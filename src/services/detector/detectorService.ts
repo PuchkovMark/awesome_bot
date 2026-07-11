@@ -1,4 +1,4 @@
-import config from '../../config';
+import config from '../../config/index.js';
 
 /**
  * DetectorService — определяет, обращаются ли к боту в чате, и парсит команды.

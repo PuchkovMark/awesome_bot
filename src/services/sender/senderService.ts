@@ -1,6 +1,6 @@
 import { VK } from 'vk-io';
-import config from '../../config';
-import { logger } from '../../logger';
+import config from '../../config/index.js';
+import { logger } from '../../logger/index.js';
 
 /**
  * SenderService — отвечает за отправку сообщений в VK и разбиение длинных текстов.

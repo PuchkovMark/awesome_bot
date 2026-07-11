@@ -1,8 +1,8 @@
-import config from './config/index';
-import { connectDb } from './db/client';
-import { logger } from './logger';
-import vkService from './services/vk/vkService';
-import { startCleanupJob } from './jobs/cleanupJob';
+import config from './config/index.js';
+import { connectDb } from './db/client.js';
+import { logger } from './logger/index.js';
+import vkService from './services/vk/vkService.js';
+import { startCleanupJob } from './jobs/cleanupJob.js';
 
 async function main() {
   try {

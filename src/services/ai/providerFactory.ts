@@ -1,8 +1,8 @@
-import container from '../../di/container';
-import type AIProvider from './AIProvider';
-import OpenAIProvider from './openaiProvider';
-import { logger } from '../../logger';
-import config from '../../config';
+import container from '../../di/container.js';
+import type AIProvider from './AIProvider.js';
+import OpenAIProvider from './openaiProvider.js';
+import { logger } from '../../logger/index.js';
+import config from '../../config/index.js';
 
 const KEY = 'ai.provider';
 
