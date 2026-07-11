@@ -1,0 +1,11 @@
+version: '3.8'
+services:
+  app:
+    build: .
+    env_file: .env
+    volumes:
+      - ./:/usr/src/app
+      - ./dev_data:/usr/src/app/dev_data
+    ports:
+      - "3000:3000"
+    restart: unless-stopped

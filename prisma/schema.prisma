@@ -1,0 +1,54 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id          String                 @id @default(cuid())
+  vkId        String                 @unique
+  displayName String?
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+  participants ConversationParticipant[]
+  messages    Message[]
+}
+
+model Conversation {
+  id          String                 @id @default(cuid())
+  title       String?
+  isGroup     Boolean                @default(false)
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+  participants ConversationParticipant[]
+  messages    Message[]
+}
+
+model ConversationParticipant {
+  id             String       @id @default(cuid())
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+  conversationId String
+  user           User         @relation(fields: [userId], references: [id])
+  userId         String
+  role           String?
+  @@unique([conversationId, userId])
+}
+
+model Message {
+  id             String   @id @default(cuid())
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+  conversationId String
+  user           User?    @relation(fields: [userId], references: [id])
+  userId         String?
+  role           String   // e.g., "user", "assistant", "system"
+  content        String
+  provider       String?  // which AI provider generated it (optional)
+  tokens         Int?     // token count if available
+  metadata       String?  // extensible metadata (JSON as string for SQLite compatibility)
+  createdAt      DateTime @default(now())
+
+  @@index([conversationId, createdAt])
+}
