@@ -1,5 +1,5 @@
-import memoryService from '../memory/memoryService';
-import { logger } from '../../logger';
+import memoryService from '../memory/memoryService.js';
+import { logger } from '../../logger/index.js';
 
 /**
  * CommandService — обрабатывает чат-команды.

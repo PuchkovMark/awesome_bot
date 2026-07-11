@@ -8,7 +8,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "dev": "npx ts-node --esm src/bootstrap.ts",
+    "dev": "tsx src/bootstrap.ts",
     "start": "node --experimental-specifier-resolution=node ./dist/bootstrap.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
@@ -38,6 +38,7 @@
     "prisma": "^5.8.0",
     "ts-node": "^10.9.1",
     "ts-node-dev": "^2.0.0",
+    "tsx": "^4.19.0",
     "typescript": "^5.4.2"
   }
 }

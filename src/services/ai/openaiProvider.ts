@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
-import config from '../../config';
-import { logger } from '../../logger';
-import type { AIProvider, AIMessage, AIResponse } from './AIProvider';
+import config from '../../config/index.js';
+import { logger } from '../../logger/index.js';
+import type { AIProvider, AIMessage, AIResponse } from './AIProvider.js';
 
 /**
  * OpenAIProvider — реализация AIProvider для OpenAI-совместимых API.

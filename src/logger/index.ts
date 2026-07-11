@@ -1,18 +1,17 @@
-import pino from 'pino';
-import config from '../config/index';
+import { pino } from 'pino';
+import config from '../config/index.js';
 
-/**
- * Создаёт и экспортирует pino-логгер.
- */
-export const logger = pino({
+const baseLogger = pino({
   level: config.LOG_LEVEL,
   transport: {
     target: 'pino-pretty',
     options: {
       colorize: true,
-      translateTime: 'SYS:standard'
-    }
-  }
+      translateTime: 'SYS:standard',
+    },
+  },
 });
+
+export const logger = baseLogger;
 
 export default logger;

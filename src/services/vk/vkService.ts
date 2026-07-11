@@ -1,12 +1,12 @@
-import { VK, MessageContext } from 'vk-io';
-import config from '../../config';
-import { logger } from '../../logger';
-import memoryService from '../memory/memoryService';
-import type { AIMessage } from '../ai/AIProvider';
-import requestQueue from '../queue/requestQueue';
-import senderService from '../sender/senderService';
-import detectorService from '../detector/detectorService';
-import commandService from '../command/commandService';
+import { VK, type MessageContext } from 'vk-io';
+import config from '../../config/index.js';
+import { logger } from '../../logger/index.js';
+import memoryService from '../memory/memoryService.js';
+import type { AIMessage } from '../ai/AIProvider.js';
+import requestQueue from '../queue/requestQueue.js';
+import senderService from '../sender/senderService.js';
+import detectorService from '../detector/detectorService.js';
+import commandService from '../command/commandService.js';
 
 /**
  * VkService — инициализация VK API и обработка входящих сообщений.
@@ -55,12 +55,12 @@ export class VkService {
 
           const aiMessages: AIMessage[] = [];
           const ctx = await memoryService.getContextForUser(String(peerId), senderId);
-          for (const m of ctx) aiMessages.push({ role: m.role as any, content: m.content });
+          for (const m of ctx) aiMessages.push({ role: m.role as 'user' | 'assistant' | 'system', content: m.content });
           aiMessages.push({ role: 'user', content: text });
 
           try {
-            const mod = await import('../ai/providerFactory');
-            const provider = mod.getAIProvider() as import('../ai/AIProvider').default;
+            const mod = await import('../ai/providerFactory.js');
+            const provider = mod.getAIProvider() as import('../ai/AIProvider.js').default;
             const resp = await provider.send(aiMessages, { maxTokens: 1500 });
 
             await memoryService.addMessage({ conversationId: String(peerId), role: 'assistant', content: resp.content, provider: provider.name, tokens: resp.tokens });

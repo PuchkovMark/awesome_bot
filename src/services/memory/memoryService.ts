@@ -1,7 +1,7 @@
-import { prisma } from '../../db/client';
+import { prisma } from '../../db/client.js';
 import type { Prisma } from '@prisma/client';
-import config from '../../config';
-import { logger } from '../../logger';
+import config from '../../config/index.js';
+import { logger } from '../../logger/index.js';
 
 export type StoredMessage = {
   id: string;

@@ -1,6 +1,6 @@
 import cron from 'node-cron';
-import memoryService from '../services/memory/memoryService';
-import { logger } from '../logger';
+import memoryService from '../services/memory/memoryService.js';
+import { logger } from '../logger/index.js';
 
 /**
  * Запускает cron-задачу очистки устаревшего контекста каждые N минут.
