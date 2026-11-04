@@ -1,53 +1,131 @@
-# Awesome VK AI Bot
+# VK AI-бот
 
-Production-ready TypeScript Node.js bot for VKontakte with AI integration.
+Бот для личных сообщений и бесед ВКонтакте. Получает сообщения от имени сообщества, передаёт их выбранной языковой модели, сохраняет историю в SQLite и отправляет ответ обратно в VK.
 
-Features:
-- Handles direct messages and chat mentions
-- Pluggable AI providers (OpenAI implemented)
-- Conversation history with Prisma + SQLite (migratable to Postgres)
-- Per-user request queue, command handling, automatic context cleanup
+## Возможности
 
-Quick start
+- Отвечает на личные сообщения сообщества.
+- В беседах отвечает реплаем на обычное текстовое сообщение, где как отдельное слово встречается имя «Бот», «Пенёк», «Пенек», «Пенёчек» или «Пенечек»; это не требует VK-упоминания через `@`. Также отвечает на настоящее VK-упоминание (`@club<ID>`) и на ответ, отправленный через функцию VK «Ответить» на сообщение сообщества. В каждом случае ответ прикрепляется к сообщению, которое обратилось к боту. Остальные текстовые сообщения сохраняются для пересказа, но сами по себе не вызывают ответ.
+- Поддерживает команды с префиксами `/` и `!`.
+- По команде `Пенек пересказ` кратко пересказывает текстовое обсуждение беседы за последние два часа.
+- Хранит историю сообщений в SQLite с помощью Prisma; контекст ограничен временем жизни и лимитом токенов.
+- Обрабатывает запросы каждого пользователя последовательно.
+- Хранит отдельную историю пользователя и отдельный session ID модели для каждого участника беседы.
+- Во время генерации ответа в беседе показывает статус «печатает» через токен сообщества.
+- Использует OpenCode Console как единственный AI-провайдер.
+- Периодически удаляет сообщения, срок хранения которых истёк.
 
-1. Copy `.env.example` to `.env` and fill required values (at least `VK_TOKEN` and `VK_GROUP_ID`).
+## Требования
 
-2. Install dependencies:
+- Node.js 22 или новее и npm.
+- Токен доступа сообщества VK с разрешением на сообщения.
+- ID сообщества VK.
+- API-ключ OpenCode Console и доступ к выбранной модели.
+
+В настройках сообщества VK включите сообщения и Long Poll, чтобы бот получал новые события.
+
+## Установка и запуск
+
+Скопируйте пример конфигурации:
+
+```bash
+cp .env.example .env
+```
+
+Заполните `.env` (описание переменных — ниже), затем выполните:
 
 ```bash
 npm ci
-```
-
-3. Generate Prisma client and run migrations:
-
-```bash
 npx prisma generate
-npx prisma migrate dev --name init
-```
-
-4. Run in dev:
-
-```bash
+npx prisma migrate deploy
 npm run dev
 ```
 
-Run in production (build + start):
+Для запуска собранной версии:
 
 ```bash
 npm run build
 npm start
 ```
 
-Docker
+## Настройка
 
-Build and run with docker-compose:
+### VK
+
+```env
+VK_TOKEN=токен_сообщества
+VK_GROUP_ID=числовой_ID_сообщества
+```
+
+- `VK_TOKEN` — токен сообщества, которым бот получает и отправляет сообщения.
+- `VK_GROUP_ID` — числовой ID сообщества без префикса `club`.
+
+### OpenCode Console
+
+```env
+OPENCODE_API_KEY=ключ_OpenCode_Console
+OPENCODE_MODEL=deepseek-v4.1-flash
+OPENCODE_BASE_URL=https://opencode.ai/inference/go/openai/v1
+```
+
+Создайте ключ в [OpenCode Console](https://opencode.ai/console): откройте меню аккаунта, раздел **Account → Personal API keys → Add API key**. API-ключ показывается один раз; храните его только в `.env` и не публикуйте. Подробнее: [список моделей и endpoints](https://opencode.ai/v2/docs/console/models/) и [настройка сторонних клиентов](https://opencode.ai/v2/docs/console/harnesses/).
+
+Для OpenCode Go разумный баланс цены и качества — `deepseek-v4.1-flash` (без `-free`). По опубликованным тарифам Go стоимость этой модели за 1 млн токенов составляет $0.15 input / $0.60 output в непиковое время и $0.30 / $1.20 в пиковое. Если важнее минимальная цена, рассмотрите `qwen3.8-flash` ($0.15 / $0.47 за 1 млн input/output токенов). Цены и лимиты могут меняться; проверяйте их в [актуальной таблице OpenCode Go](https://opencode.ai/v2/docs/console/go/).
+
+Модель `deepseek-v4.1-flash-free` — отдельная free-tier запись, а не идентификатор Go-модели. Free-tier модели могут отвечать HTTP 403 внешним клиентам; для бота с Go используйте доступный тарифу идентификатор `deepseek-v4.1-flash`. Укажите API URL Go именно как `https://opencode.ai/inference/go/openai/v1`. Go ориентирован на coding agents и типичный поток запросов таких клиентов; проверьте условия использования и региональную доступность для аккаунта. Провайдерного failover в приложении нет — используется только OpenCode.
+
+### Прочие параметры
+
+```env
+DATABASE_URL=file:./dev.db
+PORT=3000
+LOG_LEVEL=info
+BOT_NAME=awesome_bot
+CONTEXT_TTL_HOURS=24
+MAX_HISTORY_TOKENS=4000
+```
+
+- `DATABASE_URL` — адрес базы данных; по умолчанию используется локальная SQLite.
+- `PORT` — порт приложения.
+- `LOG_LEVEL` — уровень логирования.
+- `BOT_NAME` — имя, по которому бот распознаёт обращение в тексте беседы.
+- `CONTEXT_TTL_HOURS` — сколько часов хранить сообщения в контексте.
+- `MAX_HISTORY_TOKENS` — приблизительный лимит истории, передаваемой модели.
+
+## Команды
+
+Команды можно отправлять с `/` или `!`; пересказ в беседе вызывается фразой `Пенек пересказ`:
+
+| Команда                                 | Действие                                          |
+| --------------------------------------- | ------------------------------------------------- |
+| `/help` или `!help`                     | Показать список команд                            |
+| `/ping` или `!ping`                     | Проверить отклик бота                             |
+| `Пенек пересказ`                        | Пересказать обсуждение беседы за последние 2 часа |
+| `/reset` или `!reset`                   | Удалить историю пользователя в текущем диалоге    |
+| `/forget` или `!forget`                 | Удалить всю историю пользователя                  |
+| `/system <текст>` или `!system <текст>` | Добавить системное сообщение в контекст           |
+
+## Docker
+
+Для запуска через Compose подготовьте `.env`, затем выполните:
 
 ```bash
 docker compose up --build -d
 ```
 
-Notes
+## Размещение в облаке
 
-- To use OpenAI, set `OPENAI_API_KEY` in `.env`.
-- To switch to PostgreSQL, change `DATABASE_URL` and run Prisma migrations — business logic does not depend on DB vendor.
+Для работы из России размещайте процесс бота и SQLite-базу на VM или контейнерной платформе с регионом в РФ. Для текущей схемы с SQLite используйте один экземпляр бота и подключите постоянный диск, например задав `DATABASE_URL=file:/data/bot.db` и смонтировав диск в `/data`: без постоянного хранилища история будет потеряна при пересоздании контейнера. Текущий Prisma schema настроен на SQLite; для нескольких реплик потребуется отдельно перевести схему и миграции на поддерживаемую общую БД, например PostgreSQL.
 
+## Разработка
+
+```bash
+npm run build
+```
+
+Генерация клиента Prisma и применение миграций:
+
+```bash
+npx prisma generate
+npx prisma migrate dev
+```

@@ -17,7 +17,10 @@ export interface AIProvider {
   /**
    * Отправляет массив сообщений (контекст + запрос) и возвращает ответ.
    */
-  send(messages: AIMessage[], options?: { maxTokens?: number; temperature?: number }): Promise<AIResponse>;
+  send(
+    messages: AIMessage[],
+    options?: { maxTokens?: number; temperature?: number; sessionId?: string },
+  ): Promise<AIResponse>;
 
   /**
    * Имя провайдера (например, 'openai').

@@ -6,6 +6,7 @@
     "lib": ["ES2023"],
     "outDir": "dist",
     "rootDir": "src",
+    "tsBuildInfoFile": "dist/tsconfig.tsbuildinfo",
     "strict": true,
     "noImplicitAny": true,
     "noUnusedLocals": true,

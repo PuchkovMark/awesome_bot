@@ -31,12 +31,11 @@ export class MemoryService {
   }
 
   private async ensureUser(vkId: string, displayName?: string) {
-    let user = await prisma.user.findUnique({ where: { vkId } });
-    if (!user) {
-      user = await prisma.user.create({ data: { vkId, displayName } });
-      logger.debug({ vkId }, 'Created new user');
-    }
-    return user;
+    return prisma.user.upsert({
+      where: { vkId },
+      create: { vkId, displayName },
+      update: displayName ? { displayName } : {},
+    });
   }
 
   private async ensureConversation(id: string, title?: string, isGroup = false) {
@@ -70,7 +69,9 @@ export class MemoryService {
     const msg = await prisma.message.create({
       data: {
         conversationId,
-        userId: vkUserId ? (await prisma.user.findUnique({ where: { vkId: vkUserId } }))?.id : undefined,
+        userId: vkUserId
+          ? (await prisma.user.findUnique({ where: { vkId: vkUserId } }))?.id
+          : undefined,
         role,
         content,
         provider,
@@ -107,7 +108,10 @@ export class MemoryService {
     const user = await prisma.user.findUnique({ where: { vkId: vkUserId } });
     const userId = user?.id;
 
-    const corrected = messages.filter((m: { userId: string | null }) => (m.userId ? m.userId === userId : true));
+    const corrected = messages.filter(
+      (m: { userId: string | null; role: string }) =>
+        m.userId === userId || (m.userId === null && m.role === 'system'),
+    );
 
     // Now apply token-limited window from the end backwards
     const result: StoredMessage[] = [];
@@ -118,10 +122,69 @@ export class MemoryService {
       const t = m.tokens ?? this.estimateTokens(m.content);
       if (tokenSum + t > this.maxTokens && result.length > 0) break;
       tokenSum += t;
-      result.push({ id: m.id, role: m.role, content: m.content, provider: m.provider ?? null, tokens: m.tokens ?? null, createdAt: m.createdAt });
+      result.push({
+        id: m.id,
+        role: m.role,
+        content: m.content,
+        provider: m.provider ?? null,
+        tokens: m.tokens ?? null,
+        createdAt: m.createdAt,
+      });
     }
 
     return result.reverse();
+  }
+
+  async getRecentConversationMessages(conversationId: string, since: Date) {
+    const messages = await prisma.message.findMany({
+      where: {
+        conversationId,
+        role: { in: ['user', 'assistant'] },
+        createdAt: { gte: since },
+      },
+      include: { user: { select: { vkId: true, displayName: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+    });
+
+    return messages.reverse().map((message) => ({
+      role: message.role,
+      content: message.content,
+      createdAt: message.createdAt,
+      speaker:
+        message.role === 'assistant'
+          ? 'Пенёк'
+          : message.user?.displayName && message.user.displayName !== message.user.vkId
+            ? message.user.displayName
+            : 'Участник',
+    }));
+  }
+
+  async getRecentConversationUsers(conversationId: string, since: Date) {
+    const messages = await prisma.message.findMany({
+      where: {
+        conversationId,
+        role: 'user',
+        createdAt: { gte: since },
+        userId: { not: null },
+      },
+      select: {
+        user: { select: { vkId: true, displayName: true } },
+      },
+      distinct: ['userId'],
+    });
+
+    return messages.flatMap(({ user }) =>
+      user ? [{ vkId: user.vkId, displayName: user.displayName }] : [],
+    );
+  }
+
+  async updateUserDisplayName(vkId: string, displayName: string) {
+    await prisma.user.upsert({
+      where: { vkId },
+      create: { vkId, displayName },
+      update: { displayName },
+    });
   }
 
   /**
