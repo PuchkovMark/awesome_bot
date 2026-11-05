@@ -39,6 +39,15 @@ export class DetectorService {
     return false;
   }
 
+  isActiveEvent(text: string): boolean {
+    return (
+      /[?？]\s*$/u.test(text.trim()) ||
+      /(?<![\p{L}\p{N}_])(?:помоги|подскажи|объясни|расскажи|посоветуй)(?![\p{L}\p{N}_])/iu.test(
+        text,
+      )
+    );
+  }
+
   isMentioned(text: string): boolean {
     if (!text) return false;
     const t = normalizeText(text);
@@ -66,6 +75,14 @@ export class DetectorService {
 
   parseImageCommand(text: string): ImageCommand | null {
     if (!text) return null;
+    const slashCommand = text.trim().match(/^\/(image|edit)(?:\s+([\s\S]*))?$/iu);
+    if (slashCommand) {
+      return {
+        action: slashCommand[1].toLowerCase() === 'edit' ? 'edit' : 'generate',
+        prompt: slashCommand[2]?.trim() ?? '',
+      };
+    }
+
     const normalized = normalizeText(text);
     const match = normalized.match(
       /^(?:(?:бот|пенек|пенечек)[,!:;]?\s+)?(нарисуй|сгенерируй|создай(?:\s+картинку)?|преобрази|измени|переделай)\s+([\s\S]+)$/u,

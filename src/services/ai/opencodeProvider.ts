@@ -17,6 +17,8 @@ export class OpenCodeProvider implements AIProvider {
     this.client = new OpenAI({
       apiKey: config.OPENCODE_API_KEY,
       baseURL: config.OPENCODE_BASE_URL,
+      maxRetries: config.AI_MAX_RETRIES,
+      timeout: 90_000,
       defaultHeaders: {
         'User-Agent': 'awesome-bot/0.1.0',
       },
@@ -48,7 +50,14 @@ export class OpenCodeProvider implements AIProvider {
       const content = choice?.message?.content ?? '';
       const tokens = res.usage?.total_tokens;
 
-      return { id: res.id, content, provider: this.name, tokens };
+      return {
+        id: res.id,
+        content,
+        provider: this.name,
+        tokens,
+        inputTokens: res.usage?.prompt_tokens,
+        outputTokens: res.usage?.completion_tokens,
+      };
     } catch (err) {
       logger.error({ err, provider: this.name }, 'AI provider send failed');
       throw err;

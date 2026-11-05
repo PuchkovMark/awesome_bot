@@ -10,6 +10,7 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/bootstrap.ts",
     "start": "node --experimental-specifier-resolution=node ./dist/bootstrap.js",
+    "test": "node --import tsx --test test/*.test.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "lint": "eslint 'src/**/*.{ts,js}' --fix",
@@ -25,7 +26,6 @@
     "pino": "^8.15.0",
     "pino-pretty": "^9.0.0",
     "sharp": "^0.35.5",
-    "sqlite3": "^5.1.6",
     "vk-io": "*"
   },
   "devDependencies": {
