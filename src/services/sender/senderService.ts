@@ -1,8 +1,9 @@
-import { VK } from 'vk-io';
+import { Keyboard, VK } from 'vk-io';
 import sharp from 'sharp';
 import config from '../../config/index.js';
 import { logger } from '../../logger/index.js';
 import type { GeneratedImage } from '../image/imageGenerationService.js';
+import splitterService from '../splitter/splitterService.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -13,7 +14,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  */
 export class SenderService {
   private vk: VK;
-  private MAX_LEN = 4000;
   private readonly sentConversationMessages = new Map<number, Set<number>>();
   private readonly maxTrackedMessagesPerPeer = 1000;
 
@@ -24,10 +24,9 @@ export class SenderService {
   async send(
     peerId: number,
     text: string,
-    options?: { replyTo?: number; conversationMessageId?: number },
+    options?: { replyTo?: number; conversationMessageId?: number; keyboard?: string },
   ): Promise<void> {
-    const parts: string[] = [];
-    for (let i = 0; i < text.length; i += this.MAX_LEN) parts.push(text.slice(i, i + this.MAX_LEN));
+    const parts = splitterService.split(text);
 
     for (const [index, part] of parts.entries()) {
       try {
@@ -35,6 +34,7 @@ export class SenderService {
           peer_id: peerId,
           random_id: Date.now() % 1e9,
           message: part,
+          keyboard: index === 0 ? options?.keyboard : undefined,
           forward:
             index === 0 && (options?.replyTo || options?.conversationMessageId)
               ? JSON.stringify({
@@ -70,8 +70,56 @@ export class SenderService {
         }
       } catch (err) {
         logger.error({ err, peerId }, 'Failed to send message');
+        throw err;
       }
     }
+  }
+
+  async sendSummary(
+    peerId: number,
+    text: string,
+    selectedHours: 2 | 6,
+    options?: { replyTo?: number; conversationMessageId?: number },
+  ): Promise<void> {
+    await this.send(peerId, text, {
+      ...options,
+      keyboard: this.createSummaryKeyboard(selectedHours),
+    });
+  }
+
+  async editSummary(
+    peerId: number,
+    conversationMessageId: number,
+    text: string,
+    selectedHours: 2 | 6,
+  ): Promise<void> {
+    try {
+      await this.vk.api.messages.edit({
+        peer_id: peerId,
+        cmid: conversationMessageId,
+        message: text,
+        keyboard: this.createSummaryKeyboard(selectedHours),
+      });
+    } catch (err) {
+      logger.error({ err, peerId, conversationMessageId }, 'Failed to edit summary message');
+      throw err;
+    }
+  }
+
+  private createSummaryKeyboard(selectedHours: 2 | 6): string {
+    return Keyboard.builder()
+      .callbackButton({
+        label: 'За 2 часа',
+        payload: { command: 'summary', hours: 2 },
+        color: selectedHours === 2 ? Keyboard.POSITIVE_COLOR : Keyboard.PRIMARY_COLOR,
+      })
+      .callbackButton({
+        label: 'За 6 часов',
+        payload: { command: 'summary', hours: 6 },
+        color: selectedHours === 6 ? Keyboard.POSITIVE_COLOR : Keyboard.PRIMARY_COLOR,
+      })
+      .inline()
+      .toString();
   }
 
   async sendPhoto(
@@ -183,6 +231,55 @@ export class SenderService {
     } catch (err) {
       logger.error({ err, peerId }, 'Failed to send generated photo');
       throw err;
+    }
+  }
+
+  async sendVoice(
+    peerId: number,
+    audio: Buffer,
+    text: string,
+    options?: { replyTo?: number; conversationMessageId?: number },
+  ): Promise<void> {
+    if (audio.length === 0) throw new Error('Generated voice message is empty');
+    const attachment = await this.vk.upload.audioMessage({
+      peer_id: peerId,
+      source: {
+        value: audio,
+        filename: 'voice.ogg',
+        contentType: 'audio/ogg',
+        contentLength: audio.length,
+      },
+    });
+    const result: unknown = await this.vk.api.messages.send({
+      peer_id: peerId,
+      random_id: Date.now() % 1e9,
+      message: text,
+      attachment: attachment.toString(),
+      forward:
+        options?.replyTo || options?.conversationMessageId
+          ? JSON.stringify({
+              ...(options.conversationMessageId
+                ? { conversation_message_ids: options.conversationMessageId }
+                : { message_ids: options.replyTo }),
+              peer_id: peerId,
+              is_reply: true,
+            })
+          : undefined,
+    });
+    if (typeof result === 'number' && result > 0) {
+      this.trackSentMessage(peerId, result);
+    } else if (Array.isArray(result)) {
+      for (const message of result) {
+        if (
+          isRecord(message) &&
+          'peer_id' in message &&
+          message.peer_id === peerId &&
+          'conversation_message_id' in message &&
+          typeof message.conversation_message_id === 'number'
+        ) {
+          this.trackSentMessage(peerId, message.conversation_message_id);
+        }
+      }
     }
   }
 

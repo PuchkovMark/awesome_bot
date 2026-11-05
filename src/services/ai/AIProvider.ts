@@ -11,6 +11,8 @@ export type AIResponse = {
   content: string;
   provider?: string;
   tokens?: number;
+  inputTokens?: number;
+  outputTokens?: number;
 };
 
 export interface AIProvider {

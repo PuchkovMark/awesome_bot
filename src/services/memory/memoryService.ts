@@ -22,7 +22,7 @@ export class MemoryService {
   private maxTokens: number;
 
   constructor() {
-    this.ttlHours = config.CONTEXT_TTL_HOURS;
+    this.ttlHours = Math.max(1, Math.min(24, config.CONTEXT_TTL_HOURS));
     this.maxTokens = config.MAX_HISTORY_TOKENS;
   }
 
@@ -96,31 +96,25 @@ export class MemoryService {
   async getContextForUser(conversationId: string, vkUserId: string) {
     const ttlDate = new Date(Date.now() - this.ttlHours * 60 * 60 * 1000);
 
+    const user = await prisma.user.findUnique({ where: { vkId: vkUserId } });
+    if (!user) return [];
+
     const messages = await prisma.message.findMany({
       where: {
         conversationId,
+        userId: user.id,
         createdAt: { gte: ttlDate },
-        // include messages by user and assistant/system so context is coherent
       },
-      orderBy: { createdAt: 'asc' },
+      orderBy: { createdAt: 'desc' },
+      take: config.MAX_HISTORY_MESSAGES,
     });
-    // Map user vkId to internal userId first.
-    const user = await prisma.user.findUnique({ where: { vkId: vkUserId } });
-    const userId = user?.id;
 
-    const corrected = messages.filter(
-      (m: { userId: string | null; role: string }) =>
-        m.userId === userId || (m.userId === null && m.role === 'system'),
-    );
-
-    // Now apply token-limited window from the end backwards
     const result: StoredMessage[] = [];
     let tokenSum = 0;
 
-    for (let i = corrected.length - 1; i >= 0; i--) {
-      const m = corrected[i];
+    for (const m of messages) {
       const t = m.tokens ?? this.estimateTokens(m.content);
-      if (tokenSum + t > this.maxTokens && result.length > 0) break;
+      if (tokenSum + t > this.maxTokens) break;
       tokenSum += t;
       result.push({
         id: m.id,
@@ -133,6 +127,30 @@ export class MemoryService {
     }
 
     return result.reverse();
+  }
+
+  /**
+   * Shared messages from this VK chat only; never includes another conversation's data.
+   */
+  async getRecentChatContext(conversationId: string, take = 8) {
+    const messages = await prisma.message.findMany({
+      where: {
+        conversationId,
+        role: 'user',
+        createdAt: { gte: new Date(Date.now() - this.ttlHours * 60 * 60 * 1000) },
+      },
+      include: { user: { select: { vkId: true, displayName: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: Math.max(1, Math.min(20, take)),
+    });
+
+    return messages.reverse().map((message) => ({
+      speaker:
+        message.user?.displayName && message.user.displayName !== message.user.vkId
+          ? message.user.displayName
+          : 'Участник',
+      content: message.content,
+    }));
   }
 
   async getRecentConversationMessages(conversationId: string, since: Date) {
@@ -177,6 +195,20 @@ export class MemoryService {
     return messages.flatMap(({ user }) =>
       user ? [{ vkId: user.vkId, displayName: user.displayName }] : [],
     );
+  }
+
+  async getActiveGroupConversationIds(since: Date, take = 50): Promise<string[]> {
+    const conversations = await prisma.message.groupBy({
+      by: ['conversationId'],
+      where: {
+        createdAt: { gte: since },
+        conversation: { isGroup: true },
+      },
+      _max: { createdAt: true },
+      orderBy: { _max: { createdAt: 'desc' } },
+      take: Math.max(1, Math.min(50, take)),
+    });
+    return conversations.map(({ conversationId }) => conversationId);
   }
 
   async updateUserDisplayName(vkId: string, displayName: string) {

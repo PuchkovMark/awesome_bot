@@ -8,23 +8,26 @@ datasource db {
 }
 
 model User {
-  id          String                 @id @default(cuid())
-  vkId        String                 @unique
-  displayName String?
-  createdAt   DateTime               @default(now())
-  updatedAt   DateTime               @updatedAt
+  id           String                    @id @default(cuid())
+  vkId         String                    @unique
+  displayName  String?
+  createdAt    DateTime                  @default(now())
+  updatedAt    DateTime                  @updatedAt
   participants ConversationParticipant[]
-  messages    Message[]
+  messages     Message[]
+  settings     UserSettings?
 }
 
 model Conversation {
-  id          String                 @id @default(cuid())
-  title       String?
-  isGroup     Boolean                @default(false)
-  createdAt   DateTime               @default(now())
-  updatedAt   DateTime               @updatedAt
+  id           String                    @id @default(cuid())
+  title        String?
+  isGroup      Boolean                   @default(false)
+  createdAt    DateTime                  @default(now())
+  updatedAt    DateTime                  @updatedAt
   participants ConversationParticipant[]
-  messages    Message[]
+  messages     Message[]
+  settings     ChatSettings?
+  gameSessions GameSession[]
 }
 
 model ConversationParticipant {
@@ -34,21 +37,121 @@ model ConversationParticipant {
   user           User         @relation(fields: [userId], references: [id])
   userId         String
   role           String?
+
   @@unique([conversationId, userId])
 }
 
 model Message {
-  id             String   @id @default(cuid())
+  id             String       @id @default(cuid())
   conversation   Conversation @relation(fields: [conversationId], references: [id])
   conversationId String
-  user           User?    @relation(fields: [userId], references: [id])
+  user           User?        @relation(fields: [userId], references: [id])
   userId         String?
-  role           String   // e.g., "user", "assistant", "system"
+  role           String // e.g., "user", "assistant", "system"
   content        String
-  provider       String?  // which AI provider generated it (optional)
-  tokens         Int?     // token count if available
-  metadata       String?  // extensible metadata (JSON as string for SQLite compatibility)
-  createdAt      DateTime @default(now())
+  provider       String? // which AI provider generated it (optional)
+  tokens         Int? // token count if available
+  metadata       String? // extensible metadata (JSON as string for SQLite compatibility)
+  createdAt      DateTime     @default(now())
 
   @@index([conversationId, createdAt])
+  @@index([userId, conversationId, createdAt])
+}
+
+model UserSettings {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  personality  String   @default("friendly")
+  systemPrompt String?
+  voiceEnabled Boolean  @default(false)
+  voice        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model ChatSettings {
+  id             String       @id @default(cuid())
+  conversationId String       @unique
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  mode           String       @default("normal")
+  imageAccess    String       @default("admins_only")
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+model Admin {
+  id        String   @id @default(cuid())
+  vkId      String   @unique
+  createdAt DateTime @default(now())
+}
+
+model AppSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+model GameSession {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  game           String
+  state          String       @default("active")
+  data           String       @default("{}")
+  startedAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  endedAt        DateTime?
+  scores         GameScore[]
+
+  @@index([conversationId, state])
+}
+
+model GameScore {
+  id        String      @id @default(cuid())
+  sessionId String
+  session   GameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  vkUserId  String
+  points    Int         @default(0)
+  createdAt DateTime    @default(now())
+
+  @@unique([sessionId, vkUserId])
+  @@index([vkUserId, createdAt])
+}
+
+model Achievement {
+  id       String   @id @default(cuid())
+  vkUserId String
+  code     String
+  metadata String?
+  earnedAt DateTime @default(now())
+
+  @@unique([vkUserId, code])
+  @@index([vkUserId, earnedAt])
+}
+
+model ApiUsage {
+  id             String   @id @default(cuid())
+  vkUserId       String?
+  conversationId String?
+  provider       String
+  feature        String
+  inputTokens    Int?
+  outputTokens   Int?
+  estimatedCost  Float?
+  createdAt      DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([vkUserId, createdAt])
+}
+
+model AdminLog {
+  id        String   @id @default(cuid())
+  adminVkId String
+  action    String
+  details   String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([adminVkId, createdAt])
 }

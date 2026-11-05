@@ -1,4 +1,6 @@
 import axios from 'axios';
+import OpenAI from 'openai';
+import { toFile } from 'openai/uploads';
 import sharp from 'sharp';
 import type { PhotoAttachment } from 'vk-io';
 import config from '../../config/index.js';
@@ -14,6 +16,14 @@ export type GeneratedImage = {
 };
 
 export class ImageGenerationService {
+  private readonly openai: OpenAI | undefined = config.OPENAI_API_KEY
+    ? new OpenAI({
+        apiKey: config.OPENAI_API_KEY,
+        maxRetries: config.AI_MAX_RETRIES,
+        timeout: 120_000,
+      })
+    : undefined;
+
   private getEndpoint(model: string): string {
     if (!config.CLOUDFLARE_ACCOUNT_ID || !config.CLOUDFLARE_API_TOKEN) {
       throw new Error('CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN must be configured');
@@ -22,6 +32,7 @@ export class ImageGenerationService {
   }
 
   async generate(prompt: string): Promise<GeneratedImage> {
+    if (config.IMAGE_PROVIDER === 'openai') return this.generateWithOpenAI(prompt);
     let input: Record<string, string | number | number[]> | FormData = { prompt };
     if (config.CLOUDFLARE_IMAGE_MODEL === '@cf/black-forest-labs/flux-2-dev') {
       input = new FormData();
@@ -31,14 +42,16 @@ export class ImageGenerationService {
   }
 
   async edit(photo: PhotoAttachment, prompt: string): Promise<GeneratedImage> {
-    let imageUrl = photo.largeSizeUrl || photo.mediumSizeUrl;
-    if (!imageUrl) {
-      await photo.loadAttachmentPayload();
-      imageUrl = photo.largeSizeUrl || photo.mediumSizeUrl;
+    const data = await this.downloadPhoto(photo);
+    if (config.IMAGE_PROVIDER === 'openai') {
+      const sourceImage = await sharp(data)
+        .rotate()
+        .resize({ width: 2048, height: 2048, fit: 'inside', withoutEnlargement: true })
+        .jpeg({ quality: 90 })
+        .toBuffer();
+      return this.editWithOpenAI(sourceImage, prompt);
     }
-    if (!imageUrl) throw new Error('VK photo does not contain a downloadable image URL');
 
-    const { data } = await this.downloadVkPhoto(imageUrl);
     const resizedImage = await sharp(data)
       .rotate()
       .resize({ width: 511, height: 511, fit: 'inside', withoutEnlargement: true })
@@ -64,6 +77,56 @@ export class ImageGenerationService {
     return this.runModel(IMAGE_EDIT_MODEL, form, 'image/jpeg');
   }
 
+  async downloadPhoto(photo: PhotoAttachment): Promise<Buffer> {
+    let imageUrl = photo.largeSizeUrl || photo.mediumSizeUrl;
+    if (!imageUrl) {
+      await photo.loadAttachmentPayload();
+      imageUrl = photo.largeSizeUrl || photo.mediumSizeUrl;
+    }
+    if (!imageUrl) throw new Error('VK photo does not contain a downloadable image URL');
+
+    const { data } = await this.downloadVkPhoto(imageUrl);
+    return data;
+  }
+
+  private getOpenAIClient(): OpenAI {
+    if (!this.openai)
+      throw new Error('OPENAI_API_KEY must be configured for OpenAI image features');
+    return this.openai;
+  }
+
+  private async generateWithOpenAI(prompt: string): Promise<GeneratedImage> {
+    const response = await this.getOpenAIClient().images.generate({
+      model: config.OPENAI_IMAGE_MODEL,
+      prompt,
+      quality: 'high',
+      size: '1024x1024',
+      n: 1,
+    });
+    const image = response.data?.[0]?.b64_json;
+    if (!image) throw new Error('OpenAI Images API returned no image data');
+    const buffer = Buffer.from(image, 'base64');
+    if (buffer.length === 0) throw new Error('OpenAI Images API returned an empty image');
+    return { buffer, contentType: 'image/png' };
+  }
+
+  private async editWithOpenAI(image: Buffer, prompt: string): Promise<GeneratedImage> {
+    const imageFile = await toFile(image, 'source.jpg', { type: 'image/jpeg' });
+    const response = await this.getOpenAIClient().images.edit({
+      model: config.OPENAI_IMAGE_MODEL,
+      image: imageFile,
+      prompt,
+      quality: 'high',
+      size: '1024x1024',
+      n: 1,
+    });
+    const output = response.data?.[0]?.b64_json;
+    if (!output) throw new Error('OpenAI Images API returned no edited image data');
+    const buffer = Buffer.from(output, 'base64');
+    if (buffer.length === 0) throw new Error('OpenAI Images API returned an empty edited image');
+    return { buffer, contentType: 'image/png' };
+  }
+
   private async runModel(
     model: string,
     input: Record<string, string | number | number[]> | FormData,
@@ -72,16 +135,7 @@ export class ImageGenerationService {
     const endpoint = this.getEndpoint(model);
     let response;
     try {
-      response = await axios.post<ArrayBuffer>(endpoint, input, {
-        headers: {
-          Authorization: `Bearer ${config.CLOUDFLARE_API_TOKEN}`,
-          'Content-Type': input instanceof FormData ? 'multipart/form-data' : 'application/json',
-        },
-        responseType: 'arraybuffer',
-        timeout: 120_000,
-        maxContentLength: MAX_SOURCE_IMAGE_BYTES * 2,
-        maxBodyLength: MAX_SOURCE_IMAGE_BYTES * 2,
-      });
+      response = await this.postWithRetries(endpoint, input);
     } catch (err) {
       if (!axios.isAxiosError(err)) throw err;
 
@@ -192,6 +246,48 @@ export class ImageGenerationService {
     const buffer = Buffer.from(base64Image, 'base64');
     if (buffer.length === 0) throw new Error('Cloudflare Workers AI returned an empty image');
     return { buffer, contentType: fallbackContentType };
+  }
+
+  private async postWithRetries(
+    endpoint: string,
+    input: Record<string, string | number | number[]> | FormData,
+  ) {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await axios.post<ArrayBuffer>(endpoint, input, {
+          headers: { Authorization: `Bearer ${config.CLOUDFLARE_API_TOKEN}` },
+          responseType: 'arraybuffer',
+          timeout: 120_000,
+          maxContentLength: MAX_SOURCE_IMAGE_BYTES * 2,
+          maxBodyLength: MAX_SOURCE_IMAGE_BYTES * 2,
+        });
+      } catch (err) {
+        if (attempt >= config.AI_MAX_RETRIES || !this.isTransientFailure(err)) throw err;
+        await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** attempt));
+      }
+    }
+  }
+
+  private isTransientFailure(err: unknown): boolean {
+    if (!axios.isAxiosError(err)) return false;
+    const status = err.response?.status;
+    if (status === 429) {
+      const body = err.response?.data;
+      const detail =
+        typeof body === 'string'
+          ? body
+          : Buffer.isBuffer(body)
+            ? body.toString('utf8')
+            : JSON.stringify(body ?? '');
+      if (/used up|daily free allocation|upgrade to cloudflare/i.test(detail)) return false;
+    }
+    return (
+      status === 408 ||
+      status === 425 ||
+      status === 429 ||
+      (typeof status === 'number' && status >= 500) ||
+      ['ECONNABORTED', 'ETIMEDOUT', 'ECONNRESET', 'ERR_NETWORK'].includes(err.code ?? '')
+    );
   }
 
   private async downloadVkPhoto(url: string): Promise<{ data: Buffer; contentType: string }> {
