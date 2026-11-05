@@ -1,0 +1,45 @@
+{
+  "name": "awesome-bot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/bootstrap.ts",
+    "start": "node --experimental-specifier-resolution=node ./dist/bootstrap.js",
+    "test": "node --import tsx --test test/*.test.ts",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "lint": "eslint 'src/**/*.{ts,js}' --fix",
+    "format": "prettier --write 'src/**/*.{ts,js,json,md}'"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.8.0",
+    "axios": "^1.5.0",
+    "dotenv": "^16.1.4",
+    "node-cron": "^3.0.2",
+    "openai": "^4.9.0",
+    "p-queue": "^7.1.0",
+    "pino": "^8.15.0",
+    "pino-pretty": "^9.0.0",
+    "sharp": "^0.35.5",
+    "vk-io": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.4.2",
+    "@typescript-eslint/eslint-plugin": "^6.8.0",
+    "@typescript-eslint/parser": "^6.8.0",
+    "eslint": "^8.46.0",
+    "eslint-config-prettier": "^8.8.0",
+    "eslint-plugin-prettier": "^4.0.0",
+    "prettier": "^3.9.0",
+    "prisma": "^5.8.0",
+    "ts-node": "^10.9.1",
+    "ts-node-dev": "^2.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.4.2"
+  }
+}
