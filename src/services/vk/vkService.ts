@@ -1,4 +1,4 @@
-import { VK, type MessageContext } from 'vk-io';
+import { PhotoAttachment, VK, type MessageContext } from 'vk-io';
 import config from '../../config/index.js';
 import { logger } from '../../logger/index.js';
 import memoryService from '../memory/memoryService.js';
@@ -7,6 +7,8 @@ import requestQueue from '../queue/requestQueue.js';
 import senderService from '../sender/senderService.js';
 import detectorService from '../detector/detectorService.js';
 import commandService from '../command/commandService.js';
+import imageGenerationService from '../image/imageGenerationService.js';
+import type { GeneratedImage } from '../image/imageGenerationService.js';
 
 /**
  * VkService — инициализация VK API и обработка входящих сообщений.
@@ -48,6 +50,47 @@ export class VkService {
 
     this.pendingDisplayNameRequests.set(userId, request);
     return request;
+  }
+
+  private async getPhotoAttachment(context: MessageContext): Promise<PhotoAttachment | undefined> {
+    const findPhoto = (message: MessageContext) =>
+      message.attachments.find(
+        (attachment): attachment is PhotoAttachment => attachment instanceof PhotoAttachment,
+      );
+
+    let photo = findPhoto(context);
+    if (!photo) {
+      try {
+        await context.loadMessagePayload({ force: true });
+        photo = findPhoto(context);
+      } catch (err) {
+        logger.warn(
+          { err, peerId: context.peerId, conversationMessageId: context.conversationMessageId },
+          'Failed to load image command attachments',
+        );
+      }
+    }
+    if (photo) return photo;
+
+    const repliedMessage = context.replyMessage;
+    if (!repliedMessage) return undefined;
+    photo = findPhoto(repliedMessage);
+    if (!photo) {
+      try {
+        await repliedMessage.loadMessagePayload({ force: true });
+        photo = findPhoto(repliedMessage);
+      } catch (err) {
+        logger.warn(
+          {
+            err,
+            peerId: context.peerId,
+            conversationMessageId: repliedMessage.conversationMessageId,
+          },
+          'Failed to load replied image',
+        );
+      }
+    }
+    return photo;
   }
 
   private startTyping(peerId: number): () => void {
@@ -166,7 +209,8 @@ export class VkService {
           }
         }
       }
-      const command = detectorService.parseCommand(text);
+      const imageCommand = detectorService.parseImageCommand(text);
+      const command = imageCommand ? null : detectorService.parseCommand(text);
       if (context.isChat && !detectorService.isAddressed(text, isReplyToBot)) {
         if (text.trim()) {
           try {
@@ -214,6 +258,51 @@ export class VkService {
         try {
           logger.info({ peerId, senderId, text }, 'Incoming message');
 
+          let sourcePhoto: PhotoAttachment | undefined;
+          if (imageCommand) {
+            if (imageCommand.action === 'edit') {
+              sourcePhoto = await this.getPhotoAttachment(context);
+              if (!sourcePhoto) {
+                await senderService.send(
+                  Number(peerId),
+                  'Чтобы преобразить изображение, прикрепи фотографию к команде или ответь командой на сообщение с фотографией.',
+                  replyOptions,
+                );
+                return;
+              }
+            }
+
+            const stopTyping = this.startTyping(peerId);
+            try {
+              let image: GeneratedImage;
+              if (imageCommand.action === 'generate') {
+                image = await imageGenerationService.generate(imageCommand.prompt);
+              } else if (sourcePhoto) {
+                image = await imageGenerationService.edit(sourcePhoto, imageCommand.prompt);
+              } else {
+                throw new Error('No source photo was provided');
+              }
+              await senderService.sendPhoto(
+                Number(peerId),
+                image,
+                imageCommand.action === 'generate'
+                  ? 'Готово! Вот изображение по твоему описанию.'
+                  : 'Готово! Вот преобразованное изображение.',
+                replyOptions,
+              );
+            } catch (err) {
+              logger.error({ err, peerId, senderId }, 'Image generation or editing failed');
+              await senderService.send(
+                Number(peerId),
+                'Не удалось создать или преобразовать изображение. Проверьте CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN и доступ к выбранной модели, затем попробуйте ещё раз.',
+                replyOptions,
+              );
+            } finally {
+              stopTyping();
+            }
+            return;
+          }
+
           // If this is a command, handle it and return
           if (command) {
             if (command === 'summary' && context.isChat) {
@@ -248,7 +337,7 @@ export class VkService {
             {
               role: 'system',
               content:
-                'Тебя зовут Пенёк. Если нужно представиться или назвать своё имя, называй себя Пенёк. Не называй себя просто «ботом» или «awesome_bot».',
+                'Ты — ИИ-ассистент в VK. Твоё имя — Пенёк: представляйся Пенёк, когда спрашивают, как тебя зовут, но не своди свою личность только к имени или слову «бот». Ты умеешь поддерживать разговор, отвечать на вопросы и помогать с задачами текстом; используй доступный контекст беседы, но не выдумывай факты и возможности. Честно говори, если чего-то не знаешь или не можешь сделать. Для изображений доступны команды «Пенёк, нарисуй <описание>» для генерации и «Пенёк, преобрази <описание>» для редактирования прикреплённой фотографии или фотографии, на которую ответили. В беседах доступна команда «Пенёк пересказ» (также «Пенек пересказ») — краткий пересказ текстовых сообщений за последние два часа. Команды /help и !help показывают справку, /ping и !ping проверяют отклик, /reset и !reset очищают твою историю с текущим пользователем в этом диалоге, /forget и !forget удаляют историю этого пользователя, /system <текст> и !system <текст> добавляют системную инструкцию в его контекст. Слеш-команды доступны также в личных сообщениях; пересказ предназначен для бесед. Когда спрашивают о командах или возможностях, объясни их простыми словами и не утверждай, что можешь выполнять действия, которых нет в этом списке.',
             },
           ];
           const ctx = await memoryService.getContextForUser(String(peerId), senderId);

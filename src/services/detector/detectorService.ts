@@ -1,5 +1,10 @@
 import config from '../../config/index.js';
 
+export type ImageCommand = {
+  action: 'generate' | 'edit';
+  prompt: string;
+};
+
 const botNameAliasPattern = /(?<![\p{L}\p{N}_])(?:бот|пенек|пенечек)(?![\p{L}\p{N}_])/u;
 
 function normalizeText(text: string): string {
@@ -57,6 +62,25 @@ export class DetectorService {
     }
 
     return false;
+  }
+
+  parseImageCommand(text: string): ImageCommand | null {
+    if (!text) return null;
+    const normalized = normalizeText(text);
+    const match = normalized.match(
+      /^(?:(?:бот|пенек|пенечек)[,!:;]?\s+)?(нарисуй|сгенерируй|создай(?:\s+картинку)?|преобрази|измени|переделай)\s+([\s\S]+)$/u,
+    );
+    if (!match) return null;
+
+    const action = /^(?:преобрази|измени|переделай)$/u.test(match[1]) ? 'edit' : 'generate';
+    const prompt = text
+      .trim()
+      .match(
+        /^(?:(?:бот|пенёк|пенек|пенёчек|пенечек)[,!:;]?\s+)?(?:нарисуй|сгенерируй|создай(?:\s+картинку)?|преобрази|измени|переделай)\s+([\s\S]+)$/iu,
+      )?.[1];
+    if (!prompt?.trim()) return null;
+
+    return { action, prompt: prompt.trim() };
   }
 
   parseCommand(text: string): string | null {

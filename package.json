@@ -24,8 +24,9 @@
     "p-queue": "^7.1.0",
     "pino": "^8.15.0",
     "pino-pretty": "^9.0.0",
-    "vk-io": "*",
-    "sqlite3": "^5.1.6"
+    "sharp": "^0.35.5",
+    "sqlite3": "^5.1.6",
+    "vk-io": "*"
   },
   "devDependencies": {
     "@types/node": "^20.4.2",
