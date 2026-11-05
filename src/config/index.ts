@@ -10,6 +10,9 @@ export interface AppConfig {
   VK_GROUP_ID: string;
   DATABASE_URL: string;
   OPENCODE_API_KEY?: string;
+  CLOUDFLARE_ACCOUNT_ID?: string;
+  CLOUDFLARE_API_TOKEN?: string;
+  CLOUDFLARE_IMAGE_MODEL: string;
   OPENCODE_MODEL: string;
   OPENCODE_BASE_URL: string;
   PORT: number;
@@ -47,6 +50,9 @@ export const config: AppConfig = {
   VK_GROUP_ID: required('VK_GROUP_ID'),
   DATABASE_URL: process.env.DATABASE_URL || 'file:./dev.db',
   OPENCODE_API_KEY: process.env.OPENCODE_API_KEY,
+  CLOUDFLARE_ACCOUNT_ID: process.env.CLOUDFLARE_ACCOUNT_ID,
+  CLOUDFLARE_API_TOKEN: process.env.CLOUDFLARE_API_TOKEN,
+  CLOUDFLARE_IMAGE_MODEL: process.env.CLOUDFLARE_IMAGE_MODEL || '@cf/black-forest-labs/flux-2-dev',
   OPENCODE_MODEL: process.env.OPENCODE_MODEL || 'deepseek-v4.1-flash',
   OPENCODE_BASE_URL: process.env.OPENCODE_BASE_URL || 'https://opencode.ai/inference/openai/v1',
   PORT: optionalNumber('PORT', 3000),
