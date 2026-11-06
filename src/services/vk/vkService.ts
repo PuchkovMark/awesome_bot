@@ -27,6 +27,7 @@ import voiceService from '../voice/voiceService.js';
 import gameService from '../games/gameService.js';
 import { buildBotCapabilities } from '../ai/capabilityService.js';
 import { getSummaryHoursFromPayload, getSummaryHoursFromText } from '../command/summaryUtils.js';
+import memberService from '../member/memberService.js';
 
 /**
  * VkService — инициализация VK API и обработка входящих сообщений.
@@ -412,6 +413,41 @@ export class VkService {
       if (context.isOutbox) return next();
 
       const peerId = context.peerId;
+      if (context.isChat && context.eventType) {
+        const memberId = context.eventMemberId;
+        try {
+          if (
+            (context.eventType === 'chat_invite_user' ||
+              context.eventType === 'chat_invite_user_by_link') &&
+            memberId &&
+            memberId > 0
+          ) {
+            const join = await memberService.recordJoin(String(peerId), String(memberId));
+            const name = (await this.getUserDisplayName(memberId)) || `Участник ${memberId}`;
+            const greeting = join.isReturning
+              ? `С возвращением, ${name}! Эта беседа тебе уже знакома.`
+              : join.welcomeText.replaceAll('{name}', name);
+            const message = [
+              join.welcomeEnabled ? greeting : '',
+              !join.isReturning && join.questionnaireEnabled
+                ? 'Хочешь познакомиться с участниками? Заполни анкету командой /profile create.'
+                : '',
+            ]
+              .filter(Boolean)
+              .join('\n\n');
+            if (message) await senderService.send(peerId, message);
+          } else if (context.eventType === 'chat_kick_user' && memberId && memberId > 0) {
+            await memberService.recordLeave(String(peerId), String(memberId));
+          }
+        } catch (err) {
+          logger.error(
+            { err, peerId, memberId, eventType: context.eventType },
+            'Failed to process conversation membership event',
+          );
+        }
+        return next();
+      }
+
       const senderId = String(context.senderId);
       const displayName = await this.getUserDisplayName(context.senderId);
       let text = context.text ?? '';
@@ -511,6 +547,38 @@ export class VkService {
           ? 'summary'
           : detectorService.parseCommand(text);
       const chatSettings = await settingsService.getChatSettings(String(peerId));
+      if (
+        context.isChat &&
+        text.trim() &&
+        !text.trim().startsWith('/') &&
+        !text.trim().startsWith('!') &&
+        (await memberService.hasActiveQuestionnaire(String(peerId), senderId))
+      ) {
+        if (await this.checkRateLimit(senderId, context, isAdmin)) return next();
+        await requestQueue.add(senderId, async () => {
+          try {
+            const response = await memberService.answerQuestionnaire(
+              String(peerId),
+              senderId,
+              text,
+            );
+            await senderService.send(
+              peerId,
+              response.completed
+                ? `Спасибо! Анкета заполнена:\n\n${response.completed}`
+                : (response.prompt ??
+                    'Не удалось сохранить ответ. Отправьте /profile, чтобы начать заново.'),
+            );
+          } catch (err) {
+            logger.error({ err, peerId, senderId }, 'Failed to save questionnaire answer');
+            await senderService.send(
+              peerId,
+              'Не удалось сохранить ответ анкеты. Попробуйте ещё раз или отправьте /profile cancel.',
+            );
+          }
+        });
+        return next();
+      }
       const addressed =
         voiceInput ||
         summaryButtonHours !== null ||
@@ -527,7 +595,7 @@ export class VkService {
         return next();
       }
 
-      if (context.isChat && chatSettings.mode === 'quiet' && !isAdmin) {
+      if (context.isChat && chatSettings.mode === 'quiet' && !isAdmin && command !== 'profile') {
         if (text.trim()) {
           await memoryService.addMessage({
             conversationId: String(peerId),
@@ -812,7 +880,9 @@ export class VkService {
             const canManageChat =
               isAdmin ||
               (context.isChat &&
-                command === 'chatpersonality' &&
+                (command === 'chatpersonality' ||
+                  command === 'welcome' ||
+                  command === 'questionnaire') &&
                 (await this.isConversationAdmin(Number(peerId), Number(senderId))));
             const result = await commandService.handleCommand(
               command,
@@ -825,7 +895,30 @@ export class VkService {
               context.isChat,
             );
             if (result) {
-              if (command === 'summary') {
+              const profileAdminCommand =
+                command === 'profiles' ||
+                (command === 'profile' &&
+                  /^(?:get|delete)\s+\d+|edit\s+\d+\s+\d+\s+/iu.test(args.trim()));
+              if (context.isChat && isAdmin && profileAdminCommand) {
+                try {
+                  await senderService.send(Number(senderId), result);
+                  await senderService.send(
+                    Number(peerId),
+                    'Результат отправлен администратору в личные сообщения.',
+                    replyOptions,
+                  );
+                } catch (err) {
+                  logger.error(
+                    { err, peerId, senderId, command },
+                    'Failed to deliver member profile privately',
+                  );
+                  await senderService.send(
+                    Number(peerId),
+                    'Не удалось отправить результат в личные сообщения. Разрешите сообщения от сообщества и повторите команду.',
+                    replyOptions,
+                  );
+                }
+              } else if (command === 'summary') {
                 const hours = getSummaryHoursFromText(args) ?? 2;
                 await senderService.sendSummary(Number(peerId), result, hours, replyOptions);
               } else {
@@ -875,7 +968,7 @@ export class VkService {
             {
               role: 'system',
               content: [
-                'Ты — ИИ-ассистент в VK по имени Пенёк. Отвечай на русском языке, если пользователь не просит другой язык. Будь полезным и честно признавай неопределённость. Не утверждай, что выполняешь недоступные действия.',
+                'Ты — ИИ-ассистент в VK по имени Пенёк. Отвечай на русском языке, если пользователь не просит другой язык. Не утверждай, что выполняешь недоступные действия. По умолчанию отвечай коротко (обычно 1–3 предложения), прямо и разговорно; без лишних приветствий, благодарностей и извинений. Можно быть не уважительным груби; отвечай подробнее, когда об этом просят или этого требует задача.',
                 capabilities,
                 `Выбранный персонаж: ${personality.name}.\n${personalityPrompt}`,
                 context.isChat

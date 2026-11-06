@@ -6,6 +6,12 @@ export type ImageAccess = 'admins_only' | 'all';
 export type BotRole = 'user' | 'administrator' | 'creator';
 
 export const BOT_CREATOR = { name: 'Mark Puchkov', vkId: '388581097' } as const;
+export const DEFAULT_WELCOME_TEXT = 'Добро пожаловать, {name}! Рады видеть тебя в беседе.';
+export const DEFAULT_QUESTIONNAIRE_QUESTIONS = [
+  'Как к тебе обращаться?',
+  'Чем ты увлекаешься?',
+  'О чём тебе интересно общаться?',
+];
 
 export class SettingsService {
   async getUserSettings(vkId: string) {
@@ -44,8 +50,32 @@ export class SettingsService {
       create: {
         conversationId: conversation.id,
         imageAccess: config.IMAGE_ADMIN_ONLY ? 'admins_only' : 'all',
+        welcomeText: DEFAULT_WELCOME_TEXT,
+        questionnaireQuestions: JSON.stringify(DEFAULT_QUESTIONNAIRE_QUESTIONS),
       },
       update: {},
+    });
+  }
+
+  async updateChatSettings(
+    conversationId: string,
+    data: {
+      welcomeEnabled?: boolean;
+      welcomeText?: string;
+      questionnaireEnabled?: boolean;
+      questionnaireQuestions?: string[];
+    },
+  ): Promise<void> {
+    const settings = await this.getChatSettings(conversationId);
+    const { questionnaireQuestions, ...settingsData } = data;
+    await prisma.chatSettings.update({
+      where: { id: settings.id },
+      data: {
+        ...settingsData,
+        ...(questionnaireQuestions
+          ? { questionnaireQuestions: JSON.stringify(questionnaireQuestions) }
+          : {}),
+      },
     });
   }
 

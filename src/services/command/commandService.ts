@@ -11,6 +11,10 @@ import gameService from '../games/gameService.js';
 import searchService from '../search/searchService.js';
 import senderService from '../sender/senderService.js';
 import { getSummaryHoursFromText, limitSentences } from './summaryUtils.js';
+import memberService, {
+  parseQuestionnaireQuestions,
+  parseStoredQuestionnaireQuestions,
+} from '../member/memberService.js';
 
 const adminCommands = new Set([
   'provider',
@@ -21,7 +25,9 @@ const adminCommands = new Set([
   'logs',
   'admin',
   'broadcast',
+  'profiles',
 ]);
+const chatAdminCommands = new Set(['welcome', 'questionnaire']);
 
 const allowedModes = new Set<ChatMode>(['active', 'normal', 'quiet']);
 const allowedImageAccess = new Set<ImageAccess>(['admins_only', 'all']);
@@ -47,6 +53,9 @@ export class CommandService {
     try {
       if (adminCommands.has(cmd) && !isAdmin) {
         return 'Эта команда доступна только администраторам.';
+      }
+      if (chatAdminCommands.has(cmd) && !canManageChat) {
+        return 'Эта команда доступна только администраторам беседы или бота.';
       }
 
       switch (cmd) {
@@ -77,6 +86,14 @@ export class CommandService {
           return this.setMode(senderId, peerId, args);
         case 'imageaccess':
           return this.setImageAccess(senderId, peerId, args);
+        case 'welcome':
+          return this.setWelcome(senderId, peerId, args, isChat);
+        case 'questionnaire':
+          return this.setQuestionnaire(senderId, peerId, args, isChat);
+        case 'profile':
+          return this.profileCommand(peerId, senderId, args, isAdmin, isChat);
+        case 'profiles':
+          return this.listMemberProfiles(senderId, peerId, args, isChat);
         case 'maintenance':
           return this.setMaintenance(senderId, args);
         case 'admin':
@@ -150,7 +167,11 @@ export class CommandService {
     } catch (err) {
       logger.error({ err, command, peerId, senderId, isAdmin }, 'Command handling failed');
       if (
-        (cmd === 'personality' || cmd === 'chatpersonality') &&
+        (cmd === 'personality' ||
+          cmd === 'chatpersonality' ||
+          cmd === 'welcome' ||
+          cmd === 'questionnaire' ||
+          cmd === 'profile') &&
         err instanceof Error &&
         !/prisma|sqlite|database|constraint failed/iu.test(err.message)
       ) {
@@ -495,6 +516,189 @@ export class CommandService {
     return `Доступ к генерации изображений в этой беседе: ${access}.`;
   }
 
+  private async setWelcome(
+    senderId: string,
+    peerId: string,
+    args: string,
+    isChat: boolean,
+  ): Promise<string> {
+    if (!isChat) return 'Команда /welcome работает только в групповых беседах.';
+    const action = args.trim().split(/\s+/u)[0];
+    const settings = await settingsService.getChatSettings(peerId);
+    if (!action) {
+      return `Приветствие: ${settings.welcomeEnabled ? 'включено' : 'выключено'}.\nТекст: ${settings.welcomeText}\nКоманды: /welcome on|off, /welcome set <текст>. В тексте можно использовать {name}.`;
+    }
+    if (action.toLowerCase() === 'on' || action.toLowerCase() === 'off') {
+      const enabled = action.toLowerCase() === 'on';
+      await settingsService.updateChatSettings(peerId, { welcomeEnabled: enabled });
+      await settingsService.logAdminAction(
+        senderId,
+        'chat.welcome.changed',
+        `${peerId}:${enabled ? 'on' : 'off'}`,
+      );
+      return `Приветствие новых участников ${enabled ? 'включено' : 'выключено'}.`;
+    }
+    const match = args.trim().match(/^set\s+([\s\S]+)$/iu);
+    const text = match?.[1]?.trim();
+    if (!text) return 'Использование: /welcome on|off или /welcome set <текст>.';
+    if (text.length > 1000) return 'Текст приветствия слишком длинный: максимум 1000 символов.';
+    await settingsService.updateChatSettings(peerId, { welcomeText: text });
+    await settingsService.logAdminAction(senderId, 'chat.welcome.text.changed', peerId);
+    return 'Текст приветствия сохранён. Подстановка {name} заменяется именем участника.';
+  }
+
+  private async setQuestionnaire(
+    senderId: string,
+    peerId: string,
+    args: string,
+    isChat: boolean,
+  ): Promise<string> {
+    if (!isChat) return 'Команда /questionnaire работает только в групповых беседах.';
+    const settings = await settingsService.getChatSettings(peerId);
+    const trimmed = args.trim();
+    if (!trimmed) {
+      const questions = parseStoredQuestionnaireQuestions(settings.questionnaireQuestions);
+      return `Анкеты: ${settings.questionnaireEnabled ? 'включены' : 'выключены'}.\nВопросы:\n${questions.map((question, index) => `${index + 1}. ${question}`).join('\n')}\nКоманды: /questionnaire on|off, /questionnaire set <вопрос 1> | <вопрос 2>.`;
+    }
+    const action = trimmed.split(/\s+/u)[0];
+    const normalizedAction = action.toLowerCase();
+    if (normalizedAction === 'on' || normalizedAction === 'off') {
+      const enabled = normalizedAction === 'on';
+      await settingsService.updateChatSettings(peerId, { questionnaireEnabled: enabled });
+      await settingsService.logAdminAction(
+        senderId,
+        'chat.questionnaire.changed',
+        `${peerId}:${enabled ? 'on' : 'off'}`,
+      );
+      return `Анкеты участников ${enabled ? 'включены' : 'выключены'}.`;
+    }
+    const match = trimmed.match(/^set\s+([\s\S]+)$/iu);
+    if (!match)
+      return 'Использование: /questionnaire on|off или /questionnaire set <вопрос 1> | <вопрос 2>.';
+    const questions = parseQuestionnaireQuestions(match[1]);
+    await settingsService.updateChatSettings(peerId, { questionnaireQuestions: questions });
+    await settingsService.logAdminAction(senderId, 'chat.questionnaire.questions.changed', peerId);
+    return `Сохранено вопросов: ${questions.length}.`;
+  }
+
+  private async profileCommand(
+    peerId: string,
+    senderId: string,
+    args: string,
+    isAdmin: boolean,
+    isChat: boolean,
+  ): Promise<string> {
+    const trimmedArgs = args.trim();
+    const adminRead = trimmedArgs.match(/^get\s+(\d+)$/iu);
+    if (adminRead) {
+      if (!isAdmin)
+        return 'Просматривать анкеты других участников могут только администраторы бота.';
+      if (!isChat) return 'Эта команда работает в групповой беседе, к которой относится анкета.';
+      const targetId = adminRead[1];
+      const profile = await memberService.getProfile(peerId, targetId);
+      if (!profile) return `Анкета участника ${targetId} не найдена.`;
+      await settingsService.logAdminAction(
+        senderId,
+        'chat.profile.viewed',
+        `${peerId}:${targetId}`,
+      );
+      return `Анкета участника ${targetId}:\n${profile}`;
+    }
+
+    const adminDelete = trimmedArgs.match(/^delete\s+(\d+)$/iu);
+    if (adminDelete) {
+      if (!isAdmin) return 'Удалять анкеты других участников могут только администраторы бота.';
+      if (!isChat) return 'Эта команда работает в групповой беседе, к которой относится анкета.';
+      const targetId = adminDelete[1];
+      const deleted = await memberService.deleteProfile(peerId, targetId);
+      if (!deleted) return `Анкета участника ${targetId} не найдена.`;
+      await settingsService.logAdminAction(
+        senderId,
+        'chat.profile.deleted',
+        `${peerId}:${targetId}`,
+      );
+      return `Анкета участника ${targetId} удалена.`;
+    }
+
+    const adminEdit = trimmedArgs.match(/^edit\s+(\d+)\s+(\d+)\s+([\s\S]+)$/iu);
+    if (adminEdit) {
+      if (!isAdmin)
+        return 'Редактировать анкеты других участников могут только администраторы бота.';
+      if (!isChat) return 'Эта команда работает в групповой беседе, к которой относится анкета.';
+      const [, targetId, questionNumber, answer] = adminEdit;
+      const profile = await memberService.updateProfileAnswer(
+        peerId,
+        targetId,
+        Number(questionNumber),
+        answer,
+      );
+      await settingsService.logAdminAction(
+        senderId,
+        'chat.profile.answer.changed',
+        `${peerId}:${targetId}:${questionNumber}`,
+      );
+      return `Анкета участника ${targetId} обновлена:\n${profile}`;
+    }
+
+    const action = trimmedArgs.toLowerCase();
+    if (action === 'cancel') {
+      return (await memberService.cancelQuestionnaire(peerId, senderId))
+        ? 'Заполнение анкеты отменено.'
+        : 'Сейчас анкета не заполняется.';
+    }
+    if (action === 'show') {
+      const profile = await memberService.getProfile(peerId, senderId);
+      return profile
+        ? `Твоя анкета:\n${profile}\n\nИзменить: /profile edit`
+        : 'Анкета пока не заполнена. Начать: /profile create';
+    }
+    if (action && action !== 'create' && action !== 'edit') {
+      if (/^(?:get|delete|edit)\b/iu.test(trimmedArgs)) {
+        return 'Администраторские команды: /profile get <VK ID>, /profile edit <VK ID> <номер ответа> <новый ответ>, /profile delete <VK ID>.';
+      }
+      return 'Использование: /profile [create|edit|show|cancel].';
+    }
+    const result = await memberService.startQuestionnaire(
+      peerId,
+      senderId,
+      action === 'edit' || action === 'create',
+    );
+    return `${result.alreadyExists ? 'Обновим анкету.' : 'Давай познакомимся!'} ${result.prompt}\nОтветь сообщением в беседе. Отмена: /profile cancel.`;
+  }
+
+  private async listMemberProfiles(
+    senderId: string,
+    peerId: string,
+    args: string,
+    isChat: boolean,
+  ): Promise<string> {
+    if (!isChat)
+      return 'Используйте /profiles в групповой беседе, анкеты которой нужно просмотреть.';
+    const pageText = args.trim();
+    if (pageText && !/^\d+$/u.test(pageText)) return 'Использование: /profiles [номер страницы].';
+    const page = pageText ? Number(pageText) : 1;
+    if (!Number.isSafeInteger(page) || page < 1)
+      return 'Номер страницы должен быть положительным целым числом.';
+    const result = await memberService.listProfiles(peerId, page);
+    if (result.total === 0) return 'В этой беседе пока нет заполненных анкет.';
+    if (page > result.pageCount)
+      return `Страницы не существует. Всего страниц: ${result.pageCount}.`;
+    const entries = result.profiles.map(({ vkUserId, answers }) => {
+      const firstAnswer = Object.values(answers)[0] ?? '';
+      const excerpt = firstAnswer.length > 80 ? `${firstAnswer.slice(0, 77)}...` : firstAnswer;
+      return `VK ID ${vkUserId}${excerpt ? ` — ${excerpt}` : ''}`;
+    });
+    await settingsService.logAdminAction(senderId, 'chat.profiles.listed', `${peerId}:${page}`);
+    return [
+      `Анкеты участников беседы (${result.total}), страница ${result.page}/${result.pageCount}:`,
+      ...entries,
+      'Просмотр: /profile get <VK ID>',
+      result.page < result.pageCount ? `Следующая страница: /profiles ${result.page + 1}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+
   private async setMaintenance(senderId: string, args: string): Promise<string> {
     const value = args.trim().toLowerCase();
     if (value !== 'on' && value !== 'off') return 'Использование: /maintenance on|off';
@@ -537,6 +741,12 @@ export class CommandService {
       '/provider [opencode|openai] — выбрать AI-провайдера',
       '/mode [active|normal|quiet] — режим этой беседы',
       '/imageaccess [admins_only|all] — доступ к изображениям',
+      '/welcome on|off или /welcome set <текст> — приветствия участников',
+      '/questionnaire on|off или /questionnaire set <вопросы> — анкета беседы',
+      '/profile [create|edit|show|cancel] — заполнить или изменить свою анкету',
+      '/profiles [страница] — список анкет участников (администраторы бота)',
+      '/profile get|delete <VK ID> — посмотреть или удалить анкету (администраторы бота)',
+      '/profile edit <VK ID> <номер ответа> <текст> — изменить ответ (администраторы бота)',
       '/maintenance [on|off] — технический режим',
       '/system global <текст> — изменить системную инструкцию бота',
       '/broadcast <текст> — предпросмотр рассылки по активным беседам',

@@ -24,6 +24,10 @@ import {
   personalities,
   validatePersonalitySettings,
 } from '../src/services/settings/personalityService.js';
+import {
+  parseQuestionnaireQuestions,
+  parseStoredQuestionnaireQuestions,
+} from '../src/services/member/memberService.js';
 
 test('message splitter preserves content and respects UTF-16 boundaries', () => {
   const text = 'первая строка\n' + 'слово '.repeat(15) + '😀 конец';
@@ -107,6 +111,10 @@ test('AI distinguishes enabled voice feature from a missing provider key', () =>
     assert.equal(normalizePersonalityId('sarcastic'), 'max');
     assert.equal(normalizePersonalityId('gamer'), 'joker');
     assert.equal(isPersonalityId('socrates'), true);
+    assert.equal(personalities.alex.settings.length, 20);
+    assert.equal(personalities.alex.settings.detail, 35);
+    assert.equal(personalities.alex.settings.formality, 10);
+    assert.match(personalities.alex.systemPrompt, /без лишних любезностей/u);
   });
 
   test('character sliders validate their range and are weighted by character', () => {
@@ -181,4 +189,19 @@ test('riddle difficulty changes within supported bounds and guides generation', 
   assert.match(buildRiddlePrompt(5, ['Старая загадка']), /Сложность 5\/5/u);
   assert.match(buildRiddlePrompt(5, ['Старая загадка']), /Старая загадка/u);
   assert.equal(normalizeGameAnswer('  Ёж!  '), 'еж');
+});
+
+test('questionnaire configuration validates question count, length, and persisted JSON', () => {
+  assert.deepEqual(parseQuestionnaireQuestions('Как зовут? | Чем увлекаешься?'), [
+    'Как зовут?',
+    'Чем увлекаешься?',
+  ]);
+  assert.throws(() => parseQuestionnaireQuestions(' | '), /от 1 до 8 вопросов/u);
+  assert.throws(
+    () => parseQuestionnaireQuestions(Array(9).fill('Вопрос').join('|')),
+    /от 1 до 8 вопросов/u,
+  );
+  assert.throws(() => parseQuestionnaireQuestions('x'.repeat(201)), /не длиннее 200 символов/u);
+  assert.deepEqual(parseStoredQuestionnaireQuestions('["Вопрос?"]'), ['Вопрос?']);
+  assert.throws(() => parseStoredQuestionnaireQuestions('not json'), /Не удалось прочитать/u);
 });
