@@ -149,6 +149,7 @@ export class MemoryService {
         message.user?.displayName && message.user.displayName !== message.user.vkId
           ? message.user.displayName
           : 'Участник',
+      authorId: message.user?.vkId ?? 'unknown',
       content: message.content,
     }));
   }

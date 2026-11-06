@@ -59,25 +59,105 @@ model Message {
 }
 
 model UserSettings {
-  id           String   @id @default(cuid())
-  userId       String   @unique
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  personality  String   @default("friendly")
-  systemPrompt String?
-  voiceEnabled Boolean  @default(false)
-  voice        String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id                String                 @id @default(cuid())
+  userId            String                 @unique
+  user              User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  personality       String                 @default("alex")
+  systemPrompt      String?
+  voiceEnabled      Boolean                @default(false)
+  voice             String?
+  characterSettings CharacterUserSetting[]
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
 }
 
 model ChatSettings {
-  id             String       @id @default(cuid())
-  conversationId String       @unique
-  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  mode           String       @default("normal")
-  imageAccess    String       @default("admins_only")
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  id                     String       @id @default(cuid())
+  conversationId         String       @unique
+  conversation           Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  mode                   String       @default("normal")
+  imageAccess            String       @default("admins_only")
+  personality            String       @default("alex")
+  personalitySettings    String       @default("{}")
+  allowPersonalityChange Boolean      @default(false)
+  createdAt              DateTime     @default(now())
+  updatedAt              DateTime     @updatedAt
+}
+
+model PersonalityProfile {
+  id            String                      @id
+  name          String
+  description   String
+  example       String
+  systemPrompt  String
+  settings      String                      @default("{}")
+  enabled       Boolean                     @default(true)
+  directEnabled Boolean                     @default(true)
+  chatEnabled   Boolean                     @default(true)
+  allowedUsers  String                      @default("[]")
+  allowedChats  String                      @default("[]")
+  version       Int                         @default(1)
+  createdAt     DateTime                    @default(now())
+  updatedAt     DateTime                    @updatedAt
+  versions      PersonalityProfileVersion[]
+  userSettings  CharacterUserSetting[]
+  usage         PersonalityUsage[]
+}
+
+model PersonalityProfileVersion {
+  id            String             @id @default(cuid())
+  personalityId String
+  personality   PersonalityProfile @relation(fields: [personalityId], references: [id], onDelete: Cascade)
+  version       Int
+  name          String
+  description   String
+  example       String
+  systemPrompt  String
+  settings      String
+  enabled       Boolean            @default(true)
+  changedBy     String
+  createdAt     DateTime           @default(now())
+
+  @@unique([personalityId, version])
+  @@index([personalityId, createdAt])
+}
+
+model CharacterUserSetting {
+  id             String             @id @default(cuid())
+  userSettingsId String
+  userSettings   UserSettings       @relation(fields: [userSettingsId], references: [id], onDelete: Cascade)
+  personalityId  String
+  personality    PersonalityProfile @relation(fields: [personalityId], references: [id], onDelete: Cascade)
+  settings       String             @default("{}")
+  updatedAt      DateTime           @updatedAt
+
+  @@unique([userSettingsId, personalityId])
+}
+
+model PersonalityChange {
+  id             String   @id @default(cuid())
+  conversationId String
+  scope          String
+  changedBy      String
+  fromId         String?
+  toId           String
+  createdAt      DateTime @default(now())
+
+  @@index([conversationId, createdAt])
+  @@index([changedBy, createdAt])
+}
+
+model PersonalityUsage {
+  id             String             @id @default(cuid())
+  personalityId  String
+  personality    PersonalityProfile @relation(fields: [personalityId], references: [id], onDelete: Cascade)
+  conversationId String
+  vkUserId       String
+  scope          String
+  createdAt      DateTime           @default(now())
+
+  @@index([personalityId, createdAt])
+  @@index([conversationId, createdAt])
 }
 
 model Admin {
