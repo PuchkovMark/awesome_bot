@@ -11,6 +11,8 @@ process.env.DATABASE_URL = `file:${databasePath}`;
 let prisma: typeof import('../src/db/client.js').prisma;
 let characters: typeof import('../src/services/settings/characterService.js').default;
 let CharacterService: typeof import('../src/services/settings/characterService.js').CharacterService;
+let memberService: typeof import('../src/services/member/memberService.js').default;
+let settingsService: typeof import('../src/services/settings/settingsService.js').default;
 
 before(async () => {
   execFileSync(process.execPath, ['node_modules/prisma/build/index.js', 'migrate', 'deploy'], {
@@ -21,6 +23,8 @@ before(async () => {
   ({ prisma } = await import('../src/db/client.js'));
   ({ default: characters, CharacterService } =
     await import('../src/services/settings/characterService.js'));
+  ({ default: memberService } = await import('../src/services/member/memberService.js'));
+  ({ default: settingsService } = await import('../src/services/settings/settingsService.js'));
   await characters.initialize();
 });
 
@@ -118,6 +122,108 @@ test('exclusive profiles enforce access and prompt versions can be rolled back',
   await characters.updateProfile('max', { systemPrompt: 'temporary prompt' }, 'admin');
   await characters.rollbackProfile('max', 1, 'admin');
   assert.equal((await characters.getProfile('max')).systemPrompt, original);
+});
+
+test('conversation welcomes distinguish returning members and questionnaires persist to completion', async () => {
+  const conversationId = '2000000399';
+  const vkUserId = '900000001';
+  const defaults = await settingsService.getChatSettings(conversationId);
+  assert.equal(defaults.welcomeEnabled, false);
+  assert.equal(defaults.questionnaireEnabled, false);
+
+  await settingsService.updateChatSettings(conversationId, {
+    welcomeEnabled: true,
+    welcomeText: 'Добро пожаловать, {name}!',
+    questionnaireEnabled: true,
+    questionnaireQuestions: ['Как тебя зовут?', 'Что тебе интересно?'],
+  });
+
+  const firstJoin = await memberService.recordJoin(conversationId, vkUserId);
+  assert.equal(firstJoin.isReturning, false);
+  assert.equal(firstJoin.welcomeText, 'Добро пожаловать, {name}!');
+  await memberService.recordLeave(conversationId, vkUserId);
+  assert.equal((await memberService.recordJoin(conversationId, vkUserId)).isReturning, true);
+
+  const start = await memberService.startQuestionnaire(conversationId, vkUserId);
+  assert.equal(start.prompt, 'Как тебя зовут?');
+  assert.equal(await memberService.hasActiveQuestionnaire(conversationId, vkUserId), true);
+  assert.deepEqual(await memberService.answerQuestionnaire(conversationId, vkUserId, 'Аня'), {
+    prompt: 'Что тебе интересно?',
+  });
+  const completed = await memberService.answerQuestionnaire(
+    conversationId,
+    vkUserId,
+    'Книги и путешествия',
+  );
+  assert.match(completed.completed ?? '', /Аня/u);
+  assert.match(completed.completed ?? '', /Книги и путешествия/u);
+  assert.equal(await memberService.hasActiveQuestionnaire(conversationId, vkUserId), false);
+  assert.match(
+    (await memberService.getProfile(conversationId, vkUserId)) ?? '',
+    /Что тебе интересно/u,
+  );
+  const profiles = await memberService.listProfiles(conversationId, 1);
+  assert.equal(profiles.total, 1);
+  assert.equal(profiles.profiles[0]?.vkUserId, vkUserId);
+  const { CommandService } = await import('../src/services/command/commandService.js');
+  const commands = new CommandService();
+  assert.equal(
+    await commands.handleCommand(
+      'profiles',
+      '',
+      conversationId,
+      'regular-user',
+      false,
+      false,
+      false,
+      true,
+    ),
+    'Эта команда доступна только администраторам.',
+  );
+  const listedProfiles = await commands.handleCommand(
+    'profiles',
+    '',
+    conversationId,
+    '388581097',
+    true,
+    false,
+    true,
+    true,
+  );
+  assert.match(listedProfiles ?? '', new RegExp(vkUserId, 'u'));
+  const viewedProfile = await commands.handleCommand(
+    'profile',
+    `get ${vkUserId}`,
+    conversationId,
+    '388581097',
+    true,
+    false,
+    true,
+    true,
+  );
+  assert.match(viewedProfile ?? '', /Книги и путешествия/u);
+  const editedProfile = await commands.handleCommand(
+    'profile',
+    `edit ${vkUserId} 1 Аня К.`,
+    conversationId,
+    '388581097',
+    true,
+    false,
+    true,
+    true,
+  );
+  assert.match(editedProfile ?? '', /Аня К\./u);
+  const updatedProfile = await memberService.updateProfileAnswer(
+    conversationId,
+    vkUserId,
+    1,
+    'Аня К.',
+  );
+  assert.match(updatedProfile, /Аня К\./u);
+  assert.match((await memberService.getProfile(conversationId, vkUserId)) ?? '', /Аня К\./u);
+  assert.equal(await memberService.deleteProfile(conversationId, vkUserId), true);
+  assert.equal(await memberService.getProfile(conversationId, vkUserId), undefined);
+  assert.equal((await memberService.listProfiles(conversationId, 1)).total, 0);
 });
 
 test('creator has a higher protected role than administrators', async () => {
