@@ -23,10 +23,7 @@ const gameNames = [
 
 export function buildBotCapabilities(context: CapabilityContext): string {
   const canUseMedia = context.isAdmin || context.imageAccess === 'all';
-  const imageProviderReady =
-    config.IMAGE_PROVIDER === 'openai'
-      ? Boolean(config.OPENAI_API_KEY)
-      : Boolean(config.CLOUDFLARE_ACCOUNT_ID && config.CLOUDFLARE_API_TOKEN);
+  const imageProviderReady = Boolean(config.OPENAI_API_KEY);
   const openAiReady = Boolean(config.OPENAI_API_KEY);
   const searchProviders = [
     ...(config.SERPER_API_KEY ? ['serper'] : []),
@@ -55,7 +52,7 @@ export function buildBotCapabilities(context: CapabilityContext): string {
     'Текстовое приключение запускается командой /adventure start [жанр|random]; доступны совместная игра, свободные действия, сохранённый журнал и инвентарь, голосование и иллюстрации. Команда /adventure help показывает команды и настройки.',
     `Веб-поиск: ${webSearchCapability}.`,
     `Голосовые сообщения: ${!config.VOICE_ENABLED ? 'модуль выключен в конфигурации; для включения требуется VOICE_ENABLED=true и перезапуск' : !openAiReady ? 'модуль включён в конфигурации, но пока не работает: не задан OPENAI_API_KEY' : context.voiceEnabledForUser ? 'включены для этого пользователя; можно распознавать входящее голосовое и озвучивать короткие ответы' : 'сервис настроен, но для этого пользователя выключен; его можно включить командой /voice on'}.`,
-    `Генерация и редактирование изображений: ${imageProviderReady ? `провайдер ${config.IMAGE_PROVIDER} настроен` : `провайдер ${config.IMAGE_PROVIDER} не полностью настроен`}; ${canUseMedia ? 'для этого пользователя разрешены' : 'для этого пользователя ограничены администраторами'}. Команды /image <описание> и /edit <инструкция> с прикреплённым фото.`,
+    `Генерация и редактирование изображений через OpenAI: ${imageProviderReady ? 'провайдер настроен' : 'не задан OPENAI_API_KEY'}; ${canUseMedia ? 'для этого пользователя разрешены' : 'для этого пользователя ограничены администраторами'}. Команды /image <описание> и /edit <инструкция> с прикреплённым фото.`,
     `Анализ фото и OCR командами /analyze и /ocr, а также анализ документов командой /document доступны ${openAiReady && canUseMedia ? 'при настроенном OpenAI API' : 'только при разрешении в беседе и настроенном OPENAI_API_KEY'}. Для документов поддерживаются PDF, DOCX, ODT, PPTX, XLSX, CSV, JSON, MD, RTF и TXT размером до 8 МБ.`,
     'Создатель бота — Mark Puchkov (VK ID 388581097); его роль выше роли администратора. Только создатель назначает или снимает администраторов.',
     `Административные команды доступны ${context.isAdmin ? 'текущему пользователю' : 'только администраторам'}: /admin, /provider, /mode, /maintenance, /imageaccess, /users, /logs, /broadcast. Не раскрывай и не меняй настройки администратора без проверки прав командой бота.`,

@@ -102,6 +102,82 @@ test('changing a character preserves history and records a selection audit entry
   ]);
 });
 
+test('shared chat context includes recent participant messages and bot replies in order', async () => {
+  const conversationId = 'shared-chat-history';
+  const conversation = await prisma.conversation.upsert({
+    where: { id: conversationId },
+    create: { id: conversationId, isGroup: true },
+    update: {},
+  });
+  const firstUser = await prisma.user.upsert({
+    where: { vkId: 'shared-user-1' },
+    create: { vkId: 'shared-user-1', displayName: 'Аня' },
+    update: { displayName: 'Аня' },
+  });
+  const secondUser = await prisma.user.upsert({
+    where: { vkId: 'shared-user-2' },
+    create: { vkId: 'shared-user-2', displayName: 'Борис' },
+    update: { displayName: 'Борис' },
+  });
+  const now = Date.now();
+  await prisma.message.createMany({
+    data: [
+      {
+        conversationId,
+        userId: firstUser.id,
+        role: 'user',
+        content: 'Вопрос первый',
+        createdAt: new Date(now - 3000),
+      },
+      {
+        conversationId,
+        role: 'assistant',
+        content: 'Ответ Пенёчка',
+        createdAt: new Date(now - 2000),
+      },
+      {
+        conversationId,
+        userId: secondUser.id,
+        role: 'user',
+        content: 'Уточнение',
+        createdAt: new Date(now - 1000),
+      },
+    ],
+  });
+
+  const { default: memoryService } = await import('../src/services/memory/memoryService.js');
+  const sharedContext = await memoryService.getRecentChatContext(conversation.id);
+
+  assert.deepEqual(
+    sharedContext.map(({ role, speaker, authorId, content }) => ({
+      role,
+      speaker,
+      authorId,
+      content,
+    })),
+    [
+      {
+        role: 'user',
+        speaker: 'Аня',
+        authorId: 'shared-user-1',
+        content: 'Вопрос первый',
+      },
+      {
+        role: 'assistant',
+        speaker: 'Пенёк',
+        authorId: undefined,
+        content: 'Ответ Пенёчка',
+      },
+      {
+        role: 'user',
+        speaker: 'Борис',
+        authorId: 'shared-user-2',
+        content: 'Уточнение',
+      },
+    ],
+  );
+});
+
 test('exclusive profiles enforce access and prompt versions can be rolled back', async () => {
   await characters.createProfile(
     'private_helper',

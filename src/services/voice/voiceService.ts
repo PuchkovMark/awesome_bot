@@ -91,7 +91,8 @@ export class VoiceService {
       voice,
       input: text,
       response_format: 'opus',
-      instructions: 'Speak clearly and naturally in the language of the text.',
+      instructions:
+        'Speak clearly and naturally in the language of the text at a slightly faster-than-normal pace. Keep pauses concise without rushing.',
     });
     const audio = Buffer.from(await response.arrayBuffer());
     if (audio.length === 0 || audio.length > MAX_AUDIO_BYTES) {

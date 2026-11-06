@@ -14,6 +14,74 @@ type MemePlan = {
   caption: string;
 };
 
+type ContextMemePlan =
+  { skip: true } | { skip: false; topic: string; scene: string; caption: string };
+
+export function parseContextMemePlan(content: string): ContextMemePlan | null {
+  for (let start = content.indexOf('{'); start >= 0; start = content.indexOf('{', start + 1)) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    let end = -1;
+    for (let index = start; index < content.length; index += 1) {
+      const character = content[index];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (character === '\\') escaped = true;
+        else if (character === '"') inString = false;
+        continue;
+      }
+      if (character === '"') inString = true;
+      else if (character === '{') depth += 1;
+      else if (character === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          end = index + 1;
+          break;
+        }
+      }
+    }
+    if (end < 0) continue;
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(content.slice(start, end));
+    } catch {
+      continue;
+    }
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) continue;
+
+    const record = parsed as Record<string, unknown>;
+    if (record.skip === true) return { skip: true };
+    if (
+      (record.skip !== undefined && record.skip !== false) ||
+      typeof record.topic !== 'string' ||
+      typeof record.scene !== 'string' ||
+      typeof record.caption !== 'string'
+    ) {
+      continue;
+    }
+
+    const topic = record.topic.trim();
+    const scene = record.scene.trim();
+    const caption = record.caption.trim();
+    if (
+      !topic ||
+      topic.length > 120 ||
+      !scene ||
+      scene.length > 700 ||
+      !caption ||
+      caption.length > 80
+    ) {
+      continue;
+    }
+
+    return { skip: false, topic, scene, caption };
+  }
+
+  return null;
+}
+
 export type ContextMeme = {
   id: string;
   image: GeneratedImage;
@@ -170,12 +238,12 @@ export class MemeService {
         data: {
           vkUserId: userId,
           conversationId,
-          provider: config.IMAGE_PROVIDER,
+          provider: 'openai',
           feature: 'meme',
         },
       });
     } catch (err) {
-      logger.warn({ err, provider: config.IMAGE_PROVIDER }, 'Failed to record meme API usage');
+      logger.warn({ err, provider: 'openai' }, 'Failed to record meme API usage');
     }
     return { id: output.id, image: { buffer, contentType: 'image/jpeg' }, caption: plan.caption };
   }
@@ -299,63 +367,69 @@ export class MemeService {
       requesterId,
       conversationId,
     );
-    const response = await getAIProvider(providerName).send(
-      [
+    const aiProvider = getAIProvider(providerName);
+    const promptMessages = [
+      {
+        role: 'system' as const,
+        content: [
+          'Ты выбираешь концепцию одного оригинального доброжелательного мема для закрытой VK-беседы.',
+          characterPrompt,
+          `Формат: ${kind}; стиль изображения: ${settings.style}; интенсивность юмора ${settings.intensity}/100.`,
+          `Последние форматы: ${recentFormats}. Меняй композицию и визуальную подачу, не повторяй недавние.`,
+          'Используй только безобидные общие темы из предоставленного контекста этой беседы. Не представляй выдуманные события как реальные, не раскрывай личные данные и не делай выводов о личных качествах. Не повторяй недавние темы и подписи. Если контекста недостаточно или безопасной идеи нет, верни {"skip":true}.',
+          kind === 'user'
+            ? `Это добровольно разрешённый запрос о ${target.name}. Шути только по нейтральным темам из его сообщений; без критики личности, фактов вне контекста и чувствительных характеристик.`
+            : 'Не выделяй конкретных участников и не используй их имена.',
+          quoteAllowed
+            ? 'Цитату можно использовать только короткую, доброжелательную и не содержащую личных сведений.'
+            : 'Не цитируй сообщения дословно и не используй их как подписи; перескажи общую тему.',
+          'Ответь только одним JSON-объектом без пояснений и Markdown: {"skip":false,"topic":"краткая тема","scene":"описание изображения без текста","caption":"подпись до 80 символов"}. Не проси генератор изображения писать текст.',
+        ].join('\n\n'),
+      },
+      {
+        role: 'user' as const,
+        content: `Контекст беседы:\n${context}\n\nНедавние темы и подписи (избегай повторов):\n${recentIdeas || 'нет'}\n\nОбратная связь по мемам: ${JSON.stringify(feedbackSummary)}`,
+      },
+    ];
+    let response = await aiProvider.send(promptMessages, { maxTokens: 700, temperature: 0.7 });
+    let plan = parseContextMemePlan(response.content);
+    if (!plan) {
+      logger.warn(
+        { provider: aiProvider.name, responseLength: response.content.length },
+        'Meme plan response was not valid JSON; retrying once',
+      );
+      response = await aiProvider.send(
+        [
+          ...promptMessages,
+          {
+            role: 'user',
+            content:
+              'Предыдущий ответ не соответствовал формату. Верни сейчас только один корректный JSON-объект указанной схемы; при отсутствии безопасной идеи верни {"skip":true}.',
+          },
+        ],
+        { maxTokens: 700, temperature: 0 },
+      );
+      plan = parseContextMemePlan(response.content);
+    }
+    if (!plan) {
+      logger.error(
         {
-          role: 'system',
-          content: [
-            'Ты выбираешь концепцию одного оригинального доброжелательного мема для закрытой VK-беседы.',
-            characterPrompt,
-            `Формат: ${kind}; стиль изображения: ${settings.style}; интенсивность юмора ${settings.intensity}/100.`,
-            `Последние форматы: ${recentFormats}. Меняй композицию и визуальную подачу, не повторяй недавние.`,
-            'Используй только безобидные общие темы из предоставленного контекста этой беседы. Не представляй выдуманные события как реальные, не раскрывай личные данные и не делай выводов о личных качествах. Не повторяй недавние темы и подписи. Если контекста недостаточно или безопасной идеи нет, верни {"skip":true}.',
-            kind === 'user'
-              ? `Это добровольно разрешённый запрос о ${target.name}. Шути только по нейтральным темам из его сообщений; без критики личности, фактов вне контекста и чувствительных характеристик.`
-              : 'Не выделяй конкретных участников и не используй их имена.',
-            quoteAllowed
-              ? 'Цитату можно использовать только короткую, доброжелательную и не содержащую личных сведений.'
-              : 'Не цитируй сообщения дословно и не используй их как подписи; перескажи общую тему.',
-            'Ответь только JSON: {"skip":false,"topic":"краткая тема","scene":"описание изображения без текста","caption":"подпись до 80 символов"}. Не проси генератор изображения писать текст.',
-          ].join('\n\n'),
+          provider: aiProvider.name,
+          responseLength: response.content.length,
+          containsJsonObject: response.content.includes('{'),
         },
-        {
-          role: 'user',
-          content: `Контекст беседы:\n${context}\n\nНедавние темы и подписи (избегай повторов):\n${recentIdeas || 'нет'}\n\nОбратная связь по мемам: ${JSON.stringify(feedbackSummary)}`,
-        },
-      ],
-      { maxTokens: 240, temperature: 0.9 },
+        'Meme plan remained invalid after retry',
+      );
+      throw new Error('ИИ не вернул корректный план мема в JSON после повторного запроса.');
+    }
+    if (plan.skip) return null;
+
+    const rendered = await this.renderPlan(
+      { scene: plan.scene, caption: plan.caption },
+      requesterId,
+      conversationId,
     );
-    const json = response.content.match(/\{[\s\S]*\}/u)?.[0];
-    if (!json) throw new Error('ИИ не вернул план мема в JSON.');
-    const parsed: unknown = JSON.parse(json);
-    if (typeof parsed !== 'object' || parsed === null) {
-      throw new Error('ИИ вернул некорректный план мема.');
-    }
-    const record = parsed as Record<string, unknown>;
-    if (record.skip === true) return null;
-    if (
-      record.skip !== false ||
-      typeof record.topic !== 'string' ||
-      typeof record.scene !== 'string' ||
-      typeof record.caption !== 'string'
-    ) {
-      throw new Error('ИИ вернул некорректный план мема.');
-    }
-    const topic = record.topic.trim();
-    const scene = record.scene.trim();
-    const caption = record.caption.trim();
-    if (
-      !topic ||
-      topic.length > 120 ||
-      !scene ||
-      scene.length > 700 ||
-      !caption ||
-      caption.length > 80
-    ) {
-      throw new Error('План мема не прошёл проверку длины.');
-    }
-    const rendered = await this.renderPlan({ scene, caption }, requesterId, conversationId);
-    return { ...rendered, topic, kind };
+    return { ...rendered, topic: plan.topic, kind };
   }
 }
 

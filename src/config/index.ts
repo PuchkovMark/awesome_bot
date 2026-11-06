@@ -18,7 +18,6 @@ export interface AppConfig {
   OPENAI_TTS_MODEL: string;
   VOICE_ENABLED: boolean;
   AI_PROVIDER: 'opencode' | 'openai';
-  IMAGE_PROVIDER: 'openai' | 'cloudflare';
   VK_ADMIN_IDS: string[];
   IMAGE_ADMIN_ONLY: boolean;
   IMAGE_MAX_PER_USER_PER_DAY: number;
@@ -30,9 +29,6 @@ export interface AppConfig {
   MEMEDAY_TIMEZONE: string;
   SERPER_API_KEY?: string;
   TAVILY_API_KEY?: string;
-  CLOUDFLARE_ACCOUNT_ID?: string;
-  CLOUDFLARE_API_TOKEN?: string;
-  CLOUDFLARE_IMAGE_MODEL: string;
   PORT: number;
   LOG_LEVEL: string;
   BOT_NAME: string;
@@ -98,12 +94,11 @@ export const config: AppConfig = {
   OPENCODE_BASE_URL: process.env.OPENCODE_BASE_URL || 'https://opencode.ai/inference/go/openai/v1',
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
   OPENAI_MODEL: process.env.OPENAI_MODEL || 'gpt-4.1-mini',
-  OPENAI_IMAGE_MODEL: process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1',
+  OPENAI_IMAGE_MODEL: process.env.OPENAI_IMAGE_MODEL || 'gpt-image-2.6-flare',
   OPENAI_TRANSCRIPTION_MODEL: process.env.OPENAI_TRANSCRIPTION_MODEL || 'gpt-transcribe',
   OPENAI_TTS_MODEL: process.env.OPENAI_TTS_MODEL || 'gpt-4o-mini-tts',
   VOICE_ENABLED: process.env.VOICE_ENABLED === 'true',
   AI_PROVIDER: oneOf('AI_PROVIDER', ['opencode', 'openai'] as const, 'opencode'),
-  IMAGE_PROVIDER: oneOf('IMAGE_PROVIDER', ['openai', 'cloudflare'] as const, 'openai'),
   VK_ADMIN_IDS: (process.env.VK_ADMIN_IDS || '')
     .split(',')
     .map((id) => id.trim())
@@ -122,9 +117,6 @@ export const config: AppConfig = {
   MEMEDAY_TIMEZONE: timezone('MEMEDAY_TIMEZONE', 'UTC'),
   SERPER_API_KEY: process.env.SERPER_API_KEY,
   TAVILY_API_KEY: process.env.TAVILY_API_KEY,
-  CLOUDFLARE_ACCOUNT_ID: process.env.CLOUDFLARE_ACCOUNT_ID,
-  CLOUDFLARE_API_TOKEN: process.env.CLOUDFLARE_API_TOKEN,
-  CLOUDFLARE_IMAGE_MODEL: process.env.CLOUDFLARE_IMAGE_MODEL || '@cf/black-forest-labs/flux-2-dev',
   PORT: optionalNumber('PORT', 3000),
   LOG_LEVEL: process.env.LOG_LEVEL || 'info',
   BOT_NAME: process.env.BOT_NAME || 'awesome_bot',

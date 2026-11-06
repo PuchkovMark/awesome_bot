@@ -2,7 +2,41 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { prisma } from '../src/db/client.js';
-import adventureService from '../src/services/games/adventureService.js';
+import {
+  extractJson,
+  requestAdventureJson,
+  default as adventureService,
+} from '../src/services/games/adventureService.js';
+import type { AIProvider } from '../src/services/ai/AIProvider.js';
+
+test('adventure JSON extraction handles nested values, braces in strings and code fences', () => {
+  assert.deepEqual(
+    extractJson('```json\n{"scene":"Ключ {старый}","options":["A",{"next":"B"}]}\n```'),
+    { scene: 'Ключ {старый}', options: ['A', { next: 'B' }] },
+  );
+  assert.throws(() => extractJson('ответ без JSON'), /без JSON-структуры/u);
+  assert.throws(() => extractJson('{"scene":"обрыв'), /неполную JSON-структуру/u);
+  assert.throws(() => extractJson('{"scene":}'), SyntaxError);
+});
+
+test('adventure retries a malformed AI JSON response once', async () => {
+  const contents = ['{"scene":', '{"scene":"готово","location":"Лес","options":[]}'];
+  let callCount = 0;
+  const provider: AIProvider = {
+    name: 'test',
+    async send() {
+      callCount += 1;
+      return { content: contents.shift() ?? '' };
+    },
+  };
+
+  assert.deepEqual(await requestAdventureJson(provider, [{ role: 'user', content: 'начни' }]), {
+    scene: 'готово',
+    location: 'Лес',
+    options: [],
+  });
+  assert.equal(callCount, 2);
+});
 
 test('adventure vote updates are serialized and a tie opens a fresh vote', async () => {
   const conversationId = `adventure-test-${randomUUID()}`;
