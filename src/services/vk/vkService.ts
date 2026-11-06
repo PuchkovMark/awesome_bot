@@ -1614,22 +1614,27 @@ export class VkService {
                 feature: imageCommand.action === 'generate' ? 'image_generate' : 'image_edit',
               });
             } catch (err) {
-              logger.error(
-                {
-                  error: getSafeImageErrorDetails(err),
-                  peerId,
-                  senderId,
-                  provider: 'openai',
-                  model: config.OPENAI_IMAGE_MODEL,
-                },
-                'Image generation or editing failed',
-              );
               const imageError = getSafeImageErrorDetails(err);
+              const safetyRejected = imageError.code === 'moderation_blocked';
+              const logDetails = {
+                error: imageError,
+                peerId,
+                senderId,
+                provider: 'openai',
+                model: config.OPENAI_IMAGE_MODEL,
+              };
+              if (safetyRejected) {
+                logger.warn(logDetails, 'Image generation or editing rejected by safety system');
+              } else {
+                logger.error(logDetails, 'Image generation or editing failed');
+              }
               await senderService.send(
                 Number(peerId),
-                imageError.code === 917
-                  ? 'Сообщество VK не имеет доступа к этой беседе. Проверьте, что сообщество добавлено в чат и ему разрешено отправлять сообщения.'
-                  : `Не удалось создать или преобразовать изображение моделью ${config.OPENAI_IMAGE_MODEL}. Проверьте имя модели, доступ к GPT Image в организации OpenAI и повторите попытку.`,
+                safetyRejected
+                  ? 'Запрос на изображение отклонён системой безопасности. Измените описание, чтобы оно не содержало запрещённого содержания, и попробуйте снова.'
+                  : imageError.code === 917
+                    ? 'Сообщество VK не имеет доступа к этой беседе. Проверьте, что сообщество добавлено в чат и ему разрешено отправлять сообщения.'
+                    : `Не удалось создать или преобразовать изображение моделью ${config.OPENAI_IMAGE_MODEL}. Проверьте имя модели, доступ к GPT Image в организации OpenAI и повторите попытку.`,
                 replyOptions,
               );
             } finally {
