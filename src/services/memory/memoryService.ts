@@ -130,26 +130,29 @@ export class MemoryService {
   }
 
   /**
-   * Shared messages from this VK chat only; never includes another conversation's data.
+   * Shared user and assistant messages from this VK chat only.
    */
-  async getRecentChatContext(conversationId: string, take = 8) {
+  async getRecentChatContext(conversationId: string, take = config.MAX_HISTORY_MESSAGES) {
     const messages = await prisma.message.findMany({
       where: {
         conversationId,
-        role: 'user',
+        role: { in: ['user', 'assistant'] },
         createdAt: { gte: new Date(Date.now() - this.ttlHours * 60 * 60 * 1000) },
       },
       include: { user: { select: { vkId: true, displayName: true } } },
       orderBy: { createdAt: 'desc' },
-      take: Math.max(1, Math.min(20, take)),
+      take: Math.max(1, Math.min(config.MAX_HISTORY_MESSAGES, take)),
     });
 
     return messages.reverse().map((message) => ({
+      role: message.role,
       speaker:
-        message.user?.displayName && message.user.displayName !== message.user.vkId
-          ? message.user.displayName
-          : 'Участник',
-      authorId: message.user?.vkId ?? 'unknown',
+        message.role === 'assistant'
+          ? 'Пенёк'
+          : message.user?.displayName && message.user.displayName !== message.user.vkId
+            ? message.user.displayName
+            : 'Участник',
+      authorId: message.role === 'assistant' ? undefined : (message.user?.vkId ?? 'unknown'),
       content: message.content,
     }));
   }

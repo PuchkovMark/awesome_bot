@@ -63,7 +63,7 @@ export class CommandService {
 
       switch (cmd) {
         case 'help':
-          return this.helpText();
+          return this.helpText(args);
         case 'ping':
           return 'pong';
         case 'summary':
@@ -915,31 +915,58 @@ export class CommandService {
       await settingsService.logAdminAction(senderId, 'admin.removed', vkId);
       return `Пользователь ${vkId} удалён из администраторов.`;
     }
-    const counts = await this.getAdminStats();
-    return [
-      'Панель администратора',
-      'Роли бота: Создатель выше Администратора.',
-      'Создатель: Mark Puchkov (VK ID 388581097).',
-      counts,
-      'Команды администратора:',
-      '/admin add <VK ID> — добавить администратора (только создатель)',
-      '/admin remove <VK ID> — удалить администратора (только создатель)',
-      '/provider [opencode|openai] — выбрать AI-провайдера',
-      '/mode [active|normal|quiet] — режим этой беседы',
-      '/imageaccess [admins_only|all] — доступ к изображениям',
-      '/welcome on|off или /welcome set <текст> — приветствия участников',
-      '/questionnaire on|off или /questionnaire set <вопросы> — анкета беседы',
-      '/profile [create|edit|show|cancel] — заполнить или изменить свою анкету',
-      '/profiles [страница] — список анкет участников (администраторы бота)',
-      '/profile get|delete <VK ID> — посмотреть или удалить анкету (администраторы бота)',
-      '/profile edit <VK ID> <номер ответа> <текст> — изменить ответ (администраторы бота)',
-      '/maintenance [on|off] — технический режим',
-      '/system global <текст> — изменить системную инструкцию бота',
-      '/broadcast <текст> — предпросмотр рассылки по активным беседам',
-      '/broadcast confirm <текст> — отправить рассылку',
-      '/users — общая статистика',
-      '/logs — последние действия администраторов',
-    ].join('\n');
+    const pageNumber = action ? Number(action) : 1;
+    const pages = [
+      [
+        'Управление ролями (только создатель):',
+        '/admin add <@ник|упоминание|VK ID> — назначить администратора',
+        '/admin remove <VK ID> — снять роль администратора',
+        '',
+        'Настройки беседы:',
+        '/mode [active|normal|quiet] — режим ответов бота',
+        '/imageaccess [admins_only|all] — доступ к генерации изображений',
+        '/welcome on|off — включить или выключить приветствия',
+        '/welcome set <текст> — задать текст приветствия',
+        '/questionnaire on|off — включить или выключить анкету',
+        '/questionnaire set <вопросы> — настроить вопросы анкеты',
+      ],
+      [
+        'Анкеты участников:',
+        '/profile [create|edit|show|cancel] — заполнить или изменить свою анкету',
+        '/profiles [страница] — список анкет участников',
+        '/profile get <VK ID> — посмотреть анкету',
+        '/profile delete <VK ID> — удалить анкету',
+        '/profile edit <VK ID> <номер ответа> <текст> — изменить ответ',
+        '',
+        'Настройки и обслуживание:',
+        '/provider [opencode|openai] — выбрать AI-провайдера',
+        '/maintenance [on|off] — технический режим',
+        '/system global <текст> — изменить системную инструкцию бота',
+      ],
+      [
+        'Рассылка и статистика:',
+        '/broadcast <текст> — показать предпросмотр рассылки',
+        '/broadcast confirm <текст> — отправить рассылку',
+        '/users — общая статистика',
+        '/logs — последние действия администраторов',
+      ],
+    ];
+    if (!Number.isSafeInteger(pageNumber) || pageNumber < 1 || pageNumber > pages.length) {
+      return `Укажите страницу от 1 до ${pages.length}: /admin 1`;
+    }
+
+    const heading = ['Панель администратора', `Страница ${pageNumber}/${pages.length}`];
+    if (pageNumber === 1) {
+      heading.push(
+        'Роли: Создатель выше Администратора.',
+        'Создатель: Mark Puchkov (VK ID 388581097).',
+        await this.getAdminStats(),
+      );
+    }
+    heading.push(...(pages[pageNumber - 1] ?? []));
+    if (pageNumber > 1) heading.push('', `Предыдущая: /admin ${pageNumber - 1}`);
+    if (pageNumber < pages.length) heading.push(`Следующая: /admin ${pageNumber + 1}`);
+    return heading.join('\n');
   }
 
   private async broadcast(senderId: string, args: string): Promise<string> {
@@ -1386,45 +1413,77 @@ export class CommandService {
       .join('\n');
   }
 
-  private helpText(): string {
+  private helpText(args: string): string {
+    const pageText = args.trim();
+    const pageNumber = pageText ? Number(pageText) : 1;
+    const pages = [
+      [
+        'Основное:',
+        '/help [страница] — эта справка',
+        '/ping — проверить отклик',
+        '/settings — показать ваши настройки',
+        '/stats — ваша статистика',
+        '',
+        'Персонажи и настройки:',
+        '/personality [id] — выбрать характер ИИ',
+        '/personality info|list|default|settings|reset — информация, список, настройки или сброс',
+        '/chatpersonality [id|list|default] — персонаж беседы',
+        '/system [текст|clear] — задать или удалить личную инструкцию',
+      ],
+      [
+        'Фото, документы и голос:',
+        '/image <описание> — создать изображение (если доступно)',
+        '/edit <описание> — преобразить приложенное фото',
+        '/analyze <вопрос> — анализ фото',
+        '/document <вопрос> — анализ PDF или документа',
+        '/ocr — распознать текст на фото',
+        '/voice [on|off] — голосовой режим',
+        '/say [текст] — озвучить текст или сообщение, на которое вы ответили',
+        '',
+        'Игры:',
+        '/games — список игр',
+        '/games harder|easier — изменить сложность загадки',
+        '/games difficulty — текущая сложность',
+        '/adventure — интерактивное приключение',
+        '/adventure help — команды и настройки приключения',
+      ],
+      [
+        'Поиск и развлечения:',
+        '/search <запрос> — поиск в интернете',
+        '/fun — меню развлечений',
+        '/randomjoke [тема] — случайная шутка',
+        '/meme <описание> — создать мем, можно приложить фото',
+        '/joke [all|random|VK ID] — доброжелательная шутка',
+        '/roast — лёгкий подкол про себя',
+        '/prediction [тема] — шуточное предсказание',
+        '/react [стиль] — реакция на сообщение',
+        '/rating — шуточный рейтинг беседы',
+        '/story [короткая|средняя|длинная|продолжи] — история',
+        '/battle — юмористический баттл',
+        '/funsettings — настройки юмора',
+        '/memeday — мемы и голосование в беседе',
+      ],
+      [
+        'Общение и история:',
+        '/translate <язык>: <текст> — перевод',
+        '/summary — пересказ беседы за 2 часа (можно выбрать 2 или 6)',
+        '/reset — очистить историю текущего разговора',
+        '/forget — удалить всю вашу историю',
+        '',
+        '/admin — панель администратора (для администраторов)',
+      ],
+    ];
+    if (pageText && !/^\d+$/u.test(pageText)) {
+      return `Укажите номер страницы: /help 1 (всего страниц: ${pages.length}).`;
+    }
+    if (!Number.isSafeInteger(pageNumber) || pageNumber < 1 || pageNumber > pages.length) {
+      return `Укажите страницу от 1 до ${pages.length}: /help 1`;
+    }
     return [
-      '/help — показать эту справку',
-      '/ping — проверить отклик',
-      '/personality [id] — выбрать характер ИИ',
-      '/personality info|list|default|settings|reset — информация, список, сброс или настройки характера',
-      '/chatpersonality [id|list|default] — персонаж текущей беседы',
-      '/settings — показать ваши настройки',
-      '/system [текст|clear] — показать, задать или удалить личную инструкцию',
-      '/image <описание> — создать изображение (администраторы)',
-      '/edit <описание> — преобразить приложенное фото (администраторы)',
-      '/analyze <вопрос> — анализ прикреплённого фото',
-      '/document <вопрос> — анализ прикреплённого PDF или документа',
-      '/ocr — распознавание текста на фото',
-      '/voice [on|off] — состояние голосового режима',
-      '/games — список игр',
-      '/games harder или /games easier — изменить сложность активной загадки',
-      '/games difficulty — показать сложность активной загадки',
-      '/adventure — интерактивное приключение с сохранением состояния и совместной игрой',
-      '/adventure help — жанры, игровые команды и настройки приключения',
-      '/search <запрос> — поиск в интернете',
-      '/fun — меню развлечений',
-      '/randomjoke [тема] — случайная шутка',
-      '/meme <описание> — создать мем, можно приложить фото',
-      '/joke [all|random|VK ID] — доброжелательная шутка про компанию или участника',
-      '/roast — лёгкий подкол про себя',
-      '/prediction [тема] — шуточное предсказание',
-      '/react [стиль] — реакция на сообщение, на которое вы ответили',
-      '/rating — выдуманный шуточный рейтинг',
-      '/story [короткая|средняя|длинная|продолжи] — смешная история',
-      '/battle — юмористический баттл',
-      '/funsettings — настройки юмора',
-      '/memeday — мемы беседы, история, рейтинг и настройки (в групповых беседах)',
-      '/translate <язык>: <текст> — перевод',
-      '/stats — ваша статистика',
-      '/summary — пересказ беседы за 2 часа; кнопки переключают период на 2 или 6 часов',
-      '/reset — очистить историю в текущем разговоре',
-      '/forget — удалить всю вашу историю',
-      '/admin — команды администратора',
+      `Справка — страница ${pageNumber}/${pages.length}`,
+      ...(pages[pageNumber - 1] ?? []),
+      ...(pageNumber > 1 ? [`Предыдущая: /help ${pageNumber - 1}`] : []),
+      ...(pageNumber < pages.length ? [`Следующая: /help ${pageNumber + 1}`] : []),
     ].join('\n');
   }
 

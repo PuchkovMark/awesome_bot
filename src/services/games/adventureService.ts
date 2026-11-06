@@ -1,5 +1,5 @@
 import type { GameSession } from '@prisma/client';
-import type { AIMessage } from '../ai/AIProvider.js';
+import type { AIMessage, AIProvider } from '../ai/AIProvider.js';
 import { getAIProvider } from '../ai/providerFactory.js';
 import { prisma } from '../../db/client.js';
 import config from '../../config/index.js';
@@ -167,12 +167,84 @@ function parseState(value: string): AdventureState {
   return parsed as unknown as AdventureState;
 }
 
-function extractJson(value: string): Record<string, unknown> {
-  const json = value.match(/\{[\s\S]*\}/u)?.[0];
-  if (!json) throw new Error('Игровой ведущий вернул ответ без JSON-структуры.');
-  const parsed: unknown = JSON.parse(json);
+export function extractJson(value: string): Record<string, unknown> {
+  const start = value.indexOf('{');
+  if (start < 0) throw new Error('Игровой ведущий вернул ответ без JSON-структуры.');
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  let end = -1;
+  for (let index = start; index < value.length; index += 1) {
+    const character = value[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === '"') inString = false;
+      continue;
+    }
+    if (character === '"') inString = true;
+    else if (character === '{') depth += 1;
+    else if (character === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        end = index + 1;
+        break;
+      }
+    }
+  }
+  if (end < 0) throw new Error('Игровой ведущий вернул неполную JSON-структуру.');
+
+  const parsed: unknown = JSON.parse(value.slice(start, end));
   if (!isRecord(parsed)) throw new Error('Игровой ведущий вернул некорректный JSON.');
   return parsed;
+}
+
+export async function requestAdventureJson(
+  provider: AIProvider,
+  messages: AIMessage[],
+): Promise<Record<string, unknown>> {
+  const parseResponse = (content: string) => {
+    const parsed = extractJson(content);
+    if (
+      typeof parsed.scene !== 'string' ||
+      !parsed.scene.trim() ||
+      typeof parsed.location !== 'string' ||
+      !parsed.location.trim()
+    ) {
+      throw new Error('Игровой ведущий не вернул сцену или локацию.');
+    }
+    return parsed;
+  };
+
+  const response = await provider.send(messages, { maxTokens: 1800, temperature: 0.85 });
+  try {
+    return parseResponse(response.content);
+  } catch {
+    logger.warn(
+      { provider: provider.name, responseLength: response.content.length },
+      'Adventure AI response was not valid JSON; retrying once',
+    );
+  }
+
+  const retry = await provider.send(
+    [
+      ...messages,
+      {
+        role: 'user',
+        content:
+          'Предыдущий ответ был неполным или некорректным. Верни заново полный ответ строго одним корректным JSON-объектом по указанной схеме, без Markdown и пояснений.',
+      },
+    ],
+    { maxTokens: 2200, temperature: 0.3 },
+  );
+  try {
+    return parseResponse(retry.content);
+  } catch (error) {
+    throw new Error('Игровой ведущий дважды вернул некорректный или неполный JSON.', {
+      cause: error,
+    });
+  }
 }
 
 function normalizeText(value: string, maximum: number): string {
@@ -345,11 +417,7 @@ export class AdventureService {
         ].join('\n\n'),
       },
     ];
-    const response = await getAIProvider(providerName).send(messages, {
-      maxTokens: 1100,
-      temperature: 0.85,
-    });
-    return extractJson(response.content);
+    return requestAdventureJson(getAIProvider(providerName), messages);
   }
 
   private applyTurn(

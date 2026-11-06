@@ -3,6 +3,7 @@ import test from 'node:test';
 import { RateLimitService } from '../src/services/queue/rateLimitService.js';
 import { SplitterService } from '../src/services/splitter/splitterService.js';
 import { DetectorService } from '../src/services/detector/detectorService.js';
+import { parseVkUserReference } from '../src/services/vk/vkMention.js';
 import { buildBotCapabilities } from '../src/services/ai/capabilityService.js';
 import {
   buildRiddlePrompt,
@@ -63,6 +64,27 @@ test('active chat mode recognizes Russian requests without matching word fragmen
   assert.equal(detector.isAddressed('Бот, помоги с задачей'), false);
   assert.equal(detector.isActiveEvent('Бот, помоги с задачей'), false);
   assert.equal(detector.isAddressed('Пенёк, помоги с задачей'), true);
+});
+
+test('VK user references parse IDs, chat mentions, screen names and profile URLs', () => {
+  assert.deepEqual(parseVkUserReference('12345'), { kind: 'id', value: '12345' });
+  assert.deepEqual(parseVkUserReference('[id12345|Имя Фамилия]'), {
+    kind: 'id',
+    value: '12345',
+  });
+  assert.deepEqual(parseVkUserReference('@id12345 (Имя Фамилия)'), {
+    kind: 'id',
+    value: '12345',
+  });
+  assert.deepEqual(parseVkUserReference('@user_name'), {
+    kind: 'screenName',
+    value: 'user_name',
+  });
+  assert.deepEqual(parseVkUserReference('https://vk.com/user.name'), {
+    kind: 'screenName',
+    value: 'user.name',
+  });
+  assert.equal(parseVkUserReference('невалидный ник с пробелами'), null);
 });
 
 test('AI receives the current bot capabilities and access restrictions', () => {
