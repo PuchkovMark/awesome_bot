@@ -225,9 +225,21 @@ export class MemoryService {
    */
   async cleanupOldContext(): Promise<number> {
     const ttlDate = new Date(Date.now() - this.ttlHours * 60 * 60 * 1000);
-    const res = await prisma.message.deleteMany({ where: { createdAt: { lt: ttlDate } } });
-    logger.info({ deleted: res.count }, 'Old messages cleaned up');
-    return res.count;
+    const weeklyMemeCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const expired = await prisma.message.deleteMany({
+      where: {
+        createdAt: { lt: ttlDate },
+        conversation: {
+          settings: { is: { memeDayWeeklyEnabled: false } },
+        },
+      },
+    });
+    const oldWeeklyContext = await prisma.message.deleteMany({
+      where: { createdAt: { lt: weeklyMemeCutoff } },
+    });
+    const deleted = expired.count + oldWeeklyContext.count;
+    logger.info({ deleted }, 'Old messages cleaned up');
+    return deleted;
   }
 
   /**

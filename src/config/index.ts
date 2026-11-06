@@ -26,8 +26,10 @@ export interface AppConfig {
   MAX_REQUESTS_PER_MINUTE: number;
   MAX_HISTORY_MESSAGES: number;
   MAX_INPUT_CHARS: number;
-  WEB_SEARCH_PROVIDER: 'none' | 'brave';
-  BRAVE_SEARCH_API_KEY?: string;
+  WEB_SEARCH_PROVIDER: 'none' | 'serper' | 'tavily';
+  MEMEDAY_TIMEZONE: string;
+  SERPER_API_KEY?: string;
+  TAVILY_API_KEY?: string;
   CLOUDFLARE_ACCOUNT_ID?: string;
   CLOUDFLARE_API_TOKEN?: string;
   CLOUDFLARE_IMAGE_MODEL: string;
@@ -78,6 +80,16 @@ function oneOf<T extends string>(name: string, values: readonly T[], fallback: T
   return value as T;
 }
 
+function timezone(name: string, fallback: string): string {
+  const value = process.env[name] || fallback;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value });
+  } catch {
+    throw new Error(`Environment variable ${name} must be a valid IANA timezone`);
+  }
+  return value;
+}
+
 export const config: AppConfig = {
   VK_TOKEN: required('VK_TOKEN'),
   VK_GROUP_ID: required('VK_GROUP_ID'),
@@ -102,8 +114,14 @@ export const config: AppConfig = {
   MAX_REQUESTS_PER_MINUTE: positiveInteger('MAX_REQUESTS_PER_MINUTE', 10),
   MAX_HISTORY_MESSAGES: positiveInteger('MAX_HISTORY_MESSAGES', 30),
   MAX_INPUT_CHARS: positiveInteger('MAX_INPUT_CHARS', 12_000),
-  WEB_SEARCH_PROVIDER: oneOf('WEB_SEARCH_PROVIDER', ['none', 'brave'] as const, 'none'),
-  BRAVE_SEARCH_API_KEY: process.env.BRAVE_SEARCH_API_KEY,
+  WEB_SEARCH_PROVIDER: oneOf(
+    'WEB_SEARCH_PROVIDER',
+    ['none', 'serper', 'tavily'] as const,
+    'serper',
+  ),
+  MEMEDAY_TIMEZONE: timezone('MEMEDAY_TIMEZONE', 'UTC'),
+  SERPER_API_KEY: process.env.SERPER_API_KEY,
+  TAVILY_API_KEY: process.env.TAVILY_API_KEY,
   CLOUDFLARE_ACCOUNT_ID: process.env.CLOUDFLARE_ACCOUNT_ID,
   CLOUDFLARE_API_TOKEN: process.env.CLOUDFLARE_API_TOKEN,
   CLOUDFLARE_IMAGE_MODEL: process.env.CLOUDFLARE_IMAGE_MODEL || '@cf/black-forest-labs/flux-2-dev',
