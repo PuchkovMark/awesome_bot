@@ -108,6 +108,58 @@ export class SenderService {
     await this.send(peerId, text, { ...options, keyboard: keyboard.inline().toString() });
   }
 
+  createFunFeedbackKeyboard(outputId: string): string {
+    return Keyboard.builder()
+      .callbackButton({
+        label: '😂',
+        payload: { command: 'fun_feedback', outputId, value: 'laugh' },
+        color: Keyboard.POSITIVE_COLOR,
+      })
+      .callbackButton({
+        label: '😐',
+        payload: { command: 'fun_feedback', outputId, value: 'neutral' },
+        color: Keyboard.SECONDARY_COLOR,
+      })
+      .callbackButton({
+        label: '🔥',
+        payload: { command: 'fun_feedback', outputId, value: 'fire' },
+        color: Keyboard.POSITIVE_COLOR,
+      })
+      .callbackButton({
+        label: 'Ещё',
+        payload: { command: 'fun_again', outputId },
+        color: Keyboard.PRIMARY_COLOR,
+      })
+      .inline()
+      .toString();
+  }
+
+  createMemeDayVotingKeyboard(publicationId: string): string {
+    return Keyboard.builder()
+      .callbackButton({
+        label: '😂',
+        payload: { command: 'meme_vote', publicationId, value: 'laugh' },
+        color: Keyboard.POSITIVE_COLOR,
+      })
+      .callbackButton({
+        label: '🔥',
+        payload: { command: 'meme_vote', publicationId, value: 'fire' },
+        color: Keyboard.POSITIVE_COLOR,
+      })
+      .callbackButton({
+        label: '😐',
+        payload: { command: 'meme_vote', publicationId, value: 'neutral' },
+        color: Keyboard.SECONDARY_COLOR,
+      })
+      .callbackButton({
+        label: '👎',
+        payload: { command: 'meme_vote', publicationId, value: 'dislike' },
+        color: Keyboard.NEGATIVE_COLOR,
+      })
+      .inline()
+      .toString();
+  }
+
   async editSummary(
     peerId: number,
     conversationMessageId: number,
@@ -147,8 +199,13 @@ export class SenderService {
     peerId: number,
     image: GeneratedImage,
     caption: string,
-    options?: { replyTo?: number; conversationMessageId?: number },
-  ): Promise<void> {
+    options?: {
+      replyTo?: number;
+      conversationMessageId?: number;
+      keyboard?: string;
+      randomId?: number;
+    },
+  ): Promise<string> {
     try {
       if (image.buffer.length === 0) {
         throw new Error('Generated image is empty');
@@ -212,9 +269,10 @@ export class SenderService {
 
       const result: unknown = await this.vk.api.messages.send({
         peer_id: peerId,
-        random_id: Date.now() % 1e9,
+        random_id: options?.randomId ?? Date.now() % 1e9,
         message: caption,
         attachment: `photo${photo.owner_id}_${photo.id}`,
+        keyboard: options?.keyboard,
         forward:
           options?.replyTo || options?.conversationMessageId
             ? JSON.stringify({
@@ -249,9 +307,53 @@ export class SenderService {
           }
         }
       }
+      return `photo${photo.owner_id}_${photo.id}`;
     } catch (err) {
       logger.error({ err, peerId }, 'Failed to send generated photo');
       throw err;
+    }
+  }
+
+  async sendPhotoAttachment(
+    peerId: number,
+    attachment: string,
+    caption: string,
+    keyboard?: string,
+  ): Promise<void> {
+    try {
+      const result: unknown = await this.vk.api.messages.send({
+        peer_id: peerId,
+        random_id: Date.now() % 1e9,
+        message: caption,
+        attachment,
+        keyboard,
+      });
+      if (typeof result === 'number' && result > 0) {
+        this.trackSentMessage(peerId, result);
+      } else if (Array.isArray(result)) {
+        for (const message of result) {
+          if (
+            typeof message !== 'object' ||
+            message === null ||
+            !('peer_id' in message) ||
+            message.peer_id !== peerId
+          ) {
+            continue;
+          }
+          if ('message_id' in message && typeof message.message_id === 'number') {
+            this.trackSentMessage(peerId, message.message_id);
+          }
+          if (
+            'conversation_message_id' in message &&
+            typeof message.conversation_message_id === 'number'
+          ) {
+            this.trackSentMessage(peerId, message.conversation_message_id);
+          }
+        }
+      }
+    } catch (error) {
+      logger.error({ err: error, peerId, attachment }, 'Failed to send saved meme photo');
+      throw error;
     }
   }
 

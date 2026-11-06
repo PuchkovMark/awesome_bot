@@ -29,6 +29,8 @@ model Conversation {
   settings     ChatSettings?
   members      ConversationMember[]
   gameSessions GameSession[]
+  funOutputs   FunOutput[]
+  memeDays     MemeDayPublication[]
 }
 
 model ConversationParticipant {
@@ -85,6 +87,13 @@ model ChatSettings {
   personality            String       @default("alex")
   personalitySettings    String       @default("{}")
   allowPersonalityChange Boolean      @default(false)
+  funAutoReactions       Boolean      @default(false)
+  funAutoReactionAt      DateTime?
+  funAutoIntervalSeconds Int          @default(300)
+  funAutoProbability     Int          @default(10)
+  funSettings            String       @default("{}")
+  memeDaySettings        String       @default("{}")
+  memeDayWeeklyEnabled   Boolean      @default(false)
   createdAt              DateTime     @default(now())
   updatedAt              DateTime     @updatedAt
 }
@@ -106,6 +115,75 @@ model ConversationMember {
 
   @@unique([conversationId, vkUserId])
   @@index([conversationId, isPresent])
+}
+
+model FunPreference {
+  id             String   @id @default(cuid())
+  vkUserId       String
+  conversationId String
+  settings       String   @default("{}")
+  updatedAt      DateTime @updatedAt
+
+  @@unique([vkUserId, conversationId])
+  @@index([conversationId, updatedAt])
+}
+
+model FunOutput {
+  id             String        @id @default(cuid())
+  conversationId String
+  conversation   Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  vkUserId       String
+  kind           String
+  content        String
+  createdAt      DateTime      @default(now())
+  feedback       FunFeedback[]
+
+  @@index([conversationId, kind, createdAt])
+}
+
+model FunFeedback {
+  id        String    @id @default(cuid())
+  outputId  String
+  output    FunOutput @relation(fields: [outputId], references: [id], onDelete: Cascade)
+  vkUserId  String
+  value     String
+  createdAt DateTime  @default(now())
+
+  @@unique([outputId, vkUserId])
+  @@index([outputId, value])
+}
+
+model MemeDayPublication {
+  id             String        @id @default(cuid())
+  conversationId String
+  conversation   Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  funOutputId    String?
+  kind           String
+  topic          String
+  caption        String
+  imageUrl       String?
+  attachment     String?
+  scheduleKey    String?       @unique
+  status         String        @default("pending")
+  attempts       Int           @default(0)
+  nextAttemptAt  DateTime?
+  lockUntil      DateTime?
+  createdAt      DateTime      @default(now())
+  votes          MemeDayVote[]
+
+  @@index([conversationId, kind, createdAt])
+}
+
+model MemeDayVote {
+  id            String             @id @default(cuid())
+  publicationId String
+  publication   MemeDayPublication @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+  vkUserId      String
+  value         String
+  createdAt     DateTime           @default(now())
+
+  @@unique([publicationId, vkUserId])
+  @@index([publicationId, value])
 }
 
 model PersonalityProfile {

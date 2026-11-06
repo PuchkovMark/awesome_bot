@@ -43,6 +43,10 @@ export class ImageGenerationService {
 
   async edit(photo: PhotoAttachment, prompt: string): Promise<GeneratedImage> {
     const data = await this.downloadPhoto(photo);
+    return this.editBuffer(data, prompt);
+  }
+
+  async editBuffer(data: Buffer, prompt: string): Promise<GeneratedImage> {
     if (config.IMAGE_PROVIDER === 'openai') {
       const sourceImage = await sharp(data)
         .rotate()

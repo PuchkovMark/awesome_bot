@@ -15,6 +15,7 @@ import memberService, {
   parseQuestionnaireQuestions,
   parseStoredQuestionnaireQuestions,
 } from '../member/memberService.js';
+import funService from '../fun/funService.js';
 
 const adminCommands = new Set([
   'provider',
@@ -48,6 +49,8 @@ export class CommandService {
     canManageChat = false,
     isCreator = false,
     isChat = false,
+    repliedMessageText = '',
+    jokeTargetName = '',
   ): Promise<string | null> {
     const cmd = command.toLowerCase();
     try {
@@ -67,6 +70,189 @@ export class CommandService {
           return await this.summarizeConversation(peerId, getSummaryHoursFromText(args) ?? 2);
         case 'search':
           return await this.searchWeb(senderId, peerId, args);
+        case 'fun':
+          return [
+            '🎉 Развлечения:',
+            '/randomjoke [тема] — случайная шутка',
+            '/meme <описание> — создать мем (или приложить фото)',
+            '/joke [all|random|VK ID] — шутка про компанию или участника',
+            '/roast — лёгкий подкол про себя',
+            '/prediction [тема] — шуточное предсказание',
+            '/react [стиль] — реакция на сообщение, на которое вы ответили',
+            '/rating — выдуманный шуточный рейтинг беседы',
+            '/story [короткая|средняя|длинная|продолжи] — смешная история',
+            '/battle start|join|submit <шутка>|score|stop — баттл',
+            '/funsettings — настройки юмора и отказ от персональных шуток или мемов',
+            '/memeday — мемы беседы, история и голосование',
+          ].join('\n');
+        case 'randomjoke':
+          return this.generateFun(
+            'randomjoke',
+            args.trim() || 'Случайная тема.',
+            senderId,
+            peerId,
+            isChat,
+          );
+        case 'joke':
+          if (args.trim().toLowerCase() === 'all' && !isChat) {
+            return 'Шутка про всю беседу доступна только в групповых чатах.';
+          }
+          if (args.trim().toLowerCase() === 'random') {
+            if (!isChat) return 'Случайного участника можно выбрать только в групповой беседе.';
+            const members = await prisma.conversationMember.findMany({
+              where: { conversationId: peerId, isPresent: true },
+              select: { vkUserId: true },
+            });
+            const eligible: string[] = [];
+            for (const member of members) {
+              if (await funService.allowsPersonalJokes(member.vkUserId, peerId)) {
+                eligible.push(member.vkUserId);
+              }
+            }
+            if (eligible.length === 0) return 'Нет участников, разрешивших персональные шутки.';
+            const targetId = eligible[Math.floor(Math.random() * eligible.length)];
+            const target = await prisma.user.findUnique({
+              where: { vkId: targetId },
+              select: { displayName: true },
+            });
+            return this.generateFun(
+              'joke',
+              `Придумай лёгкую, доброжелательную шутку про случайно выбранного участника${target?.displayName ? ` по имени ${target.displayName}` : ''}. Не приписывай ему личных качеств или фактов.`,
+              senderId,
+              peerId,
+              isChat,
+            );
+          }
+          if (/^\d+$/u.test(args.trim())) {
+            if (!isChat) return 'Указывать участника можно только в групповой беседе.';
+            const target = await prisma.conversationMember.findUnique({
+              where: {
+                conversationId_vkUserId: { conversationId: peerId, vkUserId: args.trim() },
+              },
+              select: { isPresent: true },
+            });
+            if (!target?.isPresent) return 'Участник не найден среди текущих участников беседы.';
+            if (!(await funService.allowsPersonalJokes(args.trim(), peerId))) {
+              return 'Этот участник отключил персональные шутки.';
+            }
+            return this.generateFun(
+              'joke',
+              `Придумай лёгкую, доброжелательную шутку про участника беседы по имени «${jokeTargetName || `участник ${args.trim()}`}». Не приписывай ему личных качеств или фактов.`,
+              senderId,
+              peerId,
+              isChat,
+            );
+          }
+          return this.generateFun(
+            'joke',
+            args.trim().toLowerCase() === 'all'
+              ? 'all'
+              : args.trim() ||
+                  'Придумай дружескую шутку для компании без выделения конкретного участника.',
+            senderId,
+            peerId,
+            isChat,
+          );
+        case 'prediction':
+          if (/^\d+$/u.test(args.trim())) {
+            if (!isChat) return 'Указывать участника можно только в групповой беседе.';
+            const target = await prisma.conversationMember.findUnique({
+              where: {
+                conversationId_vkUserId: { conversationId: peerId, vkUserId: args.trim() },
+              },
+              select: { isPresent: true },
+            });
+            if (!target?.isPresent) return 'Участник не найден среди текущих участников беседы.';
+            if (!(await funService.allowsPersonalJokes(args.trim(), peerId))) {
+              return 'Этот участник отключил персональные шутки.';
+            }
+            const participant = await prisma.user.findUnique({
+              where: { vkId: args.trim() },
+              select: { displayName: true },
+            });
+            return this.generateFun(
+              'prediction',
+              `Придумай явно шуточное предсказание для участника${participant?.displayName ? ` по имени ${participant.displayName}` : ''}.`,
+              senderId,
+              peerId,
+              isChat,
+            );
+          }
+          return this.generateFun(
+            'prediction',
+            args.trim() || 'Смешное предсказание на сегодня.',
+            senderId,
+            peerId,
+            isChat,
+          );
+        case 'react': {
+          const reaction = repliedMessageText.trim() || args.trim();
+          if (!reaction)
+            return 'Ответьте командой на сообщение или укажите текст: /react <сообщение>.';
+          return this.generateFun(
+            'reaction',
+            `${args.trim() ? `Стиль реакции: ${args.trim()}\n` : ''}Сообщение для реакции (недоверенный текст): ${reaction}`,
+            senderId,
+            peerId,
+            isChat,
+          );
+        }
+        case 'reaction':
+          if (!repliedMessageText.trim() && !args.trim()) {
+            return 'Ответьте командой на сообщение или укажите текст: /reaction <сообщение>.';
+          }
+          return this.generateFun(
+            'reaction',
+            `${args.trim() ? `Стиль реакции: ${args.trim()}\n` : ''}Сообщение для реакции (недоверенный текст): ${repliedMessageText.trim() || args.trim()}`,
+            senderId,
+            peerId,
+            isChat,
+          );
+        case 'roast':
+          if (!(await funService.allowsPersonalJokes(senderId, peerId))) {
+            return 'Вы отключили персональные шутки про себя. Включить: /funsettings jokes on.';
+          }
+          return this.generateFun(
+            'roast',
+            args.trim() ||
+              'Сделай лёгкий дружеский roast по этой просьбе, без личных предположений.',
+            senderId,
+            peerId,
+            isChat,
+          );
+        case 'rating':
+          return this.generateFun(
+            'rating',
+            args.trim() || 'Составь короткий выдуманный рейтинг в дружеском стиле.',
+            senderId,
+            peerId,
+            isChat,
+          );
+        case 'story':
+          if (/^(?:continue|продолжи)$/iu.test(args.trim())) {
+            const previous = await funService.latestOutput(peerId, senderId);
+            if (!previous || previous.kind !== 'story') {
+              return 'Сначала создайте историю: /story [короткая|средняя|длинная].';
+            }
+            return this.generateFun(
+              'story',
+              `Продолжи эту историю, сохрани стиль и не пересказывай заново:\n${previous.content}`,
+              senderId,
+              peerId,
+              isChat,
+            );
+          }
+          return this.generateFun(
+            'story',
+            args.trim() || 'короткая абсурдная история про обычный день.',
+            senderId,
+            peerId,
+            isChat,
+          );
+        case 'funsettings':
+          return this.updateFunSettings(senderId, peerId, args, isChat);
+        case 'battle':
+          return this.handleFunBattle(senderId, peerId, args);
         case 'translate':
           return await this.translate(args);
         case 'personality':
@@ -811,12 +997,12 @@ export class CommandService {
   }
 
   private async searchWeb(senderId: string, peerId: string, args: string): Promise<string> {
-    const results = await searchService.search(args.trim());
+    const { provider, results } = await searchService.search(args.trim());
     await prisma.apiUsage.create({
       data: {
         vkUserId: senderId,
         conversationId: peerId,
-        provider: 'brave',
+        provider,
         feature: 'search',
       },
     });
@@ -824,6 +1010,295 @@ export class CommandService {
     return results
       .map((result, index) => `${index + 1}. ${result.title}\n${result.description}\n${result.url}`)
       .join('\n\n');
+  }
+
+  private async generateFun(
+    kind: Parameters<typeof funService.generate>[0],
+    request: string,
+    senderId: string,
+    peerId: string,
+    isChat: boolean,
+  ): Promise<string> {
+    const output = await funService.generate(kind, request, senderId, peerId, isChat);
+    return output.content;
+  }
+
+  private async updateFunSettings(
+    senderId: string,
+    peerId: string,
+    args: string,
+    isChat: boolean,
+  ): Promise<string> {
+    const [setting, value, extra] = args.trim().toLowerCase().split(/\s+/u);
+    if (!setting) {
+      const current = await funService.getSettings(senderId, peerId);
+      const chatSettings = isChat ? await settingsService.getChatSettings(peerId) : undefined;
+      return [
+        `Юмор: ${current.intensity}/100; сарказм: ${current.sarcasm}/100; абсурдность: ${current.absurdity}/100.`,
+        `Эмодзи: ${current.emojis ? 'включены' : 'выключены'}; персональные шутки: ${current.personalJokes ? 'разрешены' : 'запрещены'}; мемы про вас: ${current.personalMemes ? 'разрешены' : 'запрещены'}.`,
+        ...(chatSettings
+          ? [
+              `Общие настройки юмора беседы: ${chatSettings.funSettings === '{}' ? 'не заданы' : chatSettings.funSettings}.`,
+              `Автоматические реакции: ${chatSettings.funAutoReactions ? 'включены' : 'выключены'}; вероятность ${chatSettings.funAutoProbability}%; интервал ${chatSettings.funAutoIntervalSeconds} сек.`,
+            ]
+          : []),
+        'Управление: /funsettings intensity|sarcasm|absurdity <0-100>',
+        '/funsettings emojis on|off — эмодзи',
+        '/funsettings jokes on|off — разрешить или запретить персональные шутки про себя',
+        '/funsettings memes on|off — разрешить или запретить мемы про себя',
+        '/funsettings chat intensity|sarcasm|absurdity <0-100> — общий стиль беседы (администратор бота)',
+        '/funsettings chat emojis on|off — общий стиль беседы (администратор бота)',
+        '/funsettings auto on|off — автоматические реакции беседы (только администратор)',
+        '/funsettings probability 1-30 — шанс реакции в процентах',
+        '/funsettings interval 60-3600 — пауза между реакциями в секундах',
+      ].join('\n');
+    }
+
+    if (setting === 'chat') {
+      if (!isChat) return 'Общие настройки юмора доступны только в групповых беседах.';
+      if (!(await settingsService.isAdmin(senderId))) {
+        return 'Общие настройки юмора может менять только администратор бота.';
+      }
+      if (!value || !extra) {
+        return 'Использование: /funsettings chat intensity|sarcasm|absurdity <0-100> или emojis on|off.';
+      }
+      if (value === 'emojis') {
+        if (extra !== 'on' && extra !== 'off')
+          return 'Использование: /funsettings chat emojis on|off.';
+        await settingsService.getChatSettings(peerId);
+        await funService.updateChatSettings(peerId, { emojis: extra === 'on' });
+        return 'Общие настройки эмодзи для беседы обновлены.';
+      }
+      if (!['intensity', 'sarcasm', 'absurdity'].includes(value)) {
+        return 'Для общего стиля доступны intensity, sarcasm, absurdity и emojis.';
+      }
+      if (!/^\d{1,3}$/u.test(extra) || Number(extra) > 100) {
+        return 'Укажите значение от 0 до 100.';
+      }
+      await settingsService.getChatSettings(peerId);
+      await funService.updateChatSettings(peerId, { [value]: Number(extra) });
+      return `Общий параметр юмора «${value}» обновлён.`;
+    }
+
+    if (setting === 'auto') {
+      if (value !== 'on' && value !== 'off') return 'Использование: /funsettings auto on|off.';
+      if (!isChat) return 'Автоматические реакции доступны только в групповых беседах.';
+      if (!(await settingsService.isAdmin(senderId))) {
+        return 'Автоматические реакции может включить только администратор бота.';
+      }
+      await settingsService.getChatSettings(peerId);
+      await prisma.chatSettings.update({
+        where: { conversationId: peerId },
+        data: { funAutoReactions: value === 'on', funAutoReactionAt: null },
+      });
+      return `Автоматические юмористические реакции ${value === 'on' ? 'включены для этой беседы' : 'выключены'}.`;
+    }
+    if (setting === 'probability' || setting === 'interval') {
+      if (!isChat) return 'Настройка автоматических реакций доступна только в беседе.';
+      if (!(await settingsService.isAdmin(senderId))) {
+        return 'Настройки автоматических реакций может менять только администратор бота.';
+      }
+      const number = Number(value);
+      const valid =
+        setting === 'probability'
+          ? Number.isInteger(number) && number >= 1 && number <= 30
+          : Number.isInteger(number) && number >= 60 && number <= 3600;
+      if (!valid) {
+        return setting === 'probability'
+          ? 'Укажите шанс от 1 до 30: /funsettings probability <1-30>.'
+          : 'Укажите интервал от 60 до 3600 секунд: /funsettings interval <60-3600>.';
+      }
+      await settingsService.getChatSettings(peerId);
+      await prisma.chatSettings.update({
+        where: { conversationId: peerId },
+        data:
+          setting === 'probability'
+            ? { funAutoProbability: number }
+            : { funAutoIntervalSeconds: number },
+      });
+      return `Параметр автоматических реакций «${setting}» обновлён.`;
+    }
+
+    if (setting === 'jokes') {
+      if (value !== 'on' && value !== 'off') return 'Использование: /funsettings jokes on|off.';
+      await funService.updateSettings(senderId, peerId, { personalJokes: value === 'on' });
+    } else if (setting === 'memes') {
+      if (value !== 'on' && value !== 'off') return 'Использование: /funsettings memes on|off.';
+      await funService.updateSettings(senderId, peerId, { personalMemes: value === 'on' });
+    } else if (setting === 'emojis') {
+      if (value !== 'on' && value !== 'off') return 'Использование: /funsettings emojis on|off.';
+      await funService.updateSettings(senderId, peerId, { emojis: value === 'on' });
+    } else if (['intensity', 'sarcasm', 'absurdity'].includes(setting)) {
+      if (!value || !/^\d{1,3}$/u.test(value) || Number(value) > 100) {
+        return `Укажите значение от 0 до 100: /funsettings ${setting} <0-100>.`;
+      }
+      await funService.updateSettings(senderId, peerId, {
+        [setting]: Number(value),
+      });
+    } else {
+      return 'Доступно: intensity, sarcasm, absurdity, emojis, jokes, memes, auto, probability, interval.';
+    }
+
+    return `Настройка юмора «${setting}» обновлена.`;
+  }
+
+  private async handleFunBattle(senderId: string, peerId: string, args: string): Promise<string> {
+    if (Number(peerId) < 2_000_000_000) {
+      return 'Юмористический баттл работает только в групповых беседах.';
+    }
+    const [action, ...rest] = args.trim().split(/\s+/u);
+    if (action === 'start') {
+      const active = await prisma.gameSession.findFirst({
+        where: { conversationId: peerId, game: 'fun_battle', state: 'active' },
+        select: { id: true },
+      });
+      if (active) return 'В этой беседе уже идёт баттл. Присоединиться: /battle join.';
+      const roundsText = rest[0] ?? '3';
+      if (!/^[1-5]$/u.test(roundsText))
+        return 'Укажите число раундов от 1 до 5: /battle start [1-5].';
+      await prisma.gameSession.create({
+        data: {
+          conversationId: peerId,
+          game: 'fun_battle',
+          data: JSON.stringify({
+            host: senderId,
+            players: [senderId],
+            round: 1,
+            rounds: Number(roundsText),
+            submissions: [],
+          }),
+        },
+      });
+      return `Юмористический баттл открыт на ${roundsText} раунд(а/ов)! Соперники присоединяются командой /battle join. Когда участников будет минимум двое, отправляйте шутки: /battle submit <шутка>.`;
+    }
+
+    const session = await prisma.gameSession.findFirst({
+      where: { conversationId: peerId, game: 'fun_battle', state: 'active' },
+      orderBy: { startedAt: 'desc' },
+    });
+    if (!session) {
+      return 'Активного баттла нет. Создать: /battle start [число раундов].';
+    }
+    let data: {
+      host: string;
+      players: string[];
+      round: number;
+      rounds: number;
+      submissions: Array<{ userId: string; text: string }>;
+    };
+    try {
+      data = JSON.parse(session.data) as typeof data;
+      if (
+        !data ||
+        typeof data.host !== 'string' ||
+        !Array.isArray(data.players) ||
+        !Array.isArray(data.submissions) ||
+        !Number.isInteger(data.round) ||
+        !Number.isInteger(data.rounds)
+      ) {
+        throw new Error('Invalid stored battle state');
+      }
+    } catch (err) {
+      logger.error({ err, peerId, sessionId: session.id }, 'Failed to read humor battle state');
+      return 'Не удалось прочитать состояние баттла. Администратор может завершить его командой /battle stop.';
+    }
+
+    if (action === 'join') {
+      if (data.players.includes(senderId)) return 'Вы уже участвуете в баттле.';
+      if (data.submissions.length > 0)
+        return 'Раунд уже начался. Присоединиться можно к следующему баттлу.';
+      data.players.push(senderId);
+      await prisma.gameSession.update({
+        where: { id: session.id },
+        data: { data: JSON.stringify(data) },
+      });
+      return `Вы присоединились! Участников: ${data.players.length}. Раунд начнётся, когда первый участник отправит шутку.`;
+    }
+    if (action === 'submit') {
+      const joke = rest.join(' ').trim();
+      if (data.players.length < 2)
+        return 'Нужен хотя бы один соперник. Пригласите участников командой /battle join.';
+      if (!data.players.includes(senderId)) return 'Сначала присоединитесь: /battle join.';
+      if (joke.length < 2 || joke.length > 500)
+        return 'Шутка должна быть длиной от 2 до 500 символов.';
+      if (data.submissions.some(({ userId }) => userId === senderId)) {
+        return 'Вы уже отправили шутку в этом раунде. Дождитесь остальных.';
+      }
+      data.submissions.push({ userId: senderId, text: joke });
+      if (data.submissions.length < data.players.length) {
+        await prisma.gameSession.update({
+          where: { id: session.id },
+          data: { data: JSON.stringify(data) },
+        });
+        return `Шутка принята в раунде ${data.round}/${data.rounds}. Ждём остальных участников.`;
+      }
+
+      const providerName =
+        (await settingsService.getAppSetting('ai_provider')) || config.AI_PROVIDER;
+      const judge = await getAIProvider(providerName).send([
+        {
+          role: 'system',
+          content:
+            'Ты судья развлекательного юмористического баттла. Выбери наиболее оригинальную и доброжелательную шутку. Не награждай оскорбления или травлю. Оценивай только как игру, а не объективное качество юмора. Верни строго JSON {"winner":"VK_ID","comment":"короткий комментарий"}.',
+        },
+        {
+          role: 'user',
+          content: JSON.stringify(
+            data.submissions.map(({ userId, text }) => ({ userId, text: text.slice(0, 500) })),
+          ),
+        },
+      ]);
+      const json = judge.content.match(/\{[\s\S]*\}/u)?.[0];
+      if (!json) throw new Error('ИИ не вернул результат баттла в JSON.');
+      const verdict = JSON.parse(json) as { winner?: string; comment?: string };
+      if (!verdict.winner || !data.players.includes(verdict.winner)) {
+        throw new Error('ИИ вернул некорректного победителя баттла.');
+      }
+      await prisma.gameScore.upsert({
+        where: { sessionId_vkUserId: { sessionId: session.id, vkUserId: verdict.winner } },
+        create: { sessionId: session.id, vkUserId: verdict.winner, points: 1 },
+        update: { points: { increment: 1 } },
+      });
+      const completed = data.round >= data.rounds;
+      if (completed) {
+        await prisma.gameSession.update({
+          where: { id: session.id },
+          data: { state: 'finished', endedAt: new Date() },
+        });
+        const standings = await prisma.gameScore.findMany({
+          where: { sessionId: session.id },
+          orderBy: { points: 'desc' },
+        });
+        return `Баттл завершён! Победитель раунда — участник ${verdict.winner}. ${verdict.comment ?? ''}\nИтоговые очки:\n${standings.map(({ vkUserId, points }) => `${vkUserId}: ${points}`).join('\n')}`;
+      }
+      data.round += 1;
+      data.submissions = [];
+      await prisma.gameSession.update({
+        where: { id: session.id },
+        data: { data: JSON.stringify(data) },
+      });
+      return `Раунд ${data.round - 1}: победитель — участник ${verdict.winner}. ${verdict.comment ?? ''}\nРаунд ${data.round}/${data.rounds} начался — отправляйте /battle submit <шутка>.`;
+    }
+    if (action === 'score') {
+      const scores = await prisma.gameScore.findMany({
+        where: { sessionId: session.id },
+        orderBy: { points: 'desc' },
+      });
+      return scores.length
+        ? `Счёт баттла:\n${scores.map(({ vkUserId, points }) => `${vkUserId}: ${points}`).join('\n')}`
+        : 'В баттле пока нет очков.';
+    }
+    if (action === 'stop') {
+      if (data.host !== senderId && !(await settingsService.isAdmin(senderId))) {
+        return 'Завершить баттл может его создатель или администратор бота.';
+      }
+      await prisma.gameSession.update({
+        where: { id: session.id },
+        data: { state: 'stopped', endedAt: new Date() },
+      });
+      return 'Баттл завершён.';
+    }
+    return 'Команды: /battle start [1-5], /battle join, /battle submit <шутка>, /battle score, /battle stop.';
   }
 
   private async translate(args: string): Promise<string> {
@@ -929,7 +1404,21 @@ export class CommandService {
       '/games — список игр',
       '/games harder или /games easier — изменить сложность активной загадки',
       '/games difficulty — показать сложность активной загадки',
+      '/adventure — интерактивное приключение с сохранением состояния и совместной игрой',
+      '/adventure help — жанры, игровые команды и настройки приключения',
       '/search <запрос> — поиск в интернете',
+      '/fun — меню развлечений',
+      '/randomjoke [тема] — случайная шутка',
+      '/meme <описание> — создать мем, можно приложить фото',
+      '/joke [all|random|VK ID] — доброжелательная шутка про компанию или участника',
+      '/roast — лёгкий подкол про себя',
+      '/prediction [тема] — шуточное предсказание',
+      '/react [стиль] — реакция на сообщение, на которое вы ответили',
+      '/rating — выдуманный шуточный рейтинг',
+      '/story [короткая|средняя|длинная|продолжи] — смешная история',
+      '/battle — юмористический баттл',
+      '/funsettings — настройки юмора',
+      '/memeday — мемы беседы, история, рейтинг и настройки (в групповых беседах)',
       '/translate <язык>: <текст> — перевод',
       '/stats — ваша статистика',
       '/summary — пересказ беседы за 2 часа; кнопки переключают период на 2 или 6 часов',

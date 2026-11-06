@@ -20,8 +20,6 @@ const gameCatalog = {
   truth: 'Правда или действие',
   who: 'Кто скорее всего?',
   association: 'Ассоциации',
-  adventure: 'Текстовое приключение',
-  detective: 'Детективное расследование',
   story: 'Интерактивная история',
 } as const;
 
@@ -50,12 +48,6 @@ const prompts: Partial<Record<GameKind, GamePrompt>> = {
   association: {
     text: 'Ассоциации: первое слово — «космос». Напишите ассоциацию к предыдущему слову, не повторяясь.',
   },
-  adventure: {
-    text: 'Приключение начинается: вы просыпаетесь у входа в загадочный лес. Напишите действие, чтобы выбрать, что произойдёт дальше.',
-  },
-  detective: {
-    text: 'Дело открыто: из запертой комнаты пропала картина. На столе остались мокрый след и открытое окно. Предложите версию расследования.',
-  },
   story: {
     text: 'Интерактивная история: каждый участник добавляет одно предложение, продолжая сюжет. Начало: «В старом маяке внезапно загорелся свет».',
   },
@@ -74,7 +66,7 @@ export class GameService {
     }
 
     const active = await prisma.gameSession.findFirst({
-      where: { conversationId, state: 'active' },
+      where: { conversationId, state: 'active', game: { not: 'fun_battle' } },
       select: { id: true },
     });
     if (active) return 'В этой беседе уже идёт игра. Завершите её командой /games stop.';
@@ -128,7 +120,11 @@ export class GameService {
 
   async stop(conversationId: string): Promise<string> {
     const active = await prisma.gameSession.findFirst({
-      where: { conversationId, state: 'active' },
+      where: {
+        conversationId,
+        state: 'active',
+        game: { notIn: ['fun_battle', 'ai_adventure'] },
+      },
       orderBy: { startedAt: 'desc' },
     });
     if (!active) return 'В этой беседе сейчас нет активной игры.';
