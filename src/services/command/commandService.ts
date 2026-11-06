@@ -2,11 +2,8 @@ import memoryService from '../memory/memoryService.js';
 import { logger } from '../../logger/index.js';
 import { getAIProvider } from '../ai/providerFactory.js';
 import settingsService, { type ChatMode, type ImageAccess } from '../settings/settingsService.js';
-import {
-  listPersonalities,
-  personalities,
-  isPersonalityId,
-} from '../settings/personalityService.js';
+import { personalitySettingKeys } from '../settings/personalityService.js';
+import characterService from '../settings/characterService.js';
 import { prisma } from '../../db/client.js';
 import config from '../../config/index.js';
 import { availableVoices, isVoiceName } from '../voice/voiceService.js';
@@ -42,6 +39,9 @@ export class CommandService {
     peerId: string,
     senderId: string,
     isAdmin = false,
+    canManageChat = false,
+    isCreator = false,
+    isChat = false,
   ): Promise<string | null> {
     const cmd = command.toLowerCase();
     try {
@@ -61,7 +61,14 @@ export class CommandService {
         case 'translate':
           return await this.translate(args);
         case 'personality':
-          return this.setPersonality(senderId, args);
+          return this.setPersonality(senderId, peerId, args, isAdmin, isChat);
+        case 'chatpersonality':
+          return this.setChatPersonality(
+            senderId,
+            peerId,
+            args,
+            canManageChat || isAdmin || isCreator,
+          );
         case 'settings':
           return this.getSettings(senderId, peerId);
         case 'provider':
@@ -73,7 +80,7 @@ export class CommandService {
         case 'maintenance':
           return this.setMaintenance(senderId, args);
         case 'admin':
-          return this.adminCommand(senderId, args);
+          return this.adminCommand(senderId, args, isCreator);
         case 'broadcast':
           return this.broadcast(senderId, args);
         case 'users':
@@ -142,6 +149,13 @@ export class CommandService {
       }
     } catch (err) {
       logger.error({ err, command, peerId, senderId, isAdmin }, 'Command handling failed');
+      if (
+        (cmd === 'personality' || cmd === 'chatpersonality') &&
+        err instanceof Error &&
+        !/prisma|sqlite|database|constraint failed/iu.test(err.message)
+      ) {
+        return err.message;
+      }
       if (err instanceof Error && err.message.includes('2000 characters')) {
         return 'Инструкция слишком длинная: максимум 2000 символов.';
       }
@@ -149,17 +163,286 @@ export class CommandService {
     }
   }
 
-  private async setPersonality(senderId: string, args: string): Promise<string> {
-    const personality = args.trim().toLowerCase();
-    if (!personality) {
-      const current = await settingsService.getUserSettings(senderId);
-      return `Ваш характер: ${personalities[current.personality as keyof typeof personalities]?.name ?? 'Дружелюбный помощник'}.\nДоступные варианты:\n${listPersonalities()}\nВыбрать: /personality <id>`;
+  async getPersonalityMenu(senderId: string, peerId: string, scope: 'direct' | 'chat') {
+    const [current, availableProfiles] = await Promise.all([
+      characterService.getCurrent(scope, senderId, peerId),
+      characterService.list(scope, senderId, peerId),
+    ]);
+    const profiles = availableProfiles.slice(0, 50);
+    const intro =
+      scope === 'chat' ? 'Выбери персонажа для этой беседы.' : 'Выбери своего собеседника.';
+    const text = [
+      intro,
+      `Сейчас выбран: ${current.name}.`,
+      ...profiles.map(
+        (profile) =>
+          `${profile.name} (${profile.id}) — ${profile.description}\nПример: «${profile.example}»`,
+      ),
+      ...(availableProfiles.length > profiles.length
+        ? [
+            `Показаны первые ${profiles.length} профилей. Для выбора других укажите их ID в команде.`,
+          ]
+        : []),
+      'Нажми кнопку под сообщением, чтобы переключить персонажа.',
+    ].join('\n\n');
+    return { current, profiles, text };
+  }
+
+  private async setPersonality(
+    senderId: string,
+    peerId: string,
+    args: string,
+    isAdmin: boolean,
+    isChat: boolean,
+  ): Promise<string> {
+    const [subcommand = '', ...rest] = args.trim().split(/\s+/u);
+    const action = subcommand.toLowerCase();
+    if (action === 'default' && rest.length > 0) {
+      if (!isAdmin) return 'Назначать персонажа по умолчанию может только администратор бота.';
+      await characterService.setDefaultPersonality(rest[0]);
+      await settingsService.logAdminAction(senderId, 'personality.default.changed', rest[0]);
+      return `Персонаж ${rest[0]} назначен по умолчанию.`;
     }
-    if (!isPersonalityId(personality)) {
-      return `Неизвестный характер. Доступные варианты:\n${listPersonalities()}`;
+    if (
+      [
+        'add',
+        'edit',
+        'prompt',
+        'disable',
+        'enable',
+        'rollback',
+        'availability',
+        'exclusive',
+        'access',
+        'defaults',
+        'stats',
+      ].includes(action)
+    ) {
+      if (!isAdmin) return 'Управлять персонажами может только администратор бота.';
+      return this.managePersonality(senderId, action, args.trim().slice(subcommand.length).trim());
     }
-    await settingsService.setPersonality(senderId, personality);
-    return `Выбран характер: ${personalities[personality].name}.`;
+
+    const current = await characterService.getCurrent('direct', senderId, peerId);
+    if (!action || action === 'list') {
+      if (action === 'list' && isAdmin) {
+        const profiles = await characterService.listForAdmin();
+        return profiles.length === 0
+          ? 'Профили персонажей не созданы.'
+          : profiles
+              .map(
+                (profile) =>
+                  `${profile.id} — ${profile.name} (${profile.enabled ? 'включён' : 'отключён'}; ЛС: ${profile.directEnabled ? 'вкл.' : 'выкл.'}; беседы: ${profile.chatEnabled ? 'вкл.' : 'выкл.'}; версия ${profile.version})\n${profile.description}`,
+              )
+              .join('\n');
+      }
+      const { profiles } = await this.getPersonalityMenu(senderId, peerId, 'direct');
+      return `Текущий персонаж: ${current.name}.\n${profiles.map((profile) => `${profile.id} — ${profile.name}: ${profile.description}`).join('\n')}\n/personality <id> — выбрать персонажа.`;
+    }
+    if (action === 'info') {
+      return `${current.name}\n${current.description}\nПример: «${current.example}»`;
+    }
+    if (isChat && (action === 'settings' || action === 'reset')) {
+      return 'Личные настройки персонажа доступны только в личном диалоге с ботом.';
+    }
+    if (action === 'default') {
+      const profile = await characterService.select(
+        'direct',
+        senderId,
+        peerId,
+        await characterService.getDefaultPersonalityId(),
+      );
+      return `Теперь с вами общается ${profile.name}. История сообщений сохранена.`;
+    }
+    if (action === 'settings') {
+      const updates = this.parseSliderArgs(rest.join(' '));
+      if (Object.keys(updates).length === 0) {
+        const values = await characterService.getSettings('direct', senderId, peerId, current.id);
+        return `Настройки ${current.name} (0–100):\n${personalitySettingKeys.map((key) => `${key}: ${values[key]}%`).join('\n')}\nИзменить: /personality settings humor=70 sarcasm=30`;
+      }
+      const values = await characterService.setSettings(
+        'direct',
+        senderId,
+        peerId,
+        current.id,
+        updates,
+      );
+      return `Настройки ${current.name} сохранены.\n${personalitySettingKeys.map((key) => `${key}: ${values[key]}%`).join('\n')}`;
+    }
+    if (action === 'reset') {
+      await characterService.resetSettings('direct', senderId, peerId, current.id);
+      return `Индивидуальные настройки ${current.name} сброшены. История сохранена.`;
+    }
+    if (isChat) return 'Личного персонажа можно выбирать только в личном диалоге с ботом.';
+    const profile = await characterService.select('direct', senderId, peerId, action);
+    return `Выбран персонаж ${profile.name}. История сообщений сохранена.`;
+  }
+
+  private async setChatPersonality(
+    senderId: string,
+    peerId: string,
+    args: string,
+    canManageChat: boolean,
+  ): Promise<string> {
+    const [subcommand = '', ...rest] = args.trim().split(/\s+/u);
+    const action = subcommand.toLowerCase();
+    if (action === 'allow' || action === 'deny') {
+      if (!canManageChat) return 'Менять права беседы могут только администраторы беседы или бота.';
+      await characterService.setChatChangePermission(peerId, action === 'allow');
+      return action === 'allow'
+        ? 'Участникам беседы разрешено менять персонажа.'
+        : 'Менять персонажа могут только администраторы беседы и бота.';
+    }
+    const current = await characterService.getCurrent('chat', senderId, peerId);
+    if (!action || action === 'list') {
+      const { profiles } = await this.getPersonalityMenu(senderId, peerId, 'chat');
+      return `Персонаж беседы: ${current.name}.\n${profiles.map((profile) => `${profile.id} — ${profile.name}: ${profile.description}`).join('\n')}\n/chatpersonality <id> — сменить (нужны права администратора беседы).\n/chatpersonality allow|deny — разрешить или запретить смену всем участникам.`;
+    }
+    if (action === 'settings') {
+      if (!canManageChat)
+        return 'Настройки персонажа беседы могут менять только администраторы беседы или бота.';
+      const updates = this.parseSliderArgs(rest.join(' '));
+      if (Object.keys(updates).length === 0) {
+        const values = await characterService.getSettings('chat', senderId, peerId, current.id);
+        return `Настройки ${current.name} (0–100):\n${personalitySettingKeys.map((key) => `${key}: ${values[key]}%`).join('\n')}`;
+      }
+      await characterService.setSettings('chat', senderId, peerId, current.id, updates);
+      return `Общие настройки персонажа ${current.name} сохранены для этой беседы.`;
+    }
+    if (!canManageChat && !(await characterService.canAllMembersChange(peerId))) {
+      return 'Сменить персонажа могут только администраторы беседы или бота.';
+    }
+    const profile = await characterService.select(
+      'chat',
+      senderId,
+      peerId,
+      action === 'default' ? await characterService.getDefaultPersonalityId() : action,
+    );
+    return `В этой беседе теперь действует ${profile.name}.\n${profile.description}`;
+  }
+
+  private parseSliderArgs(value: string): Record<string, unknown> {
+    const updates: Record<string, unknown> = {};
+    for (const item of value.split(/\s+/u).filter(Boolean)) {
+      const [key, raw, extra] = item.split('=');
+      if (!key || raw === undefined || extra !== undefined || !/^\d{1,3}$/u.test(raw)) {
+        throw new Error('Настройки задаются как humor=70, значения должны быть от 0 до 100.');
+      }
+      updates[key] = Number(raw);
+    }
+    return updates;
+  }
+
+  private async managePersonality(senderId: string, action: string, args: string): Promise<string> {
+    if (action === 'stats') {
+      const stats = await characterService.getUsageStats(args.trim() || undefined);
+      if (stats.length === 0) return 'Использование персонажей пока не зарегистрировано.';
+      return [
+        'Использование персонажей (успешные ответы ИИ):',
+        ...stats.map(({ id, name, scope, count }) => `${name} (${id}), ${scope}: ${count}`),
+      ].join('\n');
+    }
+    if (action === 'add') {
+      const [id, name, description, example, ...promptParts] = args.split('|');
+      const prompt = promptParts.join('|').trim();
+      if (!id || !name || !description || !example || !prompt) {
+        return 'Использование: /personality add id|имя|описание|пример|системная инструкция';
+      }
+      await characterService.createProfile(id, name, description, example, prompt, senderId);
+      await settingsService.logAdminAction(senderId, 'personality.created', id);
+      return `Персонаж ${id.trim()} создан.`;
+    }
+    if (action === 'prompt') {
+      const separator = args.indexOf('|');
+      const id = separator < 0 ? '' : args.slice(0, separator).trim();
+      const prompt = separator < 0 ? '' : args.slice(separator + 1).trim();
+      if (!id || !prompt) return 'Использование: /personality prompt id|новая системная инструкция';
+      await characterService.updateProfile(id, { systemPrompt: prompt }, senderId);
+      await settingsService.logAdminAction(senderId, 'personality.prompt.updated', id);
+      return 'Системная инструкция обновлена; предыдущая версия сохранена.';
+    }
+    if (action === 'edit') {
+      const [id, field, ...valueParts] = args.split('|');
+      const value = valueParts.join('|').trim();
+      if (!id || !field || !value) {
+        return 'Использование: /personality edit id|name|description|example|текст';
+      }
+      const property = field.toLowerCase();
+      if (property === 'name') {
+        await characterService.updateProfile(id, { name: value }, senderId);
+      } else if (property === 'description') {
+        await characterService.updateProfile(id, { description: value }, senderId);
+      } else if (property === 'example') {
+        await characterService.updateProfile(id, { example: value }, senderId);
+      } else {
+        return 'Поле должно быть name, description или example; для промта используйте /personality prompt.';
+      }
+      await settingsService.logAdminAction(senderId, 'personality.updated', id);
+      return 'Профиль обновлён; предыдущая версия сохранена.';
+    }
+    if (action === 'disable' || action === 'enable') {
+      if (!args) return `Использование: /personality ${action} <id>`;
+      await characterService.setEnabled(args, action === 'enable', senderId);
+      return `Персонаж ${args} ${action === 'enable' ? 'включён' : 'отключён'}.`;
+    }
+    if (action === 'rollback') {
+      const [id, rawVersion] = args.split('|');
+      const version = Number(rawVersion);
+      if (!id || !Number.isInteger(version) || version < 1)
+        return 'Использование: /personality rollback id|номер_версии';
+      await characterService.rollbackProfile(id, version, senderId);
+      return `Персонаж ${id} восстановлен из версии ${version}; история версий сохранена.`;
+    }
+    if (action === 'availability') {
+      const [id, scope, state] = args.split('|');
+      if (!id || !['direct', 'chat'].includes(scope) || !['on', 'off'].includes(state)) {
+        return 'Использование: /personality availability id|direct|on (или chat|off).';
+      }
+      await characterService.setAvailability(id, scope as 'direct' | 'chat', state === 'on');
+      return `Доступность персонажа ${id} обновлена.`;
+    }
+    if (action === 'exclusive') {
+      const [id, scope, value] = args.split('|');
+      if (!id || !['direct', 'chat'].includes(scope) || !value) {
+        return 'Использование: /personality exclusive id|direct|VK_ID (или chat|PEER_ID).';
+      }
+      await characterService.addExclusiveAccess(id, scope as 'direct' | 'chat', value);
+      return `Для персонажа ${id} добавлено ограничение доступа.`;
+    }
+    if (action === 'access') {
+      const [id, scope, operation, value] = args.split('|');
+      if (
+        !id ||
+        !['direct', 'chat'].includes(scope) ||
+        !['add', 'remove'].includes(operation) ||
+        !value
+      ) {
+        return 'Использование: /personality access id|direct|add|VK_ID (или chat|remove|PEER_ID).';
+      }
+      await characterService.updateExclusiveAccess(
+        id,
+        scope as 'direct' | 'chat',
+        value,
+        operation === 'add',
+      );
+      return `Доступ к персонажу ${id} обновлён.`;
+    }
+    if (action === 'defaults') {
+      const [id, ...pairs] = args.split('|');
+      if (!id || pairs.length === 0)
+        return 'Использование: /personality defaults id|humor=70|sarcasm=20';
+      const values: Record<string, unknown> = {};
+      const influences: Record<string, unknown> = {};
+      for (const pair of pairs) {
+        const [key, raw, extra] = pair.split('=');
+        if (!key || !raw || extra !== undefined || !/^\d{1,3}$/u.test(raw))
+          throw new Error('Значения настроек должны быть целыми числами от 0 до 100.');
+        if (key.startsWith('influence.')) influences[key.slice('influence.'.length)] = Number(raw);
+        else values[key] = Number(raw);
+      }
+      await characterService.updateProfileSettings(id, values, influences, senderId);
+      return `Настройки по умолчанию персонажа ${id} обновлены и сохранены в версии профиля.`;
+    }
+    return 'Неизвестная административная операция персонажа.';
   }
 
   private async getSettings(senderId: string, peerId: string): Promise<string> {
@@ -168,7 +451,7 @@ export class CommandService {
       settingsService.getChatSettings(peerId),
     ]);
     return [
-      `Характер: ${personalities[user.personality as keyof typeof personalities]?.name ?? user.personality}`,
+      `Характер: ${(await characterService.getCurrent('direct', senderId, peerId)).name}`,
       `Личная инструкция: ${user.systemPrompt ? 'задана' : 'не задана'}`,
       `Режим беседы: ${chat.mode}`,
       `Голос: ${user.voiceEnabled ? 'включён' : 'выключен'}`,
@@ -220,14 +503,22 @@ export class CommandService {
     return `Технический режим ${value === 'on' ? 'включён' : 'выключен'}.`;
   }
 
-  private async adminCommand(senderId: string, args: string): Promise<string> {
+  private async adminCommand(senderId: string, args: string, isCreator: boolean): Promise<string> {
     const [action, vkId] = args.trim().split(/\s+/u);
     if (action === 'add' && vkId && /^\d+$/u.test(vkId)) {
-      await settingsService.addAdmin(vkId);
+      if (!isCreator) return 'Назначать администраторов может только создатель бота.';
+      try {
+        await settingsService.addAdmin(vkId);
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('Создатель')) return error.message;
+        throw error;
+      }
       await settingsService.logAdminAction(senderId, 'admin.added', vkId);
       return `Пользователь ${vkId} добавлен в администраторы.`;
     }
     if (action === 'remove' && vkId && /^\d+$/u.test(vkId)) {
+      if (!isCreator) return 'Снимать администраторов может только создатель бота.';
+      if (settingsService.isCreator(vkId)) return 'Нельзя снять роль создателя бота.';
       if (vkId === senderId) return 'Нельзя удалить собственную учётную запись администратора.';
       const removed = await settingsService.removeAdmin(vkId);
       if (!removed) return 'Администратор не найден или задан через VK_ADMIN_IDS.';
@@ -237,10 +528,12 @@ export class CommandService {
     const counts = await this.getAdminStats();
     return [
       'Панель администратора',
+      'Роли бота: Создатель выше Администратора.',
+      'Создатель: Mark Puchkov (VK ID 388581097).',
       counts,
       'Команды администратора:',
-      '/admin add <VK ID> — добавить администратора',
-      '/admin remove <VK ID> — удалить администратора',
+      '/admin add <VK ID> — добавить администратора (только создатель)',
+      '/admin remove <VK ID> — удалить администратора (только создатель)',
       '/provider [opencode|openai] — выбрать AI-провайдера',
       '/mode [active|normal|quiet] — режим этой беседы',
       '/imageaccess [admins_only|all] — доступ к изображениям',
@@ -286,9 +579,23 @@ export class CommandService {
 
   private async gamesCommand(peerId: string, args: string): Promise<string> {
     const [game, ...rest] = args.trim().toLowerCase().split(/\s+/u);
-    if (!game) return `Игры:\n${gameService.list()}\n\n/games top — таблица лидеров`;
+    if (!game) {
+      return `Игры:\n${gameService.list()}\n\n/games top — таблица лидеров\n/games harder|easier — изменить сложность активной загадки\n/games difficulty — узнать текущую сложность`;
+    }
     if (game === 'top') return gameService.leaderboard();
     if (game === 'stop') return gameService.stop(peerId);
+    if (game === 'harder' || game === 'сложнее') {
+      if (rest.length > 0) return 'Использование: /games harder';
+      return gameService.changeRiddleDifficulty(peerId, 1);
+    }
+    if (game === 'easier' || game === 'проще') {
+      if (rest.length > 0) return 'Использование: /games easier';
+      return gameService.changeRiddleDifficulty(peerId, -1);
+    }
+    if (game === 'difficulty') {
+      if (rest.length > 0) return 'Использование: /games difficulty';
+      return gameService.getRiddleDifficulty(peerId);
+    }
     if (rest.length > 0) return `Использование: /games <игра|top|stop>\n${gameService.list()}`;
     return gameService.start(peerId, game);
   }
@@ -399,6 +706,8 @@ export class CommandService {
       '/help — показать эту справку',
       '/ping — проверить отклик',
       '/personality [id] — выбрать характер ИИ',
+      '/personality info|list|default|settings|reset — информация, список, сброс или настройки характера',
+      '/chatpersonality [id|list|default] — персонаж текущей беседы',
       '/settings — показать ваши настройки',
       '/system [текст|clear] — показать, задать или удалить личную инструкцию',
       '/image <описание> — создать изображение (администраторы)',
@@ -408,6 +717,8 @@ export class CommandService {
       '/ocr — распознавание текста на фото',
       '/voice [on|off] — состояние голосового режима',
       '/games — список игр',
+      '/games harder или /games easier — изменить сложность активной загадки',
+      '/games difficulty — показать сложность активной загадки',
       '/search <запрос> — поиск в интернете',
       '/translate <язык>: <текст> — перевод',
       '/stats — ваша статистика',

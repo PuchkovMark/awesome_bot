@@ -4,6 +4,7 @@ import config from '../../config/index.js';
 import { logger } from '../../logger/index.js';
 import type { GeneratedImage } from '../image/imageGenerationService.js';
 import splitterService from '../splitter/splitterService.js';
+import type { PersonalityDefinition } from '../settings/personalityService.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -85,6 +86,26 @@ export class SenderService {
       ...options,
       keyboard: this.createSummaryKeyboard(selectedHours),
     });
+  }
+
+  async sendPersonalityMenu(
+    peerId: number,
+    text: string,
+    profiles: PersonalityDefinition[],
+    selectedId: string,
+    scope: 'direct' | 'chat',
+    options?: { replyTo?: number; conversationMessageId?: number },
+  ): Promise<void> {
+    const keyboard = Keyboard.builder();
+    profiles.slice(0, 50).forEach((profile, index) => {
+      if (index > 0 && index % 5 === 0) keyboard.row();
+      keyboard.callbackButton({
+        label: profile.name.slice(0, 40),
+        payload: { command: 'personality_select', scope, id: profile.id },
+        color: profile.id === selectedId ? Keyboard.POSITIVE_COLOR : Keyboard.PRIMARY_COLOR,
+      });
+    });
+    await this.send(peerId, text, { ...options, keyboard: keyboard.inline().toString() });
   }
 
   async editSummary(

@@ -19,7 +19,7 @@ import imageAnalysisService from '../image/imageAnalysisService.js';
 import documentAnalysisService from '../document/documentAnalysisService.js';
 import type { GeneratedImage } from '../image/imageGenerationService.js';
 import settingsService from '../settings/settingsService.js';
-import { isPersonalityId, personalities } from '../settings/personalityService.js';
+import characterService from '../settings/characterService.js';
 import { prisma } from '../../db/client.js';
 import { RateLimitService } from '../queue/rateLimitService.js';
 import splitterService from '../splitter/splitterService.js';
@@ -82,6 +82,90 @@ export class VkService {
       token: config.VK_TOKEN,
       ...(groupId ? { pollingGroupId: Number(groupId) } : {}),
     });
+  }
+
+  private parseEventPayload(value: unknown): Record<string, unknown> | null {
+    if (typeof value === 'string') {
+      try {
+        const parsed: unknown = JSON.parse(value);
+        return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+          ? (parsed as Record<string, unknown>)
+          : null;
+      } catch {
+        return null;
+      }
+    }
+    return typeof value === 'object' && value !== null && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null;
+  }
+
+  private async isConversationAdmin(peerId: number, userId: number): Promise<boolean> {
+    try {
+      const members = await this.vk.api.messages.getConversationMembers({
+        peer_id: peerId,
+        extended: true,
+      });
+      const member = members.items.find((item) => item.member_id === userId);
+      return Boolean(member && (member.is_admin || member.is_owner));
+    } catch (err) {
+      logger.warn({ err, peerId, userId }, 'Unable to verify VK conversation administrator');
+      return false;
+    }
+  }
+
+  private async handlePersonalitySelection(
+    context: MessageEventContext,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    const userId = String(context.userId);
+    const peerId = String(context.peerId);
+    const scope = payload.scope;
+    const id = payload.id;
+    try {
+      if ((scope !== 'direct' && scope !== 'chat') || typeof id !== 'string') {
+        throw new Error('Некорректная кнопка выбора персонажа.');
+      }
+      if ((scope === 'chat') !== context.isChat)
+        throw new Error('Эта кнопка предназначена для другого типа диалога.');
+      const isBotAdmin = await settingsService.isAdmin(userId);
+      if ((await settingsService.getAppSetting('maintenance')) === 'on' && !isBotAdmin) {
+        throw new Error('Бот временно на техническом обслуживании.');
+      }
+      if (scope === 'chat') {
+        const chatSettings = await settingsService.getChatSettings(peerId);
+        const canManage =
+          isBotAdmin || (await this.isConversationAdmin(context.peerId, context.userId));
+        if (chatSettings.mode === 'quiet' && !canManage) {
+          throw new Error('В тихом режиме смена персонажа доступна только администраторам.');
+        }
+        if (!canManage && !(await characterService.canAllMembersChange(peerId))) {
+          throw new Error('Сменить персонажа могут только администраторы беседы или бота.');
+        }
+      }
+      if (!isBotAdmin) {
+        const limit = this.rateLimiter.take(userId);
+        if (!limit.allowed) {
+          throw new Error(
+            `Слишком много запросов. Повторите через ${Math.ceil(limit.retryAfterMs / 1000)} сек.`,
+          );
+        }
+      }
+      const profile = await characterService.select(scope, userId, peerId, id);
+      const text =
+        scope === 'chat'
+          ? `В этой беседе теперь действует ${profile.name}.\n${profile.description}`
+          : `Теперь с вами общается ${profile.name}.`;
+      if (scope === 'chat') await senderService.send(context.peerId, text);
+      await context.answer({ type: 'show_snackbar', text: `Выбран персонаж: ${profile.name}.` });
+    } catch (err) {
+      logger.warn({ err, userId, peerId, scope, id }, 'Personality selection failed');
+      const text =
+        err instanceof Error && !/prisma|sqlite|database|constraint failed/iu.test(err.message)
+          ? err.message
+          : 'Не удалось выбрать персонажа.';
+      await context.answer({ type: 'show_snackbar', text: text.slice(0, 100) });
+    }
   }
 
   private async getUserDisplayName(userId: number): Promise<string | undefined> {
@@ -246,9 +330,18 @@ export class VkService {
       return;
     }
 
+    await characterService.initialize();
+
     this.vk.updates.on('message_event', async (context: MessageEventContext, next) => {
-      const hours = getSummaryHoursFromPayload(context.eventPayload);
-      if (hours === null) return next();
+      const payload = this.parseEventPayload(context.eventPayload);
+      const hours = getSummaryHoursFromPayload(payload);
+      if (hours === null) {
+        if (payload?.command === 'personality_select') {
+          await this.handlePersonalitySelection(context, payload);
+          return next();
+        }
+        return next();
+      }
 
       try {
         const senderId = String(context.userId);
@@ -685,12 +778,51 @@ export class VkService {
                 if (name) await memoryService.updateUserDisplayName(user.vkId, name);
               }
             }
+            if (
+              (command === 'personality' && context.isChat) ||
+              (command === 'chatpersonality' && !context.isChat)
+            ) {
+              await senderService.send(
+                Number(peerId),
+                command === 'personality'
+                  ? 'Личного персонажа можно выбирать в личных сообщениях боту командой /personality.'
+                  : '/chatpersonality доступна только в групповых беседах.',
+                replyOptions,
+              );
+              return;
+            }
+            if (
+              (command === 'personality' &&
+                (!args.trim() || (args.trim().toLowerCase() === 'list' && !isAdmin))) ||
+              (command === 'chatpersonality' &&
+                (!args.trim() || args.trim().toLowerCase() === 'list'))
+            ) {
+              const scope = command === 'chatpersonality' ? 'chat' : 'direct';
+              const menu = await commandService.getPersonalityMenu(senderId, String(peerId), scope);
+              await senderService.sendPersonalityMenu(
+                Number(peerId),
+                menu.text,
+                menu.profiles,
+                menu.current.id,
+                scope,
+                replyOptions,
+              );
+              return;
+            }
+            const canManageChat =
+              isAdmin ||
+              (context.isChat &&
+                command === 'chatpersonality' &&
+                (await this.isConversationAdmin(Number(peerId), Number(senderId))));
             const result = await commandService.handleCommand(
               command,
               args,
               String(peerId),
               senderId,
               isAdmin,
+              canManageChat,
+              settingsService.isCreator(senderId),
+              context.isChat,
             );
             if (result) {
               if (command === 'summary') {
@@ -718,15 +850,24 @@ export class VkService {
           const globalSystemPrompt = await settingsService.getAppSetting('system_prompt');
           const providerName =
             (await settingsService.getAppSetting('ai_provider')) || config.AI_PROVIDER;
-          const personality = isPersonalityId(userSettings.personality)
-            ? personalities[userSettings.personality]
-            : personalities.friendly;
+          const { definition: personality, prompt: personalityPrompt } =
+            await characterService.getSystemInstruction(
+              context.isChat ? 'chat' : 'direct',
+              senderId,
+              String(peerId),
+            );
+          const availablePersonalities = await characterService.list(
+            context.isChat ? 'chat' : 'direct',
+            senderId,
+            String(peerId),
+          );
           const capabilities = buildBotCapabilities({
             isAdmin,
             imageAccess: chatSettings.imageAccess,
             chatMode: chatSettings.mode,
             personalityName: personality.name,
-            personalityIds: Object.keys(personalities),
+            personalityIds: availablePersonalities.map(({ id }) => id),
+            isChat: context.isChat,
             provider: providerName,
             voiceEnabledForUser: userSettings.voiceEnabled,
           });
@@ -736,9 +877,11 @@ export class VkService {
               content: [
                 'Ты — ИИ-ассистент в VK по имени Пенёк. Отвечай на русском языке, если пользователь не просит другой язык. Будь полезным и честно признавай неопределённость. Не утверждай, что выполняешь недоступные действия.',
                 capabilities,
-                `Стиль общения: ${personality.name}. ${personality.prompt}`,
-                'Персональная история относится только к текущему пользователю в этой беседе. Общий контекст, если он приложен, содержит только сообщения, видимые участникам этой же беседы. Не раскрывай частные данные других пользователей.',
-                userSettings.systemPrompt
+                `Выбранный персонаж: ${personality.name}.\n${personalityPrompt}`,
+                context.isChat
+                  ? `Это групповая беседа. Автор текущего сообщения имеет VK ID ${senderId}. Различай авторов по именам и VK ID в общем контексте; используй ID только для идентификации и не включай их в ответ без необходимости. В групповом режиме используй только общую историю беседы; личную историю и инструкции участников не передавай и не раскрывай.`
+                  : 'Используй только личную историю текущего пользователя. Не передавай её другим пользователям.',
+                !context.isChat && userSettings.systemPrompt
                   ? `Дополнительная личная инструкция пользователя: ${userSettings.systemPrompt}`
                   : '',
                 globalSystemPrompt ? `Инструкция администратора: ${globalSystemPrompt}` : '',
@@ -752,10 +895,12 @@ export class VkService {
           if (sharedChatContext.length > 0) {
             aiMessages.push({
               role: 'system',
-              content: `Последние сообщения, видимые участникам этой беседы (только для понимания контекста):\n${sharedChatContext.map((message) => `${message.speaker}: ${message.content.slice(0, 1000)}`).join('\n')}`,
+              content: `Последние сообщения, видимые участникам этой беседы (только для понимания контекста):\n${sharedChatContext.map((message) => `${message.speaker} (VK ID ${message.authorId}): ${message.content.slice(0, 1000)}`).join('\n')}`,
             });
           }
-          const ctx = await memoryService.getContextForUser(String(peerId), senderId);
+          const ctx = context.isChat
+            ? []
+            : await memoryService.getContextForUser(String(peerId), senderId);
           for (const m of ctx)
             aiMessages.push({
               role: m.role as 'user' | 'assistant' | 'system',
@@ -793,6 +938,12 @@ export class VkService {
               inputTokens: resp.inputTokens,
               outputTokens: resp.outputTokens,
             });
+            await characterService.recordUsage(
+              personality.id,
+              senderId,
+              String(peerId),
+              context.isChat ? 'chat' : 'direct',
+            );
 
             await senderService.send(Number(peerId), resp.content, replyOptions);
             if (config.VOICE_ENABLED && userSettings.voiceEnabled && resp.content.length <= 4096) {
