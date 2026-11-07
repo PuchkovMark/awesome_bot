@@ -956,7 +956,15 @@ export class VkService {
     return document;
   }
 
-  private startTyping(peerId: number): () => void {
+  /**
+   * Показывает индикатор активности в диалоге (печать, запись голоса, загрузка фото).
+   * Работает и в личных сообщениях, и в беседах; в чатах без доступа (ошибки
+   * 917/922/927/932/936/983) индикатор отключается тихо, без предупреждений в логе.
+   */
+  private startActivity(
+    peerId: number,
+    type: 'typing' | 'audiomessage' | 'photo' = 'typing',
+  ): () => void {
     let stopped = false;
     let requestPending = false;
 
@@ -966,24 +974,25 @@ export class VkService {
       try {
         await this.vk.api.messages.setActivity({
           peer_id: peerId,
-          type: 'typing',
+          type,
         });
       } catch (err) {
         if (
           typeof err === 'object' &&
           err !== null &&
           'code' in err &&
-          (err.code === 917 || err.code === 922 || err.code === 932)
+          typeof err.code === 'number' &&
+          [917, 922, 927, 932, 936, 983].includes(err.code)
         ) {
           stopped = true;
           clearInterval(interval);
-          logger.warn(
-            { peerId },
-            'Typing status unavailable: community is not a member of this chat or cannot interact with it',
+          logger.debug(
+            { peerId, code: err.code },
+            'Activity status unavailable: community cannot interact with this peer',
           );
           return;
         }
-        logger.warn({ err, peerId }, 'Failed to update typing status');
+        logger.warn({ err, peerId }, 'Failed to update activity status');
       } finally {
         requestPending = false;
       }
@@ -1609,7 +1618,7 @@ export class VkService {
               }
             }
 
-            const stopTyping = this.startTyping(peerId);
+            const stopTyping = this.startActivity(peerId, 'photo');
             try {
               let image: GeneratedImage;
               if (imageCommand.action === 'generate') {
@@ -1740,7 +1749,7 @@ export class VkService {
                 }
               }
 
-              const stopTyping = this.startTyping(peerId);
+              const stopTyping = this.startActivity(peerId, 'audiomessage');
               try {
                 const userSettings = await settingsService.getUserSettings(senderId);
                 const audio = await voiceService.synthesize(
@@ -1858,7 +1867,7 @@ export class VkService {
                       'Опиши нейтрально только видимые предметы и обстановку. Не определяй личность людей и не делай выводов об их характере.',
                     )
                   : undefined;
-                const stopTyping = this.startTyping(peerId);
+                const stopTyping = this.startActivity(peerId, 'photo');
                 try {
                   const meme = await memeService.create(
                     args,
@@ -2205,7 +2214,7 @@ export class VkService {
           try {
             const mod = await import('../ai/providerFactory.js');
             const provider: AIProvider = mod.getAIProvider(providerName);
-            const stopTyping = this.startTyping(peerId);
+            const stopTyping = this.startActivity(peerId, 'typing');
             let resp: AIResponse;
             try {
               const searchEnabled =
@@ -2312,6 +2321,7 @@ export class VkService {
 
             await senderService.send(Number(peerId), resp.content, replyOptions);
             if (config.VOICE_ENABLED && userSettings.voiceEnabled && resp.content.length <= 4096) {
+              const stopVoiceActivity = this.startActivity(Number(peerId), 'audiomessage');
               try {
                 const audio = await voiceService.synthesize(
                   resp.content,
@@ -2331,6 +2341,8 @@ export class VkService {
                 });
               } catch (err) {
                 logger.warn({ err, peerId, senderId }, 'Failed to generate voice reply');
+              } finally {
+                stopVoiceActivity();
               }
             }
           } catch (err) {
