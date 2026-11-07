@@ -89,6 +89,14 @@ export class DetectorService {
     return { action, prompt: prompt.trim() };
   }
 
+  isFreeformMessage(
+    text: string,
+    command: string | null,
+    imageCommand: ImageCommand | null,
+  ): boolean {
+    return Boolean(text.trim()) && !command && !imageCommand;
+  }
+
   parseCommand(text: string): string | null {
     if (!text) return null;
     const t = text.trim();

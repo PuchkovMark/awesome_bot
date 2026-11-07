@@ -754,7 +754,7 @@ export class AdventureService {
     const help = [
       'Интерактивное приключение:',
       '/adventure start [detective|survival|fantasy|horror|scifi|pirates|time|comedy|random]',
-      '/adventure join|leave|continue|status|pause|resume|restart|end',
+      '/adventure join|leave|continue|status|pause|resume|restart|end|abort',
       '/adventure settings [сложность|длина|режим|изображения|стиль|частота|опасность|голосование|завершение] значение',
       '/adventure character [имя] — показать или изменить героя',
       '/adventure inventory — инвентарь; /inventory — короткая команда',
@@ -850,6 +850,19 @@ export class AdventureService {
         }
       }
       return { text: 'Активного приключения нет. Начать: /adventure start [жанр].' };
+    }
+    if (action === 'abort') {
+      return this.withConversationLock(conversationId, async () => {
+        const session = await this.getActive(conversationId);
+        if (!session) return { text: 'Активного приключения нет.' };
+        const state = parseState(session.data);
+        if (!this.getPlayer(state, requesterId))
+          return { text: 'Вы не участвуете в этом приключении.' };
+        if (requesterId !== state.hostId)
+          return { text: 'Управлять состоянием игры может только ведущий игрок.' };
+        await prisma.gameSession.delete({ where: { id: session.id } });
+        return { text: 'Приключение прекращено без сохранения.' };
+      });
     }
     if (action === 'status' || action === 'continue' || action === 'save') {
       const state = parseState(active.data);

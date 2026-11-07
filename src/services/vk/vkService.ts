@@ -1382,8 +1382,7 @@ export class VkService {
       }
 
       if (
-        !command &&
-        text.trim() &&
+        detectorService.isFreeformMessage(text, command, imageCommand) &&
         (await adventureService.isActivePlayer(String(peerId), senderId))
       ) {
         if (context.isChat && (await this.checkRateLimit(senderId, context, isAdmin))) {

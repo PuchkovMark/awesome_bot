@@ -175,6 +175,16 @@ test('summary period accepts only the 2-hour and 6-hour choices', () => {
   assert.equal(getSummaryHoursFromText('/summary'), null);
 });
 
+test('image commands are not treated as free-form adventure actions', () => {
+  const detector = new DetectorService();
+  const editCommand = '/edit изменить фон';
+  const imageCommand = detector.parseImageCommand(editCommand);
+
+  assert.ok(imageCommand);
+  assert.equal(detector.isFreeformMessage(editCommand, null, imageCommand), false);
+  assert.equal(detector.isFreeformMessage('осмотреть дверь', null, null), true);
+});
+
 test('summary output is capped at ten complete sentences', () => {
   const text = Array.from({ length: 12 }, (_, index) => `Предложение ${index + 1}.`).join(' ');
   const summary = limitSentences(text, 10);

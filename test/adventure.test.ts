@@ -38,6 +38,49 @@ test('adventure retries a malformed AI JSON response once', async () => {
   assert.equal(callCount, 2);
 });
 
+test('adventure abort removes the session without saving it to the journal', async () => {
+  const conversationId = `adventure-abort-${randomUUID()}`;
+  const state = {
+    version: 1,
+    players: [{ vkUserId: 'player-1' }, { vkUserId: 'player-2' }],
+    journal: [],
+    images: [],
+    options: [],
+    settings: {},
+    hostId: 'player-1',
+  };
+  try {
+    await prisma.conversation.create({
+      data: { id: conversationId, isGroup: true },
+    });
+    await prisma.gameSession.create({
+      data: { conversationId, game: 'ai_adventure', data: JSON.stringify(state) },
+    });
+
+    const denied = await adventureService.handleCommand(
+      conversationId,
+      'player-2',
+      'player-2',
+      true,
+      'abort',
+    );
+    assert.match(denied.text, /только ведущий/u);
+    assert.equal(await prisma.gameSession.count({ where: { conversationId } }), 1);
+
+    const aborted = await adventureService.handleCommand(
+      conversationId,
+      'player-1',
+      'player-1',
+      true,
+      'abort',
+    );
+    assert.equal(aborted.text, 'Приключение прекращено без сохранения.');
+    assert.equal(await prisma.gameSession.count({ where: { conversationId } }), 0);
+  } finally {
+    await prisma.conversation.deleteMany({ where: { id: conversationId } });
+  }
+});
+
 test('adventure vote updates are serialized and a tie opens a fresh vote', async () => {
   const conversationId = `adventure-test-${randomUUID()}`;
   const startedAt = new Date().toISOString();
