@@ -20,6 +20,7 @@ import {
 } from '../src/services/command/summaryUtils.js';
 import {
   buildPersonalityInstructions,
+  defaultPersonality,
   isPersonalityId,
   normalizePersonalityId,
   personalities,
@@ -120,6 +121,7 @@ test('AI distinguishes enabled voice feature from a missing provider key', () =>
   test('built-in AI characters have distinct prompts and retain legacy aliases', () => {
     assert.deepEqual(Object.keys(personalities).sort(), [
       'alex',
+      'chipsik',
       'joker',
       'max',
       'socrates',
@@ -127,12 +129,15 @@ test('AI distinguishes enabled voice feature from a missing provider key', () =>
     ]);
     assert.equal(
       new Set(Object.values(personalities).map(({ systemPrompt }) => systemPrompt)).size,
-      5,
+      6,
     );
+    assert.equal(defaultPersonality, 'chipsik');
     assert.equal(normalizePersonalityId('friendly'), 'alex');
+    assert.equal(normalizePersonalityId('default'), 'chipsik');
     assert.equal(normalizePersonalityId('sarcastic'), 'max');
     assert.equal(normalizePersonalityId('gamer'), 'joker');
     assert.equal(isPersonalityId('socrates'), true);
+    assert.equal(personalities.chipsik.settings.sarcasm, 55);
     assert.equal(personalities.alex.settings.length, 20);
     assert.equal(personalities.alex.settings.detail, 35);
     assert.equal(personalities.alex.settings.formality, 10);

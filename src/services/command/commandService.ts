@@ -256,13 +256,14 @@ export class CommandService {
         case 'translate':
           return await this.translate(args);
         case 'personality':
-          return this.setPersonality(senderId, peerId, args, isAdmin, isChat);
-        case 'chatpersonality':
-          return this.setChatPersonality(
+          return this.setPersonality(
             senderId,
             peerId,
             args,
-            canManageChat || isAdmin || isCreator,
+            isAdmin,
+            isChat,
+            canManageChat,
+            isCreator,
           );
         case 'settings':
           return this.getSettings(senderId, peerId);
@@ -354,7 +355,6 @@ export class CommandService {
       logger.error({ err, command, peerId, senderId, isAdmin }, 'Command handling failed');
       if (
         (cmd === 'personality' ||
-          cmd === 'chatpersonality' ||
           cmd === 'welcome' ||
           cmd === 'questionnaire' ||
           cmd === 'profile') &&
@@ -391,6 +391,11 @@ export class CommandService {
           ]
         : []),
       'Нажми кнопку под сообщением, чтобы переключить персонажа.',
+      ...(scope === 'chat'
+        ? [
+            'Для смены командой используй /personality <id>. Разрешить смену всем участникам можно командой /personality allow.',
+          ]
+        : []),
     ].join('\n\n');
     return { current, profiles, text };
   }
@@ -401,6 +406,8 @@ export class CommandService {
     args: string,
     isAdmin: boolean,
     isChat: boolean,
+    canManageChat: boolean,
+    isCreator: boolean,
   ): Promise<string> {
     const [subcommand = '', ...rest] = args.trim().split(/\s+/u);
     const action = subcommand.toLowerCase();
@@ -429,6 +436,14 @@ export class CommandService {
       return this.managePersonality(senderId, action, args.trim().slice(subcommand.length).trim());
     }
 
+    if (isChat) {
+      return this.setChatPersonality(senderId, peerId, args, canManageChat || isAdmin || isCreator);
+    }
+
+    if (action === 'allow' || action === 'deny') {
+      return 'Команды allow и deny доступны только в групповой беседе.';
+    }
+
     const current = await characterService.getCurrent('direct', senderId, peerId);
     if (!action || action === 'list') {
       if (action === 'list' && isAdmin) {
@@ -447,9 +462,6 @@ export class CommandService {
     }
     if (action === 'info') {
       return `${current.name}\n${current.description}\nПример: «${current.example}»`;
-    }
-    if (isChat && (action === 'settings' || action === 'reset')) {
-      return 'Личные настройки персонажа доступны только в личном диалоге с ботом.';
     }
     if (action === 'default') {
       const profile = await characterService.select(
@@ -479,7 +491,6 @@ export class CommandService {
       await characterService.resetSettings('direct', senderId, peerId, current.id);
       return `Индивидуальные настройки ${current.name} сброшены. История сохранена.`;
     }
-    if (isChat) return 'Личного персонажа можно выбирать только в личном диалоге с ботом.';
     const profile = await characterService.select('direct', senderId, peerId, action);
     return `Выбран персонаж ${profile.name}. История сообщений сохранена.`;
   }
@@ -502,11 +513,15 @@ export class CommandService {
     const current = await characterService.getCurrent('chat', senderId, peerId);
     if (!action || action === 'list') {
       const { profiles } = await this.getPersonalityMenu(senderId, peerId, 'chat');
-      return `Персонаж беседы: ${current.name}.\n${profiles.map((profile) => `${profile.id} — ${profile.name}: ${profile.description}`).join('\n')}\n/chatpersonality <id> — сменить (нужны права администратора беседы).\n/chatpersonality allow|deny — разрешить или запретить смену всем участникам.`;
+      return `Персонаж беседы: ${current.name}.\n${profiles.map((profile) => `${profile.id} — ${profile.name}: ${profile.description}`).join('\n')}\n/personality <id> — сменить персонажа.\n/personality allow|deny — разрешить или запретить смену всем участникам.`;
     }
+    if (action === 'info') {
+      return `${current.name}\n${current.description}\nПример: «${current.example}»`;
+    }
+
     if (action === 'settings') {
       if (!canManageChat)
-        return 'Настройки персонажа беседы могут менять только администраторы беседы или бота.';
+        return 'Общие настройки персонажа беседы могут менять только администраторы беседы или бота.';
       const updates = this.parseSliderArgs(rest.join(' '));
       if (Object.keys(updates).length === 0) {
         const values = await characterService.getSettings('chat', senderId, peerId, current.id);
@@ -514,6 +529,9 @@ export class CommandService {
       }
       await characterService.setSettings('chat', senderId, peerId, current.id, updates);
       return `Общие настройки персонажа ${current.name} сохранены для этой беседы.`;
+    }
+    if (action === 'reset') {
+      return 'Сбросить индивидуальные настройки персонажа можно только в личном диалоге.';
     }
     if (!canManageChat && !(await characterService.canAllMembersChange(peerId))) {
       return 'Сменить персонажа могут только администраторы беседы или бота.';
@@ -1425,9 +1443,10 @@ export class CommandService {
         '/stats — ваша статистика',
         '',
         'Персонажи и настройки:',
-        '/personality [id] — выбрать характер ИИ',
-        '/personality info|list|default|settings|reset — информация, список, настройки или сброс',
-        '/chatpersonality [id|list|default] — персонаж беседы',
+        '/personality [id|list|default] — выбрать личность; в беседе меняет общий характер',
+        '/personality info|settings|reset — информация, настройки или сброс',
+        '/personality settings humor=70 sarcasm=30 — настроить стиль',
+        '/personality allow|deny — разрешить или запретить участникам менять персонажа беседы',
         '/system [текст|clear] — задать или удалить личную инструкцию',
       ],
       [

@@ -1881,25 +1881,11 @@ export class VkService {
               }
             }
             if (
-              (command === 'personality' && context.isChat) ||
-              (command === 'chatpersonality' && !context.isChat)
+              command === 'personality' &&
+              (!args.trim() ||
+                (args.trim().toLowerCase() === 'list' && (context.isChat || !isAdmin)))
             ) {
-              await senderService.send(
-                Number(peerId),
-                command === 'personality'
-                  ? 'Личного персонажа можно выбирать в личных сообщениях боту командой /personality.'
-                  : '/chatpersonality доступна только в групповых беседах.',
-                replyOptions,
-              );
-              return;
-            }
-            if (
-              (command === 'personality' &&
-                (!args.trim() || (args.trim().toLowerCase() === 'list' && !isAdmin))) ||
-              (command === 'chatpersonality' &&
-                (!args.trim() || args.trim().toLowerCase() === 'list'))
-            ) {
-              const scope = command === 'chatpersonality' ? 'chat' : 'direct';
+              const scope = context.isChat ? 'chat' : 'direct';
               const menu = await commandService.getPersonalityMenu(senderId, String(peerId), scope);
               await senderService.sendPersonalityMenu(
                 Number(peerId),
@@ -1914,7 +1900,7 @@ export class VkService {
             const canManageChat =
               isAdmin ||
               (context.isChat &&
-                (command === 'chatpersonality' ||
+                (command === 'personality' ||
                   command === 'welcome' ||
                   command === 'questionnaire' ||
                   command === 'memeday') &&

@@ -65,6 +65,15 @@ test('chat characters and group settings are isolated from users and other chats
   assert.equal(await characters.canAllMembersChange('2000000001'), true);
 });
 
+test('new direct messages and chats use the default Chipsik character', async () => {
+  assert.equal(await characters.getDefaultPersonalityId(), 'chipsik');
+  assert.equal(
+    (await characters.getCurrent('direct', 'default-user', 'default-user')).id,
+    'chipsik',
+  );
+  assert.equal((await characters.getCurrent('chat', 'default-user', '2000000020')).id, 'chipsik');
+});
+
 test('changing a character preserves history and records a selection audit entry', async () => {
   const conversation = await prisma.conversation.upsert({
     where: { id: 'history-user' },
@@ -344,7 +353,7 @@ test('creator has a higher protected role than administrators', async () => {
   );
 });
 
-test('personal sliders are DM-only and chat sliders require administrator or creator rights', async () => {
+test('personality command uses direct or group scope and protects shared chat settings', async () => {
   const { CommandService } = await import('../src/services/command/commandService.js');
   const commands = new CommandService();
 
@@ -359,24 +368,11 @@ test('personal sliders are DM-only and chat sliders require administrator or cre
       false,
       true,
     ),
-    'Личные настройки персонажа доступны только в личном диалоге с ботом.',
-  );
-  assert.equal(
-    await commands.handleCommand(
-      'chatpersonality',
-      'settings humor=80',
-      '2000000010',
-      'regular-user',
-      false,
-      false,
-      false,
-      true,
-    ),
-    'Настройки персонажа беседы могут менять только администраторы беседы или бота.',
+    'Общие настройки персонажа беседы могут менять только администраторы беседы или бота.',
   );
 
   const creatorResult = await commands.handleCommand(
-    'chatpersonality',
+    'personality',
     'settings humor=80',
     '2000000010',
     '388581097',
@@ -385,8 +381,22 @@ test('personal sliders are DM-only and chat sliders require administrator or cre
     true,
     true,
   );
-  assert.equal(creatorResult, 'Общие настройки персонажа Алекс сохранены для этой беседы.');
-  assert.equal((await characters.getSettings('chat', 'member', '2000000010', 'alex')).humor, 80);
+  assert.equal(creatorResult, 'Общие настройки персонажа Чипсик сохранены для этой беседы.');
+  assert.equal((await characters.getSettings('chat', 'member', '2000000010', 'chipsik')).humor, 80);
+
+  const groupSelectionResult = await commands.handleCommand(
+    'personality',
+    'max',
+    '2000000010',
+    'chat-admin',
+    false,
+    true,
+    false,
+    true,
+  );
+  assert.match(groupSelectionResult ?? '', /В этой беседе теперь действует Макс/u);
+  assert.equal((await characters.getCurrent('chat', 'member', '2000000010')).id, 'max');
+  assert.equal((await characters.getCurrent('direct', 'chat-admin', 'chat-admin')).id, 'chipsik');
 
   const directResult = await commands.handleCommand(
     'personality',
@@ -394,9 +404,9 @@ test('personal sliders are DM-only and chat sliders require administrator or cre
     'direct-user',
     'direct-user',
   );
-  assert.match(directResult ?? '', /Настройки Алекс сохранены/u);
+  assert.match(directResult ?? '', /Настройки Чипсик сохранены/u);
   assert.equal(
-    (await characters.getSettings('direct', 'direct-user', 'direct-user', 'alex')).humor,
+    (await characters.getSettings('direct', 'direct-user', 'direct-user', 'chipsik')).humor,
     75,
   );
 });
