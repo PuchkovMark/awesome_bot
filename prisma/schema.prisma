@@ -58,6 +58,7 @@ model Message {
   createdAt      DateTime     @default(now())
 
   @@index([conversationId, createdAt])
+  @@index([conversationId, role, createdAt])
   @@index([userId, conversationId, createdAt])
 }
 

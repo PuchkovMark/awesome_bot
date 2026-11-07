@@ -1,10 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  nextRandomId,
   parseAudioMessageUploadFile,
   parsePhotoUploadResponse,
   parseSavedAudioMessage,
 } from '../src/services/sender/senderService.js';
+
+test('nextRandomId stays unique across rapid consecutive sends', () => {
+  const ids = new Set<number>();
+  for (let i = 0; i < 100_000; i++) ids.add(nextRandomId());
+  assert.equal(ids.size, 100_000);
+  assert.ok([...ids].every((id) => Number.isInteger(id) && id > 0 && id < 2 ** 31));
+});
 
 test('VK photo upload response parser accepts complete upload data', () => {
   const expected = {

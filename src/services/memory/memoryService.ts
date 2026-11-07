@@ -239,6 +239,7 @@ export class MemoryService {
         user: { select: { vkId: true, displayName: true } },
       },
       distinct: ['userId'],
+      take: 100,
     });
 
     return messages.flatMap(({ user }) =>
@@ -278,7 +279,7 @@ export class MemoryService {
       where: {
         createdAt: { lt: ttlDate },
         conversation: {
-          settings: { is: { memeDayWeeklyEnabled: false } },
+          OR: [{ settings: { is: { memeDayWeeklyEnabled: false } } }, { settings: { is: null } }],
         },
       },
     });

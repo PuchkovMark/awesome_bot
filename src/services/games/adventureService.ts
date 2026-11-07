@@ -1,5 +1,5 @@
 import type { GameSession } from '@prisma/client';
-import type { AIMessage, AIProvider } from '../ai/AIProvider.js';
+import type { AIMessage, AIProvider, AIResponse } from '../ai/AIProvider.js';
 import { getAIProvider } from '../ai/providerFactory.js';
 import { prisma } from '../../db/client.js';
 import config from '../../config/index.js';
@@ -200,9 +200,32 @@ export function extractJson(value: string): Record<string, unknown> {
   return parsed;
 }
 
+async function recordAdventureUsage(
+  provider: AIProvider,
+  response: AIResponse,
+  usageContext?: { vkUserId: string; conversationId: string },
+): Promise<void> {
+  if (!usageContext) return;
+  try {
+    await prisma.apiUsage.create({
+      data: {
+        vkUserId: usageContext.vkUserId,
+        conversationId: usageContext.conversationId,
+        provider: provider.name,
+        feature: 'adventure',
+        inputTokens: response.inputTokens,
+        outputTokens: response.outputTokens,
+      },
+    });
+  } catch (err) {
+    logger.warn({ err, provider: provider.name }, 'Failed to record adventure API usage');
+  }
+}
+
 export async function requestAdventureJson(
   provider: AIProvider,
   messages: AIMessage[],
+  usageContext?: { vkUserId: string; conversationId: string },
 ): Promise<Record<string, unknown>> {
   const parseResponse = (content: string) => {
     const parsed = extractJson(content);
@@ -218,6 +241,7 @@ export async function requestAdventureJson(
   };
 
   const response = await provider.send(messages, { maxTokens: 1800, temperature: 0.85 });
+  await recordAdventureUsage(provider, response, usageContext);
   try {
     return parseResponse(response.content);
   } catch {
@@ -238,6 +262,7 @@ export async function requestAdventureJson(
     ],
     { maxTokens: 2200, temperature: 0.3 },
   );
+  await recordAdventureUsage(provider, retry, usageContext);
   try {
     return parseResponse(retry.content);
   } catch (error) {
@@ -417,7 +442,10 @@ export class AdventureService {
         ].join('\n\n'),
       },
     ];
-    return requestAdventureJson(getAIProvider(providerName), messages);
+    return requestAdventureJson(getAIProvider(providerName), messages, {
+      vkUserId: requesterId,
+      conversationId,
+    });
   }
 
   private applyTurn(
@@ -1014,7 +1042,8 @@ export class AdventureService {
         return { text: 'Вы не участвуете в этом приключении.' };
       const providerName =
         (await settingsService.getAppSetting('ai_provider')) || config.AI_PROVIDER;
-      const { content } = await getAIProvider(providerName).send(
+      const provider = getAIProvider(providerName);
+      const { content, inputTokens, outputTokens } = await provider.send(
         [
           {
             role: 'system',
@@ -1024,6 +1053,11 @@ export class AdventureService {
           { role: 'user', content: `${summarizeJournal(state)}\n\nСцена: ${state.scene}` },
         ],
         { maxTokens: 120, temperature: 0.4 },
+      );
+      await recordAdventureUsage(
+        provider,
+        { content, inputTokens, outputTokens },
+        { vkUserId: requesterId, conversationId },
       );
       return { text: `💡 ${normalizeText(content, 400)}` };
     }

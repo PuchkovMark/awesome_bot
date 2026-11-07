@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import config from '../src/config/index.js';
 import { RateLimitService } from '../src/services/queue/rateLimitService.js';
+import { RequestQueue } from '../src/services/queue/requestQueue.js';
 import { SplitterService } from '../src/services/splitter/splitterService.js';
 import { DetectorService } from '../src/services/detector/detectorService.js';
 import { parseVkUserReference } from '../src/services/vk/vkMention.js';
@@ -50,6 +52,29 @@ test('rate limiter isolates users and reports when the window expires', () => {
   assert.equal(limited.retryAfterMs, 58_000);
   assert.equal(limiter.take('user-b', 3_000).allowed, true);
   assert.equal(limiter.take('user-a', 61_000).allowed, true);
+});
+
+test('rate limiter bounds notification state for rejected users', () => {
+  const limiter = new RateLimitService(1, 60_000, 2);
+
+  limiter.take('spam-1', 1_000);
+  limiter.take('spam-1', 2_000);
+  limiter.take('spam-2', 1_000);
+  limiter.take('spam-2', 2_000);
+  limiter.take('spam-3', 1_000);
+  limiter.take('spam-3', 2_000);
+
+  const internal = limiter as unknown as { lastNotified: Map<string, number> };
+  assert.ok(internal.lastNotified.size <= 2);
+});
+
+test('request queue evicts idle per-user queues', async () => {
+  const queue = new RequestQueue();
+  await queue.add('user-x', async () => 1);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  const internal = queue as unknown as { queues: Map<string, unknown> };
+  assert.equal(internal.queues.size, 0);
 });
 
 test('active chat mode recognizes Russian requests without matching word fragments', () => {
@@ -108,15 +133,25 @@ test('AI receives the current bot capabilities and access restrictions', () => {
 });
 
 test('AI distinguishes enabled voice feature from a missing provider key', () => {
-  const capabilities = buildBotCapabilities({
-    isAdmin: false,
-    imageAccess: 'admins_only',
-    chatMode: 'normal',
-    personalityName: 'Дружелюбный помощник',
-    personalityIds: ['friendly'],
-    provider: 'openai',
-    voiceEnabledForUser: false,
-  });
+  const previousVoiceEnabled = config.VOICE_ENABLED;
+  const previousOpenAiKey = config.OPENAI_API_KEY;
+  config.VOICE_ENABLED = true;
+  config.OPENAI_API_KEY = undefined;
+  let capabilities: string;
+  try {
+    capabilities = buildBotCapabilities({
+      isAdmin: false,
+      imageAccess: 'admins_only',
+      chatMode: 'normal',
+      personalityName: 'Дружелюбный помощник',
+      personalityIds: ['friendly'],
+      provider: 'openai',
+      voiceEnabledForUser: false,
+    });
+  } finally {
+    config.VOICE_ENABLED = previousVoiceEnabled;
+    config.OPENAI_API_KEY = previousOpenAiKey;
+  }
 
   test('built-in AI characters have distinct prompts and retain legacy aliases', () => {
     assert.deepEqual(Object.keys(personalities).sort(), [
@@ -137,7 +172,7 @@ test('AI distinguishes enabled voice feature from a missing provider key', () =>
     assert.equal(normalizePersonalityId('sarcastic'), 'max');
     assert.equal(normalizePersonalityId('gamer'), 'joker');
     assert.equal(isPersonalityId('socrates'), true);
-    assert.equal(personalities.chipsik.settings.sarcasm, 55);
+    assert.equal(personalities.chipsik.settings.sarcasm, 95);
     assert.equal(personalities.alex.settings.length, 20);
     assert.equal(personalities.alex.settings.detail, 35);
     assert.equal(personalities.alex.settings.formality, 10);

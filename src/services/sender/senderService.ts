@@ -11,6 +11,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+let lastRandomId = Date.now() % 0x7fffff00;
+
+/**
+ * Возвращает уникальный random_id для messages.send.
+ * Монотонный счётчик исключает коллизии при отправке нескольких частей
+ * в одну миллисекунду, из-за которых VK молча отбрасывал сообщения.
+ */
+export function nextRandomId(): number {
+  lastRandomId = lastRandomId >= 0x7ffffffe ? 1 : lastRandomId + 1;
+  return lastRandomId;
+}
+
 type PhotoUploadData = { server: number; photo: string; hash: string };
 
 export function parsePhotoUploadResponse(value: unknown): PhotoUploadData | null {
@@ -109,7 +121,7 @@ export class SenderService {
       try {
         const result: unknown = await this.vk.api.messages.send({
           peer_id: peerId,
-          random_id: Date.now() % 1e9,
+          random_id: nextRandomId(),
           message: part,
           keyboard: index === 0 ? options?.keyboard : undefined,
           forward:
@@ -446,7 +458,7 @@ export class SenderService {
 
       const result: unknown = await this.vk.api.messages.send({
         peer_id: peerId,
-        random_id: options?.randomId ?? Date.now() % 1e9,
+        random_id: options?.randomId ?? nextRandomId(),
         message: caption,
         attachment,
         keyboard: options?.keyboard,
@@ -521,7 +533,7 @@ export class SenderService {
     try {
       const result: unknown = await this.vk.api.messages.send({
         peer_id: peerId,
-        random_id: Date.now() % 1e9,
+        random_id: nextRandomId(),
         message: caption,
         attachment,
         keyboard,
@@ -601,7 +613,7 @@ export class SenderService {
 
     const result: unknown = await this.vk.api.messages.send({
       peer_id: peerId,
-      random_id: Date.now() % 1e9,
+      random_id: nextRandomId(),
       message: text,
       attachment,
       forward:

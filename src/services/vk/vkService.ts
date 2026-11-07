@@ -12,7 +12,7 @@ import { logger } from '../../logger/index.js';
 import memoryService from '../memory/memoryService.js';
 import type { AIMessage, AIProvider, AIResponse } from '../ai/AIProvider.js';
 import requestQueue from '../queue/requestQueue.js';
-import senderService from '../sender/senderService.js';
+import senderService, { nextRandomId } from '../sender/senderService.js';
 import detectorService from '../detector/detectorService.js';
 import commandService from '../command/commandService.js';
 import imageGenerationService from '../image/imageGenerationService.js';
@@ -86,6 +86,7 @@ export class VkService {
   private readonly rateLimiter = new RateLimitService(config.MAX_REQUESTS_PER_MINUTE, 60_000);
   private readonly userDisplayNames = new Map<number, string>();
   private readonly pendingDisplayNameRequests = new Map<number, Promise<string | undefined>>();
+  private readonly processedMessageKeys = new Map<string, number>();
 
   private async recordUsage(data: {
     vkUserId: string;
@@ -958,7 +959,6 @@ export class VkService {
   private startTyping(peerId: number): () => void {
     let stopped = false;
     let requestPending = false;
-    let interval: ReturnType<typeof setInterval>;
 
     const update = async () => {
       if (stopped || requestPending) return;
@@ -989,7 +989,7 @@ export class VkService {
       }
     };
 
-    interval = setInterval(() => void update(), 4000);
+    const interval = setInterval(() => void update(), 4000);
     void update();
 
     return () => {
@@ -1194,6 +1194,30 @@ export class VkService {
       if (context.isOutbox) return next();
 
       const peerId = context.peerId;
+      const messageKey =
+        context.id > 0
+          ? `${peerId}:${context.id}`
+          : context.conversationMessageId
+            ? `${peerId}:cmid${context.conversationMessageId}`
+            : null;
+      if (messageKey) {
+        if (this.processedMessageKeys.has(messageKey)) {
+          logger.debug({ peerId, messageKey }, 'Skipping duplicate VK message event');
+          return next();
+        }
+        this.processedMessageKeys.set(messageKey, Date.now());
+        if (this.processedMessageKeys.size > 5000) {
+          const cutoff = Date.now() - 10 * 60_000;
+          for (const [key, seenAt] of this.processedMessageKeys) {
+            if (seenAt < cutoff) this.processedMessageKeys.delete(key);
+          }
+          while (this.processedMessageKeys.size > 5000) {
+            const oldest = this.processedMessageKeys.keys().next().value;
+            if (oldest === undefined) break;
+            this.processedMessageKeys.delete(oldest);
+          }
+        }
+      }
       if (context.isChat && context.eventType) {
         const memberId = context.eventMemberId;
         try {
@@ -1271,6 +1295,10 @@ export class VkService {
             await senderService.send(
               Number(peerId),
               'Не удалось распознать голосовое сообщение. Проверьте настройки голосового модуля и попробуйте ещё раз.',
+              {
+                replyTo: context.id > 0 ? context.id : undefined,
+                conversationMessageId: context.conversationMessageId || undefined,
+              },
             );
             return next();
           }
@@ -1333,6 +1361,18 @@ export class VkService {
       const isAdventureCommand =
         (command !== null && adventureCommands.has(command)) || legacyAdventureCommand;
       const chatSettings = await settingsService.getChatSettings(String(peerId));
+      if (context.isChat && chatSettings.mode === 'quiet' && !isAdmin) {
+        if (text.trim()) {
+          await memoryService.addMessage({
+            conversationId: String(peerId),
+            vkUserId: senderId,
+            displayName,
+            role: 'user',
+            content: text,
+          });
+        }
+        return next();
+      }
       if (
         context.isChat &&
         text.trim() &&
@@ -1410,25 +1450,6 @@ export class VkService {
             );
           }
         });
-        return next();
-      }
-
-      if (
-        context.isChat &&
-        chatSettings.mode === 'quiet' &&
-        !isAdmin &&
-        command !== 'profile' &&
-        !isAdventureCommand
-      ) {
-        if (text.trim()) {
-          await memoryService.addMessage({
-            conversationId: String(peerId),
-            vkUserId: senderId,
-            displayName,
-            role: 'user',
-            content: text,
-          });
-        }
         return next();
       }
 
@@ -2321,7 +2342,16 @@ export class VkService {
             );
           }
         } catch (err) {
-          logger.error({ err }, 'Failed to handle queued message');
+          logger.error({ err, peerId, senderId }, 'Failed to handle queued message');
+          try {
+            await senderService.send(
+              Number(peerId),
+              'Произошла внутренняя ошибка при обработке сообщения. Попробуйте ещё раз.',
+              replyOptions,
+            );
+          } catch (sendError) {
+            logger.warn({ err: sendError, peerId }, 'Failed to send fallback error message');
+          }
         }
       });
 
@@ -2346,7 +2376,7 @@ export class VkService {
     for (const part of splitterService.split(text)) {
       await this.vk.api.messages.send({
         peer_id: Number(peerId),
-        random_id: Date.now() % 1e9,
+        random_id: nextRandomId(),
         message: part,
       });
     }
