@@ -187,6 +187,58 @@ test('shared chat context includes recent participant messages and bot replies i
   );
 });
 
+test('proposal history lookup finds the speaker beyond the recent chat context', async () => {
+  const conversationId = 'proposal-history-recall';
+  await prisma.conversation.upsert({
+    where: { id: conversationId },
+    create: { id: conversationId, isGroup: true },
+    update: {},
+  });
+  const proposer = await prisma.user.upsert({
+    where: { vkId: 'proposal-user' },
+    create: { vkId: 'proposal-user', displayName: 'Ирина' },
+    update: { displayName: 'Ирина' },
+  });
+  const other = await prisma.user.upsert({
+    where: { vkId: 'proposal-other' },
+    create: { vkId: 'proposal-other', displayName: 'Олег' },
+    update: { displayName: 'Олег' },
+  });
+  const now = Date.now();
+  await prisma.message.createMany({
+    data: [
+      {
+        conversationId,
+        userId: proposer.id,
+        role: 'user',
+        content: 'Предлагаю поехать в Казань.',
+        createdAt: new Date(now - 20 * 60_000),
+      },
+      ...Array.from({ length: 10 }, (_, index) => ({
+        conversationId,
+        userId: other.id,
+        role: 'user',
+        content: `Обсуждение поездки, сообщение ${index + 1}.`,
+        createdAt: new Date(now - (10 - index) * 60_000),
+      })),
+    ],
+  });
+
+  const { default: memoryService } = await import('../src/services/memory/memoryService.js');
+  const recalled = await memoryService.getProposalHistoryForQuestion(
+    conversationId,
+    'А кто вообще это предложил?',
+  );
+  assert.deepEqual(
+    recalled?.map(({ speaker, authorId, content }) => ({ speaker, authorId, content })),
+    [{ speaker: 'Ирина', authorId: 'proposal-user', content: 'Предлагаю поехать в Казань.' }],
+  );
+  assert.equal(
+    await memoryService.getProposalHistoryForQuestion(conversationId, 'Что сейчас обсуждаем?'),
+    undefined,
+  );
+});
+
 test('exclusive profiles enforce access and prompt versions can be rolled back', async () => {
   await characters.createProfile(
     'private_helper',
@@ -408,5 +460,65 @@ test('personality command uses direct or group scope and protects shared chat se
   assert.equal(
     (await characters.getSettings('direct', 'direct-user', 'direct-user', 'chipsik')).humor,
     75,
+  );
+});
+
+test('system instructions are scoped to direct conversations and chats', async () => {
+  const { CommandService } = await import('../src/services/command/commandService.js');
+  const commands = new CommandService();
+  const userId = 'system-chat-user';
+  const peerId = '2000000030';
+
+  assert.equal(
+    await commands.handleCommand(
+      'system',
+      'Отвечай кратко.',
+      peerId,
+      userId,
+      false,
+      false,
+      false,
+      true,
+    ),
+    'Инструкцию беседы могут просматривать и менять только администраторы беседы или бота.',
+  );
+  assert.equal((await settingsService.getUserSettings(userId)).systemPrompt, null);
+  assert.equal((await settingsService.getChatSettings(peerId)).systemPrompt, null);
+
+  assert.equal(
+    await commands.handleCommand(
+      'system',
+      'Отвечай кратко.',
+      peerId,
+      userId,
+      false,
+      true,
+      false,
+      true,
+    ),
+    'Инструкция беседы сохранена.',
+  );
+  assert.equal((await settingsService.getChatSettings(peerId)).systemPrompt, 'Отвечай кратко.');
+  assert.equal((await settingsService.getUserSettings(userId)).systemPrompt, null);
+
+  assert.equal(
+    await commands.handleCommand('system', '', peerId, userId, false, true, false, true),
+    'Инструкция беседы:\nОтвечай кратко.\n\nИзменить: /system <текст>; удалить: /system clear',
+  );
+  assert.equal(
+    await commands.handleCommand('system', 'clear', peerId, userId, false, true, false, true),
+    'Инструкция беседы удалена.',
+  );
+  assert.equal((await settingsService.getChatSettings(peerId)).systemPrompt, null);
+
+  assert.equal(
+    await commands.handleCommand('system', 'Только для меня.', userId, userId),
+    'Личная системная инструкция сохранена.',
+  );
+  assert.equal((await settingsService.getUserSettings(userId)).systemPrompt, 'Только для меня.');
+  assert.equal((await settingsService.getChatSettings(peerId)).systemPrompt, null);
+  assert.match(
+    (await commands.handleCommand('system', 'global инструкция', peerId, userId)) ?? '',
+    /Префикс global больше не используется/u,
   );
 });

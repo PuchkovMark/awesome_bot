@@ -12,6 +12,11 @@ export type StoredMessage = {
   createdAt: Date;
 };
 
+const proposalAttributionQuestionPattern =
+  /(?:^|[^\p{L}\p{N}])кто(?:$|[^\p{L}\p{N}])[\s\S]{0,100}предлож\p{L}*/iu;
+const proposalCuePattern =
+  /предлож\p{L}*|предлаг\p{L}*|давайте|давай|может(?:\s+быть)?|можно|а\s+если|есть\s+идея|мой\s+вариант|(?:поедем|поехать|съездим|съездить)\s+(?:в|на)/iu;
+
 /**
  * MemoryService — отвечает за сохранение и получение истории сообщений.
  * Хранит сообщения в Prisma/SQLite, удаляет устаревший контекст и выдаёт
@@ -155,6 +160,46 @@ export class MemoryService {
       authorId: message.role === 'assistant' ? undefined : (message.user?.vkId ?? 'unknown'),
       content: message.content,
     }));
+  }
+
+  async getProposalHistoryForQuestion(
+    conversationId: string,
+    query: string,
+  ): Promise<
+    | {
+        speaker: string;
+        authorId: string;
+        content: string;
+        createdAt: Date;
+      }[]
+    | undefined
+  > {
+    if (!proposalAttributionQuestionPattern.test(query)) return undefined;
+
+    const messages = await prisma.message.findMany({
+      where: {
+        conversationId,
+        role: 'user',
+        createdAt: { gte: new Date(Date.now() - this.ttlHours * 60 * 60 * 1000) },
+      },
+      include: { user: { select: { vkId: true, displayName: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+    });
+
+    return messages
+      .filter((message) => proposalCuePattern.test(message.content))
+      .slice(0, 10)
+      .reverse()
+      .map((message) => ({
+        speaker:
+          message.user?.displayName && message.user.displayName !== message.user.vkId
+            ? message.user.displayName
+            : 'Участник',
+        authorId: message.user?.vkId ?? 'unknown',
+        content: message.content,
+        createdAt: message.createdAt,
+      }));
   }
 
   async getRecentConversationMessages(conversationId: string, since: Date) {

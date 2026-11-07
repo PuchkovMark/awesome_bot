@@ -14,7 +14,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 type PhotoUploadData = { server: number; photo: string; hash: string };
 
 export function parsePhotoUploadResponse(value: unknown): PhotoUploadData | null {
-  const payload = isRecord(value) && 'response' in value ? value.response : value;
+  let parsed = value;
+  if (typeof parsed === 'string') {
+    try {
+      parsed = JSON.parse(parsed) as unknown;
+    } catch {
+      return null;
+    }
+  }
+  let payload = isRecord(parsed) && 'response' in parsed ? parsed.response : parsed;
+  if (typeof payload === 'string') {
+    try {
+      payload = JSON.parse(payload) as unknown;
+    } catch {
+      return null;
+    }
+  }
   if (!isRecord(payload)) return null;
   const server = Number(payload.server);
   if (
@@ -355,18 +370,57 @@ export class SenderService {
         } catch (err) {
           const status = axios.isAxiosError(err) ? err.response?.status : undefined;
           const code = axios.isAxiosError(err) ? err.code : undefined;
-          logger.warn({ peerId, status, code }, 'VK photo upload request failed');
+          if (
+            attempt === 0 &&
+            (status === 408 ||
+              status === 429 ||
+              (status && status >= 500) ||
+              isRetryableUploadError(err))
+          ) {
+            logger.warn(
+              { peerId, status, code, attempt: attempt + 1, imageBytes: jpeg.length },
+              'VK photo upload request failed; retrying with a smaller image',
+            );
+            await new Promise((resolve) => setTimeout(resolve, 750));
+            continue;
+          }
+          logger.warn(
+            { peerId, status, code, attempt: attempt + 1 },
+            'VK photo upload request failed',
+          );
           throw new Error(`VK photo upload failed${status ? ` (${status})` : ''}`);
         }
         const uploaded = parsePhotoUploadResponse(uploadData);
         if (!uploaded) {
+          const responseObject =
+            isRecord(uploadData) && isRecord(uploadData.response)
+              ? uploadData.response
+              : uploadData;
           if (attempt === 0) {
             logger.warn(
-              { peerId, attempt: attempt + 1, imageBytes: jpeg.length },
+              {
+                peerId,
+                attempt: attempt + 1,
+                imageBytes: jpeg.length,
+                responseType: typeof uploadData,
+                responseLength: typeof uploadData === 'string' ? uploadData.length : undefined,
+                responseKeys: isRecord(responseObject) ? Object.keys(responseObject) : undefined,
+              },
               'VK photo upload returned incomplete data; retrying with a smaller image',
             );
             continue;
           }
+          logger.error(
+            {
+              peerId,
+              attempt: attempt + 1,
+              imageBytes: jpeg.length,
+              responseType: typeof uploadData,
+              responseLength: typeof uploadData === 'string' ? uploadData.length : undefined,
+              responseKeys: isRecord(responseObject) ? Object.keys(responseObject) : undefined,
+            },
+            'VK photo upload returned incomplete data after retry',
+          );
           throw new Error('VK photo upload returned incomplete data after retry');
         }
 

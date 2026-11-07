@@ -313,37 +313,40 @@ export class CommandService {
           return `Вся история пользователя удалена (${deleted} сообщений).`;
         }
         case 'system': {
-          if (args.trim().split(/\s+/u, 1)[0]?.toLowerCase() === 'global') {
-            if (!isAdmin)
-              return 'Глобальную системную инструкцию может менять только администратор.';
-            const globalText = args.trim().slice('global'.length).trim();
-            const currentGlobal = await settingsService.getAppSetting('system_prompt');
-            if (!globalText) {
-              return currentGlobal
-                ? `Глобальная инструкция:\n${currentGlobal}\nИзменить: /system global <текст>; удалить: /system global clear`
-                : 'Глобальная инструкция не задана. Установить: /system global <текст>';
-            }
-            if (globalText.toLowerCase() === 'clear') {
-              await settingsService.setAppSetting('system_prompt', '');
-              await settingsService.logAdminAction(senderId, 'system_prompt.cleared');
-              return 'Глобальная системная инструкция удалена.';
-            }
-            if (globalText.length > 2000) {
-              return 'Глобальная инструкция слишком длинная: максимум 2000 символов.';
-            }
-            await settingsService.setAppSetting('system_prompt', globalText);
-            await settingsService.logAdminAction(senderId, 'system_prompt.changed');
-            return 'Глобальная системная инструкция сохранена.';
+          if (/^global(?:\s|$)/iu.test(args.trim())) {
+            return 'Префикс global больше не используется. Команда /system действует в текущем диалоге.';
           }
-          const current = await settingsService.getUserSettings(senderId);
+          if (isChat && !canManageChat && !isAdmin && !isCreator) {
+            return 'Инструкцию беседы могут просматривать и менять только администраторы беседы или бота.';
+          }
+          const current = isChat
+            ? await settingsService.getChatSettings(peerId)
+            : await settingsService.getUserSettings(senderId);
+          const currentPrompt = current.systemPrompt;
           if (!args.trim()) {
-            return current.systemPrompt
-              ? `Ваша инструкция:\n${current.systemPrompt}\n\nИзменить: /system <текст>; удалить: /system clear`
+            if (currentPrompt) {
+              return isChat
+                ? `Инструкция беседы:\n${currentPrompt}\n\nИзменить: /system <текст>; удалить: /system clear`
+                : `Ваша личная инструкция:\n${currentPrompt}\n\nИзменить: /system <текст>; удалить: /system clear`;
+            }
+            return isChat
+              ? 'Инструкция беседы не задана. Установить: /system <текст>'
               : 'Личная системная инструкция не задана. Установить: /system <текст>';
           }
           if (args.trim().toLowerCase() === 'clear') {
+            if (isChat) {
+              await settingsService.setChatSystemPrompt(peerId, null);
+              return 'Инструкция беседы удалена.';
+            }
             await settingsService.setSystemPrompt(senderId, null);
-            return 'Ваша системная инструкция удалена.';
+            return 'Личная системная инструкция удалена.';
+          }
+          if (args.trim().length > 2000) {
+            return 'Инструкция слишком длинная: максимум 2000 символов.';
+          }
+          if (isChat) {
+            await settingsService.setChatSystemPrompt(peerId, args);
+            return 'Инструкция беседы сохранена.';
           }
           await settingsService.setSystemPrompt(senderId, args);
           return 'Личная системная инструкция сохранена.';
@@ -959,7 +962,6 @@ export class CommandService {
         'Настройки и обслуживание:',
         '/provider [opencode|openai] — выбрать AI-провайдера',
         '/maintenance [on|off] — технический режим',
-        '/system global <текст> — изменить системную инструкцию бота',
       ],
       [
         'Рассылка и статистика:',
@@ -1447,7 +1449,7 @@ export class CommandService {
         '/personality info|settings|reset — информация, настройки или сброс',
         '/personality settings humor=70 sarcasm=30 — настроить стиль',
         '/personality allow|deny — разрешить или запретить участникам менять персонажа беседы',
-        '/system [текст|clear] — задать или удалить личную инструкцию',
+        '/system [текст|clear] — личная инструкция в ЛС или инструкция беседы (для администраторов)',
       ],
       [
         'Фото, документы и голос:',
@@ -1472,7 +1474,7 @@ export class CommandService {
         '/fun — меню развлечений',
         '/randomjoke [тема] — случайная шутка',
         '/meme <описание> — создать мем, можно приложить фото',
-        '/joke [all|random|VK ID] — доброжелательная шутка',
+        '/joke [random|VK ID] — доброжелательная шутка',
         '/roast — лёгкий подкол про себя',
         '/prediction [тема] — шуточное предсказание',
         '/react [стиль] — реакция на сообщение',

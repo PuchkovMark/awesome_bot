@@ -30,6 +30,7 @@ test('/help shows concise pages with navigation', async () => {
   const commandService = new CommandService();
   const firstPage = await commandService.handleCommand('help', '', '123', '123');
   const secondPage = await commandService.handleCommand('help', '2', '123', '123');
+  const thirdPage = await commandService.handleCommand('help', '3', '123', '123');
 
   assert.match(firstPage ?? '', /Справка — страница 1\/4/u);
   assert.match(firstPage ?? '', /Следующая: \/help 2/u);
@@ -38,6 +39,8 @@ test('/help shows concise pages with navigation', async () => {
   assert.match(secondPage ?? '', /\/say \[текст\].*сообщение, на которое вы ответили/u);
   assert.match(secondPage ?? '', /Предыдущая: \/help 1/u);
   assert.match(secondPage ?? '', /Следующая: \/help 3/u);
+  assert.match(thirdPage ?? '', /\/joke \[random\|VK ID\]/u);
+  assert.doesNotMatch(thirdPage ?? '', /@all|\/joke \[all/u);
 });
 
 test('/admin displays paginated sections for administrators', async () => {

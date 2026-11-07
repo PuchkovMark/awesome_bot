@@ -7,16 +7,19 @@ import {
 } from '../src/services/sender/senderService.js';
 
 test('VK photo upload response parser accepts complete upload data', () => {
+  const expected = {
+    server: 909018,
+    photo: '[{"photo":"encoded"}]',
+    hash: 'upload-hash',
+  };
   assert.deepEqual(
     parsePhotoUploadResponse({
       response: { server: '909018', photo: '[{"photo":"encoded"}]', hash: 'upload-hash' },
     }),
-    {
-      server: 909018,
-      photo: '[{"photo":"encoded"}]',
-      hash: 'upload-hash',
-    },
+    expected,
   );
+  assert.deepEqual(parsePhotoUploadResponse(JSON.stringify(expected)), expected);
+  assert.deepEqual(parsePhotoUploadResponse({ response: JSON.stringify(expected) }), expected);
 });
 
 test('VK photo upload response parser rejects missing or invalid fields', () => {

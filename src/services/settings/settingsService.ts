@@ -39,6 +39,18 @@ export class SettingsService {
     });
   }
 
+  async setChatSystemPrompt(conversationId: string, prompt: string | null): Promise<void> {
+    const trimmed = prompt?.trim() || null;
+    if (trimmed && trimmed.length > 2000) {
+      throw new Error('System instruction must be 2000 characters or fewer');
+    }
+    const settings = await this.getChatSettings(conversationId);
+    await prisma.chatSettings.update({
+      where: { id: settings.id },
+      data: { systemPrompt: trimmed },
+    });
+  }
+
   async getChatSettings(conversationId: string) {
     const conversation = await prisma.conversation.upsert({
       where: { id: conversationId },
