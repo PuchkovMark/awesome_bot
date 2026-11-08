@@ -12,6 +12,11 @@ export type StoredMessage = {
   createdAt: Date;
 };
 
+const proposalAttributionQuestionPattern =
+  /(?:^|[^\p{L}\p{N}])кто(?:$|[^\p{L}\p{N}])[\s\S]{0,100}предлож\p{L}*/iu;
+const proposalCuePattern =
+  /предлож\p{L}*|предлаг\p{L}*|давайте|давай|может(?:\s+быть)?|можно|а\s+если|есть\s+идея|мой\s+вариант|(?:поедем|поехать|съездим|съездить)\s+(?:в|на)/iu;
+
 /**
  * MemoryService — отвечает за сохранение и получение истории сообщений.
  * Хранит сообщения в Prisma/SQLite, удаляет устаревший контекст и выдаёт
@@ -130,9 +135,47 @@ export class MemoryService {
   }
 
   /**
-   * Shared messages from this VK chat only; never includes another conversation's data.
+   * Shared user and assistant messages from this VK chat only.
    */
-  async getRecentChatContext(conversationId: string, take = 8) {
+  async getRecentChatContext(conversationId: string, take = config.MAX_HISTORY_MESSAGES) {
+    const messages = await prisma.message.findMany({
+      where: {
+        conversationId,
+        role: { in: ['user', 'assistant'] },
+        createdAt: { gte: new Date(Date.now() - this.ttlHours * 60 * 60 * 1000) },
+      },
+      include: { user: { select: { vkId: true, displayName: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: Math.max(1, Math.min(config.MAX_HISTORY_MESSAGES, take)),
+    });
+
+    return messages.reverse().map((message) => ({
+      role: message.role,
+      speaker:
+        message.role === 'assistant'
+          ? 'Пенёк'
+          : message.user?.displayName && message.user.displayName !== message.user.vkId
+            ? message.user.displayName
+            : 'Участник',
+      authorId: message.role === 'assistant' ? undefined : (message.user?.vkId ?? 'unknown'),
+      content: message.content,
+    }));
+  }
+
+  async getProposalHistoryForQuestion(
+    conversationId: string,
+    query: string,
+  ): Promise<
+    | {
+        speaker: string;
+        authorId: string;
+        content: string;
+        createdAt: Date;
+      }[]
+    | undefined
+  > {
+    if (!proposalAttributionQuestionPattern.test(query)) return undefined;
+
     const messages = await prisma.message.findMany({
       where: {
         conversationId,
@@ -141,16 +184,22 @@ export class MemoryService {
       },
       include: { user: { select: { vkId: true, displayName: true } } },
       orderBy: { createdAt: 'desc' },
-      take: Math.max(1, Math.min(20, take)),
+      take: 200,
     });
 
-    return messages.reverse().map((message) => ({
-      speaker:
-        message.user?.displayName && message.user.displayName !== message.user.vkId
-          ? message.user.displayName
-          : 'Участник',
-      content: message.content,
-    }));
+    return messages
+      .filter((message) => proposalCuePattern.test(message.content))
+      .slice(0, 10)
+      .reverse()
+      .map((message) => ({
+        speaker:
+          message.user?.displayName && message.user.displayName !== message.user.vkId
+            ? message.user.displayName
+            : 'Участник',
+        authorId: message.user?.vkId ?? 'unknown',
+        content: message.content,
+        createdAt: message.createdAt,
+      }));
   }
 
   async getRecentConversationMessages(conversationId: string, since: Date) {
@@ -190,6 +239,7 @@ export class MemoryService {
         user: { select: { vkId: true, displayName: true } },
       },
       distinct: ['userId'],
+      take: 100,
     });
 
     return messages.flatMap(({ user }) =>
@@ -224,9 +274,21 @@ export class MemoryService {
    */
   async cleanupOldContext(): Promise<number> {
     const ttlDate = new Date(Date.now() - this.ttlHours * 60 * 60 * 1000);
-    const res = await prisma.message.deleteMany({ where: { createdAt: { lt: ttlDate } } });
-    logger.info({ deleted: res.count }, 'Old messages cleaned up');
-    return res.count;
+    const weeklyMemeCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const expired = await prisma.message.deleteMany({
+      where: {
+        createdAt: { lt: ttlDate },
+        conversation: {
+          OR: [{ settings: { is: { memeDayWeeklyEnabled: false } } }, { settings: { is: null } }],
+        },
+      },
+    });
+    const oldWeeklyContext = await prisma.message.deleteMany({
+      where: { createdAt: { lt: weeklyMemeCutoff } },
+    });
+    const deleted = expired.count + oldWeeklyContext.count;
+    logger.info({ deleted }, 'Old messages cleaned up');
+    return deleted;
   }
 
   /**

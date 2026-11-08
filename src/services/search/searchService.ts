@@ -1,5 +1,6 @@
 import axios from 'axios';
 import config from '../../config/index.js';
+import { logger } from '../../logger/index.js';
 
 export type SearchResult = {
   title: string;
@@ -7,46 +8,117 @@ export type SearchResult = {
   url: string;
 };
 
+export type SearchResponse = {
+  provider: 'serper' | 'tavily';
+  results: SearchResult[];
+};
+
 interface SearchProvider {
+  readonly name: 'serper' | 'tavily';
   search(query: string): Promise<SearchResult[]>;
 }
 
-class BraveSearchProvider implements SearchProvider {
-  async search(query: string): Promise<SearchResult[]> {
-    if (!config.BRAVE_SEARCH_API_KEY) {
-      throw new Error('BRAVE_SEARCH_API_KEY must be configured for web search');
-    }
-    const response = await axios.get<{
-      web?: { results?: Array<{ title?: string; description?: string; url?: string }> };
-    }>('https://api.search.brave.com/res/v1/web/search', {
-      params: { q: query, count: 5 },
-      headers: { 'X-Subscription-Token': config.BRAVE_SEARCH_API_KEY },
-      timeout: 15_000,
-      maxContentLength: 2 * 1024 * 1024,
-      maxBodyLength: 2 * 1024 * 1024,
-    });
+class SerperSearchProvider implements SearchProvider {
+  public readonly name = 'serper';
 
-    return (response.data.web?.results ?? [])
+  async search(query: string): Promise<SearchResult[]> {
+    if (!config.SERPER_API_KEY) {
+      throw new Error('SERPER_API_KEY must be configured for web search');
+    }
+    const response = await axios.post<{
+      organic?: Array<{ title?: string; snippet?: string; link?: string }>;
+    }>(
+      'https://google.serper.dev/search',
+      { q: query, num: 5 },
+      {
+        headers: { 'X-API-KEY': config.SERPER_API_KEY },
+        timeout: 15_000,
+        maxContentLength: 2 * 1024 * 1024,
+        maxBodyLength: 2 * 1024 * 1024,
+      },
+    );
+
+    return (response.data.organic ?? [])
       .filter(
-        (result): result is { title: string; description: string; url: string } =>
-          typeof result.title === 'string' &&
-          typeof result.url === 'string' &&
-          typeof result.description === 'string',
+        (result): result is { title: string; snippet?: string; link: string } =>
+          typeof result.title === 'string' && typeof result.link === 'string',
       )
-      .map(({ title, description, url }) => ({ title, description, url }));
+      .map(({ title, snippet, link }) => ({
+        title,
+        description: snippet ?? '',
+        url: link,
+      }));
+  }
+}
+
+class TavilySearchProvider implements SearchProvider {
+  public readonly name = 'tavily';
+
+  async search(query: string): Promise<SearchResult[]> {
+    if (!config.TAVILY_API_KEY) {
+      throw new Error('TAVILY_API_KEY must be configured for web search');
+    }
+    const response = await axios.post<{
+      results?: Array<{ title?: string; content?: string; url?: string }>;
+    }>(
+      'https://api.tavily.com/search',
+      {
+        api_key: config.TAVILY_API_KEY,
+        query,
+        max_results: 5,
+      },
+      {
+        timeout: 15_000,
+        maxContentLength: 2 * 1024 * 1024,
+        maxBodyLength: 2 * 1024 * 1024,
+      },
+    );
+
+    return (response.data.results ?? [])
+      .filter(
+        (result): result is { title: string; content?: string; url: string } =>
+          typeof result.title === 'string' && typeof result.url === 'string',
+      )
+      .map(({ title, content, url }) => ({
+        title,
+        description: content ?? '',
+        url,
+      }));
   }
 }
 
 export class SearchService {
-  async search(query: string): Promise<SearchResult[]> {
+  async search(query: string): Promise<SearchResponse> {
     if (query.trim().length < 2 || query.length > 500) {
       throw new Error('Search query must be between 2 and 500 characters');
     }
     if (config.WEB_SEARCH_PROVIDER === 'none') {
       throw new Error('Web search is disabled; configure a search provider');
     }
-    const provider = new BraveSearchProvider();
-    return provider.search(query);
+    const providers: SearchProvider[] =
+      config.WEB_SEARCH_PROVIDER === 'serper'
+        ? [new SerperSearchProvider(), new TavilySearchProvider()]
+        : [new TavilySearchProvider(), new SerperSearchProvider()];
+    const errors: Error[] = [];
+
+    for (const [index, provider] of providers.entries()) {
+      try {
+        const results = await provider.search(query);
+        if (results.length > 0 || index === providers.length - 1) {
+          return { provider: provider.name, results };
+        }
+        logger.warn(
+          { provider: provider.name },
+          'Search provider returned no results; trying fallback',
+        );
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error(String(err));
+        errors.push(error);
+        logger.warn({ err, provider: provider.name }, 'Search provider failed');
+      }
+    }
+
+    throw new AggregateError(errors, 'All configured web search providers failed');
   }
 }
 

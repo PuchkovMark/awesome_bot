@@ -1,12 +1,101 @@
+import axios from 'axios';
 import { Keyboard, VK } from 'vk-io';
 import sharp from 'sharp';
 import config from '../../config/index.js';
 import { logger } from '../../logger/index.js';
 import type { GeneratedImage } from '../image/imageGenerationService.js';
 import splitterService from '../splitter/splitterService.js';
+import type { PersonalityDefinition } from '../settings/personalityService.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+let lastRandomId = Date.now() % 0x7fffff00;
+
+/**
+ * Возвращает уникальный random_id для messages.send.
+ * Монотонный счётчик исключает коллизии при отправке нескольких частей
+ * в одну миллисекунду, из-за которых VK молча отбрасывал сообщения.
+ */
+export function nextRandomId(): number {
+  lastRandomId = lastRandomId >= 0x7ffffffe ? 1 : lastRandomId + 1;
+  return lastRandomId;
+}
+
+type PhotoUploadData = { server: number; photo: string; hash: string };
+
+export function parsePhotoUploadResponse(value: unknown): PhotoUploadData | null {
+  let parsed = value;
+  if (typeof parsed === 'string') {
+    try {
+      parsed = JSON.parse(parsed) as unknown;
+    } catch {
+      return null;
+    }
+  }
+  let payload = isRecord(parsed) && 'response' in parsed ? parsed.response : parsed;
+  if (typeof payload === 'string') {
+    try {
+      payload = JSON.parse(payload) as unknown;
+    } catch {
+      return null;
+    }
+  }
+  if (!isRecord(payload)) return null;
+  const server = Number(payload.server);
+  if (
+    !Number.isSafeInteger(server) ||
+    server <= 0 ||
+    typeof payload.photo !== 'string' ||
+    !payload.photo.trim() ||
+    typeof payload.hash !== 'string' ||
+    !payload.hash.trim()
+  ) {
+    return null;
+  }
+  return { server, photo: payload.photo, hash: payload.hash };
+}
+
+export function parseAudioMessageUploadFile(value: unknown): string | null {
+  const payload = isRecord(value) && 'response' in value ? value.response : value;
+  return isRecord(payload) && typeof payload.file === 'string' && payload.file.trim()
+    ? payload.file
+    : null;
+}
+
+export function parseSavedAudioMessage(value: unknown): string | null {
+  const payload = isRecord(value) && 'response' in value ? value.response : value;
+  if (!isRecord(payload) || payload.type !== 'audio_message' || !isRecord(payload.audio_message)) {
+    return null;
+  }
+  const audioMessage = payload.audio_message;
+  const id = Number(audioMessage.id);
+  const ownerId = Number(audioMessage.owner_id);
+  if (!Number.isSafeInteger(id) || id <= 0 || !Number.isSafeInteger(ownerId) || ownerId === 0) {
+    return null;
+  }
+  const accessKey =
+    typeof audioMessage.access_key === 'string' && audioMessage.access_key
+      ? `_${audioMessage.access_key}`
+      : '';
+  return `audio_message${ownerId}_${id}${accessKey}`;
+}
+
+function isMissingUploadedPhotoError(error: unknown): boolean {
+  return (
+    isRecord(error) &&
+    error.code === 100 &&
+    typeof error.message === 'string' &&
+    /photo is undefined/iu.test(error.message)
+  );
+}
+
+function isRetryableUploadError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    /gateway time[- ]out|bad gateway|service unavailable|aborted|timed? ?out/iu.test(error.message)
+  );
 }
 
 /**
@@ -18,7 +107,7 @@ export class SenderService {
   private readonly maxTrackedMessagesPerPeer = 1000;
 
   constructor() {
-    this.vk = new VK({ token: config.VK_TOKEN });
+    this.vk = new VK({ token: config.VK_TOKEN, uploadTimeout: 60_000 });
   }
 
   async send(
@@ -32,7 +121,7 @@ export class SenderService {
       try {
         const result: unknown = await this.vk.api.messages.send({
           peer_id: peerId,
-          random_id: Date.now() % 1e9,
+          random_id: nextRandomId(),
           message: part,
           keyboard: index === 0 ? options?.keyboard : undefined,
           forward:
@@ -75,6 +164,46 @@ export class SenderService {
     }
   }
 
+  createMenuPaginationKeyboard(menu: 'help' | 'admin', page: number, totalPages: number): string {
+    const keyboard = Keyboard.builder();
+    if (page > 1) {
+      keyboard.callbackButton({
+        label: '◀ Назад',
+        payload: { command: 'menu_page', menu, page: page - 1 },
+        color: Keyboard.SECONDARY_COLOR,
+      });
+    }
+    if (page < totalPages) {
+      keyboard.callbackButton({
+        label: 'Далее ▶',
+        payload: { command: 'menu_page', menu, page: page + 1 },
+        color: Keyboard.PRIMARY_COLOR,
+      });
+    }
+    return keyboard.inline().toString();
+  }
+
+  async editMenuPage(
+    peerId: number,
+    conversationMessageId: number,
+    menu: 'help' | 'admin',
+    page: number,
+    totalPages: number,
+    text: string,
+  ): Promise<void> {
+    try {
+      await this.vk.api.messages.edit({
+        peer_id: peerId,
+        cmid: conversationMessageId,
+        message: text,
+        keyboard: this.createMenuPaginationKeyboard(menu, page, totalPages),
+      });
+    } catch (err) {
+      logger.error({ err, peerId, conversationMessageId, menu, page }, 'Failed to edit menu page');
+      throw err;
+    }
+  }
+
   async sendSummary(
     peerId: number,
     text: string,
@@ -85,6 +214,84 @@ export class SenderService {
       ...options,
       keyboard: this.createSummaryKeyboard(selectedHours),
     });
+  }
+
+  async sendPersonalityMenu(
+    peerId: number,
+    text: string,
+    profiles: PersonalityDefinition[],
+    selectedId: string,
+    scope: 'direct' | 'chat',
+    options?: { replyTo?: number; conversationMessageId?: number },
+  ): Promise<void> {
+    const keyboard = Keyboard.builder();
+    profiles.slice(0, 20).forEach((profile, index) => {
+      if (index > 0 && index % 2 === 0) keyboard.row();
+      const name = Array.from(profile.name);
+      keyboard.callbackButton({
+        label: name.length > 20 ? `${name.slice(0, 19).join('')}…` : profile.name,
+        payload: { command: 'personality_select', scope, id: profile.id },
+        color: profile.id === selectedId ? Keyboard.POSITIVE_COLOR : Keyboard.PRIMARY_COLOR,
+      });
+    });
+    const limitNotice =
+      profiles.length > 20 ? '\nОстальные персонажи доступны по команде с их ID.' : '';
+    await this.send(peerId, `${text}${limitNotice}`, {
+      ...options,
+      keyboard: keyboard.inline().toString(),
+    });
+  }
+
+  createFunFeedbackKeyboard(outputId: string): string {
+    return Keyboard.builder()
+      .callbackButton({
+        label: '😂',
+        payload: { command: 'fun_feedback', outputId, value: 'laugh' },
+        color: Keyboard.POSITIVE_COLOR,
+      })
+      .callbackButton({
+        label: '😐',
+        payload: { command: 'fun_feedback', outputId, value: 'neutral' },
+        color: Keyboard.SECONDARY_COLOR,
+      })
+      .callbackButton({
+        label: '🔥',
+        payload: { command: 'fun_feedback', outputId, value: 'fire' },
+        color: Keyboard.POSITIVE_COLOR,
+      })
+      .callbackButton({
+        label: 'Ещё',
+        payload: { command: 'fun_again', outputId },
+        color: Keyboard.PRIMARY_COLOR,
+      })
+      .inline()
+      .toString();
+  }
+
+  createMemeDayVotingKeyboard(publicationId: string): string {
+    return Keyboard.builder()
+      .callbackButton({
+        label: '😂',
+        payload: { command: 'meme_vote', publicationId, value: 'laugh' },
+        color: Keyboard.POSITIVE_COLOR,
+      })
+      .callbackButton({
+        label: '🔥',
+        payload: { command: 'meme_vote', publicationId, value: 'fire' },
+        color: Keyboard.POSITIVE_COLOR,
+      })
+      .callbackButton({
+        label: '😐',
+        payload: { command: 'meme_vote', publicationId, value: 'neutral' },
+        color: Keyboard.SECONDARY_COLOR,
+      })
+      .callbackButton({
+        label: '👎',
+        payload: { command: 'meme_vote', publicationId, value: 'dislike' },
+        color: Keyboard.NEGATIVE_COLOR,
+      })
+      .inline()
+      .toString();
   }
 
   async editSummary(
@@ -126,74 +333,135 @@ export class SenderService {
     peerId: number,
     image: GeneratedImage,
     caption: string,
-    options?: { replyTo?: number; conversationMessageId?: number },
-  ): Promise<void> {
+    options?: {
+      replyTo?: number;
+      conversationMessageId?: number;
+      keyboard?: string;
+      randomId?: number;
+    },
+  ): Promise<string> {
     try {
       if (image.buffer.length === 0) {
         throw new Error('Generated image is empty');
       }
-      const jpeg = await sharp(image.buffer).jpeg({ quality: 90 }).toBuffer();
-      const metadata = await sharp(jpeg).metadata();
-      if (!metadata.width || !metadata.height) {
-        throw new Error('Generated image has invalid dimensions');
-      }
+      let attachment: string | undefined;
+      for (const [attempt, settings] of [
+        { width: 1600, quality: 82 },
+        { width: 1024, quality: 65 },
+      ].entries()) {
+        const jpeg = await sharp(image.buffer)
+          .rotate()
+          .flatten({ background: '#ffffff' })
+          .resize({
+            width: settings.width,
+            height: settings.width,
+            fit: 'inside',
+            withoutEnlargement: true,
+          })
+          .jpeg({ quality: settings.quality })
+          .toBuffer();
+        const metadata = await sharp(jpeg).metadata();
+        if (!metadata.width || !metadata.height || jpeg.length === 0) {
+          throw new Error('VK photo upload image has invalid data or dimensions');
+        }
 
-      const uploadServer = await this.vk.api.photos.getMessagesUploadServer({
-        peer_id: peerId,
-      });
-      const form = new FormData();
-      form.append(
-        'photo',
-        new Blob([new Uint8Array(jpeg)], { type: 'image/jpeg' }),
-        'generated-image.jpg',
-      );
-      const uploadResponse = await fetch(uploadServer.upload_url, {
-        method: 'POST',
-        body: form,
-        signal: AbortSignal.timeout(60_000),
-      });
-      if (!uploadResponse.ok) {
-        throw new Error(`VK photo upload failed (${uploadResponse.status})`);
-      }
-
-      const uploadPayload: unknown = await uploadResponse.json();
-      const uploadResult =
-        isRecord(uploadPayload) && 'response' in uploadPayload
-          ? uploadPayload.response
-          : uploadPayload;
-      if (!isRecord(uploadResult)) {
-        throw new Error('VK photo upload returned an invalid response');
-      }
-      const uploaded = uploadResult;
-      if (
-        typeof uploaded.photo !== 'string' ||
-        uploaded.photo.length === 0 ||
-        (typeof uploaded.server !== 'number' && typeof uploaded.server !== 'string') ||
-        !Number.isFinite(Number(uploaded.server)) ||
-        typeof uploaded.hash !== 'string' ||
-        uploaded.hash.length === 0
-      ) {
-        const keys = Object.keys(uploaded).join(', ') || 'none';
-        const photoLength = typeof uploaded.photo === 'string' ? uploaded.photo.length : 0;
-        throw new Error(
-          `VK photo upload returned incomplete data (keys: ${keys}, photo length: ${photoLength})`,
+        const uploadServer = await this.vk.api.photos.getMessagesUploadServer({ peer_id: peerId });
+        const form = new FormData();
+        form.append(
+          'photo',
+          new Blob([new Uint8Array(jpeg)], { type: 'image/jpeg' }),
+          'generated-image.jpg',
         );
-      }
+        let uploadData: unknown;
+        try {
+          ({ data: uploadData } = await axios.post<unknown>(uploadServer.upload_url, form, {
+            timeout: 60_000,
+            maxBodyLength: jpeg.length + 1024 * 1024,
+            maxContentLength: 1024 * 1024,
+          }));
+        } catch (err) {
+          const status = axios.isAxiosError(err) ? err.response?.status : undefined;
+          const code = axios.isAxiosError(err) ? err.code : undefined;
+          if (
+            attempt === 0 &&
+            (status === 408 ||
+              status === 429 ||
+              (status && status >= 500) ||
+              isRetryableUploadError(err))
+          ) {
+            logger.warn(
+              { peerId, status, code, attempt: attempt + 1, imageBytes: jpeg.length },
+              'VK photo upload request failed; retrying with a smaller image',
+            );
+            await new Promise((resolve) => setTimeout(resolve, 750));
+            continue;
+          }
+          logger.warn(
+            { peerId, status, code, attempt: attempt + 1 },
+            'VK photo upload request failed',
+          );
+          throw new Error(`VK photo upload failed${status ? ` (${status})` : ''}`);
+        }
+        const uploaded = parsePhotoUploadResponse(uploadData);
+        if (!uploaded) {
+          const responseObject =
+            isRecord(uploadData) && isRecord(uploadData.response)
+              ? uploadData.response
+              : uploadData;
+          if (attempt === 0) {
+            logger.warn(
+              {
+                peerId,
+                attempt: attempt + 1,
+                imageBytes: jpeg.length,
+                responseType: typeof uploadData,
+                responseLength: typeof uploadData === 'string' ? uploadData.length : undefined,
+                responseKeys: isRecord(responseObject) ? Object.keys(responseObject) : undefined,
+              },
+              'VK photo upload returned incomplete data; retrying with a smaller image',
+            );
+            continue;
+          }
+          logger.error(
+            {
+              peerId,
+              attempt: attempt + 1,
+              imageBytes: jpeg.length,
+              responseType: typeof uploadData,
+              responseLength: typeof uploadData === 'string' ? uploadData.length : undefined,
+              responseKeys: isRecord(responseObject) ? Object.keys(responseObject) : undefined,
+            },
+            'VK photo upload returned incomplete data after retry',
+          );
+          throw new Error('VK photo upload returned incomplete data after retry');
+        }
 
-      const [photo] = await this.vk.api.photos.saveMessagesPhoto({
-        server: Number(uploaded.server),
-        photo: uploaded.photo,
-        hash: uploaded.hash,
-      });
-      if (!photo?.id || !photo.owner_id) {
-        throw new Error('VK did not save the uploaded photo');
+        try {
+          const [photo] = await this.vk.api.photos.saveMessagesPhoto(uploaded);
+          if (!photo?.id || !photo.owner_id) {
+            throw new Error('VK did not save the uploaded photo');
+          }
+          attachment = `photo${photo.owner_id}_${photo.id}`;
+          break;
+        } catch (error) {
+          if (attempt === 0 && isMissingUploadedPhotoError(error)) {
+            logger.warn(
+              { peerId, attempt: attempt + 1, imageBytes: jpeg.length },
+              'VK rejected the uploaded photo; retrying with a smaller image',
+            );
+            continue;
+          }
+          throw error;
+        }
       }
+      if (!attachment) throw new Error('VK photo upload did not produce an attachment');
 
       const result: unknown = await this.vk.api.messages.send({
         peer_id: peerId,
-        random_id: Date.now() % 1e9,
+        random_id: options?.randomId ?? nextRandomId(),
         message: caption,
-        attachment: `photo${photo.owner_id}_${photo.id}`,
+        attachment,
+        keyboard: options?.keyboard,
         forward:
           options?.replyTo || options?.conversationMessageId
             ? JSON.stringify({
@@ -228,9 +496,74 @@ export class SenderService {
           }
         }
       }
+      return attachment;
     } catch (err) {
       logger.error({ err, peerId }, 'Failed to send generated photo');
       throw err;
+    }
+  }
+
+  private async uploadAudioMessageWithAxios(peerId: number, audio: Buffer): Promise<string> {
+    const uploadServer = await this.vk.api.docs.getMessagesUploadServer({
+      peer_id: peerId,
+      type: 'audio_message',
+    });
+    const form = new FormData();
+    form.append('file', new Blob([new Uint8Array(audio)], { type: 'audio/ogg' }), 'voice.ogg');
+    const { data } = await axios.post<unknown>(uploadServer.upload_url, form, {
+      timeout: 60_000,
+      maxBodyLength: audio.length + 1024 * 1024,
+      maxContentLength: 1024 * 1024,
+    });
+    const file = parseAudioMessageUploadFile(data);
+    if (!file) throw new Error('VK audio upload returned no file token');
+
+    const saved = await this.vk.api.docs.save({ file, title: 'voice.ogg' });
+    const attachment = parseSavedAudioMessage(saved);
+    if (!attachment) throw new Error('VK did not save the uploaded audio message');
+    return attachment;
+  }
+
+  async sendPhotoAttachment(
+    peerId: number,
+    attachment: string,
+    caption: string,
+    keyboard?: string,
+  ): Promise<void> {
+    try {
+      const result: unknown = await this.vk.api.messages.send({
+        peer_id: peerId,
+        random_id: nextRandomId(),
+        message: caption,
+        attachment,
+        keyboard,
+      });
+      if (typeof result === 'number' && result > 0) {
+        this.trackSentMessage(peerId, result);
+      } else if (Array.isArray(result)) {
+        for (const message of result) {
+          if (
+            typeof message !== 'object' ||
+            message === null ||
+            !('peer_id' in message) ||
+            message.peer_id !== peerId
+          ) {
+            continue;
+          }
+          if ('message_id' in message && typeof message.message_id === 'number') {
+            this.trackSentMessage(peerId, message.message_id);
+          }
+          if (
+            'conversation_message_id' in message &&
+            typeof message.conversation_message_id === 'number'
+          ) {
+            this.trackSentMessage(peerId, message.conversation_message_id);
+          }
+        }
+      }
+    } catch (error) {
+      logger.error({ err: error, peerId, attachment }, 'Failed to send saved meme photo');
+      throw error;
     }
   }
 
@@ -241,20 +574,48 @@ export class SenderService {
     options?: { replyTo?: number; conversationMessageId?: number },
   ): Promise<void> {
     if (audio.length === 0) throw new Error('Generated voice message is empty');
-    const attachment = await this.vk.upload.audioMessage({
-      peer_id: peerId,
-      source: {
-        value: audio,
-        filename: 'voice.ogg',
-        contentType: 'audio/ogg',
-        contentLength: audio.length,
-      },
-    });
+    let attachment: string | undefined;
+    let uploadTimedOut = false;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      try {
+        const audioMessage = await this.vk.upload.audioMessage({
+          peer_id: peerId,
+          source: {
+            value: audio,
+            filename: 'voice.ogg',
+            contentType: 'audio/ogg',
+            contentLength: audio.length,
+          },
+        });
+        attachment = audioMessage.toString();
+        break;
+      } catch (error) {
+        if (!isRetryableUploadError(error)) throw error;
+        if (attempt === 2) {
+          uploadTimedOut = true;
+          logger.warn(
+            { err: error, peerId, attempt, audioBytes: audio.length },
+            'VK voice upload timed out; retrying with alternate upload transport',
+          );
+          break;
+        }
+        logger.warn(
+          { err: error, peerId, attempt, audioBytes: audio.length },
+          'VK voice upload timed out; retrying',
+        );
+        await new Promise((resolve) => setTimeout(resolve, attempt * 750));
+      }
+    }
+    if (!attachment && uploadTimedOut) {
+      attachment = await this.uploadAudioMessageWithAxios(peerId, audio);
+    }
+    if (!attachment) throw new Error('VK voice upload did not produce an attachment');
+
     const result: unknown = await this.vk.api.messages.send({
       peer_id: peerId,
-      random_id: Date.now() % 1e9,
+      random_id: nextRandomId(),
       message: text,
-      attachment: attachment.toString(),
+      attachment,
       forward:
         options?.replyTo || options?.conversationMessageId
           ? JSON.stringify({

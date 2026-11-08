@@ -5,7 +5,8 @@ export type ImageCommand = {
   prompt: string;
 };
 
-const botNameAliasPattern = /(?<![\p{L}\p{N}_])(?:бот|пенек|пенечек)(?![\p{L}\p{N}_])/u;
+const botNameAliasPattern = /(?<![\p{L}\p{N}_])(?:пенек|пенечек)(?![\p{L}\p{N}_])/u;
+const rejectedBotAddressPattern = /^\s*@?бот(?=$|[\s,!:;])/iu;
 
 function normalizeText(text: string): string {
   return text
@@ -20,12 +21,6 @@ function normalizeText(text: string): string {
  * DetectorService — определяет, обращаются ли к боту в чате, и парсит команды.
  */
 export class DetectorService {
-  private botName: string;
-
-  constructor() {
-    this.botName = config.BOT_NAME.toLowerCase();
-  }
-
   /**
    * Возвращает true если сообщение адресовано боту.
    */
@@ -40,6 +35,7 @@ export class DetectorService {
   }
 
   isActiveEvent(text: string): boolean {
+    if (rejectedBotAddressPattern.test(normalizeText(text))) return false;
     return (
       /[?？]\s*$/u.test(text.trim()) ||
       /(?<![\p{L}\p{N}_])(?:помоги|подскажи|объясни|расскажи|посоветуй)(?![\p{L}\p{N}_])/iu.test(
@@ -51,13 +47,6 @@ export class DetectorService {
   isMentioned(text: string): boolean {
     if (!text) return false;
     const t = normalizeText(text);
-    const botName = normalizeText(this.botName);
-    if (t.includes(`@${botName}`)) return true;
-    if (
-      new RegExp(`(^|[^\\p{L}\\p{N}_])${escapeRegExp(botName)}(?=$|[^\\p{L}\\p{N}_])`, 'u').test(t)
-    ) {
-      return true;
-    }
     if (botNameAliasPattern.test(t)) return true;
 
     const groupId = config.VK_GROUP_ID.trim();
@@ -85,7 +74,7 @@ export class DetectorService {
 
     const normalized = normalizeText(text);
     const match = normalized.match(
-      /^(?:(?:бот|пенек|пенечек)[,!:;]?\s+)?(нарисуй|сгенерируй|создай(?:\s+картинку)?|преобрази|измени|переделай)\s+([\s\S]+)$/u,
+      /^(?:(?:пенек|пенечек)[,!:;]?\s+)?(нарисуй|сгенерируй|создай(?:\s+картинку)?|преобрази|измени|переделай)\s+([\s\S]+)$/u,
     );
     if (!match) return null;
 
@@ -93,28 +82,32 @@ export class DetectorService {
     const prompt = text
       .trim()
       .match(
-        /^(?:(?:бот|пенёк|пенек|пенёчек|пенечек)[,!:;]?\s+)?(?:нарисуй|сгенерируй|создай(?:\s+картинку)?|преобрази|измени|переделай)\s+([\s\S]+)$/iu,
+        /^(?:(?:пенёк|пенек|пенёчек|пенечек)[,!:;]?\s+)?(?:нарисуй|сгенерируй|создай(?:\s+картинку)?|преобрази|измени|переделай)\s+([\s\S]+)$/iu,
       )?.[1];
     if (!prompt?.trim()) return null;
 
     return { action, prompt: prompt.trim() };
   }
 
+  isFreeformMessage(
+    text: string,
+    command: string | null,
+    imageCommand: ImageCommand | null,
+  ): boolean {
+    return Boolean(text.trim()) && !command && !imageCommand;
+  }
+
   parseCommand(text: string): string | null {
     if (!text) return null;
     const t = text.trim();
     const normalized = normalizeText(t);
-    if (/^(?:бот|пенек|пенечек)\s+пересказ(?:\s|[.!?,…]|$)/u.test(normalized)) {
+    if (/^(?:пенек|пенечек)\s+пересказ(?:\s|[.!?,…]|$)/u.test(normalized)) {
       return 'summary';
     }
     if (t.startsWith('/')) return t.split(' ')[0].slice(1).toLowerCase();
     if (t.startsWith('!')) return t.split(' ')[0].slice(1).toLowerCase();
     return null;
   }
-}
-
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 const detectorService = new DetectorService();

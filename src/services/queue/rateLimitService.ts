@@ -18,7 +18,14 @@ export class RateLimitService {
       this.requests.set(userId, recent);
       const lastNotified = this.lastNotified.get(userId) ?? 0;
       const notify = now - lastNotified >= this.windowMs;
-      if (notify) this.lastNotified.set(userId, now);
+      if (notify) {
+        this.lastNotified.delete(userId);
+        this.lastNotified.set(userId, now);
+        if (this.lastNotified.size > this.maxTrackedUsers) {
+          const oldestUser = this.lastNotified.keys().next().value;
+          if (oldestUser !== undefined) this.lastNotified.delete(oldestUser);
+        }
+      }
       return {
         allowed: false,
         retryAfterMs: Math.max(1, this.windowMs - (now - recent[0])),

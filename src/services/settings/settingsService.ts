@@ -1,10 +1,17 @@
 import { randomUUID } from 'node:crypto';
 import { prisma } from '../../db/client.js';
 import config from '../../config/index.js';
-import { isPersonalityId, type PersonalityId } from './personalityService.js';
-
 export type ChatMode = 'active' | 'normal' | 'quiet';
 export type ImageAccess = 'admins_only' | 'all';
+export type BotRole = 'user' | 'administrator' | 'creator';
+
+export const BOT_CREATOR = { name: 'Mark Puchkov', vkId: '388581097' } as const;
+export const DEFAULT_WELCOME_TEXT = 'Добро пожаловать, {name}! Рады видеть тебя в беседе.';
+export const DEFAULT_QUESTIONNAIRE_QUESTIONS = [
+  'Как к тебе обращаться?',
+  'Чем ты увлекаешься?',
+  'О чём тебе интересно общаться?',
+];
 
 export class SettingsService {
   async getUserSettings(vkId: string) {
@@ -20,16 +27,6 @@ export class SettingsService {
     });
   }
 
-  async setPersonality(vkId: string, value: string): Promise<PersonalityId> {
-    if (!isPersonalityId(value)) throw new Error('Unknown personality');
-    const settings = await this.getUserSettings(vkId);
-    await prisma.userSettings.update({
-      where: { id: settings.id },
-      data: { personality: value },
-    });
-    return value;
-  }
-
   async setSystemPrompt(vkId: string, prompt: string | null): Promise<void> {
     const trimmed = prompt?.trim() || null;
     if (trimmed && trimmed.length > 2000) {
@@ -37,6 +34,18 @@ export class SettingsService {
     }
     const settings = await this.getUserSettings(vkId);
     await prisma.userSettings.update({
+      where: { id: settings.id },
+      data: { systemPrompt: trimmed },
+    });
+  }
+
+  async setChatSystemPrompt(conversationId: string, prompt: string | null): Promise<void> {
+    const trimmed = prompt?.trim() || null;
+    if (trimmed && trimmed.length > 2000) {
+      throw new Error('System instruction must be 2000 characters or fewer');
+    }
+    const settings = await this.getChatSettings(conversationId);
+    await prisma.chatSettings.update({
       where: { id: settings.id },
       data: { systemPrompt: trimmed },
     });
@@ -53,8 +62,32 @@ export class SettingsService {
       create: {
         conversationId: conversation.id,
         imageAccess: config.IMAGE_ADMIN_ONLY ? 'admins_only' : 'all',
+        welcomeText: DEFAULT_WELCOME_TEXT,
+        questionnaireQuestions: JSON.stringify(DEFAULT_QUESTIONNAIRE_QUESTIONS),
       },
       update: {},
+    });
+  }
+
+  async updateChatSettings(
+    conversationId: string,
+    data: {
+      welcomeEnabled?: boolean;
+      welcomeText?: string;
+      questionnaireEnabled?: boolean;
+      questionnaireQuestions?: string[];
+    },
+  ): Promise<void> {
+    const settings = await this.getChatSettings(conversationId);
+    const { questionnaireQuestions, ...settingsData } = data;
+    await prisma.chatSettings.update({
+      where: { id: settings.id },
+      data: {
+        ...settingsData,
+        ...(questionnaireQuestions
+          ? { questionnaireQuestions: JSON.stringify(questionnaireQuestions) }
+          : {}),
+      },
     });
   }
 
@@ -75,11 +108,23 @@ export class SettingsService {
   }
 
   async isAdmin(vkId: string): Promise<boolean> {
-    if (config.VK_ADMIN_IDS.includes(vkId)) return true;
-    return Boolean(await prisma.admin.findUnique({ where: { vkId }, select: { id: true } }));
+    return (await this.getRole(vkId)) !== 'user';
+  }
+
+  isCreator(vkId: string): boolean {
+    return vkId === BOT_CREATOR.vkId;
+  }
+
+  async getRole(vkId: string): Promise<BotRole> {
+    if (this.isCreator(vkId)) return 'creator';
+    if (config.VK_ADMIN_IDS.includes(vkId)) return 'administrator';
+    const admin = await prisma.admin.findUnique({ where: { vkId }, select: { id: true } });
+    return admin ? 'administrator' : 'user';
   }
 
   async addAdmin(vkId: string): Promise<void> {
+    if (this.isCreator(vkId))
+      throw new Error('Создатель не может быть назначен обычным администратором.');
     await prisma.admin.upsert({
       where: { vkId },
       create: { vkId },
@@ -88,8 +133,8 @@ export class SettingsService {
   }
 
   async removeAdmin(vkId: string): Promise<boolean> {
+    if (this.isCreator(vkId)) return false;
     if (config.VK_ADMIN_IDS.includes(vkId)) return false;
-    if (config.VK_ADMIN_IDS.length === 0 && (await prisma.admin.count()) <= 1) return false;
     const result = await prisma.admin.deleteMany({ where: { vkId } });
     return result.count > 0;
   }

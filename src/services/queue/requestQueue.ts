@@ -16,7 +16,13 @@ export class RequestQueue {
 
   async add<T>(userId: string, fn: () => Promise<T>): Promise<T> {
     const q = this.getQueueForUser(userId);
-    return q.add(fn) as Promise<T>;
+    const result = q.add(fn) as Promise<T>;
+    void q.onIdle().then(() => {
+      if (this.queues.get(userId) === q && q.size === 0 && q.pending === 0) {
+        this.queues.delete(userId);
+      }
+    });
+    return result;
   }
 }
 
