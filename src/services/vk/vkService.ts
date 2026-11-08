@@ -1520,7 +1520,13 @@ export class VkService {
           }
         }
         if (context.isChat && context.eventType) {
-          const memberId = context.eventMemberId;
+          const eventMemberId = context.eventMemberId;
+          const memberId =
+            context.eventType === 'chat_invite_user_by_link' &&
+            (!eventMemberId || eventMemberId <= 0) &&
+            context.senderId > 0
+              ? context.senderId
+              : eventMemberId;
           try {
             if (
               (context.eventType === 'chat_invite_user' ||
