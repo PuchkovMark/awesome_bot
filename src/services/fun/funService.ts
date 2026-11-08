@@ -73,6 +73,9 @@ function parseSettingsPatch(value: string): Partial<FunSettings> {
   return result;
 }
 
+/**
+ * Генерирует развлекательные ответы и применяет пользовательские и групповые настройки юмора.
+ */
 export class FunService {
   private async getSettingsPatch(
     vkUserId: string,

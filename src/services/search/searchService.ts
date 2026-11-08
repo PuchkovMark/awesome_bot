@@ -18,6 +18,9 @@ interface SearchProvider {
   search(query: string): Promise<SearchResult[]>;
 }
 
+/**
+ * Выполняет веб-поиск через Serper и приводит результаты к общему формату поиска.
+ */
 class SerperSearchProvider implements SearchProvider {
   public readonly name = 'serper';
 
@@ -51,6 +54,9 @@ class SerperSearchProvider implements SearchProvider {
   }
 }
 
+/**
+ * Выполняет веб-поиск через Tavily и приводит результаты к общему формату поиска.
+ */
 class TavilySearchProvider implements SearchProvider {
   public readonly name = 'tavily';
 
@@ -87,6 +93,9 @@ class TavilySearchProvider implements SearchProvider {
   }
 }
 
+/**
+ * Выбирает настроенный поисковый провайдер и применяет резервный поиск при необходимости.
+ */
 export class SearchService {
   async search(query: string): Promise<SearchResponse> {
     if (query.trim().length < 2 || query.length > 500) {

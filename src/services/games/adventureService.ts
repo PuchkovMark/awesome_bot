@@ -317,6 +317,9 @@ function summarizeJournal(state: AdventureState): string {
   ].join('\n');
 }
 
+/**
+ * Управляет состоянием интерактивных приключений: ходами, участниками, сценами и сохранением.
+ */
 export class AdventureService {
   private readonly locks = new Map<string, Promise<void>>();
 

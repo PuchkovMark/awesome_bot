@@ -5,7 +5,7 @@ import { logger } from '../../logger/index.js';
 import type { AIProvider, AIMessage, AIResponse } from './AIProvider.js';
 
 /**
- * OpenCode Console provider using its OpenAI-compatible Chat Completions endpoint.
+ * Отправляет запросы к OpenCode Console через совместимый с OpenAI API и нормализует ответы.
  */
 export class OpenCodeProvider implements AIProvider {
   public readonly name = 'opencode';

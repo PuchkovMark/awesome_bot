@@ -4,6 +4,9 @@ import PQueue from 'p-queue';
  * RequestQueue — управляет per-user очередями с concurrency=1,
  * чтобы избежать одновременной генерации ответов одному пользователю.
  */
+/**
+ * Выполняет асинхронные задачи каждого пользователя последовательно, сохраняя порядок сообщений.
+ */
 export class RequestQueue {
   private queues: Map<string, PQueue> = new Map();
 

@@ -22,6 +22,9 @@ const proposalCuePattern =
  * Хранит сообщения в Prisma/SQLite, удаляет устаревший контекст и выдаёт
  * контекст для отправки в AI с учётом лимита токенов и TTL.
  */
+/**
+ * Сохраняет, выбирает и очищает личную и общую историю сообщений для контекста диалогов.
+ */
 export class MemoryService {
   private ttlHours: number;
   private maxTokens: number;

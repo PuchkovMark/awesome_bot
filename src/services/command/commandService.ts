@@ -34,7 +34,7 @@ const allowedModes = new Set<ChatMode>(['active', 'normal', 'quiet']);
 const allowedImageAccess = new Set<ImageAccess>(['admins_only', 'all']);
 
 /**
- * CommandService — обрабатывает чат-команды.
+ * Разбирает и выполняет команды бота, связывая их аргументы с соответствующими сервисами.
  */
 export class CommandService {
   /**

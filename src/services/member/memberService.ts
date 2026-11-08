@@ -67,6 +67,9 @@ export function parseStoredQuestionnaireQuestions(value: string): string[] {
   return parsed;
 }
 
+/**
+ * Управляет участниками бесед, их профилями, событиями вступления и анкетами.
+ */
 export class MemberService {
   async recordJoin(conversationId: string, vkUserId: string) {
     const settings = await settingsService.getChatSettings(conversationId);

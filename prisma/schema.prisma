@@ -8,29 +8,34 @@ datasource db {
 }
 
 model User {
-  id           String                    @id @default(cuid())
-  vkId         String                    @unique
-  displayName  String?
-  createdAt    DateTime                  @default(now())
-  updatedAt    DateTime                  @updatedAt
-  participants ConversationParticipant[]
-  messages     Message[]
-  settings     UserSettings?
+  id                 String                    @id @default(cuid())
+  vkId               String                    @unique
+  displayName        String?
+  createdAt          DateTime                  @default(now())
+  updatedAt          DateTime                  @updatedAt
+  participants       ConversationParticipant[]
+  messages           Message[]
+  settings           UserSettings?
+  longTermMemories   LongTermMemory[]
+  memoryActionDrafts MemoryActionDraft[]
 }
 
 model Conversation {
-  id           String                    @id @default(cuid())
-  title        String?
-  isGroup      Boolean                   @default(false)
-  createdAt    DateTime                  @default(now())
-  updatedAt    DateTime                  @updatedAt
-  participants ConversationParticipant[]
-  messages     Message[]
-  settings     ChatSettings?
-  members      ConversationMember[]
-  gameSessions GameSession[]
-  funOutputs   FunOutput[]
-  memeDays     MemeDayPublication[]
+  id                 String                    @id @default(cuid())
+  title              String?
+  isGroup            Boolean                   @default(false)
+  createdAt          DateTime                  @default(now())
+  updatedAt          DateTime                  @updatedAt
+  participants       ConversationParticipant[]
+  messages           Message[]
+  settings           ChatSettings?
+  members            ConversationMember[]
+  gameSessions       GameSession[]
+  funOutputs         FunOutput[]
+  memeDays           MemeDayPublication[]
+  reminders          Reminder[]
+  longTermMemories   LongTermMemory[]
+  memoryActionDrafts MemoryActionDraft[]
 }
 
 model ConversationParticipant {
@@ -62,6 +67,52 @@ model Message {
   @@index([userId, conversationId, createdAt])
 }
 
+model LongTermMemory {
+  id               String        @id @default(cuid())
+  scope            String
+  userId           String?
+  user             User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversationId   String?
+  conversation     Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  createdByVkId    String
+  category         String
+  content          String
+  importance       Float         @default(0.5)
+  confidence       Float         @default(1)
+  source           String        @default("automatic")
+  fingerprint      String
+  embedding        String?
+  embeddingModel   String?
+  relatedMemoryIds String        @default("[]")
+  expiresAt        DateTime?
+  archivedAt       DateTime?
+  lastAccessedAt   DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  @@unique([userId, fingerprint])
+  @@unique([conversationId, fingerprint])
+  @@index([userId, archivedAt, updatedAt])
+  @@index([conversationId, archivedAt, updatedAt])
+  @@index([category])
+}
+
+model MemoryActionDraft {
+  id             String       @id @default(cuid())
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  scope          String
+  candidateIds   String
+  expiresAt      DateTime
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([userId, conversationId])
+  @@index([expiresAt])
+}
+
 model UserSettings {
   id                String                 @id @default(cuid())
   userId            String                 @unique
@@ -70,6 +121,15 @@ model UserSettings {
   systemPrompt      String?
   voiceEnabled      Boolean                @default(false)
   voice             String?
+  locationName      String?
+  locationLatitude  Float?
+  locationLongitude Float?
+  locationCountry   String?
+  locationRegion    String?
+  locationTimeZone  String?
+  timeZone          String?
+  memoryEnabled     Boolean                @default(true)
+  autoMemoryEnabled Boolean                @default(true)
   characterSettings CharacterUserSetting[]
   createdAt         DateTime               @default(now())
   updatedAt         DateTime               @updatedAt
@@ -96,8 +156,75 @@ model ChatSettings {
   funSettings            String       @default("{}")
   memeDaySettings        String       @default("{}")
   memeDayWeeklyEnabled   Boolean      @default(false)
+  locationName           String?
+  locationLatitude       Float?
+  locationLongitude      Float?
+  locationCountry        String?
+  locationRegion         String?
+  locationTimeZone       String?
+  timeZone               String?
+  memoryEnabled          Boolean      @default(true)
+  autoMemoryEnabled      Boolean      @default(true)
   createdAt              DateTime     @default(now())
   updatedAt              DateTime     @updatedAt
+}
+
+model Reminder {
+  id              String             @id @default(cuid())
+  creatorVkId     String
+  recipientVkId   String?
+  sourcePeerId    String
+  deliveryPeerId  String
+  scope           String             @default("personal")
+  content         String
+  timeZone        String
+  nextRunAt       DateTime?
+  recurrenceRule  String?
+  recurrenceEndAt DateTime?
+  status          String             @default("active")
+  deliveryMode    String             @default("private")
+  fallbackState   String             @default("none")
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  source          Conversation       @relation(fields: [sourcePeerId], references: [id], onDelete: Cascade)
+  deliveries      ReminderDelivery[]
+
+  @@index([status, nextRunAt])
+  @@index([creatorVkId, scope, status])
+  @@index([sourcePeerId, scope, status])
+}
+
+model ReminderDelivery {
+  id            String    @id @default(cuid())
+  reminderId    String
+  occurrenceAt  DateTime
+  status        String    @default("pending")
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime  @default(now())
+  lockUntil     DateTime?
+  randomId      Int
+  lastError     String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  reminder      Reminder  @relation(fields: [reminderId], references: [id], onDelete: Cascade)
+
+  @@unique([reminderId, occurrenceAt])
+  @@index([status, nextAttemptAt])
+  @@index([reminderId, occurrenceAt])
+}
+
+model ReminderDraft {
+  id             String   @id @default(cuid())
+  creatorVkId    String
+  conversationId String
+  state          String
+  payload        String
+  expiresAt      DateTime
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([creatorVkId, conversationId])
+  @@index([expiresAt])
 }
 
 model ConversationMember {

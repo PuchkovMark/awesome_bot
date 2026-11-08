@@ -13,6 +13,9 @@ export type GeneratedImage = {
   contentType: 'image/jpeg' | 'image/png' | 'image/webp';
 };
 
+/**
+ * Создаёт и редактирует изображения через настроенный провайдер изображений.
+ */
 export class ImageGenerationService {
   private readonly openai: OpenAI | undefined = config.OPENAI_API_KEY
     ? new OpenAI({

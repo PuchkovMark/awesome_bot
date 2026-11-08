@@ -75,6 +75,9 @@ function assertText(value: string, field: string, limit: number): string {
   return trimmed;
 }
 
+/**
+ * Управляет каталогом персонажей бота, их настройками и выбором для пользователя или беседы.
+ */
 export class CharacterService {
   async initialize(): Promise<void> {
     for (const definition of Object.values(personalities)) {

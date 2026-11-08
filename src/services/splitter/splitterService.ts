@@ -1,6 +1,9 @@
 /**
  * SplitterService — утилита для разбиения длинных сообщений по лимиту.
  */
+/**
+ * Делит длинные сообщения на части, пригодные для отправки через ограничения VK.
+ */
 export class SplitterService {
   private maxLen: number;
 

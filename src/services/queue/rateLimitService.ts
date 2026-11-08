@@ -1,3 +1,6 @@
+/**
+ * Ограничивает частоту запросов и отслеживает временные окна отдельно для каждого пользователя.
+ */
 export class RateLimitService {
   private readonly requests = new Map<string, number[]>();
 

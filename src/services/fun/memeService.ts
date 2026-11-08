@@ -110,6 +110,9 @@ function wrapCaption(text: string, maxCharacters: number): string[] {
   return lines.slice(0, 3);
 }
 
+/**
+ * Создаёт мемы и предоставляет операции для их хранения и повторного использования.
+ */
 export class MemeService {
   private async createPlan(
     request: string,

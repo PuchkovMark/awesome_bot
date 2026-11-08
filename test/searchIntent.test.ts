@@ -3,6 +3,9 @@ import test from 'node:test';
 import type { AIMessage, AIProvider, AIResponse } from '../src/services/ai/AIProvider.js';
 import { findWebSearchQuery } from '../src/services/search/searchIntentService.js';
 
+/**
+ * Тестовый AI-провайдер возвращает заранее заданный ответ без сетевых запросов.
+ */
 class MockAIProvider implements AIProvider {
   readonly name = 'mock';
 

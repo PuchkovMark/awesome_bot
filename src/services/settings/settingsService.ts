@@ -4,6 +4,15 @@ import config from '../../config/index.js';
 export type ChatMode = 'active' | 'normal' | 'quiet';
 export type ImageAccess = 'admins_only' | 'all';
 export type BotRole = 'user' | 'administrator' | 'creator';
+export interface RealWorldLocation {
+  name: string;
+  latitude: number;
+  longitude: number;
+  countryCode?: string;
+  region?: string;
+  timeZone?: string;
+  population?: number;
+}
 
 export const BOT_CREATOR = { name: 'Mark Puchkov', vkId: '388581097' } as const;
 export const DEFAULT_WELCOME_TEXT = 'Добро пожаловать, {name}! Рады видеть тебя в беседе.';
@@ -13,6 +22,9 @@ export const DEFAULT_QUESTIONNAIRE_QUESTIONS = [
   'О чём тебе интересно общаться?',
 ];
 
+/**
+ * Читает и сохраняет пользовательские и групповые настройки, роли и параметры приложения.
+ */
 export class SettingsService {
   async getUserSettings(vkId: string) {
     const user = await prisma.user.upsert({
@@ -24,6 +36,29 @@ export class SettingsService {
       where: { userId: user.id },
       create: { userId: user.id },
       update: {},
+    });
+  }
+
+  async setUserLocation(vkId: string, location: RealWorldLocation): Promise<void> {
+    const settings = await this.getUserSettings(vkId);
+    await prisma.userSettings.update({
+      where: { id: settings.id },
+      data: {
+        locationName: location.name,
+        locationLatitude: location.latitude,
+        locationLongitude: location.longitude,
+        locationCountry: location.countryCode ?? null,
+        locationRegion: location.region ?? null,
+        locationTimeZone: location.timeZone ?? null,
+      },
+    });
+  }
+
+  async setUserTimeZone(vkId: string, timeZone: string): Promise<void> {
+    const settings = await this.getUserSettings(vkId);
+    await prisma.userSettings.update({
+      where: { id: settings.id },
+      data: { timeZone: validateTimeZone(timeZone) },
     });
   }
 
@@ -66,6 +101,29 @@ export class SettingsService {
         questionnaireQuestions: JSON.stringify(DEFAULT_QUESTIONNAIRE_QUESTIONS),
       },
       update: {},
+    });
+  }
+
+  async setChatLocation(conversationId: string, location: RealWorldLocation): Promise<void> {
+    const settings = await this.getChatSettings(conversationId);
+    await prisma.chatSettings.update({
+      where: { id: settings.id },
+      data: {
+        locationName: location.name,
+        locationLatitude: location.latitude,
+        locationLongitude: location.longitude,
+        locationCountry: location.countryCode ?? null,
+        locationRegion: location.region ?? null,
+        locationTimeZone: location.timeZone ?? null,
+      },
+    });
+  }
+
+  async setChatTimeZone(conversationId: string, timeZone: string): Promise<void> {
+    const settings = await this.getChatSettings(conversationId);
+    await prisma.chatSettings.update({
+      where: { id: settings.id },
+      data: { timeZone: validateTimeZone(timeZone) },
     });
   }
 
@@ -157,6 +215,15 @@ export class SettingsService {
       data: { id: randomUUID(), adminVkId, action, details },
     });
   }
+}
+
+function validateTimeZone(value: string): string {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value });
+  } catch {
+    throw new Error('Укажите корректный часовой пояс IANA, например Europe/Moscow.');
+  }
+  return value;
 }
 
 const settingsService = new SettingsService();

@@ -101,6 +101,9 @@ function isRetryableUploadError(error: unknown): boolean {
 /**
  * SenderService — отвечает за отправку сообщений в VK и разбиение длинных текстов.
  */
+/**
+ * Отправляет текст и вложения через VK API и отслеживает исходящие сообщения бота.
+ */
 export class SenderService {
   private vk: VK;
   private readonly sentConversationMessages = new Map<number, Set<number>>();
@@ -113,7 +116,12 @@ export class SenderService {
   async send(
     peerId: number,
     text: string,
-    options?: { replyTo?: number; conversationMessageId?: number; keyboard?: string },
+    options?: {
+      replyTo?: number;
+      conversationMessageId?: number;
+      keyboard?: string;
+      randomId?: number;
+    },
   ): Promise<void> {
     const parts = splitterService.split(text);
 
@@ -121,7 +129,7 @@ export class SenderService {
       try {
         const result: unknown = await this.vk.api.messages.send({
           peer_id: peerId,
-          random_id: nextRandomId(),
+          random_id: index === 0 && options?.randomId ? options.randomId : nextRandomId(),
           message: part,
           keyboard: index === 0 ? options?.keyboard : undefined,
           forward:

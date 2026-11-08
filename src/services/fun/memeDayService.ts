@@ -142,6 +142,9 @@ function isNightTime(time: string): boolean {
 export type MemeDayKind =
   'daily' | 'weekly' | 'group' | 'user' | 'event' | 'quote' | 'absurd' | 'prediction';
 
+/**
+ * Управляет расписанием мемов дня и недели, публикациями, архивом и голосованием бесед.
+ */
 export class MemeDayService {
   async getSettings(conversationId: string): Promise<MemeDaySettings> {
     const chat = await prisma.chatSettings.findUniqueOrThrow({

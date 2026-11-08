@@ -53,6 +53,9 @@ const prompts: Partial<Record<GameKind, GamePrompt>> = {
   },
 };
 
+/**
+ * Предоставляет каталог и механику простых игр и интерактивных занятий в беседах.
+ */
 export class GameService {
   list(): string {
     return Object.entries(gameCatalog)

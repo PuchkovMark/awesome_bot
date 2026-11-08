@@ -4,6 +4,9 @@ type Factory<T> = () => T;
  * Простейший DI-контейнер для регистрации и получения сервисов по ключу.
  * Не использует внешних библиотек — достаточно для текущих целей.
  */
+/**
+ * Регистрирует и предоставляет зависимости приложения через контейнер инверсии управления.
+ */
 export class Container {
   private factories = new Map<string, Factory<unknown>>();
   private instances = new Map<string, unknown>();

@@ -34,6 +34,9 @@ export function isVoiceName(value: string): value is VoiceName {
   return availableVoices.includes(value as VoiceName);
 }
 
+/**
+ * Преобразует голосовые сообщения в текст и формирует озвученные ответы бота.
+ */
 export class VoiceService {
   private readonly client: OpenAI | undefined = config.OPENAI_API_KEY
     ? new OpenAI({

@@ -18,7 +18,7 @@ function normalizeText(text: string): string {
 }
 
 /**
- * DetectorService — определяет, обращаются ли к боту в чате, и парсит команды.
+ * Определяет адресованные боту сообщения, команды и другие распознаваемые намерения.
  */
 export class DetectorService {
   /**

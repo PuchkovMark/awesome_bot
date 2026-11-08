@@ -4,6 +4,9 @@ import type { PhotoAttachment } from 'vk-io';
 import config from '../../config/index.js';
 import imageGenerationService from './imageGenerationService.js';
 
+/**
+ * Анализирует изображения и формирует текстовое описание или ответ на вопрос о них.
+ */
 export class ImageAnalysisService {
   private readonly client: OpenAI | undefined = config.OPENAI_API_KEY
     ? new OpenAI({

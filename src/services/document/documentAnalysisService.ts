@@ -26,6 +26,9 @@ const FILE_TYPES: Record<string, { mimeType: string; type: 'pdf' | 'zip' | 'text
   txt: { mimeType: 'text/plain', type: 'text' },
 };
 
+/**
+ * Извлекает текст из поддерживаемых документов и готовит его к анализу языковой моделью.
+ */
 export class DocumentAnalysisService {
   private readonly client: OpenAI | undefined = config.OPENAI_API_KEY
     ? new OpenAI({

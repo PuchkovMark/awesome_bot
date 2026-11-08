@@ -3,6 +3,9 @@ import config from '../../config/index.js';
 import { logger } from '../../logger/index.js';
 import type { AIProvider, AIMessage, AIResponse } from './AIProvider.js';
 
+/**
+ * Отправляет запросы к OpenAI и преобразует ответы провайдера в общий контракт AIProvider.
+ */
 export class OpenAIProvider implements AIProvider {
   public readonly name = 'openai';
   private readonly client: OpenAI;
