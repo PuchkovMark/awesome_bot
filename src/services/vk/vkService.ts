@@ -83,6 +83,7 @@ function getSafeImageErrorDetails(error: unknown): {
  */
 export class VkService {
   private vk: VK;
+  private readonly groupId: number | undefined;
   private readonly rateLimiter = new RateLimitService(config.MAX_REQUESTS_PER_MINUTE, 60_000);
   private readonly userDisplayNames = new Map<number, string>();
   private readonly pendingDisplayNameRequests = new Map<number, Promise<string | undefined>>();
@@ -129,9 +130,10 @@ export class VkService {
 
   constructor() {
     const groupId = config.VK_GROUP_ID.match(/^(?:club|public)?(\d+)$/i)?.[1];
+    this.groupId = groupId ? Number(groupId) : undefined;
     this.vk = new VK({
       token: config.VK_TOKEN,
-      ...(groupId ? { pollingGroupId: Number(groupId) } : {}),
+      ...(this.groupId ? { pollingGroupId: this.groupId } : {}),
     });
   }
 
@@ -975,6 +977,9 @@ export class VkService {
         await this.vk.api.messages.setActivity({
           peer_id: peerId,
           type,
+          ...(this.groupId && peerId > 0 && peerId < 2_000_000_000
+            ? { group_id: this.groupId }
+            : {}),
         });
       } catch (err) {
         if (
@@ -1005,6 +1010,19 @@ export class VkService {
       stopped = true;
       clearInterval(interval);
     };
+  }
+
+  private async markMessageAsRead(peerId: number, messageId: number): Promise<void> {
+    if (!Number.isInteger(messageId) || messageId <= 0) return;
+
+    try {
+      await this.vk.api.messages.markAsRead({
+        peer_id: peerId,
+        start_message_id: messageId,
+      });
+    } catch (err) {
+      logger.warn({ err, peerId, messageId }, 'Failed to mark VK message as read');
+    }
   }
 
   /**
@@ -2214,6 +2232,7 @@ export class VkService {
           try {
             const mod = await import('../ai/providerFactory.js');
             const provider: AIProvider = mod.getAIProvider(providerName);
+            await this.markMessageAsRead(peerId, context.id);
             const stopTyping = this.startActivity(peerId, 'typing');
             let resp: AIResponse;
             try {
