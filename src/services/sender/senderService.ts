@@ -113,6 +113,28 @@ export class SenderService {
     this.vk = new VK({ token: config.VK_TOKEN, uploadTimeout: 60_000 });
   }
 
+  async canSendPrivateMessage(vkUserId: string | number): Promise<boolean> {
+    const userId = Number(vkUserId);
+    const groupId = Number(config.VK_GROUP_ID);
+    if (
+      !Number.isSafeInteger(userId) ||
+      userId <= 0 ||
+      !Number.isSafeInteger(groupId) ||
+      groupId <= 0
+    ) {
+      throw new Error('VK group and user IDs must be positive integers');
+    }
+    const response: unknown = await this.vk.api.messages.isMessagesFromGroupAllowed({
+      group_id: groupId,
+      user_id: userId,
+    });
+    if (typeof response !== 'object' || response === null || !('is_allowed' in response)) {
+      throw new Error('VK returned an invalid private-message permission response');
+    }
+    const allowed = response.is_allowed;
+    return allowed === true || allowed === 1 || allowed === '1';
+  }
+
   async send(
     peerId: number,
     text: string,

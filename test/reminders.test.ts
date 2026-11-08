@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  DEFAULT_REMINDER_TIME_ZONE,
   getNextRecurringDate,
+  resolveReminderTimeZone,
   toUtcDateTime,
   type RecurrenceRule,
 } from '../src/services/reminders/reminderDateTime.js';
@@ -9,6 +11,20 @@ import { parseReminder } from '../src/services/reminders/reminderParser.js';
 
 const now = new Date('2026-03-28T12:00:00.000Z');
 const timeZone = 'Europe/Moscow';
+
+test('reminders default to Moscow time unless a valid configured zone is available', () => {
+  assert.equal(resolveReminderTimeZone(null, null), 'Europe/Moscow');
+  assert.equal(resolveReminderTimeZone('invalid/zone', null), DEFAULT_REMINDER_TIME_ZONE);
+  assert.equal(resolveReminderTimeZone(null, 'Europe/Paris'), 'Europe/Paris');
+  assert.equal(resolveReminderTimeZone('Asia/Tokyo', 'Europe/Paris'), 'Asia/Tokyo');
+  assert.equal(
+    toUtcDateTime(
+      { date: '2026-03-29', time: '10:00' },
+      resolveReminderTimeZone(null, null),
+    ).toISOString(),
+    '2026-03-29T07:00:00.000Z',
+  );
+});
 
 test('parses a one-time reminder with a date, time, and content', () => {
   const parsed = parseReminder('Пенёк, напомни завтра в 10:00 позвонить мастеру.', now, timeZone);

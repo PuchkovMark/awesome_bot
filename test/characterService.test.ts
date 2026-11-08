@@ -12,6 +12,7 @@ let prisma: typeof import('../src/db/client.js').prisma;
 let characters: typeof import('../src/services/settings/characterService.js').default;
 let CharacterService: typeof import('../src/services/settings/characterService.js').CharacterService;
 let memberService: typeof import('../src/services/member/memberService.js').default;
+let formatProfileIntroduction: typeof import('../src/services/member/memberService.js').formatProfileIntroduction;
 let settingsService: typeof import('../src/services/settings/settingsService.js').default;
 
 before(async () => {
@@ -23,7 +24,8 @@ before(async () => {
   ({ prisma } = await import('../src/db/client.js'));
   ({ default: characters, CharacterService } =
     await import('../src/services/settings/characterService.js'));
-  ({ default: memberService } = await import('../src/services/member/memberService.js'));
+  ({ default: memberService, formatProfileIntroduction } =
+    await import('../src/services/member/memberService.js'));
   ({ default: settingsService } = await import('../src/services/settings/settingsService.js'));
   await characters.initialize();
 });
@@ -267,6 +269,59 @@ test('conversation welcomes distinguish returning members and questionnaires per
   const defaults = await settingsService.getChatSettings(conversationId);
   assert.equal(defaults.welcomeEnabled, false);
   assert.equal(defaults.questionnaireEnabled, false);
+  const defaultQuestions: unknown = JSON.parse(defaults.questionnaireQuestions);
+  assert.equal(Array.isArray(defaultQuestions) ? defaultQuestions.length : 0, 16);
+
+  const disabledConversation = '2000000397';
+  await settingsService.getChatSettings(disabledConversation);
+  assert.equal(
+    (
+      await memberService.recordJoin(
+        disabledConversation,
+        '900000002',
+        `${disabledConversation}:join-off-1`,
+      )
+    ).shouldInviteQuestionnaire,
+    false,
+  );
+  const manualQuestionnaire = await memberService.startQuestionnaire(
+    disabledConversation,
+    '900000002',
+  );
+  assert.match(manualQuestionnaire.prompt, /1\./u);
+  await memberService.cancelQuestionnaire(disabledConversation, '900000002');
+  await settingsService.updateChatSettings(disabledConversation, { questionnaireEnabled: true });
+  assert.equal(
+    (
+      await memberService.recordJoin(
+        disabledConversation,
+        '900000002',
+        `${disabledConversation}:join-on-1`,
+      )
+    ).shouldInviteQuestionnaire,
+    true,
+  );
+  assert.equal(
+    (
+      await memberService.recordJoin(
+        disabledConversation,
+        '900000002',
+        `${disabledConversation}:join-on-1`,
+      )
+    ).shouldInviteQuestionnaire,
+    false,
+  );
+  await memberService.recordLeave(disabledConversation, '900000002');
+  assert.equal(
+    (
+      await memberService.recordJoin(
+        disabledConversation,
+        '900000002',
+        `${disabledConversation}:join-on-2`,
+      )
+    ).shouldInviteQuestionnaire,
+    true,
+  );
 
   await settingsService.updateChatSettings(conversationId, {
     welcomeEnabled: true,
@@ -275,59 +330,179 @@ test('conversation welcomes distinguish returning members and questionnaires per
     questionnaireQuestions: ['Как тебя зовут?', 'Что тебе интересно?'],
   });
 
-  const firstJoin = await memberService.recordJoin(conversationId, vkUserId);
+  const { CommandService } = await import('../src/services/command/commandService.js');
+  const questionnaireCommands = new CommandService();
+  const questionnaireStatus = await questionnaireCommands.handleCommand(
+    'questionnaire',
+    '',
+    conversationId,
+    'chat-admin',
+    false,
+    true,
+    false,
+    true,
+  );
+  assert.match(
+    questionnaireStatus ?? '',
+    /Автоматическое знакомство с новыми участниками: включено/u,
+  );
+  const unauthorizedToggle = await questionnaireCommands.handleCommand(
+    'questionnaire',
+    'off',
+    conversationId,
+    'regular-user',
+    false,
+    false,
+    false,
+    true,
+  );
+  assert.match(unauthorizedToggle ?? '', /доступна только администраторам/u);
+  await questionnaireCommands.handleCommand(
+    'questionnaire',
+    'off',
+    conversationId,
+    'chat-admin',
+    false,
+    true,
+    false,
+    true,
+  );
+  const questionnaireNotice = await questionnaireCommands.handleCommand(
+    'questionnaire',
+    'on',
+    conversationId,
+    'chat-admin',
+    false,
+    true,
+    false,
+    true,
+  );
+  assert.equal(
+    questionnaireNotice,
+    'Автоматическое знакомство с новыми участниками включено. Участники могут заполнить или изменить анкету командой /анкета в любое время.',
+  );
+
+  const firstJoinEvent = `${conversationId}:join-1`;
+  const firstJoin = await memberService.recordJoin(conversationId, vkUserId, firstJoinEvent);
   assert.equal(firstJoin.isReturning, false);
   assert.equal(firstJoin.welcomeText, 'Добро пожаловать, {name}!');
+  assert.equal(firstJoin.shouldInviteQuestionnaire, true);
+  assert.equal(firstJoin.profileIntroduction, undefined);
+  const duplicateJoin = await memberService.recordJoin(conversationId, vkUserId, firstJoinEvent);
+  assert.equal(duplicateJoin.shouldInviteQuestionnaire, false);
+  assert.equal(duplicateJoin.profileIntroduction, undefined);
   await memberService.recordLeave(conversationId, vkUserId);
-  assert.equal((await memberService.recordJoin(conversationId, vkUserId)).isReturning, true);
+  await prisma.conversationMember.update({
+    where: { conversationId_vkUserId: { conversationId, vkUserId } },
+    data: { questionnaireInviteSentAt: new Date() },
+  });
+  const returningEventId = `${conversationId}:join-2`;
+  const returningJoin = await memberService.recordJoin(conversationId, vkUserId, returningEventId);
+  assert.equal(returningJoin.isReturning, true);
+  assert.equal(returningJoin.shouldInviteQuestionnaire, true);
+  assert.equal(
+    (await memberService.recordJoin(conversationId, vkUserId, returningEventId))
+      .shouldInviteQuestionnaire,
+    false,
+  );
 
   const start = await memberService.startQuestionnaire(conversationId, vkUserId);
-  assert.equal(start.prompt, 'Как тебя зовут?');
+  assert.match(start.prompt, /1\. Как тебя зовут\?/u);
+  assert.match(start.prompt, /2\. Что тебе интересно\?/u);
   assert.equal(await memberService.hasActiveQuestionnaire(conversationId, vkUserId), true);
-  assert.deepEqual(await memberService.answerQuestionnaire(conversationId, vkUserId, 'Аня'), {
-    prompt: 'Что тебе интересно?',
-  });
   const completed = await memberService.answerQuestionnaire(
     conversationId,
     vkUserId,
-    'Книги и путешествия',
+    '1. Как тебя зовут?\nОтвет: Аня\n2. Что тебе интересно?\nОтвет: Книги и путешествия',
   );
   assert.match(completed.completed ?? '', /Аня/u);
   assert.match(completed.completed ?? '', /Книги и путешествия/u);
   assert.equal(await memberService.hasActiveQuestionnaire(conversationId, vkUserId), false);
+  const profileDetails = await memberService.getProfileDetails(conversationId, vkUserId);
+  assert.ok(profileDetails?.createdAt);
+  assert.ok(profileDetails?.updatedAt);
+  const editForm = await memberService.startQuestionnaire(conversationId, vkUserId, true);
+  assert.match(editForm.prompt, /Ответ: Аня/u);
+  const unchanged = await memberService.answerQuestionnaire(
+    conversationId,
+    vkUserId,
+    '1. Как тебя зовут?\nОтвет: \n2. Что тебе интересно?\nОтвет: ',
+  );
+  assert.match(unchanged.completed ?? '', /Аня/u);
+  assert.match(unchanged.completed ?? '', /Книги и путешествия/u);
   assert.match(
     (await memberService.getProfile(conversationId, vkUserId)) ?? '',
     /Что тебе интересно/u,
   );
+  await memberService.recordLeave(conversationId, vkUserId);
+  const profileJoinEventId = `${conversationId}:join-3`;
+  const profileJoin = await memberService.recordJoin(conversationId, vkUserId, profileJoinEventId);
+  assert.equal(profileJoin.shouldInviteQuestionnaire, false);
+  assert.deepEqual(profileJoin.profileIntroduction, {
+    'Как тебя зовут?': 'Аня',
+    'Что тебе интересно?': 'Книги и путешествия',
+  });
+  const duplicateProfileJoin = await memberService.recordJoin(
+    conversationId,
+    vkUserId,
+    profileJoinEventId,
+  );
+  assert.equal(duplicateProfileJoin.profileIntroduction, undefined);
+
+  const formattedIntroduction = formatProfileIntroduction(
+    {
+      'Как к тебе обращаться?': 'Марк',
+      'Сколько лет?': '25 лет',
+      'Работаешь или учишься?': ' ',
+      'Хобби?': 'Программирование',
+    },
+    'VK display name',
+  );
+  assert.match(formattedIntroduction, /к нам присоединился Марк/u);
+  assert.match(formattedIntroduction, /Сколько лет\?: 25 лет/u);
+  assert.doesNotMatch(formattedIntroduction, /Работаешь или учишься/u);
+  assert.doesNotMatch(formattedIntroduction, /VK display name/u);
+  assert.doesNotMatch(formattedIntroduction, /VK ID|900000001/u);
+  const compactIntroduction = formatProfileIntroduction(
+    Object.fromEntries(
+      Array.from({ length: 10 }, (_, index) => [`Поле ${index}`, 'x'.repeat(500)]),
+    ),
+    'Участник',
+  );
+  assert.ok(compactIntroduction.length <= 3500);
+  assert.match(compactIntroduction, /Некоторые ответы опущены/u);
+
+  const fallbackIntroduction = formatProfileIntroduction(
+    { 'Хобби?': 'Шахматы' },
+    'VK display name',
+  );
+  assert.match(fallbackIntroduction, /к нам присоединился VK display name/u);
   const profiles = await memberService.listProfiles(conversationId, 1);
   assert.equal(profiles.total, 1);
   assert.equal(profiles.profiles[0]?.vkUserId, vkUserId);
-  const { CommandService } = await import('../src/services/command/commandService.js');
   const commands = new CommandService();
-  assert.equal(
-    await commands.handleCommand(
-      'profiles',
-      '',
-      conversationId,
-      'regular-user',
-      false,
-      false,
-      false,
-      true,
-    ),
-    'Эта команда доступна только администраторам.',
-  );
   const listedProfiles = await commands.handleCommand(
     'profiles',
     '',
     conversationId,
-    '388581097',
-    true,
+    'regular-user',
     false,
-    true,
+    false,
+    false,
     true,
   );
   assert.match(listedProfiles ?? '', new RegExp(vkUserId, 'u'));
+  const viewedByMention = await commands.handleCommand(
+    'профиль',
+    `[id${vkUserId}|Аня]`,
+    conversationId,
+    'another-user',
+    false,
+    false,
+    false,
+    true,
+  );
+  assert.match(viewedByMention ?? '', /Книги и путешествия/u);
   const viewedProfile = await commands.handleCommand(
     'profile',
     `get ${vkUserId}`,
@@ -350,6 +525,10 @@ test('conversation welcomes distinguish returning members and questionnaires per
     true,
   );
   assert.match(editedProfile ?? '', /Аня К\./u);
+  assert.match(
+    await memberService.clearProfileAnswer(conversationId, vkUserId, 2),
+    /Последнее обновление/u,
+  );
   const updatedProfile = await memberService.updateProfileAnswer(
     conversationId,
     vkUserId,
@@ -358,8 +537,76 @@ test('conversation welcomes distinguish returning members and questionnaires per
   );
   assert.match(updatedProfile, /Аня К\./u);
   assert.match((await memberService.getProfile(conversationId, vkUserId)) ?? '', /Аня К\./u);
-  assert.equal(await memberService.deleteProfile(conversationId, vkUserId), true);
+
+  const anotherConversation = '2000000398';
+  await settingsService.updateChatSettings(anotherConversation, {
+    questionnaireEnabled: true,
+    questionnaireQuestions: ['Как тебя зовут?'],
+  });
+  await memberService.startQuestionnaire(anotherConversation, vkUserId);
+  await memberService.answerQuestionnaire(
+    anotherConversation,
+    vkUserId,
+    '1. Как тебя зовут?\nОтвет: Аня',
+  );
+  const profileInAnotherChatUser = '900000003';
+  await memberService.startQuestionnaire(anotherConversation, profileInAnotherChatUser);
+  await memberService.answerQuestionnaire(
+    anotherConversation,
+    profileInAnotherChatUser,
+    '1. Как тебя зовут?\nОтвет: Другой чат',
+  );
+  const crossChatJoin = await memberService.recordJoin(
+    conversationId,
+    profileInAnotherChatUser,
+    `${conversationId}:cross-chat-profile`,
+  );
+  assert.equal(crossChatJoin.shouldInviteQuestionnaire, true);
+  assert.equal(crossChatJoin.profileIntroduction, undefined);
+
+  assert.match(
+    (await commands.handleCommand(
+      'анкета',
+      '',
+      conversationId,
+      vkUserId,
+      false,
+      false,
+      false,
+      true,
+    )) ?? '',
+    /сохранённую анкету для редактирования/u,
+  );
+  await memberService.cancelQuestionnaire(conversationId, vkUserId);
+  assert.match(
+    (await commands.handleCommand(
+      'удалить',
+      'профиль',
+      conversationId,
+      vkUserId,
+      false,
+      false,
+      false,
+      true,
+    )) ?? '',
+    /подтверди командой/u,
+  );
+  assert.ok(await memberService.getProfile(conversationId, vkUserId));
+  assert.match(
+    (await commands.handleCommand(
+      'подтвердить',
+      'удаление профиля',
+      conversationId,
+      vkUserId,
+      false,
+      false,
+      false,
+      true,
+    )) ?? '',
+    /Профиль удалён/u,
+  );
   assert.equal(await memberService.getProfile(conversationId, vkUserId), undefined);
+  assert.ok(await memberService.getProfile(anotherConversation, vkUserId));
   assert.equal((await memberService.listProfiles(conversationId, 1)).total, 0);
 });
 
@@ -503,7 +750,7 @@ test('system instructions are scoped to direct conversations and chats', async (
 
   assert.equal(
     await commands.handleCommand('system', '', peerId, userId, false, true, false, true),
-    'Инструкция беседы:\nОтвечай кратко.\n\nИзменить: /system <текст>; удалить: /system clear',
+    'Инструкция беседы:\nОтвечай кратко.\n\nИзменить: /инструкция (/system) <текст>; удалить: /инструкция (/system) clear',
   );
   assert.equal(
     await commands.handleCommand('system', 'clear', peerId, userId, false, true, false, true),

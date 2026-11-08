@@ -7,6 +7,8 @@ import settingsService from '../settings/settingsService.js';
 import {
   getLocalDateTime,
   getNextRecurringDate,
+  isValidTimeZone,
+  resolveReminderTimeZone,
   toUtcDateTime,
   type RecurrenceRule,
 } from './reminderDateTime.js';
@@ -40,15 +42,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function errorText(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
-}
-
-function isValidTimeZone(value: string): boolean {
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: value });
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function parseRule(value: string | null): RecurrenceRule | undefined {
@@ -163,9 +156,16 @@ export class ReminderService {
         conversationId: String(context.peerId),
         expiresAt: { gt: new Date() },
       },
-      select: { id: true },
+      select: { id: true, state: true, payload: true },
     });
-    if (existingDraft) return true;
+    if (existingDraft) {
+      const payload = this.readDraftPayload(existingDraft.payload);
+      if (existingDraft.state === 'creating' && payload?.missing === 'timeZone') {
+        await prisma.reminderDraft.deleteMany({ where: { id: existingDraft.id } });
+        return looksLikeReminderRequest(text);
+      }
+      return true;
+    }
     return looksLikeReminderRequest(text);
   }
 
@@ -214,8 +214,8 @@ export class ReminderService {
           originalText,
         ));
     let timeZone = requestedSharedScope
-      ? chatSettings.timeZone || chatSettings.locationTimeZone
-      : userSettings.timeZone || userSettings.locationTimeZone;
+      ? resolveReminderTimeZone(chatSettings.timeZone, chatSettings.locationTimeZone)
+      : resolveReminderTimeZone(userSettings.timeZone, userSettings.locationTimeZone);
 
     if (draftPayload?.missing === 'timeZone') {
       const zoneCandidate = trimmed.match(
@@ -229,19 +229,6 @@ export class ReminderService {
           await settingsService.setUserTimeZone(context.senderId, zoneCandidate);
         }
       }
-    }
-
-    if (!timeZone) {
-      const payload: ReminderDraftPayload = {
-        sourcePeerId,
-        originalText: draftPayload?.originalText ?? trimmed,
-        missing: 'timeZone',
-        isChat: draftPayload?.isChat ?? context.isChat,
-        groupRequested: requestedSharedScope,
-      };
-      await this.saveDraft(context.senderId, conversationId, 'creating', payload);
-      await senderService.send(context.peerId, reminderQuestion('timeZone'));
-      return true;
     }
 
     if (draftPayload?.missing === 'time') {

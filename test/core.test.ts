@@ -5,8 +5,14 @@ import { RateLimitService } from '../src/services/queue/rateLimitService.js';
 import { RequestQueue } from '../src/services/queue/requestQueue.js';
 import { SplitterService } from '../src/services/splitter/splitterService.js';
 import { DetectorService } from '../src/services/detector/detectorService.js';
+import {
+  commandAliases,
+  localizeCommandReferences,
+  normalizeCommandName,
+} from '../src/services/command/commandAliases.js';
 import { parseVkUserReference } from '../src/services/vk/vkMention.js';
 import { buildBotCapabilities } from '../src/services/ai/capabilityService.js';
+import { CommandService } from '../src/services/command/commandService.js';
 import {
   buildRiddlePrompt,
   changeRiddleDifficulty,
@@ -90,6 +96,54 @@ test('active chat mode recognizes Russian requests without matching word fragmen
   assert.equal(detector.isAddressed('Бот, помоги с задачей'), false);
   assert.equal(detector.isActiveEvent('Бот, помоги с задачей'), false);
   assert.equal(detector.isAddressed('Пенёк, помоги с задачей'), true);
+  assert.equal(detector.parseCommand('Анкета'), 'анкета');
+  assert.equal(detector.parseCommand('Анкеты 2'), 'анкеты');
+  assert.equal(detector.parseCommand('Удалить профиль'), 'удалить');
+});
+
+test('all registered Russian command aliases resolve to their canonical commands', async () => {
+  for (const [command, aliases] of Object.entries(commandAliases)) {
+    for (const alias of aliases) {
+      assert.equal(normalizeCommandName(alias), command, `/${alias} should resolve to /${command}`);
+    }
+
+    assert.equal(
+      localizeCommandReferences('https://example.com/admin /admin'),
+      'https://example.com/admin /админка (/admin)',
+    );
+  }
+
+  const detector = new DetectorService();
+  assert.equal(detector.parseCommand('/помощь 2'), 'help');
+  assert.equal(detector.parseCommand('/опрос on'), 'questionnaire');
+  assert.deepEqual(detector.parseImageCommand('/изображение кот на Луне'), {
+    action: 'generate',
+    prompt: 'кот на Луне',
+  });
+  assert.deepEqual(detector.parseImageCommand('/преобразить сделать рисунок'), {
+    action: 'edit',
+    prompt: 'сделать рисунок',
+  });
+  assert.deepEqual(detector.parseImageCommand('!изображение кот на Луне'), {
+    action: 'generate',
+    prompt: 'кот на Луне',
+  });
+  assert.equal(
+    await new CommandService().handleCommand('ping', '', '123', '123'),
+    'Неизвестная команда: ping',
+  );
+});
+
+test('thinking mode replaces provider selection and is admin-only', async () => {
+  const commandService = new CommandService();
+  assert.equal(
+    await commandService.handleCommand('thinking', 'max', '123', '456', false),
+    'Эта команда доступна только администраторам.',
+  );
+  assert.equal(
+    await commandService.handleCommand('provider', 'openai', '123', '388581097', true, true, true),
+    'Неизвестная команда: provider',
+  );
 });
 
 test('VK user references parse IDs, chat mentions, screen names and profile URLs', () => {
@@ -114,15 +168,22 @@ test('VK user references parse IDs, chat mentions, screen names and profile URLs
 });
 
 test('AI receives the current bot capabilities and access restrictions', () => {
-  const capabilities = buildBotCapabilities({
+  const commandReference = new CommandService().getCommandReference();
+  const context = {
     isAdmin: false,
     imageAccess: 'admins_only',
     chatMode: 'normal',
     personalityName: 'Дружелюбный помощник',
-    personalityIds: ['friendly', 'funny', 'sarcastic'],
+    personalityOptions: [
+      { id: 'alex', name: 'Алекс', description: 'Спокойный помощник' },
+      { id: 'socrates', name: 'Сократ', description: 'Философ' },
+    ],
     provider: 'openai',
     voiceEnabledForUser: false,
-  });
+    commandReference,
+  };
+  const capabilities = buildBotCapabilities(context);
+  const chatCapabilities = buildBotCapabilities({ ...context, isChat: true });
 
   assert.match(capabilities, /реальные возможности/u);
   assert.match(capabilities, /для этого пользователя ограничены администраторами/u);
@@ -130,6 +191,16 @@ test('AI receives the current bot capabilities and access restrictions', () => {
   assert.match(capabilities, /Веб-поиск:/u);
   assert.match(capabilities, /Не заявляй о не реализованных возможностях/u);
   assert.match(capabilities, /Mark Puchkov \(VK ID 388581097\)/u);
+  assert.match(capabilities, /\/опрос \(\/questionnaire\) set <вопрос 1> \| <вопрос 2>/u);
+  assert.match(capabilities, /администратор беседы или бот-администратор/u);
+  assert.match(capabilities, /просьба настроить вступительное приветствие означает \/welcome/u);
+  assert.match(capabilities, /предлагай новичкам анкету.*\/questionnaire on/u);
+  assert.match(capabilities, /не предлагай анкету при вступлении.*\/questionnaire off/u);
+  assert.match(capabilities, /Предложи точное имя команды и синтаксис/u);
+  assert.match(capabilities, /Алекс \(alex\) — Спокойный помощник/u);
+  assert.match(capabilities, /меняет только личный выбор/u);
+  assert.match(chatCapabilities, /меняет его для беседы/u);
+  assert.match(chatCapabilities, /только если администраторы включили \/personality allow/u);
 });
 
 test('AI distinguishes enabled voice feature from a missing provider key', () => {
@@ -144,9 +215,10 @@ test('AI distinguishes enabled voice feature from a missing provider key', () =>
       imageAccess: 'admins_only',
       chatMode: 'normal',
       personalityName: 'Дружелюбный помощник',
-      personalityIds: ['friendly'],
+      personalityOptions: [{ id: 'alex', name: 'Алекс', description: 'Спокойный помощник' }],
       provider: 'openai',
       voiceEnabledForUser: false,
+      commandReference: new CommandService().getCommandReference(),
     });
   } finally {
     config.VOICE_ENABLED = previousVoiceEnabled;
@@ -254,12 +326,13 @@ test('AI-generated riddles are validated and keep the selected difficulty', () =
 test('riddle difficulty changes within supported bounds and guides generation', () => {
   assert.equal(changeRiddleDifficulty(2, 1), 3);
   assert.equal(changeRiddleDifficulty(1, -1), 1);
-  assert.equal(changeRiddleDifficulty(5, 1), 5);
+  assert.equal(changeRiddleDifficulty(4, 1), 4);
+  assert.equal(getRiddleDifficulty(5), 4);
   assert.equal(getRiddleDifficulty(4), 4);
   assert.equal(getRiddleDifficulty('4'), 2);
-  assert.equal(getRiddleDifficultyLabel(3), 'средняя');
-  assert.match(buildRiddlePrompt(5, ['Старая загадка']), /Сложность 5\/5/u);
-  assert.match(buildRiddlePrompt(5, ['Старая загадка']), /Старая загадка/u);
+  assert.equal(getRiddleDifficultyLabel(3), 'сложная');
+  assert.match(buildRiddlePrompt(4, ['Старая загадка']), /Сложность 4\/4/u);
+  assert.match(buildRiddlePrompt(4, ['Старая загадка']), /Старая загадка/u);
   assert.equal(normalizeGameAnswer('  Ёж!  '), 'еж');
 });
 
@@ -268,10 +341,10 @@ test('questionnaire configuration validates question count, length, and persiste
     'Как зовут?',
     'Чем увлекаешься?',
   ]);
-  assert.throws(() => parseQuestionnaireQuestions(' | '), /от 1 до 8 вопросов/u);
+  assert.throws(() => parseQuestionnaireQuestions(' | '), /от 1 до 32 вопросов/u);
   assert.throws(
-    () => parseQuestionnaireQuestions(Array(9).fill('Вопрос').join('|')),
-    /от 1 до 8 вопросов/u,
+    () => parseQuestionnaireQuestions(Array(33).fill('Вопрос').join('|')),
+    /от 1 до 32 вопросов/u,
   );
   assert.throws(() => parseQuestionnaireQuestions('x'.repeat(201)), /не длиннее 200 символов/u);
   assert.deepEqual(parseStoredQuestionnaireQuestions('["Вопрос?"]'), ['Вопрос?']);

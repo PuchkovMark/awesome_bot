@@ -20,6 +20,7 @@ test('/fun lists the implemented entertainment commands', async () => {
     true,
   );
 
+  assert.match(menu ?? '', /\/случайнаяшутка \(\/randomjoke\)/u);
   assert.match(menu ?? '', /\/randomjoke/u);
   assert.match(menu ?? '', /\/meme/u);
   assert.match(menu ?? '', /\/battle/u);
@@ -33,14 +34,18 @@ test('/help shows concise pages with navigation', async () => {
   const thirdPage = await commandService.handleCommand('help', '3', '123', '123');
 
   assert.match(firstPage ?? '', /Справка — страница 1\/4/u);
-  assert.match(firstPage ?? '', /Следующая: \/help 2/u);
+  assert.match(firstPage ?? '', /\/помощь \(\/help\) \[страница\]/u);
+  assert.match(firstPage ?? '', /Следующая: \/помощь \(\/help\) 2/u);
   assert.doesNotMatch(firstPage ?? '', /\/randomjoke/u);
   assert.match(secondPage ?? '', /Фото, документы и голос/u);
-  assert.match(secondPage ?? '', /\/say \[текст\].*сообщение, на которое вы ответили/u);
-  assert.match(secondPage ?? '', /Предыдущая: \/help 1/u);
-  assert.match(secondPage ?? '', /Следующая: \/help 3/u);
-  assert.match(thirdPage ?? '', /\/joke \[random\|VK ID\]/u);
-  assert.doesNotMatch(thirdPage ?? '', /@all|\/joke \[all/u);
+  assert.match(
+    secondPage ?? '',
+    /\/озвучить \(\/say\) \[текст\].*сообщение, на которое вы ответили/u,
+  );
+  assert.match(secondPage ?? '', /Предыдущая: \/помощь \(\/help\) 1/u);
+  assert.match(secondPage ?? '', /Следующая: \/помощь \(\/help\) 3/u);
+  assert.match(thirdPage ?? '', /\/шутка \(\/joke\) \[random\|VK ID\]/u);
+  assert.doesNotMatch(thirdPage ?? '', /@all|\/шутка \(\/joke\) \[all/u);
 });
 
 test('/admin displays paginated sections for administrators', async () => {
@@ -50,8 +55,9 @@ test('/admin displays paginated sections for administrators', async () => {
   assert.match(page ?? '', /Панель администратора/u);
   assert.match(page ?? '', /Страница 2\/3/u);
   assert.match(page ?? '', /Анкеты участников/u);
-  assert.match(page ?? '', /Предыдущая: \/admin 1/u);
-  assert.match(page ?? '', /Следующая: \/admin 3/u);
+  assert.match(page ?? '', /\/профиль \(\/profile\)/u);
+  assert.match(page ?? '', /Предыдущая: \/админка \(\/admin\) 1/u);
+  assert.match(page ?? '', /Следующая: \/админка \(\/admin\) 3/u);
 });
 
 test('help and admin menus provide callback buttons for available pages', () => {
@@ -132,6 +138,7 @@ test('/react asks for a message when neither a reply nor text is provided', asyn
   );
 
   assert.match(response ?? '', /Ответьте командой на сообщение/u);
+  assert.match(response ?? '', /\/реакция \(\/react\)/u);
 });
 
 test('/battle cannot be started in a direct message', async () => {

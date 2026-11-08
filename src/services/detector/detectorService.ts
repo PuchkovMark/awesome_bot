@@ -1,4 +1,5 @@
 import config from '../../config/index.js';
+import { normalizeCommandName } from '../command/commandAliases.js';
 
 export type ImageCommand = {
   action: 'generate' | 'edit';
@@ -64,10 +65,12 @@ export class DetectorService {
 
   parseImageCommand(text: string): ImageCommand | null {
     if (!text) return null;
-    const slashCommand = text.trim().match(/^\/(image|edit)(?:\s+([\s\S]*))?$/iu);
+    const slashCommand = text
+      .trim()
+      .match(/^[/!](image|edit|изображение|преобразить)(?:\s+([\s\S]*))?$/iu);
     if (slashCommand) {
       return {
-        action: slashCommand[1].toLowerCase() === 'edit' ? 'edit' : 'generate',
+        action: /^(?:edit|преобразить)$/iu.test(slashCommand[1]) ? 'edit' : 'generate',
         prompt: slashCommand[2]?.trim() ?? '',
       };
     }
@@ -104,8 +107,14 @@ export class DetectorService {
     if (/^(?:пенек|пенечек)\s+пересказ(?:\s|[.!?,…]|$)/u.test(normalized)) {
       return 'summary';
     }
-    if (t.startsWith('/')) return t.split(' ')[0].slice(1).toLowerCase();
-    if (t.startsWith('!')) return t.split(' ')[0].slice(1).toLowerCase();
+    if (/^анкета[!.?]*$/u.test(normalized)) return 'анкета';
+    if (/^анкеты(?:\s+\d+)?[!.?]*$/u.test(normalized)) return 'анкеты';
+    if (/^профиль[!.?]*$/u.test(normalized)) return 'профиль';
+    if (/^удалить\s+профиль[!.?]*$/u.test(normalized)) return 'удалить';
+    if (/^подтвердить\s+удаление\s+профиля[!.?]*$/u.test(normalized)) return 'подтвердить';
+    if (t.startsWith('/') || t.startsWith('!')) {
+      return normalizeCommandName(t.split(/\s+/u)[0].slice(1));
+    }
     return null;
   }
 }

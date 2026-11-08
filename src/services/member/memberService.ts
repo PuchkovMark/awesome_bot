@@ -1,9 +1,10 @@
 import { prisma } from '../../db/client.js';
 import settingsService from '../settings/settingsService.js';
 
-export const MAX_QUESTIONNAIRE_QUESTIONS = 8;
+export const MAX_QUESTIONNAIRE_QUESTIONS = 32;
 export const MAX_QUESTION_LENGTH = 200;
 export const MAX_ANSWER_LENGTH = 500;
+export const MAX_QUESTIONNAIRE_RESPONSE_LENGTH = 3500;
 export const MEMBER_PROFILES_PAGE_SIZE = 10;
 
 function parseProfile(value: string): Record<string, string> {
@@ -24,10 +25,122 @@ function parseProfile(value: string): Record<string, string> {
   return parsed as Record<string, string>;
 }
 
-function formatProfile(answers: Record<string, string>): string {
-  return Object.entries(answers)
-    .map(([question, answer]) => `${question}\n${answer}`)
+function formatProfile(answers: Record<string, string>, updatedAt?: Date | null): string {
+  const displayName = Object.entries(answers).find(([question]) =>
+    question.toLocaleLowerCase('ru-RU').startsWith('как к тебе обращаться'),
+  )?.[1];
+  const fields = Object.entries(answers)
+    .filter(([, answer]) => answer.trim())
+    .map(([question, answer]) => `💬 ${question}\n${answer}`);
+  return [
+    `👤 ${displayName ? `Знакомьтесь, ${displayName}!` : 'Профиль участника'}`,
+    ...fields,
+    updatedAt ? `Последнее обновление: ${updatedAt.toLocaleDateString('ru-RU')}` : '',
+  ]
+    .filter(Boolean)
     .join('\n\n');
+}
+
+export function formatProfileIntroduction(
+  answers: Record<string, string>,
+  vkDisplayName: string,
+  welcomeAlreadySent = false,
+): string {
+  const displayNameAnswer = Object.entries(answers).find(
+    ([question, answer]) =>
+      answer.trim() && /(?:как.{0,40}обращат|имя|позывн|никнейм|ник)/iu.test(question),
+  )?.[1];
+  const displayName = displayNameAnswer?.trim() || vkDisplayName;
+  const greeting = welcomeAlreadySent
+    ? `Немного информации о ${displayName}:`
+    : `О, к нам присоединился ${displayName}! 👋\nНемного информации:`;
+  const footer = welcomeAlreadySent ? '' : '\nРады видеть в нашей компании! 😊';
+  const maxLength = 3500;
+  const lines: string[] = [];
+  const omissionText = 'Некоторые ответы опущены, чтобы сообщение было короче.';
+  const omissionReserve = `\n${omissionText}`.length;
+  let omittedAnswers = false;
+
+  for (const [question, rawAnswer] of Object.entries(answers)) {
+    const answer = rawAnswer.trim();
+    if (!question.trim() || !answer) continue;
+    const label = question.replace(/\s+/gu, ' ').trim();
+    const line = `• ${label}: ${answer}`;
+    const nextLength = [greeting, ...lines, line, footer].join('\n').length + omissionReserve;
+    if (nextLength > maxLength) {
+      omittedAnswers = true;
+      continue;
+    }
+    lines.push(line);
+  }
+
+  const details = lines.length > 0 ? lines.join('\n') : 'В анкете пока нет заполненных ответов.';
+  const omissionNote = omittedAnswers ? `\n${omissionText}` : '';
+  return `${greeting}\n${details}${omissionNote}${footer}`;
+}
+
+function createQuestionnaireTemplate(questions: string[], answers: Record<string, string>): string {
+  return [
+    'Заполни пункты и отправь весь список одним сообщением. Все ответы необязательны.',
+    'Пустой ответ сохраняет прежний вариант; чтобы удалить прежний ответ, укажи «—».',
+    ...questions.flatMap((question, index) => [
+      `${index + 1}. ${question}`,
+      `Ответ: ${answers[question] ?? ''}`,
+    ]),
+  ].join('\n');
+}
+
+function parseQuestionnaireForm(
+  text: string,
+  questions: string[],
+): { values: Map<number, string>; error?: string } {
+  const values = new Map<number, string>();
+  let currentIndex: number | undefined;
+  let currentValue = '';
+
+  const saveCurrent = (): string | undefined => {
+    if (currentIndex === undefined) return undefined;
+    if (values.has(currentIndex)) return 'В анкете повторяется номер вопроса.';
+    values.set(currentIndex, currentValue.trim());
+    return undefined;
+  };
+
+  for (const line of text.split(/\r?\n/u)) {
+    const header = line.match(/^\s*(\d{1,2})[.)]\s*(.*)$/u);
+    if (header) {
+      const error = saveCurrent();
+      if (error) return { values, error };
+      const questionNumber = Number(header[1]);
+      if (questionNumber < 1 || questionNumber > questions.length) {
+        return { values, error: `Укажите номера вопросов от 1 до ${questions.length}.` };
+      }
+      currentIndex = questionNumber - 1;
+      const payload = (header[2] ?? '').trim();
+      const question = questions[currentIndex] ?? '';
+      currentValue = payload === question ? '' : payload;
+      continue;
+    }
+
+    if (currentIndex === undefined) {
+      if (line.trim()) {
+        return { values, error: 'Сохраните номера вопросов в ответе, например «1. 25 лет».' };
+      }
+      continue;
+    }
+
+    const answerLine = line.match(/^\s*Ответ:\s*(.*)$/iu);
+    if (answerLine) {
+      currentValue = answerLine[1] ?? '';
+    } else if (line.trim()) {
+      currentValue = currentValue ? `${currentValue}\n${line.trim()}` : line.trim();
+    }
+  }
+
+  const error = saveCurrent();
+  if (error) return { values, error };
+  return values.size > 0
+    ? { values }
+    : { values, error: 'Не найдены номера вопросов в заполненной анкете.' };
 }
 
 export function parseQuestionnaireQuestions(value: string): string[] {
@@ -71,11 +184,12 @@ export function parseStoredQuestionnaireQuestions(value: string): string[] {
  * Управляет участниками бесед, их профилями, событиями вступления и анкетами.
  */
 export class MemberService {
-  async recordJoin(conversationId: string, vkUserId: string) {
+  async recordJoin(conversationId: string, vkUserId: string, eventId: string) {
+    if (!eventId.trim()) throw new Error('Для обработки вступления нужен идентификатор события.');
     const settings = await settingsService.getChatSettings(conversationId);
     const existing = await prisma.conversationMember.findUnique({
       where: { conversationId_vkUserId: { conversationId, vkUserId } },
-      select: { id: true },
+      select: { id: true, lastJoinIntroductionEventId: true },
     });
     const joinedAt = new Date();
     await prisma.conversationMember.upsert({
@@ -89,11 +203,36 @@ export class MemberService {
       },
       update: { isPresent: true, lastJoinedAt: joinedAt, leftAt: null },
     });
+    const previousEventId = existing?.lastJoinIntroductionEventId ?? null;
+    const claimedEvent =
+      previousEventId === eventId
+        ? { count: 0 }
+        : await prisma.conversationMember.updateMany({
+            where: {
+              conversationId,
+              vkUserId,
+              lastJoinIntroductionEventId: previousEventId,
+            },
+            data: { lastJoinIntroductionEventId: eventId },
+          });
+    const shouldProcessIntroduction = settings.questionnaireEnabled && claimedEvent.count === 1;
+    const profile = shouldProcessIntroduction
+      ? await this.getProfileDetails(conversationId, vkUserId)
+      : undefined;
+    const shouldInviteQuestionnaire = shouldProcessIntroduction && !profile;
+    if (shouldInviteQuestionnaire) {
+      await prisma.conversationMember.update({
+        where: { conversationId_vkUserId: { conversationId, vkUserId } },
+        data: { questionnaireInviteSentAt: joinedAt },
+      });
+    }
     return {
       isReturning: Boolean(existing),
       welcomeEnabled: settings.welcomeEnabled,
       welcomeText: settings.welcomeText,
       questionnaireEnabled: settings.questionnaireEnabled,
+      shouldInviteQuestionnaire,
+      profileIntroduction: profile?.answers,
     };
   }
 
@@ -121,24 +260,22 @@ export class MemberService {
     replaceExisting = false,
   ): Promise<{ prompt: string; alreadyExists: boolean }> {
     const settings = await settingsService.getChatSettings(conversationId);
-    if (!settings.questionnaireEnabled) {
-      throw new Error('Анкеты в этой беседе выключены. Попросите администратора включить их.');
-    }
-
     const member = await prisma.conversationMember.findUnique({
       where: { conversationId_vkUserId: { conversationId, vkUserId } },
-      select: { profile: true, questionnaireIndex: true },
+      select: { profile: true, profileCompleted: true, questionnaireIndex: true },
     });
     if (member?.questionnaireIndex !== null && member?.questionnaireIndex !== undefined) {
       throw new Error(
         'Анкета уже заполняется. Ответьте на текущий вопрос или отправьте /profile cancel.',
       );
     }
-    if (member && member.profile !== '{}' && !replaceExisting) {
+    if (member?.profileCompleted && !replaceExisting) {
       throw new Error('У вас уже есть анкета. Для изменения используйте /profile edit.');
     }
 
     const questions = parseStoredQuestionnaireQuestions(settings.questionnaireQuestions);
+    const existingAnswers =
+      member?.profileCompleted && replaceExisting ? parseProfile(member.profile) : {};
     await prisma.conversationMember.upsert({
       where: { conversationId_vkUserId: { conversationId, vkUserId } },
       create: {
@@ -146,17 +283,20 @@ export class MemberService {
         vkUserId,
         isPresent: true,
         questionnaireQuestions: JSON.stringify(questions),
-        questionnaireAnswers: '{}',
-        questionnaireIndex: 0,
+        questionnaireAnswers: JSON.stringify(existingAnswers),
+        questionnaireIndex: -1,
       },
       update: {
         isPresent: true,
         questionnaireQuestions: JSON.stringify(questions),
-        questionnaireAnswers: '{}',
-        questionnaireIndex: 0,
+        questionnaireAnswers: JSON.stringify(existingAnswers),
+        questionnaireIndex: -1,
       },
     });
-    return { prompt: questions[0], alreadyExists: Boolean(member && member.profile !== '{}') };
+    return {
+      prompt: createQuestionnaireTemplate(questions, existingAnswers),
+      alreadyExists: member?.profileCompleted ?? false,
+    };
   }
 
   async answerQuestionnaire(
@@ -166,8 +306,10 @@ export class MemberService {
   ): Promise<{ prompt?: string; completed?: string }> {
     const trimmed = answer.trim();
     if (!trimmed) return { prompt: 'Ответ не может быть пустым. Попробуйте ещё раз.' };
-    if (trimmed.length > MAX_ANSWER_LENGTH) {
-      return { prompt: `Ответ слишком длинный. Максимум — ${MAX_ANSWER_LENGTH} символов.` };
+    if (trimmed.length > MAX_QUESTIONNAIRE_RESPONSE_LENGTH) {
+      return {
+        prompt: `Ответ слишком длинный. Максимум — ${MAX_QUESTIONNAIRE_RESPONSE_LENGTH} символов.`,
+      };
     }
 
     const member = await prisma.conversationMember.findUnique({
@@ -176,6 +318,8 @@ export class MemberService {
         questionnaireQuestions: true,
         questionnaireAnswers: true,
         questionnaireIndex: true,
+        profileCompleted: true,
+        profileCreatedAt: true,
       },
     });
     if (
@@ -189,8 +333,48 @@ export class MemberService {
 
     const questions = parseStoredQuestionnaireQuestions(member.questionnaireQuestions);
     const index = member.questionnaireIndex;
+    if (index === -1) {
+      const parsed = parseQuestionnaireForm(trimmed, questions);
+      if (parsed.error) return { prompt: `${parsed.error}\nОтправьте заполненный шаблон ещё раз.` };
+
+      const answers = parseProfile(member.questionnaireAnswers);
+      for (const [questionNumber, value] of parsed.values) {
+        const question = questions[questionNumber];
+        if (!question) continue;
+        if (value === '—') {
+          delete answers[question];
+        } else if (value.trim()) {
+          if (value.length > MAX_ANSWER_LENGTH) {
+            return {
+              prompt: `Ответ на вопрос ${questionNumber + 1} слишком длинный. Максимум — ${MAX_ANSWER_LENGTH} символов.`,
+            };
+          }
+          answers[question] = value.trim();
+        }
+      }
+
+      const now = new Date();
+      await prisma.conversationMember.update({
+        where: { conversationId_vkUserId: { conversationId, vkUserId } },
+        data: {
+          profile: JSON.stringify(answers),
+          profileCompleted: true,
+          profileCreatedAt: member.profileCreatedAt ?? now,
+          profileUpdatedAt: now,
+          profileDeleteRequestedAt: null,
+          questionnaireAnswers: null,
+          questionnaireQuestions: null,
+          questionnaireIndex: null,
+        },
+      });
+      return { completed: formatProfile(answers, now) };
+    }
+
     if (index < 0 || index >= questions.length) {
       throw new Error('Анкета содержит недопустимый номер вопроса.');
+    }
+    if (trimmed.length > MAX_ANSWER_LENGTH) {
+      return { prompt: `Ответ слишком длинный. Максимум — ${MAX_ANSWER_LENGTH} символов.` };
     }
     let answers: Record<string, string>;
     try {
@@ -216,15 +400,17 @@ export class MemberService {
       where: { conversationId_vkUserId: { conversationId, vkUserId } },
       data: {
         profile: JSON.stringify(answers),
+        profileCompleted: true,
+        profileCreatedAt: member.profileCreatedAt ?? new Date(),
+        profileUpdatedAt: new Date(),
+        profileDeleteRequestedAt: null,
         questionnaireAnswers: null,
         questionnaireQuestions: null,
         questionnaireIndex: null,
       },
     });
     return {
-      completed: Object.entries(answers)
-        .map(([question, value]) => `${question}\n${value}`)
-        .join('\n\n'),
+      completed: formatProfile(answers, new Date()),
     };
   }
 
@@ -244,19 +430,44 @@ export class MemberService {
     return result.count > 0;
   }
 
-  async getProfile(conversationId: string, vkUserId: string): Promise<string | undefined> {
+  async getProfileDetails(
+    conversationId: string,
+    vkUserId: string,
+  ): Promise<
+    | {
+        answers: Record<string, string>;
+        createdAt: Date | null;
+        updatedAt: Date | null;
+      }
+    | undefined
+  > {
     const member = await prisma.conversationMember.findUnique({
       where: { conversationId_vkUserId: { conversationId, vkUserId } },
-      select: { profile: true },
+      select: {
+        profile: true,
+        profileCompleted: true,
+        profileCreatedAt: true,
+        profileUpdatedAt: true,
+      },
     });
-    if (!member || member.profile === '{}') return undefined;
-    return formatProfile(parseProfile(member.profile));
+    if (!member?.profileCompleted) return undefined;
+    return {
+      answers: parseProfile(member.profile),
+      createdAt: member.profileCreatedAt,
+      updatedAt: member.profileUpdatedAt,
+    };
+  }
+
+  async getProfile(conversationId: string, vkUserId: string): Promise<string | undefined> {
+    const profile = await this.getProfileDetails(conversationId, vkUserId);
+    if (!profile) return undefined;
+    return formatProfile(profile.answers, profile.updatedAt);
   }
 
   async listProfiles(conversationId: string, page: number) {
     if (!Number.isInteger(page) || page < 1)
       throw new Error('Номер страницы должен быть больше нуля.');
-    const where = { conversationId, profile: { not: '{}' } };
+    const where = { conversationId, profileCompleted: true };
     const total = await prisma.conversationMember.count({ where });
     const pageCount = Math.ceil(total / MEMBER_PROFILES_PAGE_SIZE);
     if (page > pageCount) {
@@ -264,8 +475,12 @@ export class MemberService {
     }
     const members = await prisma.conversationMember.findMany({
       where,
-      select: { vkUserId: true, profile: true },
-      orderBy: { updatedAt: 'desc' },
+      select: {
+        vkUserId: true,
+        profile: true,
+        profileUpdatedAt: true,
+      },
+      orderBy: { profileUpdatedAt: 'desc' },
       skip: (page - 1) * MEMBER_PROFILES_PAGE_SIZE,
       take: MEMBER_PROFILES_PAGE_SIZE,
     });
@@ -273,9 +488,10 @@ export class MemberService {
       total,
       page,
       pageCount,
-      profiles: members.map(({ vkUserId, profile }) => ({
+      profiles: members.map(({ vkUserId, profile, profileUpdatedAt }) => ({
         vkUserId,
         answers: parseProfile(profile),
+        updatedAt: profileUpdatedAt,
       })),
     };
   }
@@ -296,9 +512,9 @@ export class MemberService {
     }
     const member = await prisma.conversationMember.findUnique({
       where: { conversationId_vkUserId: { conversationId, vkUserId } },
-      select: { profile: true },
+      select: { profile: true, profileCreatedAt: true },
     });
-    if (!member || member.profile === '{}') throw new Error('Анкета участника не найдена.');
+    if (!member) throw new Error('Анкета участника не найдена.');
 
     const answers = parseProfile(member.profile);
     const questions = Object.keys(answers);
@@ -306,11 +522,77 @@ export class MemberService {
       throw new Error(`Укажите номер ответа от 1 до ${questions.length}.`);
     }
     answers[questions[questionNumber - 1]] = trimmed;
+    const now = new Date();
     await prisma.conversationMember.update({
       where: { conversationId_vkUserId: { conversationId, vkUserId } },
-      data: { profile: JSON.stringify(answers) },
+      data: {
+        profile: JSON.stringify(answers),
+        profileCompleted: true,
+        profileCreatedAt: member.profileCreatedAt ?? now,
+        profileUpdatedAt: now,
+      },
     });
-    return formatProfile(answers);
+    return formatProfile(answers, now);
+  }
+
+  async clearProfileAnswer(
+    conversationId: string,
+    vkUserId: string,
+    questionNumber: number,
+  ): Promise<string> {
+    if (!Number.isInteger(questionNumber) || questionNumber < 1) {
+      throw new Error('Номер ответа должен быть положительным целым числом.');
+    }
+    const member = await prisma.conversationMember.findUnique({
+      where: { conversationId_vkUserId: { conversationId, vkUserId } },
+      select: { profile: true, profileCompleted: true, profileCreatedAt: true },
+    });
+    if (!member?.profileCompleted) throw new Error('Анкета участника не найдена.');
+
+    const answers = parseProfile(member.profile);
+    const questions = Object.keys(answers);
+    if (questionNumber > questions.length) {
+      throw new Error(`Укажите номер ответа от 1 до ${questions.length}.`);
+    }
+    delete answers[questions[questionNumber - 1]];
+    const now = new Date();
+    const hasAnswers = Object.keys(answers).length > 0;
+    await prisma.conversationMember.update({
+      where: { conversationId_vkUserId: { conversationId, vkUserId } },
+      data: {
+        profile: JSON.stringify(answers),
+        profileCompleted: hasAnswers,
+        profileCreatedAt: hasAnswers ? member.profileCreatedAt : null,
+        profileUpdatedAt: hasAnswers ? now : null,
+      },
+    });
+    return formatProfile(answers, now);
+  }
+
+  async requestProfileDeletion(conversationId: string, vkUserId: string): Promise<boolean> {
+    const result = await prisma.conversationMember.updateMany({
+      where: { conversationId, vkUserId, profileCompleted: true },
+      data: { profileDeleteRequestedAt: new Date() },
+    });
+    return result.count > 0;
+  }
+
+  async confirmProfileDeletion(
+    conversationId: string,
+    vkUserId: string,
+    confirmationWindowMs = 5 * 60_000,
+  ): Promise<boolean> {
+    const member = await prisma.conversationMember.findUnique({
+      where: { conversationId_vkUserId: { conversationId, vkUserId } },
+      select: { profileDeleteRequestedAt: true },
+    });
+    if (
+      !member?.profileDeleteRequestedAt ||
+      Date.now() - member.profileDeleteRequestedAt.getTime() > confirmationWindowMs
+    ) {
+      return false;
+    }
+    return this.deleteProfile(conversationId, vkUserId);
   }
 
   async deleteProfile(conversationId: string, vkUserId: string): Promise<boolean> {
@@ -318,10 +600,14 @@ export class MemberService {
       where: {
         conversationId,
         vkUserId,
-        OR: [{ profile: { not: '{}' } }, { questionnaireIndex: { not: null } }],
+        OR: [{ profileCompleted: true }, { questionnaireIndex: { not: null } }],
       },
       data: {
         profile: '{}',
+        profileCompleted: false,
+        profileCreatedAt: null,
+        profileUpdatedAt: null,
+        profileDeleteRequestedAt: null,
         questionnaireAnswers: null,
         questionnaireQuestions: null,
         questionnaireIndex: null,

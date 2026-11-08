@@ -3,6 +3,7 @@ import { connectDb } from './db/client.js';
 import { logger } from './logger/index.js';
 import vkService from './services/vk/vkService.js';
 import { startCleanupJob } from './jobs/cleanupJob.js';
+import { startGameTimeoutJob } from './jobs/gameTimeoutJob.js';
 
 async function main() {
   try {
@@ -16,6 +17,7 @@ async function main() {
 
     // Start cleanup cron job (every 60 minutes)
     startCleanupJob(60);
+    startGameTimeoutJob();
 
     logger.info(`Bot ${config.BOT_NAME} is running`);
   } catch (err) {

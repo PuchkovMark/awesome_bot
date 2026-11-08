@@ -144,7 +144,7 @@ model ChatSettings {
   welcomeEnabled         Boolean      @default(false)
   welcomeText            String       @default("Добро пожаловать, {name}! Рады видеть тебя в беседе.")
   questionnaireEnabled   Boolean      @default(false)
-  questionnaireQuestions String       @default("[\"Как к тебе обращаться?\",\"Чем ты увлекаешься?\",\"О чём тебе интересно общаться?\"]")
+  questionnaireQuestions String       @default("[\"Сколько лет?\",\"Как к тебе обращаться? (Имя или позывной?)\",\"Работаешь или учишься?\",\"На кого/кем?\",\"Семейное положение: в поиске своего счастья или уже есть вторая половинка?\",\"Сколько в ВРН?\",\"Где любишь гулять?\",\"Кофе или чай?\",\"Какие хобби?\",\"Есть любимые фильмы?\",\"Скинь пару любимых песен.\",\"Ты за активный отдых или лучше фильмец дома глянуть?\",\"Как относишься к алкоголю?\",\"50/50 на первом свидании норм?\",\"Что ждёшь от этой конфы?\",\"Какой MBTI? Ссылка на тест: https://www.16personalities.com/ru\"]")
   personality            String       @default("chipsik")
   systemPrompt           String?
   personalitySettings    String       @default("{}")
@@ -228,22 +228,29 @@ model ReminderDraft {
 }
 
 model ConversationMember {
-  id                     String       @id @default(cuid())
-  conversationId         String
-  conversation           Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  vkUserId               String
-  isPresent              Boolean      @default(false)
-  firstJoinedAt          DateTime     @default(now())
-  lastJoinedAt           DateTime?
-  leftAt                 DateTime?
-  profile                String       @default("{}")
-  questionnaireQuestions String?
-  questionnaireAnswers   String?
-  questionnaireIndex     Int?
-  updatedAt              DateTime     @updatedAt
+  id                          String       @id @default(cuid())
+  conversationId              String
+  conversation                Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  vkUserId                    String
+  isPresent                   Boolean      @default(false)
+  firstJoinedAt               DateTime     @default(now())
+  lastJoinedAt                DateTime?
+  leftAt                      DateTime?
+  profile                     String       @default("{}")
+  profileCompleted            Boolean      @default(false)
+  profileCreatedAt            DateTime?
+  profileUpdatedAt            DateTime?
+  questionnaireInviteSentAt   DateTime?
+  lastJoinIntroductionEventId String?
+  profileDeleteRequestedAt    DateTime?
+  questionnaireQuestions      String?
+  questionnaireAnswers        String?
+  questionnaireIndex          Int?
+  updatedAt                   DateTime     @updatedAt
 
   @@unique([conversationId, vkUserId])
   @@index([conversationId, isPresent])
+  @@index([conversationId, profileCompleted, profileUpdatedAt])
 }
 
 model FunPreference {
@@ -414,6 +421,7 @@ model GameSession {
   updatedAt      DateTime     @updatedAt
   endedAt        DateTime?
   scores         GameScore[]
+  events         GameEvent[]
 
   @@index([conversationId, state])
 }
@@ -428,6 +436,39 @@ model GameScore {
 
   @@unique([sessionId, vkUserId])
   @@index([vkUserId, createdAt])
+}
+
+model GameEvent {
+  id        String      @id @default(cuid())
+  sessionId String
+  session   GameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  vkUserId  String
+  eventId   String
+  kind      String
+  createdAt DateTime    @default(now())
+
+  @@unique([sessionId, eventId])
+  @@index([sessionId, createdAt])
+}
+
+model GamePlayerStats {
+  id                 String   @id @default(cuid())
+  scope              String
+  scopeId            String
+  vkUserId           String
+  gamesPlayed        Int      @default(0)
+  wins               Int      @default(0)
+  answers            Int      @default(0)
+  correctAnswers     Int      @default(0)
+  bestScore          Int      @default(0)
+  currentWinStreak   Int      @default(0)
+  bestWinStreak      Int      @default(0)
+  excludedFromGlobal Boolean  @default(false)
+  updatedAt          DateTime @updatedAt
+
+  @@unique([scope, scopeId, vkUserId])
+  @@index([scope, scopeId, bestScore])
+  @@index([vkUserId, scope])
 }
 
 model Achievement {

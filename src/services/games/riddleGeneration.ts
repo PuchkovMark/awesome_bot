@@ -1,4 +1,4 @@
-export type RiddleDifficulty = 1 | 2 | 3 | 4 | 5;
+export type RiddleDifficulty = 1 | 2 | 3 | 4;
 
 export type GeneratedRiddle = {
   text: string;
@@ -7,11 +7,10 @@ export type GeneratedRiddle = {
 };
 
 const difficultyDescriptions: Record<RiddleDifficulty, string> = {
-  1: 'Очень простая: короткая, понятная детям, с очевидным ответом.',
-  2: 'Лёгкая: знакомые предметы и понятная логика.',
-  3: 'Средняя: требует подумать и заметить деталь, но решается без специальных знаний.',
-  4: 'Сложная: необычный образ или многошаговая логика, но ответ однозначен.',
-  5: 'Очень сложная: оригинальная логическая загадка с однозначным ответом, решаемая без специальных знаний.',
+  1: 'Лёгкая: короткая, понятная и с очевидным ответом.',
+  2: 'Средняя: требует подумать и заметить деталь, но решается без специальных знаний.',
+  3: 'Сложная: необычный образ или многошаговая логика, но ответ однозначен.',
+  4: 'Экспертная: оригинальная сложная логика с конкретным ответом, без специальных знаний.',
 };
 
 export function normalizeGameAnswer(value: string): string {
@@ -25,7 +24,8 @@ export function normalizeGameAnswer(value: string): string {
 }
 
 export function getRiddleDifficulty(value: unknown): RiddleDifficulty {
-  if (value === 1 || value === 2 || value === 3 || value === 4 || value === 5) return value;
+  if (value === 1 || value === 2 || value === 3 || value === 4) return value;
+  if (value === 5) return 4;
   return 2;
 }
 
@@ -33,16 +33,16 @@ export function changeRiddleDifficulty(
   current: RiddleDifficulty,
   change: -1 | 1,
 ): RiddleDifficulty {
-  return Math.max(1, Math.min(5, current + change)) as RiddleDifficulty;
+  return Math.max(1, Math.min(4, current + change)) as RiddleDifficulty;
 }
 
 export function getRiddleDifficultyLabel(difficulty: RiddleDifficulty): string {
-  return ['очень лёгкая', 'лёгкая', 'средняя', 'сложная', 'очень сложная'][difficulty - 1];
+  return ['лёгкая', 'средняя', 'сложная', 'экспертная'][difficulty - 1];
 }
 
 export function buildRiddlePrompt(difficulty: RiddleDifficulty, recentRiddles: string[]): string {
   return [
-    `Придумай одну новую, оригинальную загадку на русском языке. Сложность ${difficulty}/5: ${difficultyDescriptions[difficulty]}`,
+    `Придумай одну новую, оригинальную загадку на русском языке. Сложность ${difficulty}/4: ${difficultyDescriptions[difficulty]}`,
     'Загадка должна быть корректной, иметь один конкретный ответ и не требовать специальных знаний.',
     'Не используй общеизвестные готовые загадки и не повторяй или не перефразируй приведённые ниже предыдущие загадки.',
     'Верни только валидный JSON без Markdown и пояснений строго такой формы: {"text":"текст загадки","answers":["основной ответ","допустимый синоним"]}. Укажи от одного до трёх кратких вариантов ответа.',

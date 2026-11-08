@@ -1,4 +1,5 @@
 import dotenv from 'dotenv';
+import { DEFAULT_THINKING_MODE } from '../services/ai/thinkingMode.js';
 
 dotenv.config();
 
@@ -9,8 +10,8 @@ export interface AppConfig {
   VK_TOKEN: string;
   VK_GROUP_ID: string;
   OPENCODE_API_KEY?: string;
-  OPENCODE_MODEL: string;
   OPENCODE_BASE_URL: string;
+  AI_THINKING_MODE: 'low' | 'medium' | 'max';
   OPENAI_API_KEY?: string;
   OPENAI_MODEL: string;
   OPENAI_IMAGE_MODEL: string;
@@ -97,8 +98,12 @@ export const config: AppConfig = {
   VK_TOKEN: required('VK_TOKEN'),
   VK_GROUP_ID: required('VK_GROUP_ID'),
   OPENCODE_API_KEY: process.env.OPENCODE_API_KEY,
-  OPENCODE_MODEL: process.env.OPENCODE_MODEL || 'deepseek-v4.1-flash',
   OPENCODE_BASE_URL: process.env.OPENCODE_BASE_URL || 'https://opencode.ai/inference/go/openai/v1',
+  AI_THINKING_MODE: oneOf(
+    'AI_THINKING_MODE',
+    ['low', 'medium', 'max'] as const,
+    DEFAULT_THINKING_MODE,
+  ),
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
   OPENAI_MODEL: process.env.OPENAI_MODEL || 'gpt-4.1-mini',
   OPENAI_IMAGE_MODEL: process.env.OPENAI_IMAGE_MODEL || 'gpt-image-2.6-flare',

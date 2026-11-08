@@ -11,14 +11,18 @@ import gameService from '../games/gameService.js';
 import searchService from '../search/searchService.js';
 import senderService from '../sender/senderService.js';
 import { getSummaryHoursFromText, limitSentences } from './summaryUtils.js';
+import { localizeCommandReferences, normalizeCommandName } from './commandAliases.js';
+import { ADMIN_COMMAND_PAGES, HELP_PAGES } from './commandHelp.js';
 import memberService, {
   parseQuestionnaireQuestions,
   parseStoredQuestionnaireQuestions,
 } from '../member/memberService.js';
 import funService from '../fun/funService.js';
+import { parseVkUserReference } from '../vk/vkMention.js';
+import { parseThinkingMode, thinkingModes } from '../ai/thinkingMode.js';
 
 const adminCommands = new Set([
-  'provider',
+  'thinking',
   'mode',
   'maintenance',
   'imageaccess',
@@ -26,7 +30,6 @@ const adminCommands = new Set([
   'logs',
   'admin',
   'broadcast',
-  'profiles',
 ]);
 const chatAdminCommands = new Set(['welcome', 'questionnaire']);
 
@@ -42,7 +45,7 @@ export class CommandService {
    */
   async handleCommand(
     command: string,
-    args: string,
+    commandArgs: string,
     peerId: string,
     senderId: string,
     isAdmin = false,
@@ -51,8 +54,48 @@ export class CommandService {
     isChat = false,
     repliedMessageText = '',
     jokeTargetName = '',
+    eventId = '',
   ): Promise<string | null> {
-    const cmd = command.toLowerCase();
+    const result = await this.executeCommand(
+      command,
+      commandArgs,
+      peerId,
+      senderId,
+      isAdmin,
+      canManageChat,
+      isCreator,
+      isChat,
+      repliedMessageText,
+      jokeTargetName,
+      eventId,
+    );
+    return result === null ? null : localizeCommandReferences(result);
+  }
+
+  private async executeCommand(
+    command: string,
+    commandArgs: string,
+    peerId: string,
+    senderId: string,
+    isAdmin = false,
+    canManageChat = false,
+    isCreator = false,
+    isChat = false,
+    repliedMessageText = '',
+    jokeTargetName = '',
+    eventId = '',
+  ): Promise<string | null> {
+    const rawCommand = command.normalize('NFKC').toLocaleLowerCase('ru-RU');
+    const cmd =
+      rawCommand === 'анкета'
+        ? 'profile'
+        : rawCommand === 'удалить' && commandArgs.trim().toLocaleLowerCase('ru-RU') === 'профиль'
+          ? 'profile-delete'
+          : rawCommand === 'подтвердить' &&
+              commandArgs.trim().toLocaleLowerCase('ru-RU') === 'удаление профиля'
+            ? 'profile-delete-confirm'
+            : normalizeCommandName(rawCommand);
+    const args = rawCommand === 'анкета' && !commandArgs.trim() ? 'edit' : commandArgs;
     try {
       if (adminCommands.has(cmd) && !isAdmin) {
         return 'Эта команда доступна только администраторам.';
@@ -64,8 +107,6 @@ export class CommandService {
       switch (cmd) {
         case 'help':
           return this.helpText(args);
-        case 'ping':
-          return 'pong';
         case 'summary':
           return await this.summarizeConversation(peerId, getSummaryHoursFromText(args) ?? 2);
         case 'search':
@@ -80,7 +121,7 @@ export class CommandService {
             '/prediction [тема] — шуточное предсказание',
             '/react [стиль] — реакция на сообщение, на которое вы ответили',
             '/rating — выдуманный шуточный рейтинг беседы',
-            '/story [короткая|средняя|длинная|продолжи] — смешная история',
+            '/story [короткая|средняя|длинная|продолжи] — история',
             '/battle start|join|submit <шутка>|score|stop — баттл',
             '/funsettings — настройки юмора и отказ от персональных шуток или мемов',
             '/memeday — мемы беседы, история и голосование',
@@ -267,8 +308,8 @@ export class CommandService {
           );
         case 'settings':
           return this.getSettings(senderId, peerId);
-        case 'provider':
-          return this.setProvider(senderId, args);
+        case 'thinking':
+          return this.setThinkingMode(senderId, args);
         case 'mode':
           return this.setMode(senderId, peerId, args);
         case 'imageaccess':
@@ -280,7 +321,11 @@ export class CommandService {
         case 'profile':
           return this.profileCommand(peerId, senderId, args, isAdmin, isChat);
         case 'profiles':
-          return this.listMemberProfiles(senderId, peerId, args, isChat);
+          return this.listMemberProfiles(peerId, args, isChat);
+        case 'profile-delete':
+          return this.requestProfileDeletion(peerId, senderId, isChat);
+        case 'profile-delete-confirm':
+          return this.confirmProfileDeletion(peerId, senderId, isChat);
         case 'maintenance':
           return this.setMaintenance(senderId, args);
         case 'admin':
@@ -294,7 +339,13 @@ export class CommandService {
         case 'logs':
           return this.getRecentAdminLogs();
         case 'games':
-          return this.gamesCommand(peerId, args);
+          return this.gamesCommand(peerId, args, senderId, {
+            isGroup: isChat,
+            isAdmin,
+            canManageChat,
+            eventId: eventId || undefined,
+            name: senderId,
+          });
         case 'voice':
           return this.voiceSettings(senderId, args);
         case 'image':
@@ -373,6 +424,23 @@ export class CommandService {
     }
   }
 
+  getCommandReference(): string {
+    const helpPages = HELP_PAGES.map((page, index) =>
+      localizeCommandReferences(
+        [`Справка — страница ${index + 1}/${HELP_PAGES.length}`, ...page].join('\n'),
+      ),
+    );
+    const adminPages = ADMIN_COMMAND_PAGES.map((page, index) =>
+      localizeCommandReferences(
+        [
+          `Панель администратора — страница ${index + 1}/${ADMIN_COMMAND_PAGES.length}`,
+          ...page,
+        ].join('\n'),
+      ),
+    );
+    return [...helpPages, ...adminPages].join('\n\n');
+  }
+
   async getPersonalityMenu(senderId: string, peerId: string, scope: 'direct' | 'chat') {
     const [current, availableProfiles] = await Promise.all([
       characterService.getCurrent(scope, senderId, peerId),
@@ -381,25 +449,27 @@ export class CommandService {
     const profiles = availableProfiles.slice(0, 50);
     const intro =
       scope === 'chat' ? 'Выбери персонажа для этой беседы.' : 'Выбери своего собеседника.';
-    const text = [
-      intro,
-      `Сейчас выбран: ${current.name}.`,
-      ...profiles.map(
-        (profile) =>
-          `${profile.name} (${profile.id}) — ${profile.description}\nПример: «${profile.example}»`,
-      ),
-      ...(availableProfiles.length > profiles.length
-        ? [
-            `Показаны первые ${profiles.length} профилей. Для выбора других укажите их ID в команде.`,
-          ]
-        : []),
-      'Нажми кнопку под сообщением, чтобы переключить персонажа.',
-      ...(scope === 'chat'
-        ? [
-            'Для смены командой используй /personality <id>. Разрешить смену всем участникам можно командой /personality allow.',
-          ]
-        : []),
-    ].join('\n\n');
+    const text = localizeCommandReferences(
+      [
+        intro,
+        `Сейчас выбран: ${current.name}.`,
+        ...profiles.map(
+          (profile) =>
+            `${profile.name} (${profile.id}) — ${profile.description}\nПример: «${profile.example}»`,
+        ),
+        ...(availableProfiles.length > profiles.length
+          ? [
+              `Показаны первые ${profiles.length} профилей. Для выбора других укажите их ID в команде.`,
+            ]
+          : []),
+        'Нажми кнопку под сообщением, чтобы переключить персонажа.',
+        ...(scope === 'chat'
+          ? [
+              'Для смены командой используй /personality <id>. Разрешить смену всем участникам можно командой /personality allow.',
+            ]
+          : []),
+      ].join('\n\n'),
+    );
     return { current, profiles, text };
   }
 
@@ -686,23 +756,39 @@ export class CommandService {
     ].join('\n');
   }
 
-  private async setProvider(senderId: string, args: string): Promise<string> {
-    const provider = args.trim().toLowerCase();
-    if (!provider) {
-      return `Текущий провайдер: ${(await settingsService.getAppSetting('ai_provider')) || config.AI_PROVIDER}.\nДоступно: opencode, openai.`;
+  private async setThinkingMode(senderId: string, args: string): Promise<string> {
+    const requested = args.trim();
+    const mode = requested ? parseThinkingMode(requested) : null;
+    if (requested && !mode) {
+      return 'Укажите режим мышления: low (низкий), medium (средний) или max (максимальный).';
     }
-    if (provider !== 'opencode' && provider !== 'openai') {
-      return 'Укажите провайдера: opencode или openai.';
+
+    const savedMode = await settingsService.getAppSetting('ai_thinking_mode');
+    const currentMode =
+      savedMode === undefined ? config.AI_THINKING_MODE : parseThinkingMode(savedMode);
+    if (!currentMode) {
+      return 'Сохранён неизвестный режим мышления. Установите его заново: /thinking low.';
     }
-    if (provider === 'opencode' && !process.env.OPENCODE_API_KEY) {
-      return 'Для OpenCode сначала настройте OPENCODE_API_KEY.';
+    if (!mode) {
+      const provider = (await settingsService.getAppSetting('ai_provider')) || config.AI_PROVIDER;
+      const active =
+        provider === 'opencode'
+          ? 'Режим активен.'
+          : `Сейчас используется провайдер ${provider}; выберите режим, чтобы переключить текстовый ИИ на OpenCode.`;
+      return `Режим мышления: ${thinkingModes[currentMode].label} (${currentMode}), модель ${thinkingModes[currentMode].model}. ${active}\nДоступно: low, medium, max.`;
     }
-    if (provider === 'openai' && !process.env.OPENAI_API_KEY) {
-      return 'Для OpenAI сначала настройте OPENAI_API_KEY.';
+    if (!config.OPENCODE_API_KEY) {
+      return 'Для выбора режима сначала настройте OPENCODE_API_KEY.';
     }
-    await settingsService.setAppSetting('ai_provider', provider);
-    await settingsService.logAdminAction(senderId, 'provider.changed', provider);
-    return `AI-провайдер переключён на ${provider}.`;
+
+    await settingsService.setAppSetting('ai_provider', 'opencode');
+    await settingsService.setAppSetting('ai_thinking_mode', mode);
+    await settingsService.logAdminAction(
+      senderId,
+      'thinking_mode.changed',
+      `${mode}:${thinkingModes[mode].model}`,
+    );
+    return `Режим мышления установлен: ${thinkingModes[mode].label} (${mode}), модель ${thinkingModes[mode].model}.`;
   }
 
   private async setMode(senderId: string, peerId: string, args: string): Promise<string> {
@@ -765,7 +851,7 @@ export class CommandService {
     const trimmed = args.trim();
     if (!trimmed) {
       const questions = parseStoredQuestionnaireQuestions(settings.questionnaireQuestions);
-      return `Анкеты: ${settings.questionnaireEnabled ? 'включены' : 'выключены'}.\nВопросы:\n${questions.map((question, index) => `${index + 1}. ${question}`).join('\n')}\nКоманды: /questionnaire on|off, /questionnaire set <вопрос 1> | <вопрос 2>.`;
+      return `Автоматическое знакомство с новыми участниками: ${settings.questionnaireEnabled ? 'включено' : 'выключено'}.\nВопросы анкеты:\n${questions.map((question, index) => `${index + 1}. ${question}`).join('\n')}\nКоманды: /questionnaire on|off, /questionnaire set <вопрос 1> | <вопрос 2>.`;
     }
     const action = trimmed.split(/\s+/u)[0];
     const normalizedAction = action.toLowerCase();
@@ -777,7 +863,7 @@ export class CommandService {
         'chat.questionnaire.changed',
         `${peerId}:${enabled ? 'on' : 'off'}`,
       );
-      return `Анкеты участников ${enabled ? 'включены' : 'выключены'}.`;
+      return `Автоматическое знакомство с новыми участниками ${enabled ? 'включено' : 'выключено'}. Участники могут заполнить или изменить анкету командой /анкета в любое время.`;
     }
     const match = trimmed.match(/^set\s+([\s\S]+)$/iu);
     if (!match)
@@ -795,27 +881,30 @@ export class CommandService {
     isAdmin: boolean,
     isChat: boolean,
   ): Promise<string> {
+    if (!isChat) return 'Анкеты доступны только в групповых беседах.';
     const trimmedArgs = args.trim();
-    const adminRead = trimmedArgs.match(/^get\s+(\d+)$/iu);
-    if (adminRead) {
-      if (!isAdmin)
-        return 'Просматривать анкеты других участников могут только администраторы бота.';
-      if (!isChat) return 'Эта команда работает в групповой беседе, к которой относится анкета.';
-      const targetId = adminRead[1];
+    const adminRead = trimmedArgs.match(/^get\s+(.+)$/iu);
+    if (adminRead?.[1]) {
+      const target = parseVkUserReference(adminRead[1]);
+      if (!target || target.kind !== 'id') {
+        return 'Укажите VK ID или упоминание участника: /profile @участник.';
+      }
+      const targetId = target.value;
       const profile = await memberService.getProfile(peerId, targetId);
       if (!profile) return `Анкета участника ${targetId} не найдена.`;
-      await settingsService.logAdminAction(
-        senderId,
-        'chat.profile.viewed',
-        `${peerId}:${targetId}`,
-      );
-      return `Анкета участника ${targetId}:\n${profile}`;
+      if (isAdmin) {
+        await settingsService.logAdminAction(
+          senderId,
+          'chat.profile.viewed',
+          `${peerId}:${targetId}`,
+        );
+      }
+      return `[id${targetId}|Профиль участника]\n\n${profile}`;
     }
 
     const adminDelete = trimmedArgs.match(/^delete\s+(\d+)$/iu);
     if (adminDelete) {
       if (!isAdmin) return 'Удалять анкеты других участников могут только администраторы бота.';
-      if (!isChat) return 'Эта команда работает в групповой беседе, к которой относится анкета.';
       const targetId = adminDelete[1];
       const deleted = await memberService.deleteProfile(peerId, targetId);
       if (!deleted) return `Анкета участника ${targetId} не найдена.`;
@@ -847,40 +936,68 @@ export class CommandService {
       return `Анкета участника ${targetId} обновлена:\n${profile}`;
     }
 
+    const ownEdit = trimmedArgs.match(/^edit\s+(\d+)\s+([\s\S]+)$/iu);
+    if (ownEdit) {
+      const [, questionNumber, answer] = ownEdit;
+      const profile = await memberService.updateProfileAnswer(
+        peerId,
+        senderId,
+        Number(questionNumber),
+        answer,
+      );
+      return `Твоя анкета обновлена:\n${profile}`;
+    }
+
+    const ownClear = trimmedArgs.match(/^clear\s+(\d+)$/iu);
+    if (ownClear) {
+      const profile = await memberService.clearProfileAnswer(peerId, senderId, Number(ownClear[1]));
+      return `Ответ удалён.\n${profile}`;
+    }
+
+    const targetPattern = trimmedArgs.match(/^(?:show\s+)?(.+)$/iu);
+    if (targetPattern?.[1] && !/^(?:show|create|edit|cancel|clear)\b/iu.test(trimmedArgs)) {
+      const target = parseVkUserReference(targetPattern[1]);
+      if (target) {
+        if (target.kind !== 'id') {
+          return 'Укажите VK ID или упоминание участника, например /профиль @id123.';
+        }
+        const profile = await memberService.getProfile(peerId, target.value);
+        return profile
+          ? `[id${target.value}|Профиль участника]\n\n${profile}`
+          : `Участник ${target.value} ещё не заполнил анкету.`;
+      }
+    }
+
     const action = trimmedArgs.toLowerCase();
     if (action === 'cancel') {
       return (await memberService.cancelQuestionnaire(peerId, senderId))
         ? 'Заполнение анкеты отменено.'
         : 'Сейчас анкета не заполняется.';
     }
-    if (action === 'show') {
+    if (!action || action === 'show') {
       const profile = await memberService.getProfile(peerId, senderId);
       return profile
-        ? `Твоя анкета:\n${profile}\n\nИзменить: /profile edit`
-        : 'Анкета пока не заполнена. Начать: /profile create';
+        ? `Твоя анкета:\n\n${profile}\n\nИзменить: /анкета`
+        : 'Анкета пока не заполнена. Начать: /анкета';
     }
     if (action && action !== 'create' && action !== 'edit') {
       if (/^(?:get|delete|edit)\b/iu.test(trimmedArgs)) {
         return 'Администраторские команды: /profile get <VK ID>, /profile edit <VK ID> <номер ответа> <новый ответ>, /profile delete <VK ID>.';
       }
-      return 'Использование: /profile [create|edit|show|cancel].';
+      return 'Использование: /анкета — заполнить или изменить анкету; /профиль [@участник] — посмотреть профиль; /профиль cancel — отменить заполнение.';
     }
-    const result = await memberService.startQuestionnaire(
-      peerId,
-      senderId,
-      action === 'edit' || action === 'create',
-    );
-    return `${result.alreadyExists ? 'Обновим анкету.' : 'Давай познакомимся!'} ${result.prompt}\nОтветь сообщением в беседе. Отмена: /profile cancel.`;
+    const result = await memberService.startQuestionnaire(peerId, senderId, true);
+    return [
+      result.alreadyExists
+        ? 'Открыл сохранённую анкету для редактирования.'
+        : 'Давай познакомимся!',
+      result.prompt,
+      'Отправь заполненный шаблон одним сообщением. Отмена: /profile cancel.',
+    ].join('\n\n');
   }
 
-  private async listMemberProfiles(
-    senderId: string,
-    peerId: string,
-    args: string,
-    isChat: boolean,
-  ): Promise<string> {
-    if (!isChat)
-      return 'Используйте /profiles в групповой беседе, анкеты которой нужно просмотреть.';
+  private async listMemberProfiles(peerId: string, args: string, isChat: boolean): Promise<string> {
+    if (!isChat) return 'Список анкет доступен только в групповых беседах.';
     const pageText = args.trim();
     if (pageText && !/^\d+$/u.test(pageText)) return 'Использование: /profiles [номер страницы].';
     const page = pageText ? Number(pageText) : 1;
@@ -890,20 +1007,44 @@ export class CommandService {
     if (result.total === 0) return 'В этой беседе пока нет заполненных анкет.';
     if (page > result.pageCount)
       return `Страницы не существует. Всего страниц: ${result.pageCount}.`;
-    const entries = result.profiles.map(({ vkUserId, answers }) => {
-      const firstAnswer = Object.values(answers)[0] ?? '';
-      const excerpt = firstAnswer.length > 80 ? `${firstAnswer.slice(0, 77)}...` : firstAnswer;
-      return `VK ID ${vkUserId}${excerpt ? ` — ${excerpt}` : ''}`;
+    const entries = result.profiles.map(({ vkUserId, answers, updatedAt }) => {
+      const name =
+        Object.entries(answers).find(([question]) =>
+          question.toLocaleLowerCase('ru-RU').startsWith('как к тебе обращаться'),
+        )?.[1] ?? '';
+      return `👤 ${name || `Участник ${vkUserId}`} — https://vk.com/id${vkUserId}${updatedAt ? ` — обновлено ${updatedAt.toLocaleDateString('ru-RU')}` : ''}`;
     });
-    await settingsService.logAdminAction(senderId, 'chat.profiles.listed', `${peerId}:${page}`);
     return [
       `Анкеты участников беседы (${result.total}), страница ${result.page}/${result.pageCount}:`,
       ...entries,
-      'Просмотр: /profile get <VK ID>',
-      result.page < result.pageCount ? `Следующая страница: /profiles ${result.page + 1}` : '',
+      'Просмотр: /профиль @упоминание',
+      result.page < result.pageCount ? `Следующая страница: /анкеты ${result.page + 1}` : '',
     ]
       .filter(Boolean)
       .join('\n');
+  }
+
+  private async requestProfileDeletion(
+    peerId: string,
+    senderId: string,
+    isChat: boolean,
+  ): Promise<string> {
+    if (!isChat) return 'Удаление профиля доступно только в групповой беседе.';
+    if (!(await memberService.requestProfileDeletion(peerId, senderId))) {
+      return 'У тебя нет сохранённого профиля в этой беседе.';
+    }
+    return 'Чтобы удалить свой профиль только из этой беседы, подтверди командой /подтвердить удаление профиля. Запрос действует 5 минут.';
+  }
+
+  private async confirmProfileDeletion(
+    peerId: string,
+    senderId: string,
+    isChat: boolean,
+  ): Promise<string> {
+    if (!isChat) return 'Удаление профиля доступно только в групповой беседе.';
+    return (await memberService.confirmProfileDeletion(peerId, senderId))
+      ? 'Профиль удалён из этой беседы.'
+      : 'Нет активного запроса на удаление или срок подтверждения истёк. Начни заново: /удалить профиль.';
   }
 
   private async setMaintenance(senderId: string, args: string): Promise<string> {
@@ -916,7 +1057,13 @@ export class CommandService {
 
   private async adminCommand(senderId: string, args: string, isCreator: boolean): Promise<string> {
     const [action, vkId] = args.trim().split(/\s+/u);
-    if (action === 'add' && vkId && /^\d+$/u.test(vkId)) {
+    const normalizedAction =
+      action?.toLocaleLowerCase('ru-RU') === 'добавить'
+        ? 'add'
+        : action?.toLocaleLowerCase('ru-RU') === 'удалить'
+          ? 'remove'
+          : action;
+    if (normalizedAction === 'add' && vkId && /^\d+$/u.test(vkId)) {
       if (!isCreator) return 'Назначать администраторов может только создатель бота.';
       try {
         await settingsService.addAdmin(vkId);
@@ -927,7 +1074,7 @@ export class CommandService {
       await settingsService.logAdminAction(senderId, 'admin.added', vkId);
       return `Пользователь ${vkId} добавлен в администраторы.`;
     }
-    if (action === 'remove' && vkId && /^\d+$/u.test(vkId)) {
+    if (normalizedAction === 'remove' && vkId && /^\d+$/u.test(vkId)) {
       if (!isCreator) return 'Снимать администраторов может только создатель бота.';
       if (settingsService.isCreator(vkId)) return 'Нельзя снять роль создателя бота.';
       if (vkId === senderId) return 'Нельзя удалить собственную учётную запись администратора.';
@@ -937,40 +1084,7 @@ export class CommandService {
       return `Пользователь ${vkId} удалён из администраторов.`;
     }
     const pageNumber = action ? Number(action) : 1;
-    const pages = [
-      [
-        'Управление ролями (только создатель):',
-        '/admin add <@ник|упоминание|VK ID> — назначить администратора',
-        '/admin remove <VK ID> — снять роль администратора',
-        '',
-        'Настройки беседы:',
-        '/mode [active|normal|quiet] — режим ответов бота',
-        '/imageaccess [admins_only|all] — доступ к генерации изображений',
-        '/welcome on|off — включить или выключить приветствия',
-        '/welcome set <текст> — задать текст приветствия',
-        '/questionnaire on|off — включить или выключить анкету',
-        '/questionnaire set <вопросы> — настроить вопросы анкеты',
-      ],
-      [
-        'Анкеты участников:',
-        '/profile [create|edit|show|cancel] — заполнить или изменить свою анкету',
-        '/profiles [страница] — список анкет участников',
-        '/profile get <VK ID> — посмотреть анкету',
-        '/profile delete <VK ID> — удалить анкету',
-        '/profile edit <VK ID> <номер ответа> <текст> — изменить ответ',
-        '',
-        'Настройки и обслуживание:',
-        '/provider [opencode|openai] — выбрать AI-провайдера',
-        '/maintenance [on|off] — технический режим',
-      ],
-      [
-        'Рассылка и статистика:',
-        '/broadcast <текст> — показать предпросмотр рассылки',
-        '/broadcast confirm <текст> — отправить рассылку',
-        '/users — общая статистика',
-        '/logs — последние действия администраторов',
-      ],
-    ];
+    const pages = ADMIN_COMMAND_PAGES;
     if (!Number.isSafeInteger(pageNumber) || pageNumber < 1 || pageNumber > pages.length) {
       return `Укажите страницу от 1 до ${pages.length}: /admin 1`;
     }
@@ -1020,27 +1134,19 @@ export class CommandService {
     return `Рассылка завершена. Отправлено: ${targets.length - failed}; ошибок: ${failed}.`;
   }
 
-  private async gamesCommand(peerId: string, args: string): Promise<string> {
-    const [game, ...rest] = args.trim().toLowerCase().split(/\s+/u);
-    if (!game) {
-      return `Игры:\n${gameService.list()}\n\n/games top — таблица лидеров\n/games harder|easier — изменить сложность активной загадки\n/games difficulty — узнать текущую сложность`;
-    }
-    if (game === 'top') return gameService.leaderboard();
-    if (game === 'stop') return gameService.stop(peerId);
-    if (game === 'harder' || game === 'сложнее') {
-      if (rest.length > 0) return 'Использование: /games harder';
-      return gameService.changeRiddleDifficulty(peerId, 1);
-    }
-    if (game === 'easier' || game === 'проще') {
-      if (rest.length > 0) return 'Использование: /games easier';
-      return gameService.changeRiddleDifficulty(peerId, -1);
-    }
-    if (game === 'difficulty') {
-      if (rest.length > 0) return 'Использование: /games difficulty';
-      return gameService.getRiddleDifficulty(peerId);
-    }
-    if (rest.length > 0) return `Использование: /games <игра|top|stop>\n${gameService.list()}`;
-    return gameService.start(peerId, game);
+  private async gamesCommand(
+    peerId: string,
+    args: string,
+    senderId: string,
+    options: {
+      isGroup: boolean;
+      isAdmin: boolean;
+      canManageChat: boolean;
+      eventId?: string;
+      name: string;
+    },
+  ): Promise<string> {
+    return gameService.handleCommand(peerId, senderId, args, options);
   }
 
   private async searchWeb(senderId: string, peerId: string, args: string): Promise<string> {
@@ -1436,64 +1542,7 @@ export class CommandService {
   private helpText(args: string): string {
     const pageText = args.trim();
     const pageNumber = pageText ? Number(pageText) : 1;
-    const pages = [
-      [
-        'Основное:',
-        '/help [страница] — эта справка',
-        '/ping — проверить отклик',
-        '/settings — показать ваши настройки',
-        '/stats — ваша статистика',
-        '',
-        'Персонажи и настройки:',
-        '/personality [id|list|default] — выбрать личность; в беседе меняет общий характер',
-        '/personality info|settings|reset — информация, настройки или сброс',
-        '/personality settings humor=70 sarcasm=30 — настроить стиль',
-        '/personality allow|deny — разрешить или запретить участникам менять персонажа беседы',
-        '/system [текст|clear] — личная инструкция в ЛС или инструкция беседы (для администраторов)',
-      ],
-      [
-        'Фото, документы и голос:',
-        '/image <описание> — создать изображение (если доступно)',
-        '/edit <описание> — преобразить приложенное фото',
-        '/analyze <вопрос> — анализ фото',
-        '/document <вопрос> — анализ PDF или документа',
-        '/ocr — распознать текст на фото',
-        '/voice [on|off] — голосовой режим',
-        '/say [текст] — озвучить текст или сообщение, на которое вы ответили',
-        '',
-        'Игры:',
-        '/games — список игр',
-        '/games harder|easier — изменить сложность загадки',
-        '/games difficulty — текущая сложность',
-        '/adventure — интерактивное приключение',
-        '/adventure help — команды и настройки приключения',
-      ],
-      [
-        'Поиск и развлечения:',
-        '/search <запрос> — поиск в интернете',
-        '/fun — меню развлечений',
-        '/randomjoke [тема] — случайная шутка',
-        '/meme <описание> — создать мем, можно приложить фото',
-        '/joke [random|VK ID] — доброжелательная шутка',
-        '/roast — лёгкий подкол про себя',
-        '/prediction [тема] — шуточное предсказание',
-        '/react [стиль] — реакция на сообщение',
-        '/rating — шуточный рейтинг беседы',
-        '/story [короткая|средняя|длинная|продолжи] — история',
-        '/battle — юмористический баттл',
-        '/funsettings — настройки юмора',
-        '/memeday — мемы и голосование в беседе',
-      ],
-      [
-        'Общение и история:',
-        '/translate <язык>: <текст> — перевод',
-        '/summary — пересказ беседы за 2 часа (можно выбрать 2 или 6)',
-        '/reset — очистить историю текущего разговора',
-        '/forget — удалить всю вашу историю',
-        '',
-        '/admin — панель администратора (для администраторов)',
-      ],
-    ];
+    const pages = HELP_PAGES;
     if (pageText && !/^\d+$/u.test(pageText)) {
       return `Укажите номер страницы: /help 1 (всего страниц: ${pages.length}).`;
     }

@@ -5,6 +5,27 @@ export type RecurrenceRule =
   | { type: 'monthly'; day: number }
   | { type: 'yearly'; month: number; day: number };
 
+export const DEFAULT_REMINDER_TIME_ZONE = 'Europe/Moscow';
+
+export function isValidTimeZone(value: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function resolveReminderTimeZone(
+  preferred: string | null | undefined,
+  location: string | null | undefined,
+): string {
+  for (const candidate of [preferred, location, DEFAULT_REMINDER_TIME_ZONE]) {
+    if (candidate && isValidTimeZone(candidate)) return candidate;
+  }
+  return DEFAULT_REMINDER_TIME_ZONE;
+}
+
 export interface LocalDateTime {
   date: string;
   time: string;

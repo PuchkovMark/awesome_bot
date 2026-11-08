@@ -2,7 +2,9 @@ import { createHash, randomUUID } from 'node:crypto';
 import OpenAI from 'openai';
 import config from '../../config/index.js';
 import { logger } from '../../logger/index.js';
+import settingsService from '../settings/settingsService.js';
 import type { AIProvider, AIMessage, AIResponse } from './AIProvider.js';
+import { parseThinkingMode, thinkingModes } from './thinkingMode.js';
 
 /**
  * Отправляет запросы к OpenCode Console через совместимый с OpenAI API и нормализует ответы.
@@ -30,9 +32,12 @@ export class OpenCodeProvider implements AIProvider {
     options?: { maxTokens?: number; temperature?: number; sessionId?: string },
   ): Promise<AIResponse> {
     try {
+      const savedMode = await settingsService.getAppSetting('ai_thinking_mode');
+      const mode = savedMode === undefined ? config.AI_THINKING_MODE : parseThinkingMode(savedMode);
+      if (!mode) throw new Error(`Unsupported AI thinking mode: ${savedMode}`);
       const res = await this.client.chat.completions.create(
         {
-          model: config.OPENCODE_MODEL,
+          model: thinkingModes[mode].model,
           messages,
           max_tokens: options?.maxTokens,
           temperature: options?.temperature,
