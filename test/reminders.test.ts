@@ -42,6 +42,15 @@ test('parses relative reminders and preserves their requested interval', () => {
   assert.equal(parsed.dueAt?.toISOString(), '2026-03-28T14:00:00.000Z');
 });
 
+test('parses a mentioned reminder recipient without exposing their numeric ID', () => {
+  const parsed = parseReminder('Напомни завтра в 10:00 @ivanov проверить документы', now, timeZone);
+
+  assert.equal(parsed.missing, null);
+  assert.equal(parsed.recipientReference, '@ivanov');
+  assert.equal(parsed.recipientVkId, undefined);
+  assert.equal(parsed.content, 'проверить документы');
+});
+
 test('asks for an unambiguous time when the request contains only an hour', () => {
   const parsed = parseReminder('Напомни завтра в 10 позвонить мастеру', now, timeZone);
 

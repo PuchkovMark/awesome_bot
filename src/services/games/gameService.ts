@@ -105,6 +105,7 @@ interface StartOptions extends GameRequestOptions {
   category?: string;
   name?: string;
   isReplyToBot?: boolean;
+  resolveUserDisplayName?: (vkUserId: string) => Promise<string | undefined>;
 }
 
 interface CommitOptions {
@@ -307,7 +308,7 @@ class GameService {
         : null;
     const participant: GameParticipant = {
       vkUserId,
-      name: name || `Участник ${vkUserId}`,
+      name: name || 'Участник',
       score: 0,
       answers: 0,
       correctAnswers: 0,
@@ -674,7 +675,7 @@ class GameService {
       if (options.isGroup && settings.playMode === 'team' && settings.maxParticipants < 2) {
         return 'Командная игра требует не менее двух участников. Увеличьте лимит игроков или выберите индивидуальный режим.';
       }
-      const participantName = options.name ?? `Участник ${userId}`;
+      const participantName = options.name ?? 'Участник';
       const state = this.createState(kind, userId, settings, participantName);
 
       if (options.isGroup && settings.playMode === 'team') {
@@ -738,11 +739,7 @@ class GameService {
       }
       if (session.state !== 'active') return null;
 
-      const participant = await this.ensureParticipant(
-        state,
-        userId,
-        options.name ?? `Участник ${userId}`,
-      );
+      const participant = await this.ensureParticipant(state, userId, options.name ?? 'Участник');
       if (!participant) return 'В игре достигнут лимит участников.';
       if (state.kind === 'who') return this.castVote(session, state, participant, text, options);
       if (state.kind === 'truth')
@@ -812,20 +809,12 @@ class GameService {
     }
     if (action.type === 'vote-difficulty') {
       if (!state.difficultyVote) return null;
-      const voter = await this.ensureParticipant(
-        state,
-        userId,
-        options.name ?? `Участник ${userId}`,
-      );
+      const voter = await this.ensureParticipant(state, userId, options.name ?? 'Участник');
       if (!voter) return 'В игре достигнут лимит участников.';
       return this.voteDifficulty(session, state, voter, action.direction, options.eventId);
     }
     if (action.type === 'join') {
-      const participant = await this.ensureParticipant(
-        state,
-        userId,
-        options.name ?? `Участник ${userId}`,
-      );
+      const participant = await this.ensureParticipant(state, userId, options.name ?? 'Участник');
       if (!participant) return 'В игре достигнут лимит участников.';
       if (session.state === 'waiting' && state.participants.length >= 2) {
         const response = await this.startRound(session, state);
@@ -1626,7 +1615,7 @@ class GameService {
       }
       return `🎚 Сложность изменится на ${difficulty}/4 со следующего задания. Текущий раунд и очки сохранены.`;
     }
-    const participant = await this.ensureParticipant(state, userId, `Участник ${userId}`);
+    const participant = await this.ensureParticipant(state, userId, 'Участник');
     if (!participant) return 'В игре достигнут лимит участников.';
     state.difficultyVote = {
       difficulty,
@@ -1719,7 +1708,11 @@ class GameService {
     return `📊 Счёт:\n${rows.join('\n')}`;
   }
 
-  private async leaderboard(scopeId: string, limit = 10): Promise<string> {
+  private async leaderboard(
+    scopeId: string,
+    resolveUserDisplayName?: StartOptions['resolveUserDisplayName'],
+    limit = 10,
+  ): Promise<string> {
     const players = await prisma.gamePlayerStats.findMany({
       where:
         scopeId === 'global'
@@ -1730,12 +1723,13 @@ class GameService {
       select: { vkUserId: true, wins: true, bestScore: true, correctAnswers: true },
     });
     if (!players.length) return 'Рейтинг пока пуст.';
-    return `🏆 Рейтинг:\n${players
-      .map(
-        (player, index) =>
-          `${index + 1}. ${player.vkUserId} — побед: ${player.wins}, лучший счёт: ${player.bestScore}, ответов: ${player.correctAnswers}`,
-      )
-      .join('\n')}`;
+    const lines = await Promise.all(
+      players.map(async (player, index) => {
+        const name = (await resolveUserDisplayName?.(player.vkUserId)) || 'Участник';
+        return `${index + 1}. ${name} — побед: ${player.wins}, лучший счёт: ${player.bestScore}, ответов: ${player.correctAnswers}`;
+      }),
+    );
+    return `🏆 Рейтинг:\n${lines.join('\n')}`;
   }
 
   private async playerStats(userId: string, conversationId: string): Promise<string> {
@@ -1819,6 +1813,7 @@ class GameService {
     if (first === 'top' || first === 'рейтинг') {
       return this.leaderboard(
         first === 'top' || normalize(second) === 'общий' ? 'global' : conversationId,
+        options.resolveUserDisplayName,
       );
     }
     if (first === 'stats' || first === 'статистика')

@@ -375,7 +375,7 @@ export class CharacterService {
     }
     const normalizedValue = value.trim();
     if (!/^\d+$/u.test(normalizedValue)) {
-      throw new Error('VK ID пользователя или беседы должен содержать только цифры.');
+      throw new Error('Идентификатор пользователя или беседы должен содержать только цифры.');
     }
     const field = scope === 'direct' ? 'allowedUsers' : 'allowedChats';
     const existing = parseIdList(profile[field], field);

@@ -125,12 +125,32 @@ export function getCountryCodeForLocationName(name: string): string | undefined 
 }
 
 function getExplicitLocation(text: string): string | undefined {
-  const match = text.match(
+  const placePattern = '([\\p{L}][\\p{L}\\p{M}-]*(?:\\s+[\\p{L}][\\p{L}\\p{M}-]*){0,3}?)';
+  const periodSuffix =
+    '(?=\\s+(?:на\\s+)?(?:сейчас|сегодня|завтра|послезавтра|выходных|этой\\s+неделе|вечером|утром)|[,.!?;:]|$)';
+  const prepositionalMatch = text.match(
     /(?:^|[\s,])(?:в|около|рядом\s+с)\s+([\p{L}][\p{L}\p{M}-]*(?:\s+[\p{L}][\p{L}\p{M}-]*){0,3}?)(?=\s+(?:сейчас|сегодня|завтра|послезавтра|на\s+выходных|на\s+этой\s+неделе|вечером|утром)|[,.!?;:]|$)/iu,
   );
-  const location = match?.[1]?.trim();
-  if (!location || /^(?:городе|месте|доме|парке|природе|дороге)$/iu.test(location))
+  const bareWeatherMatch = text.match(
+    new RegExp(
+      `(?:^|[\\s,])(?:погода|погоду|погоде|прогноз(?:\\s+погоды)?|температура|температуру)\\s*[:,]?\\s+${placePattern}${periodSuffix}`,
+      'iu',
+    ),
+  );
+  const bareLocation = bareWeatherMatch?.[1]?.trim();
+  const firstBareLetter = bareLocation?.[0];
+  const hasProperNameCapitalization =
+    firstBareLetter !== undefined && firstBareLetter !== firstBareLetter.toLocaleLowerCase('ru-RU');
+  const location =
+    prepositionalMatch?.[1]?.trim() ?? (hasProperNameCapitalization ? bareLocation : undefined);
+  if (
+    !location ||
+    /^(?:городе|месте|доме|парке|природе|дороге|на|в|около|рядом|сейчас|сегодня|завтра|послезавтра)$/iu.test(
+      location,
+    )
+  ) {
     return undefined;
+  }
   return location;
 }
 

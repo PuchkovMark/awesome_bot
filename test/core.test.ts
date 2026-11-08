@@ -190,8 +190,10 @@ test('AI receives the current bot capabilities and access restrictions', () => {
   assert.match(capabilities, /режим normal/u);
   assert.match(capabilities, /Веб-поиск:/u);
   assert.match(capabilities, /Не заявляй о не реализованных возможностях/u);
-  assert.match(capabilities, /Mark Puchkov \(VK ID 388581097\)/u);
-  assert.match(capabilities, /\/опрос \(\/questionnaire\) set <вопрос 1> \| <вопрос 2>/u);
+  assert.match(capabilities, /Создатель бота — Mark Puchkov/u);
+  assert.doesNotMatch(capabilities, /VK ID|388581097/u);
+  assert.match(capabilities, /\/опрос on\|off/u);
+  assert.doesNotMatch(capabilities, /\/опрос set/u);
   assert.match(capabilities, /администратор беседы или бот-администратор/u);
   assert.match(capabilities, /просьба настроить вступительное приветствие означает \/welcome/u);
   assert.match(capabilities, /предлагай новичкам анкету.*\/questionnaire on/u);

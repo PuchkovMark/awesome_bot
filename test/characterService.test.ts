@@ -342,10 +342,8 @@ test('conversation welcomes distinguish returning members and questionnaires per
     false,
     true,
   );
-  assert.match(
-    questionnaireStatus ?? '',
-    /Автоматическое знакомство с новыми участниками: включено/u,
-  );
+  assert.match(questionnaireStatus ?? '', /Автоматическое анкетирование при вступлении: включено/u);
+  assert.match(questionnaireStatus ?? '', /Использование: \/опрос on\|off/u);
   const unauthorizedToggle = await questionnaireCommands.handleCommand(
     'questionnaire',
     'off',
@@ -379,7 +377,20 @@ test('conversation welcomes distinguish returning members and questionnaires per
   );
   assert.equal(
     questionnaireNotice,
-    'Автоматическое знакомство с новыми участниками включено. Участники могут заполнить или изменить анкету командой /анкета в любое время.',
+    'Автоматическое анкетирование при вступлении включено. При включении вступившим участникам без анкеты будет показана форма /анкета.',
+  );
+  assert.equal(
+    await questionnaireCommands.handleCommand(
+      'questionnaire',
+      'set Вопрос?',
+      conversationId,
+      'chat-admin',
+      false,
+      true,
+      false,
+      true,
+    ),
+    'Использование: /опрос on|off.',
   );
 
   const firstJoinEvent = `${conversationId}:join-1`;
@@ -409,7 +420,29 @@ test('conversation welcomes distinguish returning members and questionnaires per
   const start = await memberService.startQuestionnaire(conversationId, vkUserId);
   assert.match(start.prompt, /1\. Как тебя зовут\?/u);
   assert.match(start.prompt, /2\. Что тебе интересно\?/u);
+  const resumedStart = await memberService.startQuestionnaire(conversationId, vkUserId, true);
+  assert.match(resumedStart.prompt, /1\. Как тебя зовут\?/u);
   assert.equal(await memberService.hasActiveQuestionnaire(conversationId, vkUserId), true);
+  assert.equal(
+    await memberService.shouldHandleQuestionnaireAnswer(conversationId, vkUserId, 'Привет!'),
+    false,
+  );
+  assert.equal(
+    await memberService.shouldHandleQuestionnaireAnswer(
+      conversationId,
+      vkUserId,
+      '1. Впиши ответ после строки «Ответ:» под нужным вопросом.',
+    ),
+    false,
+  );
+  assert.equal(
+    await memberService.shouldHandleQuestionnaireAnswer(
+      conversationId,
+      vkUserId,
+      '1. Как тебя зовут?\nОтвет: Аня',
+    ),
+    true,
+  );
   const completed = await memberService.answerQuestionnaire(
     conversationId,
     vkUserId,
@@ -417,7 +450,69 @@ test('conversation welcomes distinguish returning members and questionnaires per
   );
   assert.match(completed.completed ?? '', /Аня/u);
   assert.match(completed.completed ?? '', /Книги и путешествия/u);
+  assert.match(completed.completed ?? '', /🏷️ Как тебя зовут\?/u);
+  assert.match(completed.completed ?? '', /🎯 Что тебе интересно\?/u);
+  assert.doesNotMatch(completed.completed ?? '', /\n\n/u);
   assert.equal(await memberService.hasActiveQuestionnaire(conversationId, vkUserId), false);
+  const noisyUserId = '900000009';
+  await memberService.startQuestionnaire(conversationId, noisyUserId);
+  const noisyQuestionnaireText = [
+    'Ответ]',
+    'Марк, сегодня в 19:27',
+    '/анкета',
+    '',
+    'Давай познакомимся!',
+    'Заполни пункты и отправь весь список одним сообщением.',
+    '1. Что тебе интерсно?',
+    'Ответ: чилить',
+    '2. Как тя зовут?',
+    'Ответ]: Буча',
+    'Отправь заполненный шаблон одним сообщением.',
+  ].join('\n');
+  assert.equal(
+    await memberService.shouldHandleQuestionnaireAnswer(
+      conversationId,
+      noisyUserId,
+      noisyQuestionnaireText,
+    ),
+    true,
+  );
+  const noisyCompleted = await memberService.answerQuestionnaire(
+    conversationId,
+    noisyUserId,
+    noisyQuestionnaireText,
+  );
+  assert.match(noisyCompleted.completed ?? '', /Буча/u);
+  assert.match(noisyCompleted.completed ?? '', /чилить/u);
+  assert.doesNotMatch(noisyCompleted.completed ?? '', /Отправь заполненный шаблон/u);
+  await memberService.deleteProfile(conversationId, noisyUserId);
+
+  const replyOnlyUserId = '900000010';
+  await memberService.startQuestionnaire(conversationId, replyOnlyUserId);
+  const numberedAnswers = '1.27\n2. Тиран';
+  assert.equal(
+    await memberService.shouldHandleQuestionnaireAnswer(
+      conversationId,
+      replyOnlyUserId,
+      numberedAnswers,
+    ),
+    false,
+  );
+  assert.equal(
+    await memberService.shouldHandleQuestionnaireAnswer(
+      conversationId,
+      replyOnlyUserId,
+      numberedAnswers,
+      true,
+    ),
+    true,
+  );
+  await memberService.answerQuestionnaire(conversationId, replyOnlyUserId, numberedAnswers, true);
+  const replyOnlyProfile = await memberService.getProfileDetails(conversationId, replyOnlyUserId);
+  assert.equal(replyOnlyProfile?.answers['Как тебя зовут?'], '27');
+  assert.equal(replyOnlyProfile?.answers['Что тебе интересно?'], 'Тиран');
+  await memberService.deleteProfile(conversationId, replyOnlyUserId);
+
   const profileDetails = await memberService.getProfileDetails(conversationId, vkUserId);
   assert.ok(profileDetails?.createdAt);
   assert.ok(profileDetails?.updatedAt);
@@ -490,8 +585,13 @@ test('conversation welcomes distinguish returning members and questionnaires per
     false,
     false,
     true,
+    '',
+    '',
+    '',
+    async () => 'Аня Иванова',
   );
-  assert.match(listedProfiles ?? '', new RegExp(vkUserId, 'u'));
+  assert.match(listedProfiles ?? '', /Аня Иванова/u);
+  assert.doesNotMatch(listedProfiles ?? '', new RegExp(vkUserId, 'u'));
   const viewedByMention = await commands.handleCommand(
     'профиль',
     `[id${vkUserId}|Аня]`,
@@ -635,7 +735,7 @@ test('creator has a higher protected role than administrators', async () => {
   assert.equal(await settings.getRole('888000'), 'user');
   assert.equal(
     await commands.handleCommand('admin', 'add 888000', 'peer', '388581097', true, false, true),
-    'Пользователь 888000 добавлен в администраторы.',
+    'Теперь Участник — администратор.',
   );
   assert.equal(await settings.getRole('888000'), 'administrator');
   assert.equal(

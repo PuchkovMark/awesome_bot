@@ -447,7 +447,7 @@ export class MafiaService {
         players: [
           {
             vkUserId: userId,
-            name: options.name?.trim() || `Участник ${userId}`,
+            name: options.name?.trim() || 'Участник',
             role: null,
             alive: true,
             selfHealUsed: false,
@@ -1502,7 +1502,7 @@ export class MafiaService {
     if (state.players.length >= state.settings.maxPlayers) return 'Набор уже заполнен.';
     state.players.push({
       vkUserId: userId,
-      name: options.name?.trim() || `Участник ${userId}`,
+      name: options.name?.trim() || 'Участник',
       role: null,
       alive: true,
       selfHealUsed: false,

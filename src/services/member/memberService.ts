@@ -7,6 +7,29 @@ export const MAX_ANSWER_LENGTH = 500;
 export const MAX_QUESTIONNAIRE_RESPONSE_LENGTH = 3500;
 export const MEMBER_PROFILES_PAGE_SIZE = 10;
 
+const profileQuestionEmojis: Array<[RegExp, string]> = [
+  [/(?:возраст|сколько лет)/iu, '🎂'],
+  [/(?:имя|зовут|обращаться|позывн|никнейм)/iu, '🏷️'],
+  [/(?:работа|уч[её]б|кем|професс)/iu, '💼'],
+  [/(?:семейн|отношен|свидан|половин)/iu, '💛'],
+  [/(?:город|врн|жив[её]шь|где)/iu, '📍'],
+  [/(?:гуля|отдых|актив)/iu, '🌿'],
+  [/(?:кофе|чай)/iu, '☕'],
+  [/(?:хобби|увлечен|интерес)/iu, '🎯'],
+  [/(?:фильм|сериал|кино)/iu, '🎬'],
+  [/(?:песн|музык)/iu, '🎵'],
+  [/(?:алкогол)/iu, '🍷'],
+  [/(?:mbti|тип личности)/iu, '🧠'],
+];
+const fallbackProfileEmojis = ['💬', '✨', '🌟'];
+
+function getProfileQuestionEmoji(question: string, index: number): string {
+  return (
+    profileQuestionEmojis.find(([pattern]) => pattern.test(question))?.[1] ??
+    fallbackProfileEmojis[index % fallbackProfileEmojis.length]!
+  );
+}
+
 function parseProfile(value: string): Record<string, string> {
   let parsed: unknown;
   try {
@@ -31,14 +54,17 @@ function formatProfile(answers: Record<string, string>, updatedAt?: Date | null)
   )?.[1];
   const fields = Object.entries(answers)
     .filter(([, answer]) => answer.trim())
-    .map(([question, answer]) => `💬 ${question}\n${answer}`);
+    .map(
+      ([question, answer], index) =>
+        `${getProfileQuestionEmoji(question, index)} ${question}\n${answer}`,
+    );
   return [
     `👤 ${displayName ? `Знакомьтесь, ${displayName}!` : 'Профиль участника'}`,
     ...fields,
-    updatedAt ? `Последнее обновление: ${updatedAt.toLocaleDateString('ru-RU')}` : '',
+    updatedAt ? `🕒 Последнее обновление: ${updatedAt.toLocaleDateString('ru-RU')}` : '',
   ]
     .filter(Boolean)
-    .join('\n\n');
+    .join('\n');
 }
 
 export function formatProfileIntroduction(
@@ -90,9 +116,95 @@ function createQuestionnaireTemplate(questions: string[], answers: Record<string
   ].join('\n');
 }
 
+function normalizeQuestionText(value: string): string {
+  return value
+    .normalize('NFKC')
+    .toLocaleLowerCase('ru-RU')
+    .replace(/[^\p{L}\p{N}]/gu, '');
+}
+
+function editDistance(left: string, right: string): number {
+  let previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+    const current = [leftIndex];
+    for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+      current[rightIndex] = Math.min(
+        (current[rightIndex - 1] ?? 0) + 1,
+        (previous[rightIndex] ?? 0) + 1,
+        (previous[rightIndex - 1] ?? 0) + (left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1),
+      );
+    }
+    previous = current;
+  }
+  return previous[right.length] ?? 0;
+}
+
+function matchQuestionnaireHeader(
+  line: string,
+  questions: string[],
+  allowNumberedAnswers = false,
+): { index: number; answer?: string } | undefined {
+  const header = line.match(/^\s*(?:>\s*)?(?:№\s*)?(\d{1,2})\s*(?:[.)\-:]|\s+)(.*)$/u);
+  if (!header) return undefined;
+  const numberedIndex = Number(header[1]) - 1;
+
+  const payload = (header[2] ?? '').trim();
+  const answer = payload.match(
+    /^(?:ответ|отвт|отв(?:ет)?|отве[дт])\s*(?:(?::|\]|\)|-|–|—)\s*){0,2}(.*)$/iu,
+  );
+  if (answer) {
+    return numberedIndex >= 0 && numberedIndex < questions.length
+      ? { index: numberedIndex, answer: answer[1] ?? '' }
+      : undefined;
+  }
+  if (!payload) {
+    return numberedIndex >= 0 && numberedIndex < questions.length
+      ? { index: numberedIndex }
+      : undefined;
+  }
+
+  const actual = normalizeQuestionText(payload);
+  const candidates = questions
+    .map((question, index) => {
+      const expected = normalizeQuestionText(question);
+      const distance = editDistance(expected, actual);
+      const allowedDistance = Math.max(2, Math.ceil(expected.length * 0.2));
+      const similarity = 1 - distance / Math.max(expected.length, actual.length, 1);
+      return { index, distance, allowedDistance, similarity };
+    })
+    .filter(
+      ({ distance, allowedDistance, similarity }) =>
+        distance <= allowedDistance && similarity >= 0.72,
+    )
+    .sort(
+      (left, right) =>
+        right.similarity - left.similarity ||
+        Number(right.index === numberedIndex) - Number(left.index === numberedIndex),
+    );
+  const best = candidates[0];
+  if (best) return { index: best.index };
+  return allowNumberedAnswers && numberedIndex >= 0 && numberedIndex < questions.length
+    ? { index: numberedIndex, answer: payload }
+    : undefined;
+}
+
+function getQuestionnaireAnswer(line: string): string | undefined {
+  const answer = line.match(
+    /^\s*(?:ответ|отвт|отв(?:ет)?|отве[дт])\s*(?:(?::|\]|\)|-|–|—)\s*){0,2}(.*)$/iu,
+  );
+  return answer?.[1] ?? (answer ? '' : undefined);
+}
+
+function isQuestionnaireControlLine(line: string): boolean {
+  return /^\s*(?:\/(?:анкета|профиль|profile)\b|давай познакомимся|заполни пункты|пустой ответ сохраняет|отправь заполненный шаблон|если передумаешь)/iu.test(
+    line,
+  );
+}
+
 function parseQuestionnaireForm(
   text: string,
   questions: string[],
+  allowNumberedAnswers = false,
 ): { values: Map<number, string>; error?: string } {
   const values = new Map<number, string>();
   let currentIndex: number | undefined;
@@ -106,31 +218,23 @@ function parseQuestionnaireForm(
   };
 
   for (const line of text.split(/\r?\n/u)) {
-    const header = line.match(/^\s*(\d{1,2})[.)]\s*(.*)$/u);
+    const header = matchQuestionnaireHeader(line, questions, allowNumberedAnswers);
     if (header) {
       const error = saveCurrent();
       if (error) return { values, error };
-      const questionNumber = Number(header[1]);
-      if (questionNumber < 1 || questionNumber > questions.length) {
-        return { values, error: `Укажите номера вопросов от 1 до ${questions.length}.` };
-      }
-      currentIndex = questionNumber - 1;
-      const payload = (header[2] ?? '').trim();
-      const question = questions[currentIndex] ?? '';
-      currentValue = payload === question ? '' : payload;
+      currentIndex = header.index;
+      currentValue = header.answer ?? '';
       continue;
     }
 
     if (currentIndex === undefined) {
-      if (line.trim()) {
-        return { values, error: 'Сохраните номера вопросов в ответе, например «1. 25 лет».' };
-      }
       continue;
     }
+    if (isQuestionnaireControlLine(line)) continue;
 
-    const answerLine = line.match(/^\s*Ответ:\s*(.*)$/iu);
-    if (answerLine) {
-      currentValue = answerLine[1] ?? '';
+    const answer = getQuestionnaireAnswer(line);
+    if (answer !== undefined) {
+      currentValue = answer;
     } else if (line.trim()) {
       currentValue = currentValue ? `${currentValue}\n${line.trim()}` : line.trim();
     }
@@ -254,6 +358,27 @@ export class MemberService {
     return member?.questionnaireIndex !== null && member?.questionnaireIndex !== undefined;
   }
 
+  async shouldHandleQuestionnaireAnswer(
+    conversationId: string,
+    vkUserId: string,
+    text: string,
+    isReplyToQuestionnaire = false,
+  ): Promise<boolean> {
+    const member = await prisma.conversationMember.findUnique({
+      where: { conversationId_vkUserId: { conversationId, vkUserId } },
+      select: { questionnaireIndex: true, questionnaireQuestions: true },
+    });
+    if (member?.questionnaireIndex === null || member?.questionnaireIndex === undefined) {
+      return false;
+    }
+    if (member.questionnaireIndex !== -1) return true;
+    if (!member.questionnaireQuestions) return false;
+    const questions = parseStoredQuestionnaireQuestions(member.questionnaireQuestions);
+    return text
+      .split(/\r?\n/u)
+      .some((line) => matchQuestionnaireHeader(line, questions, isReplyToQuestionnaire));
+  }
+
   async startQuestionnaire(
     conversationId: string,
     vkUserId: string,
@@ -262,9 +387,27 @@ export class MemberService {
     const settings = await settingsService.getChatSettings(conversationId);
     const member = await prisma.conversationMember.findUnique({
       where: { conversationId_vkUserId: { conversationId, vkUserId } },
-      select: { profile: true, profileCompleted: true, questionnaireIndex: true },
+      select: {
+        profile: true,
+        profileCompleted: true,
+        questionnaireIndex: true,
+        questionnaireQuestions: true,
+        questionnaireAnswers: true,
+      },
     });
     if (member?.questionnaireIndex !== null && member?.questionnaireIndex !== undefined) {
+      if (member.questionnaireIndex === -1 && replaceExisting) {
+        if (!member.questionnaireQuestions || !member.questionnaireAnswers) {
+          throw new Error('Не удалось восстановить незавершённую анкету.');
+        }
+        return {
+          prompt: createQuestionnaireTemplate(
+            parseStoredQuestionnaireQuestions(member.questionnaireQuestions),
+            parseProfile(member.questionnaireAnswers),
+          ),
+          alreadyExists: member.profileCompleted,
+        };
+      }
       throw new Error(
         'Анкета уже заполняется. Ответьте на текущий вопрос или отправьте /profile cancel.',
       );
@@ -303,6 +446,7 @@ export class MemberService {
     conversationId: string,
     vkUserId: string,
     answer: string,
+    isReplyToQuestionnaire = false,
   ): Promise<{ prompt?: string; completed?: string }> {
     const trimmed = answer.trim();
     if (!trimmed) return { prompt: 'Ответ не может быть пустым. Попробуйте ещё раз.' };
@@ -334,7 +478,7 @@ export class MemberService {
     const questions = parseStoredQuestionnaireQuestions(member.questionnaireQuestions);
     const index = member.questionnaireIndex;
     if (index === -1) {
-      const parsed = parseQuestionnaireForm(trimmed, questions);
+      const parsed = parseQuestionnaireForm(trimmed, questions, isReplyToQuestionnaire);
       if (parsed.error) return { prompt: `${parsed.error}\nОтправьте заполненный шаблон ещё раз.` };
 
       const answers = parseProfile(member.questionnaireAnswers);

@@ -104,6 +104,7 @@ export interface ParsedReminder {
   ambiguousTime: boolean;
   groupRequested: boolean;
   recipientVkId?: string;
+  recipientReference?: string;
   recognized: boolean;
 }
 
@@ -540,7 +541,9 @@ export function parseReminder(text: string, now: Date, timeZone: string): Parsed
       ? toUtcDateTime({ date: endDate.value, time: '23:59' }, timeZone)
       : undefined;
 
-  const targetMatch = /(?:@id(\d+)|vk\.com\/id(\d+)|\[id(\d+)\|[^\]]+\])/iu.exec(normalized);
+  const targetMatch = /(?:@id(\d+)|vk\.com\/id(\d+)|\[id(\d+)\|[^\]]+\]|@([a-z][a-z\d_.]*))/iu.exec(
+    normalized,
+  );
   const groupRequested =
     /(?:(?<![\p{L}\p{N}_])(?=[\p{L}\p{N}_])|(?<=[\p{L}\p{N}_])(?![\p{L}\p{N}_]))(?:всем|всех|беседе|чату|группе|для\s+всех)(?:(?<![\p{L}\p{N}_])(?=[\p{L}\p{N}_])|(?<=[\p{L}\p{N}_])(?![\p{L}\p{N}_]))/iu.test(
       normalized,
@@ -590,7 +593,10 @@ export function parseReminder(text: string, now: Date, timeZone: string): Parsed
     missing,
     ambiguousTime,
     groupRequested,
-    ...(targetMatch ? { recipientVkId: targetMatch[1] ?? targetMatch[2] ?? targetMatch[3] } : {}),
+    ...(targetMatch?.[1] || targetMatch?.[2] || targetMatch?.[3]
+      ? { recipientVkId: targetMatch[1] ?? targetMatch[2] ?? targetMatch[3] }
+      : {}),
+    ...(targetMatch?.[4] ? { recipientReference: `@${targetMatch[4]}` } : {}),
     recognized: hasReminderIntent,
   };
 }

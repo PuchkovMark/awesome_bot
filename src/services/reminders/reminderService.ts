@@ -24,6 +24,7 @@ interface ReminderContext {
   isBotAdmin: boolean;
   isConversationAdmin: (peerId: number, userId: number) => Promise<boolean>;
   resolveRecipient: (peerId: number, name: string) => Promise<string | null>;
+  resolveRecipientReference: (peerId: number, reference: string) => Promise<string | null>;
 }
 
 interface ReminderDraftPayload {
@@ -105,7 +106,7 @@ function reminderQuestion(missing: string): string {
     case 'content':
       return 'Что именно нужно напомнить?';
     case 'recipient':
-      return 'Кому именно напомнить? Отправь ссылку или VK ID участника.';
+      return 'Кому именно напомнить? Упомяни участника через @имя.';
     case 'timeZone':
       return 'В каком часовом поясе поставить напоминание? Укажи часовой пояс, например Europe/Moscow.';
     default:
@@ -256,11 +257,14 @@ export class ReminderService {
       /(?:напомни|напомнить)\s+([А-ЯЁ][а-яё-]{2,}(?:у|е|ым|ой))/u,
     )?.[1];
     const resolvedRecipientId =
-      recipientName && isChat
-        ? await context.resolveRecipient(Number(sourcePeerId), recipientName)
-        : undefined;
+      parsed.recipientReference && isChat
+        ? await context.resolveRecipientReference(Number(sourcePeerId), parsed.recipientReference)
+        : recipientName && isChat
+          ? await context.resolveRecipient(Number(sourcePeerId), recipientName)
+          : undefined;
     const recipientRequested =
       Boolean(recipientName) ||
+      Boolean(parsed.recipientReference) ||
       /(?:(?<![\p{L}\p{N}_])(?=[\p{L}\p{N}_])|(?<=[\p{L}\p{N}_])(?![\p{L}\p{N}_]))(?:ему|ей|им|участнику|пользователю)(?:(?<![\p{L}\p{N}_])(?=[\p{L}\p{N}_])|(?<=[\p{L}\p{N}_])(?![\p{L}\p{N}_]))/iu.test(
         originalText,
       );

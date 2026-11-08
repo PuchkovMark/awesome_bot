@@ -84,6 +84,11 @@ test('context relevance recognizes weather, dates, places, and natural horoscope
     'current',
   );
   assert.equal(detectContextRelevance('Пенёк, какая погода в Москве?').explicitLocation, 'Москве');
+  const bareWeatherLocation = detectContextRelevance('Погода Воронеж на завтра');
+  assert.equal(bareWeatherLocation.weatherPeriod, 'tomorrow');
+  assert.equal(bareWeatherLocation.explicitLocation, 'Воронеж');
+  assert.equal(detectContextRelevance('Погода на завтра').explicitLocation, undefined);
+  assert.equal(detectContextRelevance('Погода хорошая завтра').explicitLocation, undefined);
   assert.equal(detectContextRelevance('Будет ли завтра дождь?').weatherPeriod, 'tomorrow');
   assert.equal(
     detectContextRelevance('Пенёк, что будет с погодой на выходных?').weatherPeriod,

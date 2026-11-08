@@ -383,12 +383,13 @@ export class AdventureService {
 
   private formatState(state: AdventureState, intro = false): string {
     const options = state.options.map((option, index) => `${index + 1}. ${option}`).join('\n');
+    const hostName = this.getPlayer(state, state.hostId)?.characterName || 'ведущий';
     const prompt = intro
       ? 'Выберите действие или напишите свой вариант.'
       : state.settings.decisionMode === 'vote'
         ? `Голосование: отправьте /vote <номер>. Можно изменить голос до завершения.\n`
         : state.settings.decisionMode === 'host'
-          ? `Окончательное решение принимает ведущий ${state.hostId}.\n`
+          ? `Окончательное решение принимает ведущий ${hostName}.\n`
           : '';
     return [
       `🎲 ${state.title}`,
@@ -440,7 +441,7 @@ export class AdventureService {
         content: [
           kind === 'opening'
             ? `Начни новое оригинальное приключение. Создай атмосферную завязку и первую локацию с реальными вариантами действий. Игроки: ${state.players.map((player) => `${player.characterName}, роль ${player.role}, навыки ${player.skills.join(', ')}`).join('; ')}.`
-            : `Последнее действие участника ${requesterId}: ${action}`,
+            : `Последнее действие участника ${this.getPlayer(state, requesterId)?.name || 'Участник'}: ${action}`,
           `Состояние до действия:\n${summarizeJournal(state)}`,
         ].join('\n\n'),
       },
@@ -711,8 +712,8 @@ export class AdventureService {
           : (genres.find((item) => item === genreInput) ?? 'fantasy');
       const player: AdventurePlayer = {
         vkUserId: requesterId,
-        name: normalizeText(displayName, 80) || `Игрок ${requesterId}`,
-        characterName: normalizeText(displayName, 60) || `Герой ${requesterId}`,
+        name: normalizeText(displayName, 80) || 'Игрок',
+        characterName: normalizeText(displayName, 60) || 'Герой',
         description: '',
         role:
           genre === 'detective'
@@ -840,8 +841,8 @@ export class AdventureService {
           return { text: 'В приключении может быть не более 8 игроков.' };
         state.players.push({
           vkUserId: requesterId,
-          name: normalizeText(displayName, 80) || `Игрок ${requesterId}`,
-          characterName: normalizeText(displayName, 60) || `Герой ${requesterId}`,
+          name: normalizeText(displayName, 80) || 'Игрок',
+          characterName: normalizeText(displayName, 60) || 'Герой',
           description: '',
           role: 'путешественник',
           skills: ['смекалка', 'наблюдательность'],

@@ -44,7 +44,7 @@ test('/help shows concise pages with navigation', async () => {
   );
   assert.match(secondPage ?? '', /Предыдущая: \/помощь \(\/help\) 1/u);
   assert.match(secondPage ?? '', /Следующая: \/помощь \(\/help\) 3/u);
-  assert.match(thirdPage ?? '', /\/шутка \(\/joke\) \[random\|VK ID\]/u);
+  assert.match(thirdPage ?? '', /\/шутка \(\/joke\) \[random\|@упоминание\]/u);
   assert.doesNotMatch(thirdPage ?? '', /@all|\/шутка \(\/joke\) \[all/u);
 });
 
