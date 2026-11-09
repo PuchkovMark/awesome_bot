@@ -1714,6 +1714,7 @@ export class VkService {
         }
         const isReplyToQuestionnaire =
           isReplyToBot && isQuestionnairePromptMessage(repliedMessageText);
+        const commandText = detectorService.stripBotAddressPrefix(text);
         const imageCommand = detectorService.parseImageCommand(text);
         const summaryButtonHours = getSummaryHoursFromPayload(context.messagePayload);
         const command = imageCommand
@@ -1721,6 +1722,8 @@ export class VkService {
           : summaryButtonHours
             ? 'summary'
             : detectorService.parseCommand(text);
+        const explicitlyAddressed =
+          summaryButtonHours !== null || detectorService.isExplicitlyAddressed(text, isReplyToBot);
         if (command === 'translate' && repliedMessage && !repliedMessageText) {
           try {
             await repliedMessage.loadMessagePayload({ force: true });
@@ -1734,7 +1737,7 @@ export class VkService {
         }
         const legacyAdventureCommand =
           command === 'games' &&
-          /^(?:adventure|detective)(?:\s|$)/iu.test(text.replace(/^[/!]\S+\s*/u, ''));
+          /^(?:adventure|detective)(?:\s|$)/iu.test(commandText.replace(/^[/!]\S+\s*/u, ''));
         const isAdventureCommand =
           (command !== null && adventureCommands.has(command)) || legacyAdventureCommand;
         const chatSettings = await settingsService.getChatSettings(String(peerId));
@@ -1774,6 +1777,9 @@ export class VkService {
               );
             }
           });
+          return next();
+        }
+        if (context.isChat && (command !== null || imageCommand !== null) && !explicitlyAddressed) {
           return next();
         }
         const profileCommand = command !== null && memberProfileCommands.has(command);
@@ -1817,11 +1823,17 @@ export class VkService {
             : addressed || activeEvent || pendingMemorySelection;
         let gameRateChecked = false;
         if (!command && text.trim()) {
+          const gameControl =
+            /^(?:пауза|поставь игру на паузу|продолжи игру|продолжай игру|продолжить|возобнови игру|останови игру|заверши игру|закончить партию|измени сложность|сделай игру сложнее|сделай игру легче|легче|сложнее|начинай|начать игру|запускай|старт|отмени набор|отмени игру|отмена)/iu.test(
+              commandText.trim(),
+            );
+          if (context.isChat && gameControl && !explicitlyAddressed) return next();
+          const gameText = gameControl ? commandText : text;
           try {
             const mafiaMessage = await mafiaService.shouldHandleMessage(
               String(peerId),
               senderId,
-              text,
+              gameText,
               {
                 isGroup: context.isChat,
                 isReplyToBot,
@@ -1832,7 +1844,7 @@ export class VkService {
               context.isChat &&
               (await gameService.shouldHandleMessage(
                 String(peerId),
-                text,
+                gameText,
                 isReplyToBot,
                 !context.isChat || addressed,
               ));
@@ -1840,10 +1852,6 @@ export class VkService {
               gameRateChecked = true;
               if (await this.checkRateLimit(senderId, context, isAdmin)) return next();
             }
-            const gameControl =
-              /^(?:пауза|поставь игру на паузу|продолжи игру|возобнови игру|останови игру|заверши игру|измени сложность|сделай игру сложнее|сделай игру легче|легче|сложнее|начинай|начать игру|отмени набор|отмени игру)/iu.test(
-                text.trim(),
-              );
             const canManageGame =
               context.isChat && gameControl
                 ? await this.isConversationAdmin(Number(peerId), Number(senderId))
@@ -1865,7 +1873,7 @@ export class VkService {
             const mafiaReply = await mafiaService.handleNaturalMessage(
               String(peerId),
               senderId,
-              text,
+              gameText,
               gameOptions,
             );
             if (mafiaReply) {
@@ -1878,7 +1886,7 @@ export class VkService {
             const gameReply = await gameService.handleNaturalMessage(
               String(peerId),
               senderId,
-              text,
+              gameText,
               {
                 ...gameOptions,
               },
@@ -1918,13 +1926,16 @@ export class VkService {
           resolveRecipientReference: (targetPeerId: number, reference: string) =>
             this.resolveReminderRecipientReference(targetPeerId, reference),
         };
-        if (await reminderService.shouldHandleMessage(text, reminderContext)) {
+        if (
+          (!context.isChat || explicitlyAddressed) &&
+          (await reminderService.shouldHandleMessage(text, reminderContext))
+        ) {
           if (context.isChat && (await this.checkRateLimit(senderId, context, isAdmin))) {
             return next();
           }
           void requestQueue.add(senderId, async () => {
             try {
-              await reminderService.handleMessage(text, reminderContext);
+              await reminderService.handleMessage(commandText, reminderContext);
             } catch (error) {
               logger.error({ err: error, peerId, senderId }, 'Failed to process reminder request');
               await senderService.send(
@@ -2205,11 +2216,11 @@ export class VkService {
             if (command) {
               const args =
                 command === 'summary'
-                  ? String(summaryButtonHours ?? getSummaryHoursFromText(text) ?? '')
-                  : /^[/!]/u.test(text.trim())
-                    ? text.replace(/^[/!]\S+\s*/, '')
+                  ? String(summaryButtonHours ?? getSummaryHoursFromText(commandText) ?? '')
+                  : /^[/!]/u.test(commandText.trim())
+                    ? commandText.replace(/^[/!]\S+\s*/, '')
                     : command === 'анкеты'
-                      ? text
+                      ? commandText
                           .trim()
                           .replace(/^анкеты\b/iu, '')
                           .trim()

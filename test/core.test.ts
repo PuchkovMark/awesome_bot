@@ -96,6 +96,8 @@ test('active chat mode recognizes Russian requests without matching word fragmen
   assert.equal(detector.isAddressed('Бот, помоги с задачей'), false);
   assert.equal(detector.isActiveEvent('Бот, помоги с задачей'), false);
   assert.equal(detector.isAddressed('Пенёк, помоги с задачей'), true);
+  assert.equal(detector.isAddressed('/help'), false);
+  assert.equal(detector.isExplicitlyAddressed('/help', true), true);
   assert.equal(detector.parseCommand('Анкета'), 'анкета');
   assert.equal(detector.parseCommand('Анкеты 2'), 'анкеты');
   assert.equal(detector.parseCommand('Удалить профиль'), 'удалить');
@@ -115,8 +117,13 @@ test('all registered Russian command aliases resolve to their canonical commands
 
   const detector = new DetectorService();
   assert.equal(detector.parseCommand('/помощь 2'), 'help');
+  assert.equal(detector.parseCommand('Пенёк, /помощь 2'), 'help');
   assert.equal(detector.parseCommand('/опрос on'), 'questionnaire');
   assert.deepEqual(detector.parseImageCommand('/изображение кот на Луне'), {
+    action: 'generate',
+    prompt: 'кот на Луне',
+  });
+  assert.deepEqual(detector.parseImageCommand('Пенёк, /изображение кот на Луне'), {
     action: 'generate',
     prompt: 'кот на Луне',
   });

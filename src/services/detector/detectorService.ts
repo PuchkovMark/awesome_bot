@@ -18,6 +18,22 @@ function normalizeText(text: string): string {
     .trim();
 }
 
+function stripBotAddressPrefix(text: string): string {
+  const botNamePrefix = /^\s*(?:пен[её]к|пен[её]чек)(?:[,!:;]\s*|\s+)/iu.exec(text);
+  let commandText = botNamePrefix ? text.slice(botNamePrefix[0].length) : text;
+
+  const groupIdMatch = config.VK_GROUP_ID.trim().match(/^(?:club|public)?(\d+)$/i);
+  if (groupIdMatch?.[1]) {
+    const mentionPattern = new RegExp(
+      `(?:@(?:club|public)?${groupIdMatch[1]}\\b|\\[(?:club|public)?${groupIdMatch[1]}\\|[^\\]]+\\])[,!:;]?`,
+      'giu',
+    );
+    commandText = commandText.replace(mentionPattern, ' ');
+  }
+
+  return commandText.trimStart();
+}
+
 /**
  * Определяет адресованные боту сообщения, команды и другие распознаваемые намерения.
  */
@@ -26,13 +42,15 @@ export class DetectorService {
    * Возвращает true если сообщение адресовано боту.
    */
   isAddressed(text: string, isReplyToBot = false): boolean {
-    if (!text) return false;
-    const t = text.toLowerCase().trim();
-    if (t.startsWith('/') || t.startsWith('!')) return true;
-    if (this.isMentioned(text)) return true;
-    if (isReplyToBot) return true;
+    return this.isExplicitlyAddressed(text, isReplyToBot);
+  }
 
-    return false;
+  isExplicitlyAddressed(text: string, isReplyToBot = false): boolean {
+    return Boolean(text) && (this.isMentioned(text) || isReplyToBot);
+  }
+
+  stripBotAddressPrefix(text: string): string {
+    return stripBotAddressPrefix(text);
   }
 
   isActiveEvent(text: string): boolean {
@@ -65,7 +83,8 @@ export class DetectorService {
 
   parseImageCommand(text: string): ImageCommand | null {
     if (!text) return null;
-    const slashCommand = text
+    const commandText = this.stripBotAddressPrefix(text);
+    const slashCommand = commandText
       .trim()
       .match(/^[/!](image|edit|изображение|преобразить)(?:\s+([\s\S]*))?$/iu);
     if (slashCommand) {
@@ -75,14 +94,14 @@ export class DetectorService {
       };
     }
 
-    const normalized = normalizeText(text);
+    const normalized = normalizeText(commandText);
     const match = normalized.match(
       /^(?:(?:пенек|пенечек)[,!:;]?\s+)?(нарисуй|сгенерируй|создай(?:\s+картинку)?|преобрази|измени|переделай)\s+([\s\S]+)$/u,
     );
     if (!match) return null;
 
     const action = /^(?:преобрази|измени|переделай)$/u.test(match[1]) ? 'edit' : 'generate';
-    const prompt = text
+    const prompt = commandText
       .trim()
       .match(
         /^(?:(?:пенёк|пенек|пенёчек|пенечек)[,!:;]?\s+)?(?:нарисуй|сгенерируй|создай(?:\s+картинку)?|преобрази|измени|переделай)\s+([\s\S]+)$/iu,
@@ -102,9 +121,9 @@ export class DetectorService {
 
   parseCommand(text: string): string | null {
     if (!text) return null;
-    const t = text.trim();
+    const t = this.stripBotAddressPrefix(text).trim();
     const normalized = normalizeText(t);
-    if (/^(?:пенек|пенечек)\s+пересказ(?:\s|[.!?,…]|$)/u.test(normalized)) {
+    if (/^пересказ(?:\s|[.!?,…]|$)/u.test(normalized)) {
       return 'summary';
     }
     if (/^анкета[!.?]*$/u.test(normalized)) return 'анкета';

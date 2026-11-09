@@ -12,7 +12,12 @@ import {
   toUtcDateTime,
   type RecurrenceRule,
 } from './reminderDateTime.js';
-import { formatReminderDate, parseReminder, parseReminderTime } from './reminderParser.js';
+import {
+  formatReminderDate,
+  hasReminderIntent,
+  parseReminder,
+  parseReminderTime,
+} from './reminderParser.js';
 
 const draftLifetimeMs = 30 * 60_000;
 const maxDeliveryAttempts = 5;
@@ -79,9 +84,7 @@ function parseRule(value: string | null): RecurrenceRule | undefined {
 
 function looksLikeReminderRequest(text: string): boolean {
   return (
-    /(?:(?<![\p{L}\p{N}_])(?=[\p{L}\p{N}_])|(?<=[\p{L}\p{N}_])(?![\p{L}\p{N}_]))(?:напомни|напоминай|напомнить|напоминание|не\s+забудь|не\s+забыть|мне\s+нужно\s+не\s+забыть|запланируй|напоминания)(?:(?<![\p{L}\p{N}_])(?=[\p{L}\p{N}_])|(?<=[\p{L}\p{N}_])(?![\p{L}\p{N}_]))/iu.test(
-      text,
-    ) ||
+    hasReminderIntent(text) ||
     /^\s*(?:пен(?:ё|е)к\s*[,!:—-]?\s*)?(?:завтра|послезавтра|сегодня|в\s+(?:понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье)|через\s+\S+)(?:(?<![\p{L}\p{N}_])(?=[\p{L}\p{N}_])|(?<=[\p{L}\p{N}_])(?![\p{L}\p{N}_])).*(?:(?<![\p{L}\p{N}_])(?=[\p{L}\p{N}_])|(?<=[\p{L}\p{N}_])(?![\p{L}\p{N}_]))\d{1,2}(?::\d{2}|\s*(?:утра|вечера|дня))(?:(?<![\p{L}\p{N}_])(?=[\p{L}\p{N}_])|(?<=[\p{L}\p{N}_])(?![\p{L}\p{N}_]))/iu.test(
       text,
     )

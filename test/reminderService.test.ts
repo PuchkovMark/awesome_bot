@@ -82,3 +82,30 @@ test('stale timezone clarification drafts stop intercepting ordinary chat', asyn
     true,
   );
 });
+
+test('only explicit reminder requests intercept messages without an active draft', async () => {
+  const reminderService = new ReminderService();
+  const context = {
+    senderId: randomUUID(),
+    peerId: 2_000_000_002,
+    isChat: true,
+    isBotAdmin: false,
+    isConversationAdmin: async () => false,
+    resolveRecipient: async () => null,
+  };
+
+  assert.equal(
+    await reminderService.shouldHandleMessage(
+      'В беседе обсуждали напоминание про встречу',
+      context,
+    ),
+    false,
+  );
+  assert.equal(
+    await reminderService.shouldHandleMessage(
+      'Поставь напоминание завтра в 10:00 проверить почту',
+      context,
+    ),
+    true,
+  );
+});

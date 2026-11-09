@@ -30,8 +30,20 @@ test('parses a one-time reminder with a date, time, and content', () => {
   const parsed = parseReminder('Пенёк, напомни завтра в 10:00 позвонить мастеру.', now, timeZone);
 
   assert.equal(parsed.missing, null);
+  assert.equal(parsed.recognized, true);
   assert.equal(parsed.content, 'позвонить мастеру');
   assert.equal(parsed.dueAt?.toISOString(), '2026-03-29T07:00:00.000Z');
+});
+
+test('does not recognize a casual mention of reminders as a request', () => {
+  assert.equal(
+    parseReminder('В беседе обсуждали напоминание про встречу', now, timeZone).recognized,
+    false,
+  );
+  assert.equal(
+    parseReminder('Поставь напоминание завтра в 10:00 проверить почту', now, timeZone).recognized,
+    true,
+  );
 });
 
 test('parses relative reminders and preserves their requested interval', () => {

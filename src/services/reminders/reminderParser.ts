@@ -413,6 +413,17 @@ function parseRecurrence(text: string): Match<RecurrenceRule> | undefined {
   return undefined;
 }
 
+export function hasReminderIntent(text: string): boolean {
+  return (
+    /(?<![\p{L}\p{N}_])(?:напомни|напоминай|напомнить|не\s+забудь|не\s+забыть|мне\s+нужно\s+не\s+забыть|запланируй)(?![\p{L}\p{N}_])/iu.test(
+      text,
+    ) ||
+    /(?<![\p{L}\p{N}_])(?:создай|поставь|установи|добавь)\s+(?:мне\s+)?напоминани[ея](?![\p{L}\p{N}_])/iu.test(
+      text,
+    )
+  );
+}
+
 function cleanContent(text: string, removable: string[]): string {
   let content = text;
   for (const value of removable.filter(Boolean)) {
@@ -568,10 +579,7 @@ export function parseReminder(text: string, now: Date, timeZone: string): Parsed
     ].map((match) => match[0]),
   ];
   const content = cleanContent(normalized, removable);
-  const hasReminderIntent =
-    /(?:(?<![\p{L}\p{N}_])(?=[\p{L}\p{N}_])|(?<=[\p{L}\p{N}_])(?![\p{L}\p{N}_]))(?:напомни|напоминай|напомнить|напоминание|не\s+забудь|не\s+забыть|мне\s+нужно\s+не\s+забыть|запланируй)(?:(?<![\p{L}\p{N}_])(?=[\p{L}\p{N}_])|(?<=[\p{L}\p{N}_])(?![\p{L}\p{N}_]))/iu.test(
-      normalized,
-    ) || Boolean(recurrence);
+  const hasIntent = hasReminderIntent(normalized) || Boolean(recurrence);
 
   const missing: ParsedReminder['missing'] = !content
     ? 'content'
@@ -597,7 +605,7 @@ export function parseReminder(text: string, now: Date, timeZone: string): Parsed
       ? { recipientVkId: targetMatch[1] ?? targetMatch[2] ?? targetMatch[3] }
       : {}),
     ...(targetMatch?.[4] ? { recipientReference: `@${targetMatch[4]}` } : {}),
-    recognized: hasReminderIntent,
+    recognized: hasIntent,
   };
 }
 
