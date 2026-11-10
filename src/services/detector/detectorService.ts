@@ -8,6 +8,15 @@ export type ImageCommand = {
 
 const botNameAliasPattern = /(?<![\p{L}\p{N}_])(?:пенек|пенечек)(?![\p{L}\p{N}_])/u;
 const rejectedBotAddressPattern = /^\s*@?бот(?=$|[\s,!:;])/iu;
+const memberProfileCommands = new Set([
+  'анкета',
+  'анкеты',
+  'профиль',
+  'profile',
+  'profiles',
+  'удалить',
+  'подтвердить',
+]);
 
 function normalizeText(text: string): string {
   return text
@@ -117,6 +126,10 @@ export class DetectorService {
     imageCommand: ImageCommand | null,
   ): boolean {
     return Boolean(text.trim()) && !command && !imageCommand;
+  }
+
+  isMemberProfileCommand(command: string | null): boolean {
+    return command !== null && memberProfileCommands.has(command);
   }
 
   parseCommand(text: string): string | null {

@@ -62,16 +62,6 @@ const adventureCommands = new Set([
   'map',
   'hint',
 ]);
-const memberProfileCommands = new Set([
-  'анкета',
-  'анкеты',
-  'профиль',
-  'profile',
-  'profiles',
-  'удалить',
-  'подтвердить',
-]);
-
 function getSafeImageErrorDetails(error: unknown): {
   name: string;
   message: string;
@@ -1722,6 +1712,7 @@ export class VkService {
           : summaryButtonHours
             ? 'summary'
             : detectorService.parseCommand(text);
+        const memberProfileCommand = detectorService.isMemberProfileCommand(command);
         const explicitlyAddressed =
           summaryButtonHours !== null || detectorService.isExplicitlyAddressed(text, isReplyToBot);
         if (command === 'translate' && repliedMessage && !repliedMessageText) {
@@ -1779,11 +1770,15 @@ export class VkService {
           });
           return next();
         }
-        if (context.isChat && (command !== null || imageCommand !== null) && !explicitlyAddressed) {
+        if (
+          context.isChat &&
+          (command !== null || imageCommand !== null) &&
+          !explicitlyAddressed &&
+          !memberProfileCommand
+        ) {
           return next();
         }
-        const profileCommand = command !== null && memberProfileCommands.has(command);
-        if (context.isChat && chatSettings.mode === 'quiet' && !isAdmin && !profileCommand) {
+        if (context.isChat && chatSettings.mode === 'quiet' && !isAdmin && !memberProfileCommand) {
           if (text.trim()) {
             await memoryService.addMessage({
               conversationId: String(peerId),
@@ -1798,6 +1793,7 @@ export class VkService {
         const addressed =
           voiceInput ||
           summaryButtonHours !== null ||
+          memberProfileCommand ||
           detectorService.isAddressed(text, isReplyToBot);
         let pendingMemorySelection = false;
         try {
