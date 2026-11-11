@@ -3,6 +3,7 @@ import OpenAI from 'openai';
 import { toFile } from 'openai/uploads';
 import type { AudioMessageAttachment } from 'vk-io';
 import config from '../../config/index.js';
+import { MAX_VOICE_TEXT_LENGTH } from './voiceLimits.js';
 
 const MAX_AUDIO_BYTES = 24 * 1024 * 1024;
 const allowedHosts = [
@@ -87,7 +88,9 @@ export class VoiceService {
   }
 
   async synthesize(text: string, voice: string): Promise<Buffer> {
-    if (text.length > 4096) throw new Error('Voice response exceeds the 4096-character limit');
+    if (text.length > MAX_VOICE_TEXT_LENGTH) {
+      throw new Error(`Voice response exceeds the ${MAX_VOICE_TEXT_LENGTH}-character limit`);
+    }
     if (!isVoiceName(voice)) throw new Error('Unsupported voice');
     const response = await this.getClient().audio.speech.create({
       model: config.OPENAI_TTS_MODEL,

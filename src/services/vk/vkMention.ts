@@ -18,3 +18,19 @@ export function parseVkUserReference(input: string): VkUserReference | null {
 
   return null;
 }
+
+export function matchesVkPersonName(
+  firstName: string,
+  lastName: string,
+  reference: string,
+): boolean {
+  const normalizedName = reference.toLocaleLowerCase('ru-RU').trim();
+  const rootName = normalizedName.replace(/(?:у|ю|е|ы|а)$/u, '');
+  const normalizedFirstName = firstName.toLocaleLowerCase('ru-RU');
+  const fullName = `${normalizedFirstName} ${lastName.toLocaleLowerCase('ru-RU')}`.trim();
+  return (
+    fullName === normalizedName ||
+    normalizedFirstName === normalizedName ||
+    (rootName.length >= 3 && normalizedFirstName.startsWith(rootName))
+  );
+}

@@ -7,7 +7,6 @@ export type ImageCommand = {
 };
 
 const botNameAliasPattern = /(?<![\p{L}\p{N}_])(?:пенек|пенечек)(?![\p{L}\p{N}_])/u;
-const rejectedBotAddressPattern = /^\s*@?бот(?=$|[\s,!:;])/iu;
 const memberProfileCommands = new Set([
   'анкета',
   'анкеты',
@@ -34,17 +33,17 @@ function stripBotAddressPrefix(text: string): string {
   const groupIdMatch = config.VK_GROUP_ID.trim().match(/^(?:club|public)?(\d+)$/i);
   if (groupIdMatch?.[1]) {
     const mentionPattern = new RegExp(
-      `(?:@(?:club|public)?${groupIdMatch[1]}\\b|\\[(?:club|public)?${groupIdMatch[1]}\\|[^\\]]+\\])[,!:;]?`,
-      'giu',
+      `^\\s*(?:@(?:club|public)?${groupIdMatch[1]}\\b|\\[(?:club|public)?${groupIdMatch[1]}\\|[^\\]]+\\])[,!:;]?\\s*`,
+      'iu',
     );
-    commandText = commandText.replace(mentionPattern, ' ');
+    commandText = commandText.replace(mentionPattern, '');
   }
 
   return commandText.trimStart();
 }
 
 /**
- * Определяет адресованные боту сообщения, команды и другие распознаваемые намерения.
+ * Определяет обращения к боту и разбирает команды.
  */
 export class DetectorService {
   /**
@@ -60,16 +59,6 @@ export class DetectorService {
 
   stripBotAddressPrefix(text: string): string {
     return stripBotAddressPrefix(text);
-  }
-
-  isActiveEvent(text: string): boolean {
-    if (rejectedBotAddressPattern.test(normalizeText(text))) return false;
-    return (
-      /[?？]\s*$/u.test(text.trim()) ||
-      /(?<![\p{L}\p{N}_])(?:помоги|подскажи|объясни|расскажи|посоветуй)(?![\p{L}\p{N}_])/iu.test(
-        text,
-      )
-    );
   }
 
   isMentioned(text: string): boolean {
@@ -92,32 +81,13 @@ export class DetectorService {
 
   parseImageCommand(text: string): ImageCommand | null {
     if (!text) return null;
-    const commandText = this.stripBotAddressPrefix(text);
-    const slashCommand = commandText
+    const match = this.stripBotAddressPrefix(text)
       .trim()
-      .match(/^[/!](image|edit|изображение|преобразить)(?:\s+([\s\S]*))?$/iu);
-    if (slashCommand) {
-      return {
-        action: /^(?:edit|преобразить)$/iu.test(slashCommand[1]) ? 'edit' : 'generate',
-        prompt: slashCommand[2]?.trim() ?? '',
-      };
-    }
-
-    const normalized = normalizeText(commandText);
-    const match = normalized.match(
-      /^(?:(?:пенек|пенечек)[,!:;]?\s+)?(нарисуй|сгенерируй|создай(?:\s+картинку)?|преобрази|измени|переделай)\s+([\s\S]+)$/u,
-    );
+      .match(/^[/!]([^\s]+)(?:\s+([\s\S]*))?$/u);
     if (!match) return null;
-
-    const action = /^(?:преобрази|измени|переделай)$/u.test(match[1]) ? 'edit' : 'generate';
-    const prompt = commandText
-      .trim()
-      .match(
-        /^(?:(?:пенёк|пенек|пенёчек|пенечек)[,!:;]?\s+)?(?:нарисуй|сгенерируй|создай(?:\s+картинку)?|преобрази|измени|переделай)\s+([\s\S]+)$/iu,
-      )?.[1];
-    if (!prompt?.trim()) return null;
-
-    return { action, prompt: prompt.trim() };
+    const command = normalizeCommandName(match[1]);
+    if (command !== 'image' && command !== 'edit') return null;
+    return { action: command === 'edit' ? 'edit' : 'generate', prompt: match[2]?.trim() ?? '' };
   }
 
   isFreeformMessage(
@@ -135,17 +105,9 @@ export class DetectorService {
   parseCommand(text: string): string | null {
     if (!text) return null;
     const t = this.stripBotAddressPrefix(text).trim();
-    const normalized = normalizeText(t);
-    if (/^пересказ(?:\s|[.!?,…]|$)/u.test(normalized)) {
-      return 'summary';
-    }
-    if (/^анкета[!.?]*$/u.test(normalized)) return 'анкета';
-    if (/^анкеты(?:\s+\d+)?[!.?]*$/u.test(normalized)) return 'анкеты';
-    if (/^профиль[!.?]*$/u.test(normalized)) return 'профиль';
-    if (/^удалить\s+профиль[!.?]*$/u.test(normalized)) return 'удалить';
-    if (/^подтвердить\s+удаление\s+профиля[!.?]*$/u.test(normalized)) return 'подтвердить';
     if (t.startsWith('/') || t.startsWith('!')) {
-      return normalizeCommandName(t.split(/\s+/u)[0].slice(1));
+      const command = t.split(/\s+/u)[0].slice(1);
+      return command ? normalizeCommandName(command) : null;
     }
     return null;
   }

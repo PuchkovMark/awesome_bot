@@ -3,8 +3,9 @@ import OpenAI from 'openai';
 import config from '../../config/index.js';
 import { logger } from '../../logger/index.js';
 import settingsService from '../settings/settingsService.js';
-import type { AIProvider, AIMessage, AIResponse } from './AIProvider.js';
-import { parseThinkingMode, thinkingModes } from './thinkingMode.js';
+import type { AIProvider, AIMessage, AIRequestOptions, AIResponse } from './AIProvider.js';
+import { sendChatCompletion } from './chatCompletion.js';
+import { resolveReasoningEffort, TEXT_MODEL } from './effort.js';
 
 /**
  * Отправляет запросы к OpenCode Console через совместимый с OpenAI API и нормализует ответы.
@@ -27,42 +28,25 @@ export class OpenCodeProvider implements AIProvider {
     });
   }
 
-  async send(
-    messages: AIMessage[],
-    options?: { maxTokens?: number; temperature?: number; sessionId?: string },
-  ): Promise<AIResponse> {
+  async send(messages: AIMessage[], options?: AIRequestOptions): Promise<AIResponse> {
     try {
-      const savedMode = await settingsService.getAppSetting('ai_thinking_mode');
-      const mode = savedMode === undefined ? config.AI_THINKING_MODE : parseThinkingMode(savedMode);
-      if (!mode) throw new Error(`Unsupported AI thinking mode: ${savedMode}`);
-      const res = await this.client.chat.completions.create(
+      const savedEffort = await settingsService.getAppSetting('ai_effort');
+      const effort = resolveReasoningEffort(savedEffort, config.AI_EFFORT);
+      if (!effort) throw new Error(`Unsupported saved AI effort: ${savedEffort}`);
+      return await sendChatCompletion(
+        this.client,
+        TEXT_MODEL,
+        this.name,
+        messages,
+        effort,
+        config.AI_MAX_OUTPUT_TOKENS,
+        options,
         {
-          model: thinkingModes[mode].model,
-          messages,
-          max_tokens: options?.maxTokens,
-          temperature: options?.temperature,
-        },
-        {
-          headers: {
-            'x-opencode-session': options?.sessionId
-              ? `ses_${createHash('sha256').update(options.sessionId).digest('hex').slice(0, 32)}`
-              : `ses_${randomUUID().replaceAll('-', '')}`,
-          },
+          'x-opencode-session': options?.sessionId
+            ? `ses_${createHash('sha256').update(options.sessionId).digest('hex').slice(0, 32)}`
+            : `ses_${randomUUID().replaceAll('-', '')}`,
         },
       );
-
-      const choice = res.choices?.[0];
-      const content = choice?.message?.content ?? '';
-      const tokens = res.usage?.total_tokens;
-
-      return {
-        id: res.id,
-        content,
-        provider: this.name,
-        tokens,
-        inputTokens: res.usage?.prompt_tokens,
-        outputTokens: res.usage?.completion_tokens,
-      };
     } catch (err) {
       logger.error({ err, provider: this.name }, 'AI provider send failed');
       throw err;

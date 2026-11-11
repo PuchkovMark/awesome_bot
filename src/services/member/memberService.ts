@@ -107,7 +107,7 @@ export function formatProfileIntroduction(
 
 function createQuestionnaireTemplate(questions: string[], answers: Record<string, string>): string {
   return [
-    'Заполни пункты и отправь весь список одним сообщением. Все ответы необязательны.',
+    'Заполни пункты и отправь весь список ответом на это сообщение либо добавь обращение «Пенёк» или упоминание бота перед шаблоном. Все ответы необязательны.',
     'Пустой ответ сохраняет прежний вариант; чтобы удалить прежний ответ, укажи «—».',
     ...questions.flatMap((question, index) => [
       `${index + 1}. ${question}`,

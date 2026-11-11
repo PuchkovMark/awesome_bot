@@ -3,9 +3,7 @@ import { getAIProvider } from '../ai/providerFactory.js';
 import type { AIMessage } from '../ai/AIProvider.js';
 import imageGenerationService, { type GeneratedImage } from '../image/imageGenerationService.js';
 import characterService from '../settings/characterService.js';
-import settingsService from '../settings/settingsService.js';
 import { prisma } from '../../db/client.js';
-import config from '../../config/index.js';
 import { logger } from '../../logger/index.js';
 import memeDayService, { type MemeDayKind } from './memeDayService.js';
 
@@ -121,7 +119,6 @@ export class MemeService {
     isChat: boolean,
     imageDescription?: string,
   ): Promise<MemePlan> {
-    const providerName = (await settingsService.getAppSetting('ai_provider')) || config.AI_PROVIDER;
     const { prompt: characterPrompt } = await characterService.getSystemInstruction(
       isChat ? 'chat' : 'direct',
       userId,
@@ -148,10 +145,7 @@ export class MemeService {
           .join('\n'),
       },
     ];
-    const response = await getAIProvider(providerName).send(messages, {
-      maxTokens: 180,
-      temperature: 0.8,
-    });
+    const response = await getAIProvider().send(messages);
     const json = response.content.match(/\{[\s\S]*\}/u)?.[0];
     if (!json) throw new Error('ИИ не вернул концепцию мема в JSON.');
     const plan: unknown = JSON.parse(json);
@@ -364,13 +358,12 @@ export class MemeService {
       settings.allowQuotes &&
       kind === 'quote' &&
       sourceMessages.some((message) => !message.user || !optedOut.has(message.user.vkId));
-    const providerName = (await settingsService.getAppSetting('ai_provider')) || config.AI_PROVIDER;
     const { prompt: characterPrompt } = await characterService.getSystemInstruction(
       isChat ? 'chat' : 'direct',
       requesterId,
       conversationId,
     );
-    const aiProvider = getAIProvider(providerName);
+    const aiProvider = getAIProvider();
     const promptMessages = [
       {
         role: 'system' as const,
@@ -394,24 +387,21 @@ export class MemeService {
         content: `Контекст беседы:\n${context}\n\nНедавние темы и подписи (избегай повторов):\n${recentIdeas || 'нет'}\n\nОбратная связь по мемам: ${JSON.stringify(feedbackSummary)}`,
       },
     ];
-    let response = await aiProvider.send(promptMessages, { maxTokens: 700, temperature: 0.7 });
+    let response = await aiProvider.send(promptMessages);
     let plan = parseContextMemePlan(response.content);
     if (!plan) {
       logger.warn(
         { provider: aiProvider.name, responseLength: response.content.length },
         'Meme plan response was not valid JSON; retrying once',
       );
-      response = await aiProvider.send(
-        [
-          ...promptMessages,
-          {
-            role: 'user',
-            content:
-              'Предыдущий ответ не соответствовал формату. Верни сейчас только один корректный JSON-объект указанной схемы; при отсутствии безопасной идеи верни {"skip":true}.',
-          },
-        ],
-        { maxTokens: 700, temperature: 0 },
-      );
+      response = await aiProvider.send([
+        ...promptMessages,
+        {
+          role: 'user',
+          content:
+            'Предыдущий ответ не соответствовал формату. Верни сейчас только один корректный JSON-объект указанной схемы; при отсутствии безопасной идеи верни {"skip":true}.',
+        },
+      ]);
       plan = parseContextMemePlan(response.content);
     }
     if (!plan) {

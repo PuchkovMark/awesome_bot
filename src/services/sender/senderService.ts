@@ -4,8 +4,17 @@ import sharp from 'sharp';
 import config from '../../config/index.js';
 import { logger } from '../../logger/index.js';
 import type { GeneratedImage } from '../image/imageGenerationService.js';
-import splitterService from '../splitter/splitterService.js';
+import splitterService, { MAX_VK_MESSAGE_LENGTH } from '../splitter/splitterService.js';
 import type { PersonalityDefinition } from '../settings/personalityService.js';
+
+const CHAT_PEER_ID_OFFSET = 2_000_000_000;
+const CHAT_TRUNCATION_NOTICE = '\n\n[Ответ сокращён: лимит одного сообщения VK.]';
+
+export const CHAT_REPLY_INSTRUCTION = `Ответ должен помещаться в одно сообщение VK: не более ${MAX_VK_MESSAGE_LENGTH} символов.`;
+
+export function isChatPeer(peerId: number): boolean {
+  return peerId > CHAT_PEER_ID_OFFSET;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -143,16 +152,20 @@ export class SenderService {
       conversationMessageId?: number;
       keyboard?: string;
       randomId?: number;
+      attachment?: string;
     },
   ): Promise<void> {
-    const parts = splitterService.split(text);
+    const parts = splitterService.split(this.formatMessage(peerId, text));
+    if (parts.length === 0 && options?.attachment) parts.push('');
 
     for (const [index, part] of parts.entries()) {
       try {
         const result: unknown = await this.vk.api.messages.send({
           peer_id: peerId,
-          random_id: index === 0 && options?.randomId ? options.randomId : nextRandomId(),
+          random_id:
+            index === 0 && options?.randomId !== undefined ? options.randomId : nextRandomId(),
           message: part,
+          attachment: index === 0 ? options?.attachment : undefined,
           keyboard: index === 0 ? options?.keyboard : undefined,
           forward:
             index === 0 && (options?.replyTo || options?.conversationMessageId)
@@ -194,19 +207,56 @@ export class SenderService {
     }
   }
 
-  createMenuPaginationKeyboard(menu: 'help' | 'admin', page: number, totalPages: number): string {
+  formatMessage(peerId: number, text: string, suffix = ''): string {
+    return isChatPeer(peerId)
+      ? splitterService.truncate(text, CHAT_TRUNCATION_NOTICE, suffix)
+      : `${text}${suffix}`;
+  }
+
+  hasContinuation(peerId: number, text: string): boolean {
+    return !isChatPeer(peerId) && text.length > MAX_VK_MESSAGE_LENGTH;
+  }
+
+  private async editMessage(
+    peerId: number,
+    conversationMessageId: number,
+    text: string,
+    keyboard: string,
+    hasContinuations: boolean,
+  ): Promise<void> {
+    const formatted = this.formatMessage(peerId, text);
+    const parts = splitterService.split(formatted);
+    if (parts.length === 0) throw new Error('Cannot edit a message with empty text');
+    const sendSeparately = !isChatPeer(peerId) && (hasContinuations || parts.length > 1);
+    await this.vk.api.messages.edit({
+      peer_id: peerId,
+      cmid: conversationMessageId,
+      message: sendSeparately
+        ? 'Обновлённый ответ — в последних сообщениях диалога. Предыдущие части могут быть неактуальны.'
+        : parts[0],
+      keyboard,
+    });
+    if (sendSeparately) await this.send(peerId, formatted);
+  }
+
+  createMenuPaginationKeyboard(
+    menu: 'help' | 'admin',
+    page: number,
+    totalPages: number,
+    hasContinuations = false,
+  ): string {
     const keyboard = Keyboard.builder();
     if (page > 1) {
       keyboard.callbackButton({
         label: '◀ Назад',
-        payload: { command: 'menu_page', menu, page: page - 1 },
+        payload: { command: 'menu_page', menu, page: page - 1, hasContinuations },
         color: Keyboard.SECONDARY_COLOR,
       });
     }
     if (page < totalPages) {
       keyboard.callbackButton({
         label: 'Далее ▶',
-        payload: { command: 'menu_page', menu, page: page + 1 },
+        payload: { command: 'menu_page', menu, page: page + 1, hasContinuations },
         color: Keyboard.PRIMARY_COLOR,
       });
     }
@@ -220,14 +270,18 @@ export class SenderService {
     page: number,
     totalPages: number,
     text: string,
+    previousHasContinuations = true,
   ): Promise<void> {
     try {
-      await this.vk.api.messages.edit({
-        peer_id: peerId,
-        cmid: conversationMessageId,
-        message: text,
-        keyboard: this.createMenuPaginationKeyboard(menu, page, totalPages),
-      });
+      const hasContinuations =
+        this.hasContinuation(peerId, text) || (!isChatPeer(peerId) && previousHasContinuations);
+      await this.editMessage(
+        peerId,
+        conversationMessageId,
+        text,
+        this.createMenuPaginationKeyboard(menu, page, totalPages, hasContinuations),
+        hasContinuations,
+      );
     } catch (err) {
       logger.error({ err, peerId, conversationMessageId, menu, page }, 'Failed to edit menu page');
       throw err;
@@ -242,7 +296,7 @@ export class SenderService {
   ): Promise<void> {
     await this.send(peerId, text, {
       ...options,
-      keyboard: this.createSummaryKeyboard(selectedHours),
+      keyboard: this.createSummaryKeyboard(selectedHours, this.hasContinuation(peerId, text)),
     });
   }
 
@@ -329,30 +383,34 @@ export class SenderService {
     conversationMessageId: number,
     text: string,
     selectedHours: 2 | 6,
+    previousHasContinuations = true,
   ): Promise<void> {
     try {
-      await this.vk.api.messages.edit({
-        peer_id: peerId,
-        cmid: conversationMessageId,
-        message: text,
-        keyboard: this.createSummaryKeyboard(selectedHours),
-      });
+      const hasContinuations =
+        this.hasContinuation(peerId, text) || (!isChatPeer(peerId) && previousHasContinuations);
+      await this.editMessage(
+        peerId,
+        conversationMessageId,
+        text,
+        this.createSummaryKeyboard(selectedHours, hasContinuations),
+        hasContinuations,
+      );
     } catch (err) {
       logger.error({ err, peerId, conversationMessageId }, 'Failed to edit summary message');
       throw err;
     }
   }
 
-  private createSummaryKeyboard(selectedHours: 2 | 6): string {
+  private createSummaryKeyboard(selectedHours: 2 | 6, hasContinuations: boolean): string {
     return Keyboard.builder()
       .callbackButton({
         label: 'За 2 часа',
-        payload: { command: 'summary', hours: 2 },
+        payload: { command: 'summary', hours: 2, hasContinuations },
         color: selectedHours === 2 ? Keyboard.POSITIVE_COLOR : Keyboard.PRIMARY_COLOR,
       })
       .callbackButton({
         label: 'За 6 часов',
-        payload: { command: 'summary', hours: 6 },
+        payload: { command: 'summary', hours: 6, hasContinuations },
         color: selectedHours === 6 ? Keyboard.POSITIVE_COLOR : Keyboard.PRIMARY_COLOR,
       })
       .inline()
@@ -486,46 +544,7 @@ export class SenderService {
       }
       if (!attachment) throw new Error('VK photo upload did not produce an attachment');
 
-      const result: unknown = await this.vk.api.messages.send({
-        peer_id: peerId,
-        random_id: options?.randomId ?? nextRandomId(),
-        message: caption,
-        attachment,
-        keyboard: options?.keyboard,
-        forward:
-          options?.replyTo || options?.conversationMessageId
-            ? JSON.stringify({
-                ...(options.conversationMessageId
-                  ? { conversation_message_ids: options.conversationMessageId }
-                  : { message_ids: options.replyTo }),
-                peer_id: peerId,
-                is_reply: true,
-              })
-            : undefined,
-      });
-      if (typeof result === 'number' && result > 0) {
-        this.trackSentMessage(peerId, result);
-      } else if (Array.isArray(result)) {
-        for (const message of result) {
-          if (
-            typeof message !== 'object' ||
-            message === null ||
-            !('peer_id' in message) ||
-            message.peer_id !== peerId
-          ) {
-            continue;
-          }
-          if ('message_id' in message && typeof message.message_id === 'number') {
-            this.trackSentMessage(peerId, message.message_id);
-          }
-          if (
-            'conversation_message_id' in message &&
-            typeof message.conversation_message_id === 'number'
-          ) {
-            this.trackSentMessage(peerId, message.conversation_message_id);
-          }
-        }
-      }
+      await this.send(peerId, caption, { ...options, attachment });
       return attachment;
     } catch (err) {
       logger.error({ err, peerId }, 'Failed to send generated photo');
@@ -561,48 +580,14 @@ export class SenderService {
     keyboard?: string,
   ): Promise<void> {
     try {
-      const result: unknown = await this.vk.api.messages.send({
-        peer_id: peerId,
-        random_id: nextRandomId(),
-        message: caption,
-        attachment,
-        keyboard,
-      });
-      if (typeof result === 'number' && result > 0) {
-        this.trackSentMessage(peerId, result);
-      } else if (Array.isArray(result)) {
-        for (const message of result) {
-          if (
-            typeof message !== 'object' ||
-            message === null ||
-            !('peer_id' in message) ||
-            message.peer_id !== peerId
-          ) {
-            continue;
-          }
-          if ('message_id' in message && typeof message.message_id === 'number') {
-            this.trackSentMessage(peerId, message.message_id);
-          }
-          if (
-            'conversation_message_id' in message &&
-            typeof message.conversation_message_id === 'number'
-          ) {
-            this.trackSentMessage(peerId, message.conversation_message_id);
-          }
-        }
-      }
+      await this.send(peerId, caption, { attachment, keyboard });
     } catch (error) {
       logger.error({ err: error, peerId, attachment }, 'Failed to send saved meme photo');
       throw error;
     }
   }
 
-  async sendVoice(
-    peerId: number,
-    audio: Buffer,
-    text: string,
-    options?: { replyTo?: number; conversationMessageId?: number },
-  ): Promise<void> {
+  async uploadVoice(peerId: number, audio: Buffer): Promise<string> {
     if (audio.length === 0) throw new Error('Generated voice message is empty');
     let attachment: string | undefined;
     let uploadTimedOut = false;
@@ -640,38 +625,17 @@ export class SenderService {
       attachment = await this.uploadAudioMessageWithAxios(peerId, audio);
     }
     if (!attachment) throw new Error('VK voice upload did not produce an attachment');
+    return attachment;
+  }
 
-    const result: unknown = await this.vk.api.messages.send({
-      peer_id: peerId,
-      random_id: nextRandomId(),
-      message: text,
-      attachment,
-      forward:
-        options?.replyTo || options?.conversationMessageId
-          ? JSON.stringify({
-              ...(options.conversationMessageId
-                ? { conversation_message_ids: options.conversationMessageId }
-                : { message_ids: options.replyTo }),
-              peer_id: peerId,
-              is_reply: true,
-            })
-          : undefined,
-    });
-    if (typeof result === 'number' && result > 0) {
-      this.trackSentMessage(peerId, result);
-    } else if (Array.isArray(result)) {
-      for (const message of result) {
-        if (
-          isRecord(message) &&
-          'peer_id' in message &&
-          message.peer_id === peerId &&
-          'conversation_message_id' in message &&
-          typeof message.conversation_message_id === 'number'
-        ) {
-          this.trackSentMessage(peerId, message.conversation_message_id);
-        }
-      }
-    }
+  async sendVoice(
+    peerId: number,
+    audio: Buffer,
+    text: string,
+    options?: { replyTo?: number; conversationMessageId?: number },
+  ): Promise<void> {
+    const attachment = await this.uploadVoice(peerId, audio);
+    await this.send(peerId, text, { ...options, attachment });
   }
 
   isBotMessage(peerId: number, messageId: number): boolean {

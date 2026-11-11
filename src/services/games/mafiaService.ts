@@ -263,6 +263,20 @@ export class MafiaService {
     );
   }
 
+  async hasPendingPrivateAction(userId: string): Promise<boolean> {
+    const sessions = await this.getSessionsForPlayer(userId);
+    return sessions.some((session) => {
+      const state = readState(session);
+      const player = state.players.find((candidate) => candidate.vkUserId === userId);
+      return (
+        state.phase === 'night' &&
+        player?.alive === true &&
+        player.role !== null &&
+        player.role !== 'villager'
+      );
+    });
+  }
+
   private async persist(
     session: MafiaSession,
     state: MafiaState,
@@ -475,7 +489,7 @@ export class MafiaService {
           data: JSON.stringify(state),
         },
       });
-      return `🕵️ Начинаю набор в «Мафию»!\n${phaseDescription(state)}\nУчастники, напишите «я играю». Чтобы выйти до начала — «выйти из игры». Список: «игроки». Начать может организатор после набора минимума; автоматически проверю состав через ${displayDuration(settings.recruitmentSeconds)}.`;
+      return `🕵️ Начинаю набор в «Мафию»!\n${phaseDescription(state)}\nОтветьте на это сообщение или обратитесь к боту по имени: «я играю», «выйти из игры» или «игроки». Начать может организатор после набора минимума; автоматически проверю состав через ${displayDuration(settings.recruitmentSeconds)}.`;
     });
   }
 
@@ -1151,7 +1165,7 @@ export class MafiaService {
     const candidates = state.players
       .map((player, index) => (player.alive ? `${index + 1}. ${player.name}` : null))
       .filter((value): value is string => value !== null);
-    return `🗳 Голосование открыто на ${displayDuration(state.settings.votingSeconds)}. Напишите «голос за N», где N — номер игрока.\n${candidates.join('\n')}`;
+    return `🗳 Голосование открыто на ${displayDuration(state.settings.votingSeconds)}. Ответьте на сообщение или обратитесь к боту: «голос за N», где N — номер игрока.\n${candidates.join('\n')}`;
   }
 
   private async completeVoting(

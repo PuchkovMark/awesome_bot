@@ -13,6 +13,7 @@ export class RateLimitService {
   take(
     userId: string,
     now = Date.now(),
+    notifyOnLimit = true,
   ): { allowed: boolean; retryAfterMs: number; notify: boolean } {
     const recent = (this.requests.get(userId) ?? []).filter(
       (timestamp) => now - timestamp < this.windowMs,
@@ -20,7 +21,7 @@ export class RateLimitService {
     if (recent.length >= this.limit) {
       this.requests.set(userId, recent);
       const lastNotified = this.lastNotified.get(userId) ?? 0;
-      const notify = now - lastNotified >= this.windowMs;
+      const notify = notifyOnLimit && now - lastNotified >= this.windowMs;
       if (notify) {
         this.lastNotified.delete(userId);
         this.lastNotified.set(userId, now);

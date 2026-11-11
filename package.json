@@ -10,7 +10,6 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/bootstrap.ts",
     "start": "node --experimental-specifier-resolution=node ./dist/bootstrap.js",
-    "test": "node --import tsx --test test/*.test.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "lint": "eslint 'src/**/*.{ts,js}' --fix",

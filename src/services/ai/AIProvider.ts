@@ -15,14 +15,23 @@ export type AIResponse = {
   outputTokens?: number;
 };
 
+export type AITool = {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  execute: (args: unknown) => Promise<string>;
+};
+
+export type AIRequestOptions = {
+  sessionId?: string;
+  tools?: readonly AITool[];
+};
+
 export interface AIProvider {
   /**
    * Отправляет массив сообщений (контекст + запрос) и возвращает ответ.
    */
-  send(
-    messages: AIMessage[],
-    options?: { maxTokens?: number; temperature?: number; sessionId?: string },
-  ): Promise<AIResponse>;
+  send(messages: AIMessage[], options?: AIRequestOptions): Promise<AIResponse>;
 
   /**
    * Имя провайдера (например, 'openai').

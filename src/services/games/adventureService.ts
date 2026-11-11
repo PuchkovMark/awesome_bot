@@ -2,9 +2,7 @@ import type { GameSession } from '@prisma/client';
 import type { AIMessage, AIProvider, AIResponse } from '../ai/AIProvider.js';
 import { getAIProvider } from '../ai/providerFactory.js';
 import { prisma } from '../../db/client.js';
-import config from '../../config/index.js';
 import { logger } from '../../logger/index.js';
-import settingsService from '../settings/settingsService.js';
 import characterService from '../settings/characterService.js';
 import imageGenerationService, { type GeneratedImage } from '../image/imageGenerationService.js';
 
@@ -240,7 +238,7 @@ export async function requestAdventureJson(
     return parsed;
   };
 
-  const response = await provider.send(messages, { maxTokens: 1800, temperature: 0.85 });
+  const response = await provider.send(messages);
   await recordAdventureUsage(provider, response, usageContext);
   try {
     return parseResponse(response.content);
@@ -251,17 +249,14 @@ export async function requestAdventureJson(
     );
   }
 
-  const retry = await provider.send(
-    [
-      ...messages,
-      {
-        role: 'user',
-        content:
-          'Предыдущий ответ был неполным или некорректным. Верни заново полный ответ строго одним корректным JSON-объектом по указанной схеме, без Markdown и пояснений.',
-      },
-    ],
-    { maxTokens: 2200, temperature: 0.3 },
-  );
+  const retry = await provider.send([
+    ...messages,
+    {
+      role: 'user',
+      content:
+        'Предыдущий ответ был неполным или некорректным. Верни заново полный ответ строго одним корректным JSON-объектом по указанной схеме, без Markdown и пояснений.',
+    },
+  ]);
   await recordAdventureUsage(provider, retry, usageContext);
   try {
     return parseResponse(retry.content);
@@ -410,7 +405,6 @@ export class AdventureService {
     action: string,
     kind: 'opening' | 'turn',
   ): Promise<Record<string, unknown>> {
-    const providerName = (await settingsService.getAppSetting('ai_provider')) || config.AI_PROVIDER;
     const { prompt: characterPrompt } = await characterService.getSystemInstruction(
       isChat ? 'chat' : 'direct',
       requesterId,
@@ -446,7 +440,7 @@ export class AdventureService {
         ].join('\n\n'),
       },
     ];
-    return requestAdventureJson(getAIProvider(providerName), messages, {
+    return requestAdventureJson(getAIProvider(), messages, {
       vkUserId: requesterId,
       conversationId,
     });
@@ -792,7 +786,7 @@ export class AdventureService {
       '/adventure inventory — инвентарь; /inventory — короткая команда',
       '/adventure journal|map|hint|save',
       '/look, /inspect <предмет>, /talk <персонаж>, /use <предмет>, /status, /vote <номер|end>, /journal, /map, /hint',
-      'В активной игре можно просто написать действие свободным текстом.',
+      'В активной игре действие можно описать свободным текстом, ответив боту или обратившись к нему по имени.',
     ].join('\n');
     if (!action || action === 'help' || action === 'rules') {
       return {
@@ -1044,20 +1038,15 @@ export class AdventureService {
       if (!state.settings.hints) return { text: 'Подсказки отключены настройками игры.' };
       if (!this.getPlayer(state, requesterId))
         return { text: 'Вы не участвуете в этом приключении.' };
-      const providerName =
-        (await settingsService.getAppSetting('ai_provider')) || config.AI_PROVIDER;
-      const provider = getAIProvider(providerName);
-      const { content, inputTokens, outputTokens } = await provider.send(
-        [
-          {
-            role: 'system',
-            content:
-              'Дай одну краткую подсказку по текущей сцене, не раскрывая скрытую разгадку и не добавляя новых фактов.',
-          },
-          { role: 'user', content: `${summarizeJournal(state)}\n\nСцена: ${state.scene}` },
-        ],
-        { maxTokens: 120, temperature: 0.4 },
-      );
+      const provider = getAIProvider();
+      const { content, inputTokens, outputTokens } = await provider.send([
+        {
+          role: 'system',
+          content:
+            'Дай одну краткую подсказку по текущей сцене, не раскрывая скрытую разгадку и не добавляя новых фактов.',
+        },
+        { role: 'user', content: `${summarizeJournal(state)}\n\nСцена: ${state.scene}` },
+      ]);
       await recordAdventureUsage(
         provider,
         { content, inputTokens, outputTokens },

@@ -153,6 +153,19 @@ function extractSearchTerms(text: string): string[] {
  * Создаёт и управляет личными и групповыми напоминаниями, уточняет запросы и доставляет их по расписанию.
  */
 export class ReminderService {
+  async hasPendingDraft(senderId: string, conversationId: string): Promise<boolean> {
+    return Boolean(
+      await prisma.reminderDraft.findFirst({
+        where: {
+          creatorVkId: senderId,
+          conversationId,
+          expiresAt: { gt: new Date() },
+        },
+        select: { id: true },
+      }),
+    );
+  }
+
   async shouldHandleMessage(text: string, context: ReminderContext): Promise<boolean> {
     const existingDraft = await prisma.reminderDraft.findFirst({
       where: {

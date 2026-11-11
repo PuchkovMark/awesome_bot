@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-import { DEFAULT_THINKING_MODE } from '../services/ai/thinkingMode.js';
+import { DEFAULT_REASONING_EFFORT, type ReasoningEffort } from '../services/ai/effort.js';
 
 dotenv.config();
 
@@ -8,17 +8,18 @@ dotenv.config();
  */
 export interface AppConfig {
   VK_TOKEN: string;
+  VK_SERVICE_TOKEN?: string;
   VK_GROUP_ID: string;
   OPENCODE_API_KEY?: string;
   OPENCODE_BASE_URL: string;
-  AI_THINKING_MODE: 'low' | 'medium' | 'max';
+  AI_EFFORT: ReasoningEffort;
+  AI_MAX_OUTPUT_TOKENS: number;
   OPENAI_API_KEY?: string;
   OPENAI_MODEL: string;
   OPENAI_IMAGE_MODEL: string;
   OPENAI_TRANSCRIPTION_MODEL: string;
   OPENAI_TTS_MODEL: string;
   VOICE_ENABLED: boolean;
-  AI_PROVIDER: 'opencode' | 'openai';
   VK_ADMIN_IDS: string[];
   IMAGE_ADMIN_ONLY: boolean;
   IMAGE_MAX_PER_USER_PER_DAY: number;
@@ -28,11 +29,6 @@ export interface AppConfig {
   MAX_INPUT_CHARS: number;
   WEB_SEARCH_PROVIDER: 'none' | 'serper' | 'tavily';
   MEMEDAY_TIMEZONE: string;
-  REAL_WORLD_DEFAULT_TIME_ZONE: string;
-  REAL_WORLD_CURRENT_WEATHER_CACHE_SECONDS: number;
-  REAL_WORLD_FORECAST_CACHE_SECONDS: number;
-  REAL_WORLD_HOLIDAY_CACHE_SECONDS: number;
-  REAL_WORLD_HOROSCOPE_CACHE_SECONDS: number;
   MEMORY_EMBEDDING_API_KEY?: string;
   MEMORY_EMBEDDING_MODEL: string;
   SERPER_API_KEY?: string;
@@ -75,6 +71,14 @@ function positiveInteger(name: string, fallback: number): number {
   return value;
 }
 
+function outputTokenLimit(): number {
+  const value = positiveInteger('AI_MAX_OUTPUT_TOKENS', 32_768);
+  if (value > 32_768) {
+    throw new Error('Environment variable AI_MAX_OUTPUT_TOKENS must not exceed 32768');
+  }
+  return value;
+}
+
 function oneOf<T extends string>(name: string, values: readonly T[], fallback: T): T {
   const value = process.env[name];
   if (!value) return fallback;
@@ -96,21 +100,18 @@ function timezone(name: string, fallback: string): string {
 
 export const config: AppConfig = {
   VK_TOKEN: required('VK_TOKEN'),
+  VK_SERVICE_TOKEN: process.env.VK_SERVICE_TOKEN?.trim() || undefined,
   VK_GROUP_ID: required('VK_GROUP_ID'),
   OPENCODE_API_KEY: process.env.OPENCODE_API_KEY,
   OPENCODE_BASE_URL: process.env.OPENCODE_BASE_URL || 'https://opencode.ai/inference/go/openai/v1',
-  AI_THINKING_MODE: oneOf(
-    'AI_THINKING_MODE',
-    ['low', 'medium', 'max'] as const,
-    DEFAULT_THINKING_MODE,
-  ),
+  AI_EFFORT: oneOf('AI_EFFORT', ['low', 'medium', 'high'] as const, DEFAULT_REASONING_EFFORT),
+  AI_MAX_OUTPUT_TOKENS: outputTokenLimit(),
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
   OPENAI_MODEL: process.env.OPENAI_MODEL || 'gpt-4.1-mini',
   OPENAI_IMAGE_MODEL: process.env.OPENAI_IMAGE_MODEL || 'gpt-image-2.6-flare',
   OPENAI_TRANSCRIPTION_MODEL: process.env.OPENAI_TRANSCRIPTION_MODEL || 'gpt-transcribe',
   OPENAI_TTS_MODEL: process.env.OPENAI_TTS_MODEL || 'gpt-4o-mini-tts',
   VOICE_ENABLED: process.env.VOICE_ENABLED === 'true',
-  AI_PROVIDER: oneOf('AI_PROVIDER', ['opencode', 'openai'] as const, 'opencode'),
   VK_ADMIN_IDS: (process.env.VK_ADMIN_IDS || '')
     .split(',')
     .map((id) => id.trim())
@@ -127,14 +128,6 @@ export const config: AppConfig = {
     'serper',
   ),
   MEMEDAY_TIMEZONE: timezone('MEMEDAY_TIMEZONE', 'UTC'),
-  REAL_WORLD_DEFAULT_TIME_ZONE: timezone('REAL_WORLD_DEFAULT_TIME_ZONE', 'Europe/Moscow'),
-  REAL_WORLD_CURRENT_WEATHER_CACHE_SECONDS: positiveInteger(
-    'REAL_WORLD_CURRENT_WEATHER_CACHE_SECONDS',
-    600,
-  ),
-  REAL_WORLD_FORECAST_CACHE_SECONDS: positiveInteger('REAL_WORLD_FORECAST_CACHE_SECONDS', 1800),
-  REAL_WORLD_HOLIDAY_CACHE_SECONDS: positiveInteger('REAL_WORLD_HOLIDAY_CACHE_SECONDS', 86400),
-  REAL_WORLD_HOROSCOPE_CACHE_SECONDS: positiveInteger('REAL_WORLD_HOROSCOPE_CACHE_SECONDS', 86400),
   MEMORY_EMBEDDING_API_KEY:
     process.env.MEMORY_EMBEDDING_API_KEY || process.env.OPENAI_API_KEY || undefined,
   MEMORY_EMBEDDING_MODEL: process.env.MEMORY_EMBEDDING_MODEL || 'text-embedding-3-small',
