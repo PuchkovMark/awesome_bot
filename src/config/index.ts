@@ -28,6 +28,8 @@ export interface AppConfig {
   SUMMARY_MODEL: string;
   SUMMARY_CHUNK_MESSAGES: number;
   SUMMARY_CHUNK_CHARS: number;
+  SUMMARY_CHUNK_OUTPUT_TOKENS: number;
+  SUMMARY_CHUNK_OUTPUT_TOKENS_MAX: number;
   SUMMARY_MAX_DIGEST_CHARS: number;
   SUMMARY_MAX_CHARS: number;
   MAX_REQUESTS_PER_MINUTE: number;
@@ -104,6 +106,16 @@ function timezone(name: string, fallback: string): string {
   return value;
 }
 
+const aiMaxOutputTokens = outputTokenLimit();
+const summaryChunkOutputTokens = Math.min(
+  positiveInteger('SUMMARY_CHUNK_OUTPUT_TOKENS', 3_000),
+  aiMaxOutputTokens,
+);
+const summaryChunkOutputTokensMax = Math.max(
+  summaryChunkOutputTokens,
+  Math.min(positiveInteger('SUMMARY_CHUNK_OUTPUT_TOKENS_MAX', 6_000), aiMaxOutputTokens),
+);
+
 export const config: AppConfig = {
   VK_TOKEN: required('VK_TOKEN'),
   VK_SERVICE_TOKEN: process.env.VK_SERVICE_TOKEN?.trim() || undefined,
@@ -111,7 +123,7 @@ export const config: AppConfig = {
   OPENCODE_API_KEY: process.env.OPENCODE_API_KEY,
   OPENCODE_BASE_URL: process.env.OPENCODE_BASE_URL || 'https://opencode.ai/inference/go/openai/v1',
   AI_EFFORT: oneOf('AI_EFFORT', ['low', 'medium', 'high'] as const, DEFAULT_REASONING_EFFORT),
-  AI_MAX_OUTPUT_TOKENS: outputTokenLimit(),
+  AI_MAX_OUTPUT_TOKENS: aiMaxOutputTokens,
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
   OPENAI_MODEL: process.env.OPENAI_MODEL || 'gpt-4.1-mini',
   OPENAI_IMAGE_MODEL: process.env.OPENAI_IMAGE_MODEL || 'gpt-image-2.6-flare',
@@ -129,6 +141,8 @@ export const config: AppConfig = {
   SUMMARY_MODEL: process.env.SUMMARY_MODEL || 'claude-haiku-5-5',
   SUMMARY_CHUNK_MESSAGES: positiveInteger('SUMMARY_CHUNK_MESSAGES', 300),
   SUMMARY_CHUNK_CHARS: positiveInteger('SUMMARY_CHUNK_CHARS', 12_000),
+  SUMMARY_CHUNK_OUTPUT_TOKENS: summaryChunkOutputTokens,
+  SUMMARY_CHUNK_OUTPUT_TOKENS_MAX: summaryChunkOutputTokensMax,
   SUMMARY_MAX_DIGEST_CHARS: positiveInteger('SUMMARY_MAX_DIGEST_CHARS', 15_000),
   SUMMARY_MAX_CHARS: positiveInteger('SUMMARY_MAX_CHARS', 3_500),
   MAX_REQUESTS_PER_MINUTE: positiveInteger('MAX_REQUESTS_PER_MINUTE', 10),

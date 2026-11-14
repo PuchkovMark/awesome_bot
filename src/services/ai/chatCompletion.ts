@@ -2,6 +2,16 @@ import type OpenAI from 'openai';
 import type { AIMessage, AIRequestOptions, AIResponse } from './AIProvider.js';
 import type { ReasoningEffort } from './effort.js';
 
+export class AIOutputLimitError extends Error {
+  readonly limit: number;
+
+  constructor(limit: number) {
+    super(`AI response exceeded the output token limit (${limit})`);
+    this.name = 'AIOutputLimitError';
+    this.limit = limit;
+  }
+}
+
 export async function sendChatCompletion(
   client: OpenAI,
   model: string,
@@ -54,7 +64,7 @@ export async function sendChatCompletion(
     const choice = response.choices[0];
     if (!choice) throw new Error('AI provider returned no completion choices');
     if (choice.finish_reason === 'length') {
-      throw new Error(`AI response exceeded the output token limit (${maxOutputTokens})`);
+      throw new AIOutputLimitError(maxOutputTokens);
     }
     if (choice.finish_reason === 'content_filter') {
       throw new Error('AI response was blocked by the provider content filter');
