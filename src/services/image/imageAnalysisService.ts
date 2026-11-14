@@ -29,6 +29,8 @@ export class ImageAnalysisService {
       : prompt.trim() || 'Кратко опиши изображение и ответь на вопрос пользователя.';
     const response = await this.client.chat.completions.create({
       model: config.OPENAI_MODEL,
+      // Совместимость с OpenAI-совместимыми провайдерами: они ожидают max_tokens.
+      // eslint-disable-next-line @typescript-eslint/no-deprecated
       max_tokens: 1200,
       messages: [
         {

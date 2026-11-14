@@ -108,7 +108,7 @@ test('real VK routing delivers exactly one correctly addressed response', async 
   const saved: Array<{ role: string; content: string }> = [];
 
   t.mock.method(settingsService, 'isAdmin', async () => false);
-  t.mock.method(settingsService, 'getAppSetting', async () => undefined);
+  t.mock.method(settingsService, 'getAppSetting', async () => {});
   t.mock.method(settingsService, 'getChatSettings', async () => ({ ...chatSettings, mode }));
   t.mock.method(settingsService, 'getUserSettings', async () => ({
     ...userSettings,
@@ -121,13 +121,13 @@ test('real VK routing delivers exactly one correctly addressed response', async 
     prompt: 'Тестовый персонаж.',
   }));
   t.mock.method(characterService, 'recordUsage', async () => {});
-  t.mock.method(memberService, 'getProfileDetails', async () => undefined);
+  t.mock.method(memberService, 'getProfileDetails', async () => {});
   t.mock.method(reminderService, 'hasPendingDraft', async () => false);
   t.mock.method(longTermMemoryService, 'hasPendingSelection', async () => false);
   t.mock.method(longTermMemoryService, 'getRelevantMemories', async () => []);
   t.mock.method(longTermMemoryService, 'shouldAnalyzeAutomatically', () => false);
   t.mock.method(memoryService, 'getRecentChatContext', async () => []);
-  t.mock.method(memoryService, 'getProposalHistoryForQuestion', async () => undefined);
+  t.mock.method(memoryService, 'getProposalHistoryForQuestion', async () => {});
   t.mock.method(
     memoryService,
     'addMessage',
@@ -351,7 +351,7 @@ test('real VK routing delivers exactly one correctly addressed response', async 
   await dispatch(8, 'Пенёк, какая погода?');
   assert.equal(delivered.length, 1);
   assert.match(delivered[0].text, /Погода: \+20 °C/u);
-  assert.match(delivered[0].text, /Open-Meteo\.com/u);
+  assert.doesNotMatch(delivered[0].text, /Open-Meteo|MET Norway|GeoNames|OpenStreetMap/iu);
   assert.equal(weatherCalls, 1);
   assert.deepEqual(toolStatuses.slice(-3), ['result', 'result', 'not_executed']);
 

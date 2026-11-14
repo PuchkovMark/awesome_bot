@@ -575,7 +575,10 @@ async function runToolCompletion(
     return { answer, toolResults };
   } finally {
     await new Promise<void>((resolve, reject) =>
-      server.close((error) => (error ? reject(error) : resolve())),
+      server.close((error) => {
+        if (error) reject(error);
+        else resolve();
+      }),
     );
   }
 }

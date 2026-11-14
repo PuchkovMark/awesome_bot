@@ -142,8 +142,8 @@ async function findMember(
 function memberMention(member: Participant): string {
   const label =
     (member.name ?? member.first_name ?? 'участник')
-      .replace(/[\]|\r\n]/gu, ' ')
-      .replace(/\s+/gu, ' ')
+      .replaceAll(/[\]|\r\n]/gu, ' ')
+      .replaceAll(/\s+/gu, ' ')
       .trim()
       .slice(0, 120) || 'участник';
   return `[id${member.id}|${label}]`;
@@ -344,7 +344,8 @@ export function createMessageDeliveryTool(context: MessageDeliveryContext): AITo
             message: 'Обращение к другому участнику доступно только в текущей групповой беседе.',
           });
         }
-        if (typeof input.recipient !== 'string') throw new Error('Validated recipient is missing');
+        if (typeof input.recipient !== 'string')
+          throw new TypeError('Validated recipient is missing');
         let lookup: MemberLookup;
         try {
           lookup = await findMember(context, input.recipient.trim());

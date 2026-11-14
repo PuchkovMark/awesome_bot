@@ -26,7 +26,7 @@ const fallbackProfileEmojis = ['💬', '✨', '🌟'];
 function getProfileQuestionEmoji(question: string, index: number): string {
   return (
     profileQuestionEmojis.find(([pattern]) => pattern.test(question))?.[1] ??
-    fallbackProfileEmojis[index % fallbackProfileEmojis.length]!
+    fallbackProfileEmojis[index % fallbackProfileEmojis.length]
   );
 }
 
@@ -90,7 +90,7 @@ export function formatProfileIntroduction(
   for (const [question, rawAnswer] of Object.entries(answers)) {
     const answer = rawAnswer.trim();
     if (!question.trim() || !answer) continue;
-    const label = question.replace(/\s+/gu, ' ').trim();
+    const label = question.replaceAll(/\s+/gu, ' ').trim();
     const line = `• ${label}: ${answer}`;
     const nextLength = [greeting, ...lines, line, footer].join('\n').length + omissionReserve;
     if (nextLength > maxLength) {
@@ -120,7 +120,7 @@ function normalizeQuestionText(value: string): string {
   return value
     .normalize('NFKC')
     .toLocaleLowerCase('ru-RU')
-    .replace(/[^\p{L}\p{N}]/gu, '');
+    .replaceAll(/[^\p{L}\p{N}]/gu, '');
 }
 
 function editDistance(left: string, right: string): number {
@@ -486,7 +486,7 @@ export class MemberService {
         const question = questions[questionNumber];
         if (!question) continue;
         if (value === '—') {
-          delete answers[question];
+          Reflect.deleteProperty(answers, question);
         } else if (value.trim()) {
           if (value.length > MAX_ANSWER_LENGTH) {
             return {
@@ -698,7 +698,7 @@ export class MemberService {
     if (questionNumber > questions.length) {
       throw new Error(`Укажите номер ответа от 1 до ${questions.length}.`);
     }
-    delete answers[questions[questionNumber - 1]];
+    Reflect.deleteProperty(answers, questions[questionNumber - 1]);
     const now = new Date();
     const hasAnswers = Object.keys(answers).length > 0;
     await prisma.conversationMember.update({

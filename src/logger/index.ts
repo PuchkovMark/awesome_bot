@@ -1,7 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { multistream, pino } from 'pino';
+import { multistream, pino, type DestinationStream } from 'pino';
 import config from '../config/index.js';
+
+// Пути формируются из фиксированного каталога logs/, а не из пользовательского ввода.
+/* eslint-disable security/detect-non-literal-fs-filename */
 
 const LOG_DIR = path.resolve('logs');
 const ERROR_LOG_PATH = path.join(LOG_DIR, 'error.log');
@@ -48,7 +51,7 @@ const prettyStdout = pino.transport({
     colorize: true,
     translateTime: 'SYS:standard',
   },
-});
+}) as unknown as DestinationStream;
 
 // В консоль — всё согласно LOG_LEVEL; в logs/error.log — только error и fatal (JSON).
 const baseLogger = pino(

@@ -2,8 +2,6 @@ import type OpenAI from 'openai';
 import type { AIMessage, AIRequestOptions, AIResponse } from './AIProvider.js';
 import type { ReasoningEffort } from './effort.js';
 
-const MAX_TOOL_CALLS = 5;
-
 export async function sendChatCompletion(
   client: OpenAI,
   model: string,
@@ -14,6 +12,7 @@ export async function sendChatCompletion(
   options?: AIRequestOptions,
   headers?: Record<string, string>,
 ): Promise<AIResponse> {
+  const maxToolCalls = options?.maxToolCalls ?? 10;
   const availableTools = options?.tools ?? [];
   const toolsByName = new Map(availableTools.map((tool) => [tool.name, tool]));
   if (toolsByName.size !== availableTools.length) {
@@ -33,11 +32,13 @@ export async function sendChatCompletion(
   let outputTokens: number | undefined;
   let toolCallCount = 0;
 
-  for (let round = 0; round <= MAX_TOOL_CALLS; round += 1) {
+  for (let round = 0; round <= maxToolCalls; round += 1) {
     const response = await client.chat.completions.create(
       {
         model,
         messages: conversation,
+        // OpenAI-совместимые провайдеры (включая OpenCode) ожидают max_tokens.
+        // eslint-disable-next-line @typescript-eslint/no-deprecated
         max_tokens: maxOutputTokens,
         reasoning_effort: effort,
         ...(tools.length > 0 ? { tools, tool_choice: 'auto' as const } : {}),
@@ -61,7 +62,7 @@ export async function sendChatCompletion(
     const { message } = choice;
     const toolCalls = message.tool_calls ?? [];
     if (toolCalls.length === 0) {
-      if (choice.finish_reason === 'tool_calls' || message.function_call) {
+      if (choice.finish_reason === 'tool_calls' || Object.hasOwn(message, 'function_call')) {
         throw new Error('AI provider returned an unsupported tool call');
       }
       const content = message.content ?? message.refusal;
@@ -77,8 +78,8 @@ export async function sendChatCompletion(
     }
 
     toolCallCount += toolCalls.length;
-    if (toolCallCount > MAX_TOOL_CALLS) {
-      throw new Error(`AI tool call limit exceeded (${MAX_TOOL_CALLS})`);
+    if (toolCallCount > maxToolCalls) {
+      throw new Error(`AI tool call limit exceeded (${maxToolCalls})`);
     }
     conversation.push(message);
     for (const call of toolCalls) {
@@ -95,5 +96,5 @@ export async function sendChatCompletion(
       conversation.push({ role: 'tool', tool_call_id: call.id, content: result });
     }
   }
-  throw new Error(`AI tool call limit exceeded (${MAX_TOOL_CALLS})`);
+  throw new Error(`AI tool call limit exceeded (${maxToolCalls})`);
 }

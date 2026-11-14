@@ -269,7 +269,8 @@ export function createVkConversationHistoryTool(context: HistoryToolContext): AI
           if (!currentAccess.allowed) return currentAccess;
           const requested = new Set(ids);
           const page = await context.getMessages(ids);
-          if (!Array.isArray(page.items)) throw new Error('VK returned an invalid message batch');
+          if (!Array.isArray(page.items))
+            throw new TypeError('VK returned an invalid message batch');
           const byId = new Map<number, VkMessage>();
           for (const message of page.items) {
             if (
@@ -312,9 +313,7 @@ export function createVkConversationHistoryTool(context: HistoryToolContext): AI
               if (message.is_hidden === true || message.is_hidden === 1) continue;
               observations.set(message.conversation_message_id, message.date * 1000);
             }
-            const orderedObservations = [...observations.entries()].sort(
-              ([left], [right]) => left - right,
-            );
+            const orderedObservations = [...observations].sort(([left], [right]) => left - right);
             if (
               orderedObservations.some(
                 ([, time], index) => index > 0 && time < orderedObservations[index - 1][1],
@@ -465,7 +464,7 @@ export function createVkConversationHistoryTool(context: HistoryToolContext): AI
         status: complete ? 'result' : 'partial',
         source: 'vk',
         period: { from: new Date(start).toISOString(), to: new Date(end).toISOString() },
-        messages: messages.reverse(),
+        messages: messages.toReversed(),
         complete,
         requested_ids: requestedIds,
         examined_ids: examinedIds,

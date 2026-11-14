@@ -45,11 +45,14 @@ export const commandAliases = {
   imageaccess: ['доступккартинкам'],
   welcome: ['приветствие'],
   questionnaire: ['опрос', 'настройкаанкеты'],
+  city: ['город', 'местоположение', 'location'],
+  timezone: ['часовойпояс', 'часовой_пояс', 'tz'],
   profile: ['профиль'],
   profiles: ['анкеты'],
   maintenance: ['обслуживание'],
   broadcast: ['рассылка'],
   users: ['пользователи'],
+  membership: ['участники', 'состав', 'статистикаучастников'],
   logs: ['журнал'],
 } as const satisfies Record<string, readonly string[]>;
 
@@ -70,7 +73,7 @@ export function localizeCommandReferences(text: string): string {
     .map((part, index) =>
       index % 2 === 1
         ? part
-        : part.replace(/\/([a-z][a-z\d]*)/giu, (reference, command: string) => {
+        : part.replaceAll(/\/([a-z][a-z\d]*)/giu, (reference, command: string) => {
             const alias = commandAliases[command.toLowerCase() as keyof typeof commandAliases]?.[0];
             return alias ? `/${alias} (/${command})` : reference;
           }),

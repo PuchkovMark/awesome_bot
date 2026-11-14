@@ -23,7 +23,7 @@ export class OpenAIMemoryEmbeddingProvider implements MemoryEmbeddingProvider {
       input: texts,
     });
     return response.data
-      .sort((left, right) => left.index - right.index)
+      .toSorted((left, right) => left.index - right.index)
       .map(({ embedding }) => embedding);
   }
 }

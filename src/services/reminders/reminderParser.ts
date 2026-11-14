@@ -346,15 +346,22 @@ function parseRecurrence(text: string): Match<RecurrenceRule> | undefined {
 
   const weekdayRepeatPattern =
     /(?:(?<![\p{L}\p{N}_])(?=[\p{L}\p{N}_])|(?<=[\p{L}\p{N}_])(?![\p{L}\p{N}_]))кажд(?:ый|ую|ое)\s+(понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье)(?:(?<![\p{L}\p{N}_])(?=[\p{L}\p{N}_])|(?<=[\p{L}\p{N}_])(?![\p{L}\p{N}_]))/iu;
+  // Шаблон собран из источника фиксированного регулярного выражения выше.
+  // eslint-disable-next-line security/detect-non-literal-regexp
   const repeatedDays = [...text.matchAll(new RegExp(weekdayRepeatPattern.source, 'giu'))].map(
     (match) => weekdayNames[match[1].toLocaleLowerCase('ru-RU')],
   );
   if (repeatedDays.length > 0) {
     return {
+      // Шаблон собран из источника фиксированного регулярного выражения выше.
+      // eslint-disable-next-line security/detect-non-literal-regexp
       text: [...text.matchAll(new RegExp(weekdayRepeatPattern.source, 'giu'))]
         .map((match) => match[0])
         .join(' '),
-      value: { type: 'weekly', weekdays: [...new Set(repeatedDays)].sort() },
+      value: {
+        type: 'weekly',
+        weekdays: [...new Set(repeatedDays)].sort((left, right) => left - right),
+      },
     };
   }
 
@@ -429,20 +436,24 @@ function cleanContent(text: string, removable: string[]): string {
   for (const value of removable.filter(Boolean)) {
     content = content.replace(value, ' ');
   }
-  return content
-    .replace(/^(?:\s*(?:пен(?:ё|е)к|бот)\s*[,!:—-]?\s*)+/iu, '')
-    .replace(
-      /^(?:\s*(?:напоминай|напомни|напомнить|напомни мне|не забудь|запомни|мне нужно не забыть)\s*)/iu,
-      '',
-    )
-    .replace(/каждого\s+месяца/giu, ' ')
-    .replace(
-      /(?:(?<![\p{L}\p{N}_])(?=[\p{L}\p{N}_])|(?<=[\p{L}\p{N}_])(?![\p{L}\p{N}_]))(?:для\s+всех|мне|всем|ему|ей|им|участнику|пользователю|беседе|чату|группе|лично|напоминай|напоминать|напомни|напомнить|пожалуйста|что)(?:(?<![\p{L}\p{N}_])(?=[\p{L}\p{N}_])|(?<=[\p{L}\p{N}_])(?![\p{L}\p{N}_]))/giu,
-      ' ',
-    )
-    .replace(/[,.!?;:—-]+/gu, ' ')
-    .replace(/\s+/gu, ' ')
-    .trim();
+  return (
+    content
+      // Регулярное выражение ограничено началом строки и короткими альтернативами.
+      // eslint-disable-next-line sonarjs/slow-regex
+      .replace(/^(?:\s*(?:пен(?:ё|е)к|бот)\s*[,!:—-]?\s*)+/iu, '')
+      .replace(
+        /^(?:\s*(?:напоминай|напомни|напомнить|напомни мне|не забудь|запомни|мне нужно не забыть)\s*)/iu,
+        '',
+      )
+      .replaceAll(/каждого\s+месяца/giu, ' ')
+      .replaceAll(
+        /(?:(?<![\p{L}\p{N}_])(?=[\p{L}\p{N}_])|(?<=[\p{L}\p{N}_])(?![\p{L}\p{N}_]))(?:для\s+всех|мне|всем|ему|ей|им|участнику|пользователю|беседе|чату|группе|лично|напоминай|напоминать|напомни|напомнить|пожалуйста|что)(?:(?<![\p{L}\p{N}_])(?=[\p{L}\p{N}_])|(?<=[\p{L}\p{N}_])(?![\p{L}\p{N}_]))/giu,
+        ' ',
+      )
+      .replaceAll(/[,.!?;:—-]+/gu, ' ')
+      .replaceAll(/\s+/gu, ' ')
+      .trim()
+  );
 }
 
 export function parseReminder(text: string, now: Date, timeZone: string): ParsedReminder {
@@ -520,7 +531,7 @@ export function parseReminder(text: string, now: Date, timeZone: string): Parsed
 
   if (!dueAt && dateMatch && time) {
     dueAt = toUtcDateTime({ date: dateMatch.value, time }, timeZone);
-    if (dueAt <= now && /(?:сегодня|завтра|послезавтра)/iu.test(dateMatch.text) === false) {
+    if (dueAt <= now && !/(?:сегодня|завтра|послезавтра)/iu.test(dateMatch.text)) {
       const explicitYear =
         /(?:(?<![\p{L}\p{N}_])(?=[\p{L}\p{N}_])|(?<=[\p{L}\p{N}_])(?![\p{L}\p{N}_]))20\d{2}(?:(?<![\p{L}\p{N}_])(?=[\p{L}\p{N}_])|(?<=[\p{L}\p{N}_])(?![\p{L}\p{N}_]))/u.test(
           dateMatch.text,

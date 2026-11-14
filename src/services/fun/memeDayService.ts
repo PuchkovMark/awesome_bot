@@ -77,7 +77,7 @@ function parseSettings(value: string): MemeDaySettings {
   ] as const) {
     if (record[key] !== undefined) {
       if (typeof record[key] !== 'boolean') {
-        throw new Error(`Настройка «${key}» имеет некорректный формат.`);
+        throw new TypeError(`Настройка «${key}» имеет некорректный формат.`);
       }
       result[key] = record[key];
     }
@@ -126,7 +126,7 @@ function parseSettings(value: string): MemeDaySettings {
     ) {
       throw new Error('Список исключённых участников повреждён.');
     }
-    result.excludedUserIds = record.excludedUserIds;
+    result.excludedUserIds = record.excludedUserIds.map(String);
   }
   if (!result.allowNight && isNightTime(result.dailyTime)) {
     throw new Error('Ночное время задано, хотя ночные публикации отключены.');

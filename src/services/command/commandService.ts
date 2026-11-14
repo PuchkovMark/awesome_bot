@@ -15,7 +15,10 @@ import { getSummaryHoursFromText, limitSentences } from './summaryUtils.js';
 import { localizeCommandReferences, normalizeCommandName } from './commandAliases.js';
 import { ADMIN_COMMAND_PAGES, HELP_PAGES } from './commandHelp.js';
 import memberService from '../member/memberService.js';
+import membershipService, { formatMembershipStats } from '../membership/membershipService.js';
 import funService from '../fun/funService.js';
+import locationService, { type LocationSummary } from '../settings/locationService.js';
+import { DEFAULT_CITY, DEFAULT_TIME_ZONE } from '../settings/locationDefaults.js';
 import { parseVkUserReference } from '../vk/vkMention.js';
 import {
   parseReasoningEffort,
@@ -35,9 +38,11 @@ const adminCommands = new Set([
   'broadcast',
 ]);
 const chatAdminCommands = new Set(['welcome', 'questionnaire']);
+const botAdminOnlyCommands = new Set(['membership']);
 
 export function isBotAdminCommand(command: string): boolean {
-  return adminCommands.has(normalizeCommandName(command));
+  const normalized = normalizeCommandName(command);
+  return adminCommands.has(normalized) || botAdminOnlyCommands.has(normalized);
 }
 
 export function getProfileCommandAccessError(args: string, isAdmin: boolean): string | null {
@@ -68,8 +73,8 @@ export function parseTranslationRequest(
   const explicitLanguage = trimmedArgs.match(/^([^:\n]{2,40}):\s*([\s\S]+)$/u);
   if (explicitLanguage) {
     return {
-      language: explicitLanguage[1]!.trim(),
-      text: explicitLanguage[2]!,
+      language: explicitLanguage[1].trim(),
+      text: explicitLanguage[2],
       translateOnlyNonRussianParts: false,
     };
   }
@@ -149,6 +154,9 @@ export class CommandService {
             : normalizeCommandName(rawCommand);
     const args = rawCommand === 'анкета' && !commandArgs.trim() ? 'edit' : commandArgs;
     try {
+      if (botAdminOnlyCommands.has(cmd) && !isAdmin) {
+        return 'Эта команда доступна только администраторам бота.';
+      }
       if (adminCommands.has(cmd) && !isAdmin) {
         return 'Эта команда доступна только администраторам.';
       }
@@ -368,6 +376,18 @@ export class CommandService {
           return this.setWelcome(senderId, peerId, args, isChat);
         case 'questionnaire':
           return this.setQuestionnaire(senderId, peerId, args, isChat);
+        case 'city':
+          return this.manageCity(senderId, peerId, args, isChat, isAdmin, canManageChat, isCreator);
+        case 'timezone':
+          return this.manageTimeZone(
+            senderId,
+            peerId,
+            args,
+            isChat,
+            isAdmin,
+            canManageChat,
+            isCreator,
+          );
         case 'profile':
           return this.profileCommand(
             peerId,
@@ -391,6 +411,8 @@ export class CommandService {
           return this.broadcast(senderId, args);
         case 'users':
           return this.getAdminStats();
+        case 'membership':
+          return this.membershipCommand(peerId, args, isChat);
         case 'stats':
           return this.getUserStats(senderId);
         case 'logs':
@@ -679,10 +701,11 @@ export class CommandService {
   private parseSliderArgs(value: string): Record<string, unknown> {
     const updates: Record<string, unknown> = {};
     for (const item of value.split(/\s+/u).filter(Boolean)) {
-      const [key, raw, extra] = item.split('=');
-      if (!key || raw === undefined || extra !== undefined || !/^\d{1,3}$/u.test(raw)) {
+      const parts = item.split('=');
+      if (parts.length !== 2 || !parts[0] || !/^\d{1,3}$/u.test(parts[1])) {
         throw new Error('Настройки задаются как humor=70, значения должны быть от 0 до 100.');
       }
+      const [key, raw] = parts;
       updates[key] = Number(raw);
     }
     return updates;
@@ -789,9 +812,10 @@ export class CommandService {
       const values: Record<string, unknown> = {};
       const influences: Record<string, unknown> = {};
       for (const pair of pairs) {
-        const [key, raw, extra] = pair.split('=');
-        if (!key || !raw || extra !== undefined || !/^\d{1,3}$/u.test(raw))
+        const parts = pair.split('=');
+        if (parts.length !== 2 || !parts[0] || !parts[1] || !/^\d{1,3}$/u.test(parts[1]))
           throw new Error('Значения настроек должны быть целыми числами от 0 до 100.');
+        const [key, raw] = parts;
         if (key.startsWith('influence.')) influences[key.slice('influence.'.length)] = Number(raw);
         else values[key] = Number(raw);
       }
@@ -806,11 +830,18 @@ export class CommandService {
       settingsService.getUserSettings(senderId),
       settingsService.getChatSettings(peerId),
     ]);
+    const isChat = isChatPeer(Number(peerId));
+    const location = await locationService.getLocationSummary(
+      isChat ? 'chat' : 'user',
+      isChat ? peerId : senderId,
+    );
     return [
       `Характер: ${(await characterService.getCurrent('direct', senderId, peerId)).name}`,
       `Личная инструкция: ${user.systemPrompt ? 'задана' : 'не задана'}`,
       `Режим беседы: ${chat.mode}`,
       `Голос: ${user.voiceEnabled ? 'включён' : 'выключен'}`,
+      `Город: ${location.city}${location.cityConfigured ? '' : ' (по умолчанию)'}`,
+      `Часовой пояс: ${location.timeZone}${location.timeZoneConfigured ? '' : ' (по умолчанию)'}`,
     ].join('\n');
   }
 
@@ -908,6 +939,142 @@ export class CommandService {
       `${peerId}:${enabled ? 'on' : 'off'}`,
     );
     return `Автоматическое анкетирование при вступлении ${enabled ? 'включено' : 'выключено'}. При включении вступившим участникам без анкеты будет показана форма /анкета.`;
+  }
+
+  private formatLocationSummary(summary: LocationSummary, isChat: boolean): string {
+    const cityNote = summary.cityConfigured
+      ? ''
+      : ` (не указан, используется ${DEFAULT_CITY.name} по умолчанию)`;
+    const timeZoneNote = summary.timeZoneConfigured
+      ? ''
+      : ` (не указан, используется ${DEFAULT_TIME_ZONE} по умолчанию)`;
+    return [
+      isChat ? 'Настройки беседы:' : 'Ваши настройки:',
+      `Город: ${summary.city}${cityNote}`,
+      `Часовой пояс: ${summary.timeZone}${timeZoneNote}`,
+      !summary.cityConfigured || !summary.timeZoneConfigured
+        ? 'Город и/или часовой пояс не указаны; используются значения по умолчанию.'
+        : '',
+      'Изменить: /city set <город>, /timezone set <IANA>.',
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  private parseCityQuery(value: string): {
+    name: string;
+    region?: string;
+    country?: string;
+    countryCode?: string;
+  } | null {
+    const [namePart, regionPart, countryPart] = value.split(',').map((part) => part.trim());
+    if (!namePart || namePart.length > 100) return null;
+    const countryIsCode = Boolean(countryPart && /^[A-Za-z]{2}$/u.test(countryPart));
+    return {
+      name: namePart,
+      ...(regionPart ? { region: regionPart } : {}),
+      ...(countryPart
+        ? countryIsCode
+          ? { countryCode: countryPart.toUpperCase() }
+          : { country: countryPart }
+        : {}),
+    };
+  }
+
+  private async manageCity(
+    senderId: string,
+    peerId: string,
+    args: string,
+    isChat: boolean,
+    isAdmin: boolean,
+    canManageChat: boolean,
+    isCreator: boolean,
+  ): Promise<string> {
+    const scope = isChat ? 'chat' : 'user';
+    const target = isChat ? peerId : senderId;
+    const trimmed = args.trim();
+    if (!trimmed || /^(?:show|status|показать)$/iu.test(trimmed)) {
+      return this.formatLocationSummary(
+        await locationService.getLocationSummary(scope, target),
+        isChat,
+      );
+    }
+    if (isChat && !isAdmin && !canManageChat && !isCreator) {
+      return 'Менять город беседы могут только администраторы беседы или бота.';
+    }
+    if (/^(?:reset|clear|delete|сброс|удалить)$/iu.test(trimmed)) {
+      const result = await locationService.clearLocation(scope, target, 'city');
+      return result.status === 'result'
+        ? `Город сброшен.\n${this.formatLocationSummary(result.summary, isChat)}`
+        : result.message;
+    }
+
+    const value = trimmed.replace(/^(?:set|установить)\s+/iu, '').trim();
+    const query = this.parseCityQuery(value);
+    if (!query) {
+      return 'Использование: /city set <город> или /city set <город>, <регион>, <страна>.';
+    }
+    const result = await locationService.setCity(scope, target, query);
+    if (result.status === 'not_found' || result.status === 'error') return result.message;
+    if (result.status === 'ambiguous') {
+      const candidates = result.candidates.slice(0, 5).map((candidate, index) => {
+        const details = [candidate.region, candidate.country].filter(Boolean).join(', ');
+        return `${index + 1}. ${candidate.name}${details ? ` — ${details}` : ''}`;
+      });
+      return [
+        'Найдено несколько населённых пунктов:',
+        ...candidates,
+        'Уточните: /city set <город>, <регион>, <страна>.',
+      ].join('\n');
+    }
+
+    const place = [
+      result.location.name,
+      result.location.region && result.location.region !== result.location.name
+        ? result.location.region
+        : undefined,
+      result.location.country,
+    ]
+      .filter(Boolean)
+      .join(', ');
+    return `Город сохранён: ${place}.\n${this.formatLocationSummary(result.summary, isChat)}`;
+  }
+
+  private async manageTimeZone(
+    senderId: string,
+    peerId: string,
+    args: string,
+    isChat: boolean,
+    isAdmin: boolean,
+    canManageChat: boolean,
+    isCreator: boolean,
+  ): Promise<string> {
+    const scope = isChat ? 'chat' : 'user';
+    const target = isChat ? peerId : senderId;
+    const trimmed = args.trim();
+    if (!trimmed || /^(?:show|status|показать)$/iu.test(trimmed)) {
+      return this.formatLocationSummary(
+        await locationService.getLocationSummary(scope, target),
+        isChat,
+      );
+    }
+    if (isChat && !isAdmin && !canManageChat && !isCreator) {
+      return 'Менять часовой пояс беседы могут только администраторы беседы или бота.';
+    }
+    if (/^(?:reset|clear|delete|сброс|удалить)$/iu.test(trimmed)) {
+      const result = await locationService.clearLocation(scope, target, 'timezone');
+      return result.status === 'result'
+        ? `Часовой пояс сброшен.\n${this.formatLocationSummary(result.summary, isChat)}`
+        : result.message;
+    }
+
+    const timeZone = trimmed.replace(/^(?:set|установить)\s+/iu, '').trim();
+    const result = await locationService.setTimeZone(scope, target, timeZone);
+    if (result.status === 'invalid' || result.status === 'error') return result.message;
+    return `Часовой пояс сохранён: ${result.summary.timeZone}.\n${this.formatLocationSummary(
+      result.summary,
+      isChat,
+    )}`;
   }
 
   private async profileCommand(
@@ -1570,6 +1737,22 @@ export class CommandService {
       `При включении автоматически озвучиваются ответы ИИ длиннее ${MIN_AUTO_VOICE_CHARACTERS} символов.`,
       `Команды: /voice on, /voice off, /voice <${availableVoices.join('|')}>`,
     ].join('\n');
+  }
+
+  private async membershipCommand(peerId: string, args: string, isChat: boolean): Promise<string> {
+    if (!isChat) {
+      return 'Статистика участников доступна только в групповой беседе.';
+    }
+    const trimmed = args.trim();
+    const days = trimmed ? Number(trimmed) : 30;
+    if (!Number.isSafeInteger(days) || days < 1 || days > 3650) {
+      return 'Укажите период от 1 до 3650 дней: /участники 30.';
+    }
+    const stats = await membershipService.getStats({
+      conversationId: peerId,
+      days,
+    });
+    return formatMembershipStats(stats);
   }
 
   private async getAdminStats(): Promise<string> {

@@ -24,6 +24,12 @@ export interface AppConfig {
   IMAGE_ADMIN_ONLY: boolean;
   IMAGE_MAX_PER_USER_PER_DAY: number;
   AI_MAX_RETRIES: number;
+  AI_MAX_TOOL_CALLS: number;
+  SUMMARY_MODEL: string;
+  SUMMARY_CHUNK_MESSAGES: number;
+  SUMMARY_CHUNK_CHARS: number;
+  SUMMARY_MAX_DIGEST_CHARS: number;
+  SUMMARY_MAX_CHARS: number;
   MAX_REQUESTS_PER_MINUTE: number;
   MAX_HISTORY_MESSAGES: number;
   MAX_INPUT_CHARS: number;
@@ -59,7 +65,7 @@ function optionalNumber(name: string, fallback: number): number {
   const v = process.env[name];
   if (!v) return fallback;
   const n = Number(v);
-  if (Number.isNaN(n)) throw new Error(`Environment variable ${name} must be a number`);
+  if (Number.isNaN(n)) throw new TypeError(`Environment variable ${name} must be a number`);
   return n;
 }
 
@@ -119,6 +125,12 @@ export const config: AppConfig = {
   IMAGE_ADMIN_ONLY: process.env.IMAGE_ADMIN_ONLY !== 'false',
   IMAGE_MAX_PER_USER_PER_DAY: positiveInteger('IMAGE_MAX_PER_USER_PER_DAY', 20),
   AI_MAX_RETRIES: positiveInteger('AI_MAX_RETRIES', 2),
+  AI_MAX_TOOL_CALLS: positiveInteger('AI_MAX_TOOL_CALLS', 10),
+  SUMMARY_MODEL: process.env.SUMMARY_MODEL || 'claude-haiku-5-5',
+  SUMMARY_CHUNK_MESSAGES: positiveInteger('SUMMARY_CHUNK_MESSAGES', 300),
+  SUMMARY_CHUNK_CHARS: positiveInteger('SUMMARY_CHUNK_CHARS', 12_000),
+  SUMMARY_MAX_DIGEST_CHARS: positiveInteger('SUMMARY_MAX_DIGEST_CHARS', 15_000),
+  SUMMARY_MAX_CHARS: positiveInteger('SUMMARY_MAX_CHARS', 3_500),
   MAX_REQUESTS_PER_MINUTE: positiveInteger('MAX_REQUESTS_PER_MINUTE', 10),
   MAX_HISTORY_MESSAGES: positiveInteger('MAX_HISTORY_MESSAGES', 30),
   MAX_INPUT_CHARS: positiveInteger('MAX_INPUT_CHARS', 12_000),

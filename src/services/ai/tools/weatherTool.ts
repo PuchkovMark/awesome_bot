@@ -1,5 +1,6 @@
 import { logger } from '../../../logger/index.js';
 import { isValidTimeZone } from '../../reminders/reminderDateTime.js';
+import { DEFAULT_CITY, DEFAULT_TIME_ZONE } from '../../settings/locationDefaults.js';
 import weatherService, {
   GeocodingUnavailableError,
   WeatherUnavailableError,
@@ -19,6 +20,7 @@ type LocationSettings = {
   locationCountry: string | null;
   locationRegion: string | null;
   locationTimeZone: string | null;
+  timeZone?: string | null;
 };
 
 type WeatherContext = {
@@ -26,6 +28,7 @@ type WeatherContext = {
   scope: 'chat' | 'user';
   checkAccess: () => Promise<{ allowed: true } | { allowed: false; message: string }>;
   onAttribution: (attribution: WeatherAttribution) => void;
+  userMessage?: string;
   service?: Pick<WeatherService, 'resolveLocation' | 'getWeather'>;
 };
 
@@ -42,6 +45,23 @@ export function selectContextWeatherLocation(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function normalizePlace(value: string): string {
+  return value
+    .normalize('NFKC')
+    .toLocaleLowerCase('ru-RU')
+    .replaceAll(/[^\p{L}\p{N}]/gu, '');
+}
+
+function formatCandidateList(candidates: WeatherLocation[]): string {
+  return candidates
+    .slice(0, 5)
+    .map((candidate, index) => {
+      const details = [candidate.region, candidate.country].filter(Boolean).join(', ');
+      return `${index + 1}. ${candidate.name}${details ? ` — ${details}` : ''}`;
+    })
+    .join('; ');
 }
 
 function validPlaceText(value: unknown): value is string {
@@ -109,7 +129,8 @@ export function createWeatherTool(context: WeatherContext): AITool {
       'Получи текущую оценку погоды и прогноз на ближайшие 1–7 суток из внешних погодных сервисов.',
       'Название города указывай в именительном падеже; страну и регион передавай отдельно, если они известны.',
       'Координаты используй только если пользователь их указал или выбрал предложенный населённый пункт.',
-      'Без места используются настройки текущей беседы или личного диалога; если их нет, спроси город.',
+      'Без места используются настройки текущей беседы или личного диалога; если город не задан, используется Москва по умолчанию, а в ответе нужно сообщить, что настройки не указаны.',
+      'Если пользователь не назвал город в текущем сообщении, не подставляй город из истории переписки: используй сохранённые настройки или Москву по умолчанию.',
       'Если найдено несколько подходящих мест, попроси пользователя выбрать и не угадывай.',
       'После выбора передай координаты и geocoding_source выбранного варианта; time_zone передавай, только если он известен.',
       'Для прогноза на завтра запрашивай не менее 2 суток: период отсчитывается от текущего времени.',
@@ -226,12 +247,26 @@ export function createWeatherTool(context: WeatherContext): AITool {
         return JSON.stringify({ status: 'not_executed', message: access.message });
 
       const forecastDays = typeof input.forecast_days === 'number' ? input.forecast_days : 1;
-      const requestedName = typeof input.location === 'string' ? input.location.trim() : undefined;
+      const rawRequestedName =
+        typeof input.location === 'string' ? input.location.trim() : undefined;
+      const currentMessage = normalizePlace(context.userMessage ?? '');
+      const requestedName =
+        rawRequestedName &&
+        (!currentMessage || currentMessage.includes(normalizePlace(rawRequestedName)))
+          ? rawRequestedName
+          : undefined;
       const requestedRegion = typeof input.region === 'string' ? input.region.trim() : undefined;
       const requestedCountry =
         typeof input.country_code === 'string' ? input.country_code.toUpperCase() : undefined;
       const explicitlyRequested = requestedName !== undefined || input.latitude !== undefined;
       const settings = context.settings;
+      const cityConfigured = Boolean(
+        settings.locationName?.trim() ||
+        settings.locationLatitude !== null ||
+        settings.locationLongitude !== null,
+      );
+      const timeZoneConfigured = Boolean(settings.timeZone || settings.locationTimeZone);
+      let usedDefaultCity = false;
       let location: WeatherLocation | undefined;
       let query: WeatherLocationQuery | undefined;
 
@@ -303,10 +338,8 @@ export function createWeatherTool(context: WeatherContext): AITool {
               : undefined,
         };
       } else {
-        return JSON.stringify({
-          status: 'needs_location',
-          message: 'Уточните, для какого города или населённого пункта нужна погода.',
-        });
+        location = { ...DEFAULT_CITY };
+        usedDefaultCity = true;
       }
 
       const service = context.service ?? weatherService;
@@ -320,34 +353,53 @@ export function createWeatherTool(context: WeatherContext): AITool {
             context.onAttribution(resolution.attribution);
             return JSON.stringify({
               status: 'needs_clarification',
-              message: 'Уточните населённый пункт; не выбирайте его без пользователя.',
-              candidates: resolution.candidates.map((candidate) => ({
-                ...resultLocation(candidate),
-                latitude: candidate.latitude,
-                longitude: candidate.longitude,
-                geocoding_source: resolution.attribution,
-              })),
+              message: `Уточните населённый пункт: ${formatCandidateList(resolution.candidates)}.`,
             });
           }
           location = resolution.location;
         }
         if (!location) throw new Error('Weather location was not resolved');
+        if (!location.timeZone) {
+          location = {
+            ...location,
+            timeZone: settings.timeZone ?? settings.locationTimeZone ?? DEFAULT_TIME_ZONE,
+          };
+        }
         if (location.attribution) context.onAttribution(location.attribution);
         const result = await service.getWeather(location, forecastDays);
         context.onAttribution(result.source);
-        const timeZone = location.timeZone;
+        const timeZone = location.timeZone ?? DEFAULT_TIME_ZONE;
+        const defaultTimeZoneUsed =
+          usedDefaultCity &&
+          !timeZoneConfigured &&
+          !settings.timeZone &&
+          !settings.locationTimeZone;
+        const notes = [
+          'Прогноз охватывает следующие сутки или несколько суток: в первые 24 часа точки почасовые, затем примерно каждые 6 часов. Это отдельные значения, а не дневные минимумы и максимумы.',
+          usedDefaultCity
+            ? `Город не настроен; используется ${DEFAULT_CITY.name} по умолчанию.`
+            : '',
+          defaultTimeZoneUsed
+            ? `Часовой пояс не настроен; используется ${DEFAULT_TIME_ZONE} по умолчанию.`
+            : '',
+        ].filter(Boolean);
         return JSON.stringify({
           status: 'result',
-          source: result.source === 'open_meteo' ? 'Open-Meteo' : 'MET Norway',
           location: resultLocation(location),
-          location_source: explicitlyRequested ? 'requested' : context.scope,
+          location_source: explicitlyRequested
+            ? 'requested'
+            : usedDefaultCity
+              ? 'default'
+              : context.scope,
+          settings_configured: cityConfigured && timeZoneConfigured,
+          default_used: usedDefaultCity || defaultTimeZoneUsed,
           retrieved_at_utc: result.fetchedAt,
           forecast_issued_at_utc: result.issuedAt,
           current_is_model_estimate: true,
-          current: formatPoint(result.current, location.timeZone),
+          current: formatPoint(result.current, timeZone),
           forecast: result.forecast.map((point) => formatPoint(point, timeZone)),
           forecast_days: forecastDays,
-          note: 'Прогноз охватывает следующие сутки или несколько суток: в первые 24 часа точки почасовые, затем примерно каждые 6 часов. Это отдельные значения, а не дневные минимумы и максимумы.',
+          note: notes.join(' '),
         });
       } catch (error) {
         logger.warn(

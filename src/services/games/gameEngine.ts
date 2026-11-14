@@ -163,7 +163,7 @@ export function difficultyLabel(difficulty: GameDifficulty): string {
 export function difficultyFromValue(value: unknown): GameDifficulty {
   if (value === 1 || value === 2 || value === 3 || value === 4) return value;
   if (typeof value !== 'string') return 2;
-  const normalized = value.normalize('NFKC').toLocaleLowerCase('ru-RU').replace(/ё/gu, 'е');
+  const normalized = value.normalize('NFKC').toLocaleLowerCase('ru-RU').replaceAll('ё', 'е');
   if (/^(?:1|easy|легк)/u.test(normalized)) return 1;
   if (/^(?:2|medium|средн)/u.test(normalized)) return 2;
   if (/^(?:3|hard|сложн)/u.test(normalized)) return 3;
@@ -383,10 +383,9 @@ export function parseGeneratedQuestion(
     choices === null ||
     choices.length > 5 ||
     (choices.length > 0 && choices.length < 2) ||
-    (choices !== null &&
-      !choices.every(
-        (choice) => typeof choice === 'string' && choice.trim().length > 0 && choice.length <= 120,
-      )) ||
+    !choices.every(
+      (choice) => typeof choice === 'string' && choice.trim().length > 0 && choice.length <= 120,
+    ) ||
     !hints.every((hint) => typeof hint === 'string' && hint.trim().length > 0 && hint.length <= 180)
   ) {
     throw new Error('ИИ вернул задание с некорректным текстом, ответами или подсказками.');
@@ -449,11 +448,11 @@ export function pointsForCorrectAnswer(
 }
 
 export function normalize(text: string): string {
-  return text.normalize('NFKC').toLocaleLowerCase('ru-RU').replace(/ё/gu, 'е').trim();
+  return text.normalize('NFKC').toLocaleLowerCase('ru-RU').replaceAll('ё', 'е').trim();
 }
 
 function normalizeCategory(category: string): string {
-  const safeCategory = [...category.normalize('NFKC')]
+  const safeCategory = Array.from(category.normalize('NFKC'))
     .filter((character) => {
       const codePoint = character.codePointAt(0) ?? 0;
       return codePoint >= 32 && codePoint !== 127;
@@ -480,11 +479,15 @@ function escapeRegex(value: string): string {
 function aliasMatches(text: string, alias: string): boolean {
   const boundary = '(?:^|\\s)';
   const ending = '(?:$|\\s|[,!?])';
+  // alias экранируется escapeRegex перед подстановкой в шаблон.
+  // eslint-disable-next-line security/detect-non-literal-regexp
   if (new RegExp(`${boundary}${escapeRegex(alias)}${ending}`, 'u').test(text)) return true;
   if (!/^[а-яё]+$/u.test(alias)) return false;
   const stem = alias.replace(/(?:ами|ями|ого|ему|ыми|ими|а|я|ы|и|у|ю|е|о)$/u, '');
   return (
     stem.length >= 3 &&
+    // stem также экранируется escapeRegex перед подстановкой.
+    // eslint-disable-next-line security/detect-non-literal-regexp
     new RegExp(`${boundary}${escapeRegex(stem)}[а-яё]*${ending}`, 'u').test(text)
   );
 }

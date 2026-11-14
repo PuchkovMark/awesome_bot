@@ -183,7 +183,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function text(value: unknown, limit = 100): string | undefined {
   if (typeof value !== 'string') return undefined;
   const result = value
-    .replace(/\p{Cc}/gu, ' ')
+    .replaceAll(/\p{Cc}/gu, ' ')
     .trim()
     .slice(0, limit);
   return result || undefined;
@@ -206,10 +206,10 @@ function percent(value: unknown): number | undefined {
 function normalize(value: string): string {
   return value
     .normalize('NFKD')
-    .replace(/\p{M}/gu, '')
+    .replaceAll(/\p{M}/gu, '')
     .toLocaleLowerCase('ru-RU')
-    .replace(/ё/gu, 'е')
-    .replace(/\s+/gu, ' ')
+    .replaceAll('ё', 'е')
+    .replaceAll(/\s+/gu, ' ')
     .trim();
 }
 
@@ -542,7 +542,7 @@ function sourceError(source: string, error: unknown): void {
 function retryAfter(error: unknown, now: number): number {
   let until = now + 5 * 60_000;
   if (axios.isAxiosError(error) && error.response?.status === 429) {
-    const header = error.response.headers['retry-after'];
+    const header: unknown = error.response.headers['retry-after'];
     if (typeof header === 'string') {
       const seconds = Number(header);
       const fromHeader = Number.isFinite(seconds) ? now + seconds * 1000 : Date.parse(header);
@@ -610,13 +610,20 @@ export class WeatherService {
             ? await this.getOpenMeteo(location)
             : await this.getMetNorway(location);
         const now = this.now();
+        const initialForecast = series.forecast[0];
         const current =
           series.current ??
-          series.forecast.reduce((closest, point) =>
-            Math.abs(Date.parse(point.timeUtc) - now) < Math.abs(Date.parse(closest.timeUtc) - now)
-              ? point
-              : closest,
-          );
+          (initialForecast
+            ? series.forecast.reduce(
+                (closest, point) =>
+                  Math.abs(Date.parse(point.timeUtc) - now) <
+                  Math.abs(Date.parse(closest.timeUtc) - now)
+                    ? point
+                    : closest,
+                initialForecast,
+              )
+            : undefined);
+        if (!current) throw new Error('Weather provider returned no forecast');
         if (Math.abs(Date.parse(current.timeUtc) - now) > 2 * 60 * 60_000) {
           throw new Error('Weather provider returned an outdated current forecast');
         }
@@ -631,10 +638,8 @@ export class WeatherService {
             );
           })
           .toSorted((a, b) => Date.parse(a.timeUtc) - Date.parse(b.timeUtc));
-        if (
-          forecast.length === 0 ||
-          Date.parse(forecast[forecast.length - 1].timeUtc) < end - 6 * 60 * 60_000
-        ) {
+        const lastForecast = forecast.at(-1);
+        if (!lastForecast || Date.parse(lastForecast.timeUtc) < end - 6 * 60 * 60_000) {
           throw new Error('Weather provider returned an incomplete forecast');
         }
         let previousTime = now;

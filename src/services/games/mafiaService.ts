@@ -131,7 +131,9 @@ function readState(session: MafiaSession): MafiaState {
     value = JSON.parse(session.data) as unknown;
   } catch (error) {
     logger.error({ err: error, sessionId: session.id }, 'Mafia session contains invalid JSON');
-    throw new Error('Не удалось прочитать сохранённое состояние партии в мафию.');
+    throw new Error('Не удалось прочитать сохранённое состояние партии в мафию.', {
+      cause: error,
+    });
   }
   if (
     typeof value !== 'object' ||
@@ -535,7 +537,9 @@ export class MafiaService {
 
     const shuffled = shuffleRoles(roles);
     state.players.forEach((player, index) => {
-      player.role = shuffled[index]!;
+      const role = shuffled[index];
+      if (!role) throw new Error('Не удалось распределить роли в мафии');
+      player.role = role;
       player.alive = true;
       player.selfHealUsed = false;
     });
@@ -558,6 +562,7 @@ export class MafiaService {
   }
 
   private roleMessage(state: MafiaState, player: MafiaPlayerState): string {
+    if (!player.role) throw new Error('Роль игрока ещё не распределена');
     const playerNumber = playerIndex(state, player.vkUserId) + 1;
     const allies =
       player.role === 'mafia' || player.role === 'don'
@@ -571,8 +576,8 @@ export class MafiaService {
             .filter((name): name is string => name !== null)
         : [];
     return [
-      `🎭 Твоя роль в партии «Мафия» — ${mafiaRoleLabel(player.role!)}.`,
-      mafiaRoleBrief(player.role!),
+      `🎭 Твоя роль в партии «Мафия» — ${mafiaRoleLabel(player.role)}.`,
+      mafiaRoleBrief(player.role),
       `Твой номер игрока: ${playerNumber}.`,
       ...(allies.length > 0 ? [`Твои союзники: ${allies.join('; ')}.`] : []),
       'Не раскрывай эту личную информацию в общей беседе. Игровые ночные действия принимай только здесь, в личных сообщениях боту.',
@@ -741,7 +746,7 @@ export class MafiaService {
 
   private privateActionText(text: string): { conversationId: string | null; text: string } | null {
     const match = text.match(/^\s*(?:беседа|чат)\s+(\d{10})\s+(.+)$/iu);
-    if (match) return { conversationId: match[1]!, text: match[2]! };
+    if (match) return { conversationId: match[1], text: match[2] };
     if (
       !/(?:^\s*\d{1,2}\s*$|(?:убить|устранить|лечить|спасти|защитить|проверить|проверка)\s+\d{1,2}\s*$)/iu.test(
         text,
@@ -896,7 +901,7 @@ export class MafiaService {
     }
     if (state.phase === 'voting') {
       const vote = normalized.match(/^(?:голос(?:ую)?(?: за)?|за|обвиняю)\s+(.+)$/u);
-      if (vote) return this.castVote(session, state, userId, vote[1]!, options);
+      if (vote) return this.castVote(session, state, userId, vote[1], options);
     }
     if (
       /^(?:игроки|список игроков|кто играет|статус игры|статус|сколько осталось игроков)$/u.test(
@@ -917,7 +922,7 @@ export class MafiaService {
     const byId = state.players.find((player) => player.vkUserId === target);
     if (byId) return byId;
     const matches = state.players.filter((player) => normalize(player.name) === normalize(target));
-    return matches.length === 1 ? matches[0]! : null;
+    return matches.length === 1 ? matches[0] : null;
   }
 
   private async castVote(
@@ -987,7 +992,7 @@ export class MafiaService {
       const conversations = eligible.map((session) => session.conversationId).join(', ');
       return `У тебя есть активные ночные ходы в нескольких беседах (${conversations}). Напиши действие в личке с номером беседы: «беседа <ID> убить 3».`;
     }
-    const selected = eligible[0]!;
+    const selected = eligible[0];
     return serializeGameConversation(selected.conversationId, async () => {
       const session = await this.getActiveSession(selected.conversationId);
       if (!session || session.id !== selected.id) return null;
@@ -1017,7 +1022,8 @@ export class MafiaService {
     if (
       parsed.kind === 'kill' &&
       actor.role !== 'maniac' &&
-      mafiaFaction(target.role!) === 'mafia'
+      target.role !== null &&
+      mafiaFaction(target.role) === 'mafia'
     ) {
       return 'Мафия не может выбрать своей целью союзника.';
     }
@@ -1193,13 +1199,12 @@ export class MafiaService {
       phaseEvent('равенство голосов — переголосование', state);
       if (!(await this.persist(session, state, event))) return 'Голосование уже обработано.';
       return `⚖️ Ничья (${summary}). Проведём переголосование между:\n${result.leaders
-        .map(
-          (id) => `${playerIndex(state, id) + 1}. ${state.players[playerIndex(state, id)]!.name}`,
-        )
+        .map((id) => `${playerIndex(state, id) + 1}. ${state.players[playerIndex(state, id)].name}`)
         .join('\n')}`;
     }
     if (result.eliminatedId) {
-      const eliminated = state.players.find((player) => player.vkUserId === result.eliminatedId)!;
+      const eliminated = state.players.find((player) => player.vkUserId === result.eliminatedId);
+      if (!eliminated) return 'Не удалось определить исключённого игрока.';
       eliminated.alive = false;
       phaseEvent(`${eliminated.name} исключён голосованием (${summary || 'без голосов'})`, state);
       const label =
@@ -1277,7 +1282,7 @@ export class MafiaService {
       (first === 'start' || first === 'начать') && ['mafia', 'мафия', 'мафию'].includes(second);
     if (mafiaAlias || explicitStart) {
       const subcommand = mafiaAlias ? second : 'начать';
-      const subcommandText = tokens.slice(mafiaAlias ? 2 : 2).join(' ');
+      const subcommandText = tokens.slice(2).join(' ');
       const settingsText =
         subcommand === 'start' || subcommand === 'начать'
           ? subcommandText
@@ -1393,8 +1398,8 @@ export class MafiaService {
       }
       if (!player.alive) return null;
       player.alive = false;
-      delete state.votes[userId];
-      delete state.nightActions[userId];
+      Reflect.deleteProperty(state.votes, userId);
+      Reflect.deleteProperty(state.nightActions, userId);
       phaseEvent(`${player.name} покинул беседу и выбыл`, state);
       const winner = determineMafiaWinner(state.players);
       if (winner) {
@@ -1530,7 +1535,7 @@ export class MafiaService {
     ) {
       return 'Это сообщение уже было обработано.';
     }
-    return `Записал ${state.players[state.players.length - 1]!.name}. Игроков: ${state.players.length}/${state.settings.maxPlayers}.`;
+    return `Записал ${state.players.at(-1)?.name ?? 'Игрок'}. Игроков: ${state.players.length}/${state.settings.maxPlayers}.`;
   }
 
   private async leaveLobby(
@@ -1558,7 +1563,7 @@ export class MafiaService {
     ) {
       return 'Это сообщение уже было обработано.';
     }
-    return `${departed!.name} вышел из набора. Игроков: ${state.players.length}/${state.settings.maxPlayers}.`;
+    return `${departed.name} вышел из набора. Игроков: ${state.players.length}/${state.settings.maxPlayers}.`;
   }
 
   private isSettingsRequest(text: string): boolean {
@@ -1698,14 +1703,22 @@ export class MafiaService {
         return 'Состав ролей текущей партии уже зафиксирован. Изменения сохранены и применятся в следующей партии.';
       }
       state.futureSettings = { ...state.futureSettings, ...changes };
-      if ('nightSeconds' in changes) state.settings.nightSeconds = changes.nightSeconds!;
-      if ('discussionSeconds' in changes)
-        state.settings.discussionSeconds = changes.discussionSeconds!;
-      if ('votingSeconds' in changes) state.settings.votingSeconds = changes.votingSeconds!;
-      if ('difficulty' in changes) state.settings.difficulty = changes.difficulty!;
-      if ('allowRevote' in changes) state.settings.allowRevote = changes.allowRevote!;
-      if ('revealRole' in changes) state.settings.revealRole = changes.revealRole!;
-      if ('allowDeadTalk' in changes) state.settings.allowDeadTalk = changes.allowDeadTalk!;
+      const {
+        nightSeconds,
+        discussionSeconds,
+        votingSeconds,
+        difficulty,
+        allowRevote,
+        revealRole,
+        allowDeadTalk,
+      } = changes;
+      if (nightSeconds !== undefined) state.settings.nightSeconds = nightSeconds;
+      if (discussionSeconds !== undefined) state.settings.discussionSeconds = discussionSeconds;
+      if (votingSeconds !== undefined) state.settings.votingSeconds = votingSeconds;
+      if (difficulty !== undefined) state.settings.difficulty = difficulty;
+      if (allowRevote !== undefined) state.settings.allowRevote = allowRevote;
+      if (revealRole !== undefined) state.settings.revealRole = revealRole;
+      if (allowDeadTalk !== undefined) state.settings.allowDeadTalk = allowDeadTalk;
     }
     if (
       !(await this.persist(session, state, {

@@ -1,5 +1,6 @@
 import { logger } from '../../../logger/index.js';
 import { isValidTimeZone } from '../../reminders/reminderDateTime.js';
+import { DEFAULT_TIME_ZONE } from '../../settings/locationDefaults.js';
 import timeService, { type CurrentTime } from '../../time/timeService.js';
 import type { AITool } from '../AIProvider.js';
 
@@ -16,6 +17,7 @@ type ContextTimeZone = {
 type CurrentDateTimeContext = ContextTimeZone & {
   checkAccess: () => Promise<{ allowed: true } | { allowed: false; message: string }>;
   getCurrentTime?: () => Promise<CurrentTime>;
+  getTimeZone?: () => ContextTimeZone;
 };
 
 export function selectContextTimeZone(
@@ -69,8 +71,8 @@ export function createCurrentDateTimeTool(context: CurrentDateTimeContext): AITo
     description: [
       'Получи текущую дату, день недели и время из внешнего сервиса.',
       'При необходимости укажи часовой пояс IANA из запроса, например Europe/Moscow.',
-      'Без него используется часовой пояс текущей беседы или личного диалога; если он не задан, возвращается UTC.',
-      'Всегда указывай часовой пояс из результата и не называй UTC местным временем без оснований.',
+      'Без него используется часовой пояс текущей беседы или личного диалога; если он не задан, используется Europe/Moscow по умолчанию.',
+      'Всегда указывай часовой пояс из результата. Если default_used=true, обязательно сообщи, что часовой пояс не настроен и использована Москва по умолчанию.',
       'Если сервисы недоступны, сообщи об этом и не выдумывай текущую дату или время.',
     ].join(' '),
     parameters: {
@@ -106,7 +108,11 @@ export function createCurrentDateTimeTool(context: CurrentDateTimeContext): AITo
 
       const requestedTimeZone =
         typeof input.time_zone === 'string' ? input.time_zone.trim() : undefined;
-      const timeZone = requestedTimeZone ?? context.timeZone ?? 'UTC';
+      const contextTimeZone = context.getTimeZone?.() ?? {
+        timeZone: context.timeZone,
+        scope: context.scope,
+      };
+      const timeZone = requestedTimeZone ?? contextTimeZone.timeZone ?? DEFAULT_TIME_ZONE;
       if (!isValidTimeZone(timeZone)) {
         logger.warn({ scope: context.scope }, 'Invalid current date/time timezone');
         return JSON.stringify({
@@ -140,9 +146,16 @@ export function createCurrentDateTimeTool(context: CurrentDateTimeContext): AITo
           time_zone: timeZone,
           time_zone_source: requestedTimeZone
             ? 'requested'
-            : context.timeZone !== null
-              ? context.scope
-              : 'utc_default',
+            : contextTimeZone.timeZone !== null
+              ? contextTimeZone.scope
+              : 'default_moscow',
+          settings_configured: contextTimeZone.timeZone !== null,
+          default_used: !requestedTimeZone && contextTimeZone.timeZone === null,
+          ...(requestedTimeZone || contextTimeZone.timeZone !== null
+            ? {}
+            : {
+                note: `Часовой пояс не настроен; используется ${DEFAULT_TIME_ZONE} (Москва) по умолчанию.`,
+              }),
           ...formatLocalTime(reading.instant, timeZone),
         });
       } catch (error) {

@@ -4,7 +4,7 @@ export const MAX_VK_MESSAGE_LENGTH = 4000;
  * Делит длинные сообщения на части, пригодные для отправки через ограничения VK.
  */
 export class SplitterService {
-  private maxLen: number;
+  private readonly maxLen: number;
 
   constructor(maxLen = MAX_VK_MESSAGE_LENGTH) {
     if (!Number.isInteger(maxLen) || maxLen < 1) {

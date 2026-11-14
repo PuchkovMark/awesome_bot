@@ -268,7 +268,7 @@ export async function requestAdventureJson(
 }
 
 function normalizeText(value: string, maximum: number): string {
-  return value.replace(/\s+/gu, ' ').trim().slice(0, maximum);
+  return value.replaceAll(/\s+/gu, ' ').trim().slice(0, maximum);
 }
 
 function getImagePrompt(state: AdventureState, prompt: string): string {
@@ -455,7 +455,7 @@ export class AdventureService {
     imageKey?: string;
   } {
     if (typeof response.scene !== 'string' || typeof response.location !== 'string') {
-      throw new Error('Игровой ведущий не вернул сцену или локацию.');
+      throw new TypeError('Игровой ведущий не вернул сцену или локацию.');
     }
     const scene = normalizeText(response.scene, 1600);
     const location = normalizeText(response.location, 160);

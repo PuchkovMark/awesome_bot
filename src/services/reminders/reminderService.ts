@@ -124,7 +124,7 @@ function isCancellation(text: string): boolean {
 function extractSearchTerms(text: string): string[] {
   return text
     .toLocaleLowerCase('ru-RU')
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replaceAll(/[^\p{L}\p{N}\s]/gu, ' ')
     .split(/\s+/u)
     .filter((word) => word.length >= 3)
     .filter(
@@ -186,6 +186,8 @@ export class ReminderService {
     return looksLikeReminderRequest(text);
   }
 
+  // Все ветки означают успешную обработку; boolean сохранён для совместимости с вызывающим кодом.
+  // eslint-disable-next-line sonarjs/no-invariant-returns
   async handleMessage(text: string, context: ReminderContext): Promise<boolean> {
     const trimmed = text.trim();
     const conversationId = String(context.peerId);
@@ -251,7 +253,7 @@ export class ReminderService {
     if (draftPayload?.missing === 'time') {
       const answerTime = parseReminderTime(trimmed);
       if (answerTime.time && !answerTime.ambiguous) {
-        const baseText = draftPayload.originalText.replace(
+        const baseText = draftPayload.originalText.replaceAll(
           /(?:(?:в|к|на)\s*\d{1,2}(?::\d{2})?(?:\s*(?:утра|утром|дня|днём|днем|вечера|вечером|ночи))?|\d{1,2}\s*(?:утра|утром|дня|днём|днем|вечера|вечером|ночи))/giu,
           ' ',
         );

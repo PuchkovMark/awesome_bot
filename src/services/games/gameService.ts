@@ -166,7 +166,7 @@ class GameService {
       value = JSON.parse(session.data) as unknown;
     } catch (error) {
       logger.error(`Некорректное состояние игры ${session.id}`, error);
-      throw new Error('Не удалось прочитать сохранённое состояние игры');
+      throw new Error('Не удалось прочитать сохранённое состояние игры', { cause: error });
     }
     if (typeof value !== 'object' || value === null || Array.isArray(value)) {
       throw new Error(`Состояние игры ${session.id} имеет неверный формат`);
@@ -179,13 +179,12 @@ class GameService {
     const legacy = value as Record<string, unknown>;
     const kind = parseGameKind(session.game) ?? 'quiz';
     const difficultyValue = Number(legacy.difficulty);
-    const difficulty = (
+    const difficulty =
       difficultyValue === 1 || difficultyValue === 2 || difficultyValue === 3
         ? difficultyValue
         : difficultyValue >= 4
           ? 4
-          : 2
-    ) as GameDifficulty;
+          : 2;
     const oldPrompt = typeof legacy.text === 'string' ? legacy.text : 'Продолжим игру!';
     return {
       version: 1,
@@ -212,7 +211,7 @@ class GameService {
       hintsUsed: 0,
       usedPrompts: [oldPrompt],
       roundResults: [],
-      associationLastWord: associationSeeds[0]!,
+      associationLastWord: associationSeeds[0],
       associationWords: [],
       story: [],
       truthStage: null,
@@ -258,7 +257,7 @@ class GameService {
       hintsUsed: 0,
       usedPrompts: [],
       roundResults: [],
-      associationLastWord: associationSeeds[Math.floor(Math.random() * associationSeeds.length)]!,
+      associationLastWord: associationSeeds[Math.floor(Math.random() * associationSeeds.length)],
       associationWords: [],
       story: [],
       truthStage: null,
@@ -324,7 +323,7 @@ class GameService {
   ): Promise<GeneratedQuestion> {
     if (kind === 'riddle') {
       const riddleTypes = ['логическая', 'математическая', 'словесная', 'с подвохом'];
-      const riddleType = riddleTypes[history.length % riddleTypes.length]!;
+      const riddleType = riddleTypes[history.length % riddleTypes.length];
       for (let attempt = 0; attempt < 2; attempt += 1) {
         const generated = await this.sendAI(
           `Придумай одну новую ${riddleType} загадку категории «${category}» уровня ${difficulty} из 4. Верни только JSON: {"text":"текст","answers":["однозначный ответ"]}. Ответ должен быть однозначным. Не используй загадки: ${history.slice(-15).join(' | ')}`,
@@ -356,7 +355,7 @@ class GameService {
         'Составь открытый вопрос викторины и один точный ответ.',
         'Составь вопрос викторины с четырьмя вариантами ответа.',
         'Составь задание «верно или неверно» с одним точным ответом.',
-      ][history.length % 3]!,
+      ][history.length % 3],
       riddle: 'Составь загадку и один точный ответ.',
       character:
         'Загадай известного вымышленного персонажа с кратким описанием и подходящими эмодзи, не называй его.',
@@ -365,7 +364,7 @@ class GameService {
         'Загадай слово по его буквам.',
         'Загадай слово переставленными буквами.',
         'Загадай слово через ассоциации.',
-      ][history.length % 4]!,
+      ][history.length % 4],
       truth: 'Не используется.',
       who: 'Составь доброжелательный вопрос «Кто из участников вероятнее всего...?» без оскорблений.',
       songfilm: 'Загадай фильм или песню по нейтральной подсказке. Не цитируй текст песен.',
@@ -461,7 +460,7 @@ class GameService {
         ? Date.now() + state.settings.timeLimitSeconds * 1000
         : null;
     state.currentPlayerId = state.participants.length
-      ? state.participants[(state.round - 1) % state.participants.length]!.vkUserId
+      ? state.participants[(state.round - 1) % state.participants.length].vkUserId
       : null;
     state.currentTeam = state.settings.playMode === 'team' ? (state.round % 2 === 1 ? 1 : 2) : null;
     state.answeringPlayerId = null;
@@ -782,8 +781,9 @@ class GameService {
     const choice = response.trim().toLocaleLowerCase('ru-RU');
     const letterIndex = /^[a-e]$/u.test(choice) ? choice.charCodeAt(0) - 97 : -1;
     const choiceIndex = /^\d{1,2}$/u.test(choice) ? Number(choice) - 1 : letterIndex;
-    if (choiceIndex >= 0 && choiceIndex < (question.choices?.length ?? 0)) {
-      answer = question.choices![choiceIndex]!;
+    const selectedChoice = question.choices?.[choiceIndex];
+    if (choiceIndex >= 0 && selectedChoice !== undefined) {
+      answer = selectedChoice;
     }
     const normalized = normalizeGameAnswer(answer);
     const unmarked = normalized.replace(/^(?:[a-e]|\d+)[.)\s:-]+/u, '');
@@ -893,7 +893,7 @@ class GameService {
           !(await this.commit(
             session,
             state,
-            session.state as GameSessionStatus,
+            session.state,
             this.eventOptions(options.eventId, userId, 'pass'),
           ))
         )
@@ -909,7 +909,7 @@ class GameService {
         !(await this.commit(
           session,
           state,
-          session.state as GameSessionStatus,
+          session.state,
           this.eventOptions(options.eventId, userId, 'pass'),
         ))
       )
@@ -939,7 +939,7 @@ class GameService {
       const args = text.trim().split(/\s+/);
       if (!options.isAdmin && !options.canManageChat && state.creatorId !== userId)
         return 'Команды может менять ведущий игры или администратор.';
-      const targetId = args[1]?.replace(/\D/g, '');
+      const targetId = args[1]?.replaceAll(/\D/g, '');
       const team = Number(args[2]);
       const participant = state.participants.find((player) => player.vkUserId === targetId);
       if (!participant || (team !== 1 && team !== 2))
@@ -977,7 +977,7 @@ class GameService {
         .trim()
         .replace(/^(?:капитан|назначь капитаном|выбери капитана)\s*/iu, '')
         .split(/\s+/u)[0]
-        ?.replace(/\D/g, '');
+        ?.replaceAll(/\D/g, '');
       const target = state.participants.find((player) => player.vkUserId === targetId);
       if (!target || target.team === null)
         return 'Формат: «капитан <id участника>» для участника команды.';
@@ -1231,7 +1231,10 @@ class GameService {
     options: StartOptions,
   ): Promise<string | null> {
     if (!options.isReplyToBot && !/^ассоциация\s*:/iu.test(text.trim())) return null;
-    const word = normalize(text.replace(/^ассоциация\s*:/iu, '')).replace(/[^a-zа-яё0-9]/giu, '');
+    const word = normalize(text.replace(/^ассоциация\s*:/iu, '')).replaceAll(
+      /[^a-zа-яё0-9]/giu,
+      '',
+    );
     if (word.length < 2 || state.associationWords.includes(word)) return null;
     if (!(await this.checkAssociation(state.associationLastWord, word, state.settings.category))) {
       return 'Эта ассоциация не подходит к предыдущему слову. Попробуйте другую.';
@@ -1337,7 +1340,7 @@ class GameService {
       .trim();
     const target = state.participants.find(
       (candidate) =>
-        candidate.vkUserId === normalized.replace(/\D/g, '') ||
+        candidate.vkUserId === normalized.replaceAll(/\D/g, '') ||
         normalize(candidate.name) === normalized,
     );
     if (!target) return null;
@@ -1364,9 +1367,7 @@ class GameService {
     for (const target of Object.values(state.votes))
       voteCounts.set(target, (voteCounts.get(target) ?? 0) + 1);
     const maxVotes = Math.max(0, ...voteCounts.values());
-    const winners = [...voteCounts.entries()].filter(
-      ([, count]) => count === maxVotes && count > 0,
-    );
+    const winners = [...voteCounts].filter(([, count]) => count === maxVotes && count > 0);
     const scoreDeltas: Array<{ vkUserId: string; points: number }> = [];
     for (const [targetId, count] of winners) {
       const target = state.participants.find((player) => player.vkUserId === targetId);
@@ -1381,7 +1382,7 @@ class GameService {
     const isLast = state.round >= state.settings.rounds;
     state.roundResults.push({
       round: state.round,
-      winnerId: winners.length === 1 ? winners[0]![0] : null,
+      winnerId: winners.length === 1 ? winners[0][0] : null,
       summary,
       difficulty: state.difficulty,
     });
@@ -1481,9 +1482,7 @@ class GameService {
       }
       const high = Math.max(0, ...totals.values());
       const teams = new Set(
-        [...totals.entries()]
-          .filter(([, score]) => score === high && high > 0)
-          .map(([team]) => team),
+        [...totals].filter(([, score]) => score === high && high > 0).map(([team]) => team),
       );
       return state.participants.filter((player) => player.team !== null && teams.has(player.team));
     }
@@ -1983,7 +1982,7 @@ class GameService {
       const index = state.participants.findIndex((participant) => participant.vkUserId === userId);
       if (index < 0) return;
       const [departed] = state.participants.splice(index, 1);
-      delete state.votes[userId];
+      Reflect.deleteProperty(state.votes, userId);
       if (departed?.isCaptain && departed.team !== null) {
         const replacement = state.participants.find(
           (participant) => participant.team === departed.team,
@@ -2067,14 +2066,7 @@ class GameService {
           state.kind,
         );
         const response = `⏰ Время вышло.${revealAnswer && answer ? ` Ответ: ${answer}.` : ''}`;
-        const result = await this.completeRound(
-          current,
-          state,
-          null,
-          response,
-          state.creatorId,
-          undefined,
-        );
+        const result = await this.completeRound(current, state, null, response, state.creatorId);
         handled.push({ conversationId: session.conversationId, text: result });
       });
     }

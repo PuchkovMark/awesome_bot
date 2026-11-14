@@ -25,6 +25,9 @@ export type AITool = {
 export type AIRequestOptions = {
   sessionId?: string;
   tools?: readonly AITool[];
+  model?: string;
+  maxOutputTokens?: number;
+  maxToolCalls?: number;
 };
 
 export interface AIProvider {

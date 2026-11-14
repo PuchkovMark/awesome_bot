@@ -8,13 +8,14 @@ type Factory<T> = () => T;
  * Регистрирует и предоставляет зависимости приложения через контейнер инверсии управления.
  */
 export class Container {
-  private factories = new Map<string, Factory<unknown>>();
-  private instances = new Map<string, unknown>();
+  private readonly factories = new Map<string, Factory<unknown>>();
+  private readonly instances = new Map<string, unknown>();
 
   register<T>(key: string, factory: Factory<T>): void {
-    this.factories.set(key, factory as Factory<unknown>);
+    this.factories.set(key, factory);
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- тип задаёт вызывающий код
   resolve<T>(key: string): T {
     if (this.instances.has(key)) return this.instances.get(key) as T;
     const factory = this.factories.get(key);

@@ -243,6 +243,8 @@ export function parseUserInfoOptions(input: Record<string, unknown>): UserInfoOp
   };
 }
 
+// Рекурсивный sanitizer намеренно использует undefined как маркер пропуска значения.
+// eslint-disable-next-line sonarjs/function-return-type
 function sanitize(value: unknown, budget: Budget, depth = 0): JsonValue | undefined {
   if (budget.nodes <= 0) {
     budget.truncated = true;
@@ -272,7 +274,7 @@ function sanitize(value: unknown, budget: Budget, depth = 0): JsonValue | undefi
     return result;
   }
   if (isRecord(value)) {
-    const result: Record<string, JsonValue> = Object.create(null);
+    const result = Object.create(null) as Record<string, JsonValue>;
     const entries = Object.entries(value).filter(
       ([key]) => /^[a-zA-Z0-9_]{1,60}$/u.test(key) && !SECRET_FIELDS.has(key),
     );

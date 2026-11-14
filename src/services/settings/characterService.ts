@@ -37,7 +37,7 @@ function parseIdList(value: string, field: string): string[] {
   if (!Array.isArray(parsed) || parsed.some((item) => typeof item !== 'string')) {
     throw new Error(`Неверный список доступа персонажа (${field}).`);
   }
-  return parsed;
+  return parsed as string[];
 }
 
 function parseProfileSettings(value: string, name: string) {
@@ -317,7 +317,7 @@ export class CharacterService {
     if (scope === 'chat') {
       const settings = await this.getChatSettings(peerId);
       const allSettings = this.parseChatSettings(settings.personalitySettings);
-      delete allSettings[profile.id];
+      Reflect.deleteProperty(allSettings, profile.id);
       await prisma.chatSettings.update({
         where: { id: settings.id },
         data: { personalitySettings: JSON.stringify(allSettings) },

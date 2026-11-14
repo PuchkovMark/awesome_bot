@@ -124,7 +124,7 @@ function parseEmbedding(value: string | null): number[] | undefined {
       parsed.length > 0 &&
       parsed.every((entry) => typeof entry === 'number' && Number.isFinite(entry))
     ) {
-      return parsed;
+      return parsed as number[];
     }
   } catch {
     return undefined;
@@ -364,7 +364,7 @@ export class LongTermMemoryService {
       if (strongMatches.length === 0) {
         return { publicMessage: 'Не нашёл подходящего воспоминания. Уточни, что именно забыть.' };
       }
-      if (strongMatches.length > 1 && strongMatches[0]!.score - strongMatches[1]!.score < 0.12) {
+      if (strongMatches.length > 1 && strongMatches[0].score - strongMatches[1].score < 0.12) {
         const options = strongMatches.slice(0, 4);
         await this.savePendingSelection(
           context,
@@ -383,7 +383,7 @@ export class LongTermMemoryService {
             }
           : { publicMessage: optionsText };
       }
-      const selected = strongMatches[0]!.memory;
+      const selected = strongMatches[0].memory;
       if (
         scope === 'conversation' &&
         selected.createdByVkId !== context.vkUserId &&
@@ -847,29 +847,26 @@ export class LongTermMemoryService {
     query: string,
     memories: LongTermMemory[],
   ): Promise<{ query: number[]; memoryVectors: Map<string, number[]> } | undefined> {
-    if (!this.embeddingProvider || containsSensitiveMemoryData(query)) return undefined;
+    const provider = this.embeddingProvider;
+    if (!provider || containsSensitiveMemoryData(query)) return undefined;
     const safeQuery = query.slice(0, 2_000);
     const queryVector = this.getCachedQueryEmbedding(safeQuery);
-    const stale = memories.filter(
-      (memory) => memory.embeddingModel !== this.embeddingProvider?.model,
-    );
+    const stale = memories.filter((memory) => memory.embeddingModel !== provider.model);
     try {
       const inputs = [
         ...(queryVector ? [] : [safeQuery]),
         ...stale.map(({ content }) => content.slice(0, 400)),
       ];
-      const generated = inputs.length > 0 ? await this.embeddingProvider.embed(inputs) : [];
+      const generated = inputs.length > 0 ? await provider.embed(inputs) : [];
       let generatedIndex = 0;
       const resolvedQuery =
-        queryVector ??
-        generated[generatedIndex++] ??
-        (await this.embeddingProvider.embed([safeQuery]))[0];
+        queryVector ?? generated[generatedIndex++] ?? (await provider.embed([safeQuery]))[0];
       if (!resolvedQuery) return undefined;
       this.cacheQueryEmbedding(safeQuery, resolvedQuery);
       const memoryVectors = new Map<string, number[]>();
       const staleUpdates: Promise<unknown>[] = [];
       for (const memory of memories) {
-        if (memory.embeddingModel === this.embeddingProvider.model) {
+        if (memory.embeddingModel === provider.model) {
           const vector = parseEmbedding(memory.embedding);
           if (vector) memoryVectors.set(memory.id, vector);
           continue;
@@ -883,7 +880,7 @@ export class LongTermMemoryService {
               where: { id: memory.id },
               data: {
                 embedding: JSON.stringify(vector),
-                embeddingModel: this.embeddingProvider.model,
+                embeddingModel: provider.model,
               },
             })
             .catch((error: unknown) => {
@@ -1102,7 +1099,7 @@ export class LongTermMemoryService {
         .map((memory) => ({ memory, score: keywordRelevance(text, memory.content) }))
         .sort((left, right) => right.score - left.score);
       if (ranked[0] && ranked[0].score >= 0.2) {
-        if (ranked.length === 1 || ranked[0].score - ranked[1]!.score >= 0.12) {
+        if (ranked.length === 1 || ranked[0].score - ranked[1].score >= 0.12) {
           selected = ranked[0].memory;
         }
       }

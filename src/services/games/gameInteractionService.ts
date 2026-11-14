@@ -233,7 +233,7 @@ export class GameInteractionService {
       };
     }
 
-    const session = matching[0]!;
+    const session = matching[0];
     const family = getGameFamily(session.game);
     if ((family === 'adventure' || family === 'battle') && context.eventId) {
       try {

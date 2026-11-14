@@ -114,6 +114,8 @@ test('formats the current time in the configured conversation timezone', async (
     utc_datetime: '2026-11-10T23:59:59.123Z',
     time_zone: 'Europe/Moscow',
     time_zone_source: 'chat',
+    settings_configured: true,
+    default_used: false,
     date: '2026-11-11',
     time: '02:59:59',
     weekday: 'среда',
@@ -154,7 +156,7 @@ test('uses IANA daylight-saving rules at a transition', async () => {
   }
 });
 
-test('labels UTC as the default when no timezone is configured', async () => {
+test('uses Moscow as the default when no timezone is configured', async () => {
   const tool = createCurrentDateTimeTool({
     timeZone: null,
     scope: 'chat',
@@ -162,10 +164,13 @@ test('labels UTC as the default when no timezone is configured', async () => {
     getCurrentTime: fixedReading,
   });
   const result = JSON.parse(await tool.execute({}));
-  assert.equal(result.time_zone, 'UTC');
-  assert.equal(result.time_zone_source, 'utc_default');
-  assert.equal(result.date, '2026-11-10');
-  assert.equal(result.time, '23:59:59');
+  assert.equal(result.time_zone, 'Europe/Moscow');
+  assert.equal(result.time_zone_source, 'default_moscow');
+  assert.equal(result.settings_configured, false);
+  assert.equal(result.default_used, true);
+  assert.equal(result.date, '2026-11-11');
+  assert.equal(result.time, '02:59:59');
+  assert.equal(result.utc_offset, 'UTC+03:00');
 });
 
 test('rejects invalid arguments and timezones without calling a service', async () => {
@@ -323,7 +328,10 @@ test('returns the tool result to the model through the existing completion loop'
     assert.equal(response.content, 'В Москве 02:59.');
   } finally {
     await new Promise<void>((resolve, reject) =>
-      server.close((error) => (error ? reject(error) : resolve())),
+      server.close((error) => {
+        if (error) reject(error);
+        else resolve();
+      }),
     );
   }
 });

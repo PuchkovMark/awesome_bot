@@ -12,10 +12,40 @@ export type StoredMessage = {
   createdAt: Date;
 };
 
+export type HistoryMessage = {
+  id: string;
+  role: string;
+  content: string;
+  createdAt: Date;
+  sentAt: Date | null;
+  speaker: string;
+  replyToAuthorName: string | null;
+  replyToText: string | null;
+  attachments: string[];
+};
+
+export type HistoryPage = {
+  messages: HistoryMessage[];
+  hasMore: boolean;
+  oldestAvailable: Date | null;
+};
+
 const proposalAttributionQuestionPattern =
   /(?:^|[^\p{L}\p{N}])кто(?:$|[^\p{L}\p{N}])[\s\S]{0,100}предлож\p{L}*/iu;
 const proposalCuePattern =
   /предлож\p{L}*|предлаг\p{L}*|давайте|давай|может(?:\s+быть)?|можно|а\s+если|есть\s+идея|мой\s+вариант|(?:поедем|поехать|съездим|съездить)\s+(?:в|на)/iu;
+
+function parseAttachmentTypes(value: string | null): string[] {
+  if (!value) return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === 'string').slice(0, 5)
+      : [];
+  } catch {
+    return [];
+  }
+}
 
 /**
  * MemoryService — отвечает за сохранение и получение истории сообщений.
@@ -26,8 +56,8 @@ const proposalCuePattern =
  * Сохраняет, выбирает и очищает личную и общую историю сообщений для контекста диалогов.
  */
 export class MemoryService {
-  private ttlHours: number;
-  private maxTokens: number;
+  private readonly ttlHours: number;
+  private readonly maxTokens: number;
 
   constructor() {
     this.ttlHours = Math.max(1, Math.min(24, config.CONTEXT_TTL_HOURS));
@@ -66,6 +96,17 @@ export class MemoryService {
     content: string;
     provider?: string;
     tokens?: number;
+    vkMessageId?: number;
+    conversationMessageId?: number;
+    sentAt?: Date;
+    fromId?: number;
+    authorName?: string;
+    replyToVkMessageId?: number;
+    replyToConversationMessageId?: number;
+    replyToFromId?: number;
+    replyToAuthorName?: string;
+    replyToText?: string;
+    attachments?: string;
   }): Promise<StoredMessage> {
     const { conversationId, vkUserId, displayName, role, content, provider } = params;
 
@@ -84,6 +125,17 @@ export class MemoryService {
         content,
         provider,
         tokens,
+        vkMessageId: params.vkMessageId,
+        conversationMessageId: params.conversationMessageId,
+        sentAt: params.sentAt ?? new Date(),
+        fromId: params.fromId,
+        authorName: params.authorName ?? (role === 'assistant' ? 'Пенёк' : displayName),
+        replyToVkMessageId: params.replyToVkMessageId,
+        replyToConversationMessageId: params.replyToConversationMessageId,
+        replyToFromId: params.replyToFromId,
+        replyToAuthorName: params.replyToAuthorName,
+        replyToText: params.replyToText,
+        attachments: params.attachments,
       },
     });
 
@@ -152,7 +204,8 @@ export class MemoryService {
       take: Math.max(1, Math.min(config.MAX_HISTORY_MESSAGES, take)),
     });
 
-    return messages.reverse().map((message) => ({
+    return messages.toReversed().map((message) => ({
+      id: message.id,
       role: message.role,
       speaker:
         message.role === 'assistant'
@@ -162,7 +215,86 @@ export class MemoryService {
             : 'Участник',
       authorId: message.role === 'assistant' ? undefined : (message.user?.vkId ?? 'unknown'),
       content: message.content,
+      createdAt: message.createdAt,
     }));
+  }
+
+  /**
+   * Возвращает страницу сохранённой истории текущей беседы или личного диалога.
+   * В личном диалоге выборка дополнительно ограничивается текущим пользователем.
+   */
+  async getHistoryPage(params: {
+    conversationId: string;
+    vkUserId?: string;
+    before?: Date;
+    from?: Date;
+    limit: number;
+    excludeIds?: readonly string[];
+  }): Promise<HistoryPage> {
+    const limit = Math.max(1, Math.min(50, params.limit));
+    let userId: string | undefined;
+    if (params.vkUserId) {
+      const user = await prisma.user.findUnique({ where: { vkId: params.vkUserId } });
+      if (!user) return { messages: [], hasMore: false, oldestAvailable: null };
+      userId = user.id;
+    }
+
+    const baseWhere: Prisma.MessageWhereInput = {
+      conversationId: params.conversationId,
+      role: { in: ['user', 'assistant'] },
+      ...(userId ? { userId } : {}),
+    };
+    const excludeIds = [...new Set(params.excludeIds)].filter(Boolean);
+    const where: Prisma.MessageWhereInput = {
+      ...baseWhere,
+      ...(params.before || params.from
+        ? {
+            createdAt: {
+              ...(params.from ? { gte: params.from } : {}),
+              ...(params.before ? { lte: params.before } : {}),
+            },
+          }
+        : {}),
+      ...(excludeIds.length > 0 ? { id: { notIn: excludeIds } } : {}),
+    };
+
+    const [rows, oldest] = await Promise.all([
+      prisma.message.findMany({
+        where,
+        include: { user: { select: { vkId: true, displayName: true } } },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: limit + 1,
+      }),
+      prisma.message.findFirst({
+        where: baseWhere,
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        select: { createdAt: true },
+      }),
+    ]);
+
+    const hasMore = rows.length > limit;
+    const messages = (hasMore ? rows.slice(0, limit) : rows).toReversed().map((message) => ({
+      id: message.id,
+      role: message.role,
+      content: message.content,
+      createdAt: message.createdAt,
+      sentAt: message.sentAt,
+      speaker:
+        message.role === 'assistant'
+          ? 'Пенёк'
+          : message.user?.displayName && message.user.displayName !== message.user.vkId
+            ? message.user.displayName
+            : (message.authorName ?? 'Участник'),
+      replyToAuthorName: message.replyToAuthorName,
+      replyToText: message.replyToText,
+      attachments: parseAttachmentTypes(message.attachments),
+    }));
+
+    return {
+      messages,
+      hasMore,
+      oldestAvailable: oldest?.createdAt ?? null,
+    };
   }
 
   async getProposalHistoryForQuestion(
@@ -170,6 +302,7 @@ export class MemoryService {
     query: string,
   ): Promise<
     | {
+        id: string;
         speaker: string;
         authorId: string;
         content: string;
@@ -195,6 +328,7 @@ export class MemoryService {
       .slice(0, 10)
       .reverse()
       .map((message) => ({
+        id: message.id,
         speaker:
           message.user?.displayName && message.user.displayName !== message.user.vkId
             ? message.user.displayName
@@ -217,7 +351,7 @@ export class MemoryService {
       take: 200,
     });
 
-    return messages.reverse().map((message) => ({
+    return messages.toReversed().map((message) => ({
       role: message.role,
       content: message.content,
       createdAt: message.createdAt,

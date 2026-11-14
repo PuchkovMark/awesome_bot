@@ -60,10 +60,28 @@ model Message {
   provider       String? // which AI provider generated it (optional)
   tokens         Int? // token count if available
   metadata       String? // extensible metadata (JSON as string for SQLite compatibility)
-  createdAt      DateTime     @default(now())
 
+  vkMessageId           Int?
+  conversationMessageId Int?
+  sentAt                DateTime?
+  fromId                Int?
+  authorName            String?
+
+  replyToVkMessageId           Int?
+  replyToConversationMessageId Int?
+  replyToFromId                Int?
+  replyToAuthorName            String?
+  replyToText                  String?
+  attachments                  String? // JSON array of attachment types
+
+  createdAt DateTime @default(now())
+
+  @@unique([conversationId, conversationMessageId])
   @@index([conversationId, createdAt])
+  @@index([conversationId, sentAt])
+  @@index([conversationId, conversationMessageId])
   @@index([conversationId, role, createdAt])
+  @@index([conversationId, replyToConversationMessageId])
   @@index([userId, conversationId, createdAt])
 }
 
@@ -136,37 +154,39 @@ model UserSettings {
 }
 
 model ChatSettings {
-  id                     String       @id @default(cuid())
-  conversationId         String       @unique
-  conversation           Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  mode                   String       @default("normal")
-  imageAccess            String       @default("admins_only")
-  welcomeEnabled         Boolean      @default(false)
-  welcomeText            String       @default("Добро пожаловать, {name}! Рады видеть тебя в беседе.")
-  questionnaireEnabled   Boolean      @default(false)
-  questionnaireQuestions String       @default("[\"Сколько лет?\",\"Как к тебе обращаться? (Имя или позывной?)\",\"Работаешь или учишься?\",\"На кого/кем?\",\"Семейное положение: в поиске своего счастья или уже есть вторая половинка?\",\"Сколько в ВРН?\",\"Где любишь гулять?\",\"Кофе или чай?\",\"Какие хобби?\",\"Есть любимые фильмы?\",\"Скинь пару любимых песен.\",\"Ты за активный отдых или лучше фильмец дома глянуть?\",\"Как относишься к алкоголю?\",\"50/50 на первом свидании норм?\",\"Что ждёшь от этой конфы?\",\"Какой MBTI? Ссылка на тест: https://www.16personalities.com/ru\"]")
-  personality            String       @default("chipsik")
-  systemPrompt           String?
-  personalitySettings    String       @default("{}")
-  allowPersonalityChange Boolean      @default(false)
-  funAutoReactions       Boolean      @default(false)
-  funAutoReactionAt      DateTime?
-  funAutoIntervalSeconds Int          @default(300)
-  funAutoProbability     Int          @default(10)
-  funSettings            String       @default("{}")
-  memeDaySettings        String       @default("{}")
-  memeDayWeeklyEnabled   Boolean      @default(false)
-  locationName           String?
-  locationLatitude       Float?
-  locationLongitude      Float?
-  locationCountry        String?
-  locationRegion         String?
-  locationTimeZone       String?
-  timeZone               String?
-  memoryEnabled          Boolean      @default(true)
-  autoMemoryEnabled      Boolean      @default(true)
-  createdAt              DateTime     @default(now())
-  updatedAt              DateTime     @updatedAt
+  id                      String       @id @default(cuid())
+  conversationId          String       @unique
+  conversation            Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  mode                    String       @default("normal")
+  imageAccess             String       @default("admins_only")
+  welcomeEnabled          Boolean      @default(false)
+  welcomeText             String       @default("Добро пожаловать, {name}! Рады видеть тебя в беседе.")
+  questionnaireEnabled    Boolean      @default(false)
+  questionnaireQuestions  String       @default("[\"Сколько лет?\",\"Как к тебе обращаться? (Имя или позывной?)\",\"Работаешь или учишься?\",\"На кого/кем?\",\"Семейное положение: в поиске своего счастья или уже есть вторая половинка?\",\"Сколько в ВРН?\",\"Где любишь гулять?\",\"Кофе или чай?\",\"Какие хобби?\",\"Есть любимые фильмы?\",\"Скинь пару любимых песен.\",\"Ты за активный отдых или лучше фильмец дома глянуть?\",\"Как относишься к алкоголю?\",\"50/50 на первом свидании норм?\",\"Что ждёшь от этой конфы?\",\"Какой MBTI? Ссылка на тест: https://www.16personalities.com/ru\"]")
+  personality             String       @default("chipsik")
+  systemPrompt            String?
+  personalitySettings     String       @default("{}")
+  allowPersonalityChange  Boolean      @default(false)
+  funAutoReactions        Boolean      @default(false)
+  funAutoReactionAt       DateTime?
+  funAutoIntervalSeconds  Int          @default(300)
+  funAutoProbability      Int          @default(10)
+  funSettings             String       @default("{}")
+  memeDaySettings         String       @default("{}")
+  memeDayWeeklyEnabled    Boolean      @default(false)
+  locationName            String?
+  locationLatitude        Float?
+  locationLongitude       Float?
+  locationCountry         String?
+  locationRegion          String?
+  locationTimeZone        String?
+  timeZone                String?
+  memoryEnabled           Boolean      @default(true)
+  autoMemoryEnabled       Boolean      @default(true)
+  membershipTrackingSince DateTime     @default(now())
+  membershipLastSyncDay   String?
+  createdAt               DateTime     @default(now())
+  updatedAt               DateTime     @updatedAt
 }
 
 model Reminder {
@@ -251,6 +271,47 @@ model ConversationMember {
   @@unique([conversationId, vkUserId])
   @@index([conversationId, isPresent])
   @@index([conversationId, profileCompleted, profileUpdatedAt])
+}
+
+model MembershipEvent {
+  id             String   @id @default(cuid())
+  conversationId String
+  memberId       String
+  memberType     String // user | community (communities and bots)
+  type           String // join | leave
+  eventId        String
+  source         String // chat_invite_user | chat_invite_user_by_link | chat_invite_user_by_message_request | chat_kick_user
+  actorId        String?
+  occurredAt     DateTime
+  createdAt      DateTime @default(now())
+
+  @@unique([conversationId, eventId])
+  @@index([conversationId, occurredAt])
+  @@index([conversationId, memberId, occurredAt])
+  @@index([conversationId, type, occurredAt])
+}
+
+model DigestJob {
+  id                    String    @id @default(cuid())
+  conversationId        String
+  userId                String
+  activeKey             String?   @unique
+  status                String    @default("pending")
+  requestedCount        Int?
+  rangeFrom             DateTime?
+  rangeTo               DateTime?
+  maxDigestChars        Int       @default(15000)
+  messageId             Int?
+  conversationMessageId Int?
+  digests               String?
+  result                String?
+  error                 String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  completedAt           DateTime?
+
+  @@index([conversationId, userId])
+  @@index([status, updatedAt])
 }
 
 model FunPreference {

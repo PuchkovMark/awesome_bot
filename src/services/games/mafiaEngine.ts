@@ -143,7 +143,7 @@ export function shuffleRoles(
     if (!Number.isInteger(swapIndex) || swapIndex < 0 || swapIndex > index) {
       throw new Error('Источник случайных чисел вернул индекс вне диапазона.');
     }
-    [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex]!, shuffled[index]!];
+    [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
   }
   return shuffled;
 }
@@ -216,12 +216,15 @@ export function tallyMafiaVotes(
   const highest = Math.max(0, ...Object.values(counts));
   const leaders =
     highest === 0 ? [] : Object.keys(counts).filter((targetId) => counts[targetId] === highest);
-  return { counts, leaders, eliminatedId: leaders.length === 1 ? leaders[0]! : null };
+  return { counts, leaders, eliminatedId: leaders.length === 1 ? leaders[0] : null };
 }
 
 export function determineMafiaWinner(players: readonly MafiaPlayerState[]): MafiaFaction | null {
-  const alive = players.filter((player) => player.alive && player.role !== null);
-  const mafia = alive.filter((player) => mafiaFaction(player.role!) === 'mafia').length;
+  const alive = players.filter(
+    (player): player is MafiaPlayerState & { role: MafiaRole } =>
+      player.alive && player.role !== null,
+  );
+  const mafia = alive.filter((player) => mafiaFaction(player.role) === 'mafia').length;
   const maniac = alive.filter((player) => player.role === 'maniac').length;
   if (alive.length === 0) return null;
   if (mafia === 0 && maniac === 0) return 'town';
@@ -255,11 +258,11 @@ export function resolveNightActions(
     }
   }
   const mostMafiaVotes = Math.max(0, ...mafiaCounts.values());
-  const mafiaTargets = [...mafiaCounts.entries()]
+  const mafiaTargets = [...mafiaCounts]
     .filter(([, count]) => count === mostMafiaVotes && count > 0)
     .map(([targetId]) => targetId);
   const attacks = new Set<string>();
-  if (mafiaTargets.length === 1) attacks.add(mafiaTargets[0]!);
+  if (mafiaTargets.length === 1) attacks.add(mafiaTargets[0]);
   for (const [actorId, action] of allActions) {
     if (
       active(actorId) &&
@@ -288,7 +291,7 @@ export function resolveNightActions(
         {
           actorId,
           targetId: action.targetId,
-          result: mafiaFaction(target.role!) === 'mafia' ? 'мафия' : 'не мафия',
+          result: mafiaFaction(target.role) === 'mafia' ? 'мафия' : 'не мафия',
         },
       ];
     }

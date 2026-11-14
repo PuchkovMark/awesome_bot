@@ -114,7 +114,7 @@ function isRetryableUploadError(error: unknown): boolean {
  * Отправляет текст и вложения через VK API и отслеживает исходящие сообщения бота.
  */
 export class SenderService {
-  private vk: VK;
+  private readonly vk: VK;
   private readonly sentConversationMessages = new Map<number, Set<number>>();
   private readonly maxTrackedMessagesPerPeer = 1000;
 
@@ -181,7 +181,8 @@ export class SenderService {
         if (typeof result === 'number' && result > 0) {
           this.trackSentMessage(peerId, result);
         } else if (Array.isArray(result)) {
-          for (const message of result) {
+          for (const rawMessage of result) {
+            const message: unknown = rawMessage;
             if (
               typeof message === 'object' &&
               message !== null &&
@@ -488,7 +489,7 @@ export class SenderService {
             { peerId, status, code, attempt: attempt + 1 },
             'VK photo upload request failed',
           );
-          throw new Error(`VK photo upload failed${status ? ` (${status})` : ''}`);
+          throw new Error(`VK photo upload failed${status ? ` (${status})` : ''}`, { cause: err });
         }
         const uploaded = parsePhotoUploadResponse(uploadData);
         if (!uploaded) {

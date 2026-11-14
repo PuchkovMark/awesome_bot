@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 
 const secretPattern =
-  /(?:парол\p{L}*|password|api[\s_-]?key|ключ\p{L}*\s+api|токен\p{L}*|access[\s_-]?token|token(?:s)?|secret(?:s)?|секрет\p{L}*|credential\p{L}*|ssh[\s_-]?key|-----BEGIN [A-Z ]*PRIVATE KEY-----|sk-[A-Za-z0-9]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[A-Z0-9]{16}|AIza[A-Za-z0-9_-]{30,}|vk1\.a\.[A-Za-z0-9._-]+)/iu;
+  /(?:парол\p{L}*|password|api[\s_-]?key|ключ\p{L}*\s+api|токен\p{L}*|access[\s_-]?token|token(?:s)?|secret(?:s)?|секрет\p{L}*|credential\p{L}*|ssh[\s_-]?key|-----BEGIN [A-Z ]*PRIVATE KEY-----|sk-[A-Z0-9]{20,}|gh[pousr]_[A-Z0-9]{20,}|AKIA[A-Z0-9]{16}|AIza[A-Z0-9_-]{30,}|vk1\.a\.[A-Z0-9._-]+)/iu;
 const sensitivePattern =
   /(?:здоров\p{L}*|болезн\p{L}*|диагноз\p{L}*|лечен\p{L}*|лекарств\p{L}*|медицин\p{L}*|инвалид\p{L}*|беремен\p{L}*|сексуальн\p{L}*\s+ориентац\p{L}*|религи\p{L}*|вероисповедан\p{L}*|атеист\p{L}*|политическ\p{L}*|политическ\p{L}*\s+взгляд\p{L}*|этническ\p{L}*|национальност\p{L}*|расов\p{L}*|биометр\p{L}*|отпечаток\s+пальц\p{L}*|health|illness|diagnos\p{L}*|medicat\p{L}*|medical|pregnan\p{L}*|religio\p{L}*|political\s+views|ethnicit\p{L}*|sexual\s+orientat\p{L}*|biometric\p{L}*)/iu;
 const firstPersonPattern =
@@ -78,7 +78,7 @@ export function shouldConsiderAutomaticMemory(text: string): boolean {
 }
 
 export function normalizeMemoryContent(text: string): string {
-  return text.normalize('NFKC').toLocaleLowerCase('ru-RU').replace(/\s+/gu, ' ').trim();
+  return text.normalize('NFKC').toLocaleLowerCase('ru-RU').replaceAll(/\s+/gu, ' ').trim();
 }
 
 export function memoryFingerprint(text: string): string {

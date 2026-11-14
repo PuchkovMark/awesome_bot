@@ -267,7 +267,7 @@ export class MemeService {
       take: isWeekly ? 100 : 50,
     });
     const recent = messages
-      .reverse()
+      .toReversed()
       .filter(
         ({ content }) =>
           !/(?:не\s+(?:шути|мемь|цитируй|публикуй|используй|использовать)|не\s+хочу.*(?:мем|шутк|цитат)|не\s+для\s+(?:мема|шуток|публикации)|личн(?:ое|ая|ые)|конфиденциальн|парол[ья]|паспорт|диагноз|здоровь|врач|больниц|номер\s+телефон|домашний\s+адрес)/iu.test(
@@ -331,20 +331,17 @@ export class MemeService {
     const recentFormats = previous.map(({ kind }) => kind).join(', ') || 'нет';
     const feedbackSummary = previous
       .flatMap(({ votes }) => votes.map(({ value }) => value))
-      .reduce(
-        (counts, value) => {
-          counts[value] = (counts[value] ?? 0) + 1;
-          return counts;
-        },
-        {} as Record<string, number>,
-      );
+      .reduce<Record<string, number>>((counts, value) => {
+        counts[value] = (counts[value] ?? 0) + 1;
+        return counts;
+      }, {});
     const context = selectedMessages
       .map((message) => {
         const clean = message.content
-          .replace(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/giu, '[скрытый контакт]')
-          .replace(/(?:https?:\/\/|www\.)\S+/giu, '[ссылка]')
-          .replace(/\+?\d[\d\s()-]{8,}\d/gu, '[скрытый номер]')
-          .replace(/\s+/gu, ' ')
+          .replaceAll(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/giu, '[скрытый контакт]')
+          .replaceAll(/(?:https?:\/\/|www\.)\S+/giu, '[ссылка]')
+          .replaceAll(/\+?\d[\d\s()-]{8,}\d/gu, '[скрытый номер]')
+          .replaceAll(/\s+/gu, ' ')
           .trim()
           .slice(0, 500);
         if (!clean) return '';

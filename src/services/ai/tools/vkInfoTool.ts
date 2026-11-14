@@ -36,6 +36,7 @@ export type Participant = {
   is_owner: boolean | null;
   joined_at: string | null;
   invited_by: number | null;
+  profile: Record<string, unknown> | null;
 };
 
 export type ParticipantPage = { count: number; items: Participant[] };
@@ -71,7 +72,7 @@ function timestamp(value: unknown): string | null {
 }
 
 function normalize(value: string): string {
-  return value.normalize('NFKC').toLocaleLowerCase('ru-RU').replace(/\s+/gu, ' ').trim();
+  return value.normalize('NFKC').toLocaleLowerCase('ru-RU').replaceAll(/\s+/gu, ' ').trim();
 }
 
 export function participantPage(value: unknown): ParticipantPage {
@@ -114,6 +115,7 @@ export function participantPage(value: unknown): ParticipantPage {
       is_owner: flag(item.is_owner),
       joined_at: timestamp(item.join_date),
       invited_by: integer(item.invited_by),
+      profile: profile ?? null,
     };
   });
   return { count, items };
@@ -123,7 +125,7 @@ function conversationInfo(value: unknown, peerId: number): Record<string, unknow
   if (!isRecord(value) || !Array.isArray(value.items) || value.items.length !== 1) {
     throw new Error('VK did not return the current conversation');
   }
-  const conversation = value.items[0];
+  const conversation: unknown = value.items[0];
   if (
     !isRecord(conversation) ||
     !isRecord(conversation.peer) ||

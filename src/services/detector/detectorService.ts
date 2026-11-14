@@ -20,8 +20,8 @@ const memberProfileCommands = new Set([
 function normalizeText(text: string): string {
   return text
     .normalize('NFKC')
-    .replace(/[\u200B-\u200D\uFEFF]/g, '')
-    .replace(/ё/gi, 'е')
+    .replaceAll(/[\u200B-\u200D\uFEFF]/g, '')
+    .replaceAll(/ё/gi, 'е')
     .toLowerCase()
     .trim();
 }
@@ -32,6 +32,8 @@ function stripBotAddressPrefix(text: string): string {
 
   const groupIdMatch = config.VK_GROUP_ID.trim().match(/^(?:club|public)?(\d+)$/i);
   if (groupIdMatch?.[1]) {
+    // groupIdMatch[1] состоит только из цифр и проверен регулярным выражением выше.
+    // eslint-disable-next-line security/detect-non-literal-regexp
     const mentionPattern = new RegExp(
       `^\\s*(?:@(?:club|public)?${groupIdMatch[1]}\\b|\\[(?:club|public)?${groupIdMatch[1]}\\|[^\\]]+\\])[,!:;]?\\s*`,
       'iu',
@@ -69,6 +71,8 @@ export class DetectorService {
     const groupId = config.VK_GROUP_ID.trim();
     if (
       groupId &&
+      // groupId содержит только цифры и проверен регулярным выражением выше.
+      // eslint-disable-next-line security/detect-non-literal-regexp
       new RegExp(`(?:@(?:club|public)?${groupId}\\b|\\[(?:club|public)?${groupId}\\|)`, 'i').test(
         text,
       )

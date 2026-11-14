@@ -57,7 +57,7 @@ function parseSettingsPatch(value: string): Partial<FunSettings> {
   for (const key of ['intensity', 'sarcasm', 'absurdity'] as const) {
     if (record[key] !== undefined) {
       if (typeof record[key] !== 'number' || !Number.isFinite(record[key])) {
-        throw new Error(`Параметр юмора «${key}» имеет некорректный формат.`);
+        throw new TypeError(`Параметр юмора «${key}» имеет некорректный формат.`);
       }
       result[key] = Math.max(0, Math.min(100, record[key]));
     }
@@ -65,7 +65,7 @@ function parseSettingsPatch(value: string): Partial<FunSettings> {
   for (const key of ['emojis', 'personalJokes', 'personalMemes'] as const) {
     if (record[key] !== undefined) {
       if (typeof record[key] !== 'boolean') {
-        throw new Error(`Параметр юмора «${key}» имеет некорректный формат.`);
+        throw new TypeError(`Параметр юмора «${key}» имеет некорректный формат.`);
       }
       result[key] = record[key];
     }

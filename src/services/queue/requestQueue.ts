@@ -8,23 +8,26 @@ import PQueue from 'p-queue';
  * Выполняет асинхронные задачи каждого пользователя последовательно, сохраняя порядок сообщений.
  */
 export class RequestQueue {
-  private queues: Map<string, PQueue> = new Map();
+  private readonly queues: Map<string, PQueue> = new Map();
 
   getQueueForUser(userId: string): PQueue {
-    if (!this.queues.has(userId)) {
-      this.queues.set(userId, new PQueue({ concurrency: 1 }));
+    let queue = this.queues.get(userId);
+    if (!queue) {
+      queue = new PQueue({ concurrency: 1 });
+      this.queues.set(userId, queue);
     }
-    return this.queues.get(userId)!;
+    return queue;
   }
 
   async add<T>(userId: string, fn: () => Promise<T>): Promise<T> {
     const q = this.getQueueForUser(userId);
     const result = q.add(fn) as Promise<T>;
-    void q.onIdle().then(() => {
+    void (async () => {
+      await q.onIdle();
       if (this.queues.get(userId) === q && q.size === 0 && q.pending === 0) {
         this.queues.delete(userId);
       }
-    });
+    })();
     return result;
   }
 }

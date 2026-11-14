@@ -101,6 +101,104 @@ export class SettingsService {
     });
   }
 
+  async setChatLocation(
+    conversationId: string,
+    location: {
+      name: string;
+      latitude: number;
+      longitude: number;
+      country?: string;
+      countryCode?: string;
+      region?: string;
+      timeZone?: string;
+    },
+  ): Promise<void> {
+    const settings = await this.getChatSettings(conversationId);
+    await prisma.chatSettings.update({
+      where: { id: settings.id },
+      data: {
+        locationName: location.name,
+        locationLatitude: location.latitude,
+        locationLongitude: location.longitude,
+        locationCountry: location.country ?? null,
+        locationRegion: location.region ?? null,
+        locationTimeZone: location.timeZone ? validateTimeZone(location.timeZone) : null,
+      },
+    });
+  }
+
+  async setUserLocation(
+    vkId: string,
+    location: {
+      name: string;
+      latitude: number;
+      longitude: number;
+      country?: string;
+      countryCode?: string;
+      region?: string;
+      timeZone?: string;
+    },
+  ): Promise<void> {
+    const settings = await this.getUserSettings(vkId);
+    await prisma.userSettings.update({
+      where: { id: settings.id },
+      data: {
+        locationName: location.name,
+        locationLatitude: location.latitude,
+        locationLongitude: location.longitude,
+        locationCountry: location.country ?? null,
+        locationRegion: location.region ?? null,
+        locationTimeZone: location.timeZone ? validateTimeZone(location.timeZone) : null,
+      },
+    });
+  }
+
+  async clearChatLocation(conversationId: string): Promise<void> {
+    const settings = await this.getChatSettings(conversationId);
+    await prisma.chatSettings.update({
+      where: { id: settings.id },
+      data: {
+        locationName: null,
+        locationLatitude: null,
+        locationLongitude: null,
+        locationCountry: null,
+        locationRegion: null,
+        locationTimeZone: null,
+      },
+    });
+  }
+
+  async clearUserLocation(vkId: string): Promise<void> {
+    const settings = await this.getUserSettings(vkId);
+    await prisma.userSettings.update({
+      where: { id: settings.id },
+      data: {
+        locationName: null,
+        locationLatitude: null,
+        locationLongitude: null,
+        locationCountry: null,
+        locationRegion: null,
+        locationTimeZone: null,
+      },
+    });
+  }
+
+  async clearChatTimeZone(conversationId: string): Promise<void> {
+    const settings = await this.getChatSettings(conversationId);
+    await prisma.chatSettings.update({
+      where: { id: settings.id },
+      data: { timeZone: null, locationTimeZone: null },
+    });
+  }
+
+  async clearUserTimeZone(vkId: string): Promise<void> {
+    const settings = await this.getUserSettings(vkId);
+    await prisma.userSettings.update({
+      where: { id: settings.id },
+      data: { timeZone: null, locationTimeZone: null },
+    });
+  }
+
   async updateChatSettings(
     conversationId: string,
     data: {

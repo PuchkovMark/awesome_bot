@@ -12,7 +12,7 @@ import { resolveReasoningEffort, TEXT_MODEL } from './effort.js';
  */
 export class OpenCodeProvider implements AIProvider {
   public readonly name = 'opencode';
-  private client: OpenAI;
+  private readonly client: OpenAI;
 
   constructor() {
     if (!config.OPENCODE_API_KEY)
@@ -35,12 +35,15 @@ export class OpenCodeProvider implements AIProvider {
       if (!effort) throw new Error(`Unsupported saved AI effort: ${savedEffort}`);
       return await sendChatCompletion(
         this.client,
-        TEXT_MODEL,
+        options?.model ?? TEXT_MODEL,
         this.name,
         messages,
         effort,
-        config.AI_MAX_OUTPUT_TOKENS,
-        options,
+        options?.maxOutputTokens ?? config.AI_MAX_OUTPUT_TOKENS,
+        {
+          ...options,
+          maxToolCalls: options?.maxToolCalls ?? config.AI_MAX_TOOL_CALLS,
+        },
         {
           'x-opencode-session': options?.sessionId
             ? `ses_${createHash('sha256').update(options.sessionId).digest('hex').slice(0, 32)}`

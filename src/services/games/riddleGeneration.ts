@@ -17,10 +17,10 @@ export function normalizeGameAnswer(value: string): string {
   return value
     .normalize('NFKC')
     .toLocaleLowerCase('ru-RU')
-    .replace(/[ё]/gu, 'е')
-    .replace(/[^\p{L}\p{N}\s]/gu, '')
+    .replaceAll('ё', 'е')
+    .replaceAll(/[^\p{L}\p{N}\s]/gu, '')
     .trim()
-    .replace(/\s+/gu, ' ');
+    .replaceAll(/\s+/gu, ' ');
 }
 
 export function getRiddleDifficulty(value: unknown): RiddleDifficulty {
