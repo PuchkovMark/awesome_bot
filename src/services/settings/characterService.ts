@@ -4,6 +4,7 @@ import { logger } from '../../logger/index.js';
 import {
   buildPersonalityInstructions,
   defaultPersonality,
+  isRetiredPersonalityId,
   normalizePersonalityId,
   personalities,
   parsePersonalitySettings,
@@ -481,6 +482,9 @@ export class CharacterService {
     const normalizedId = id.trim().toLowerCase();
     if (!/^[a-z0-9_-]{2,32}$/.test(normalizedId))
       throw new Error('ID должен содержать 2–32 латинских символа, цифр, _ или -.');
+    if (isRetiredPersonalityId(normalizedId)) {
+      throw new Error('Этот ID удалён и зарезервирован.');
+    }
     if (normalizePersonalityId(normalizedId) !== normalizedId) {
       throw new Error('Этот ID зарезервирован для совместимости со старым профилем.');
     }

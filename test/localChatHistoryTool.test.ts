@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import type { ParticipantResolution } from '../src/services/memory/memoryService.js';
 import { createLocalChatHistoryTool } from '../src/services/ai/tools/localChatHistoryTool.js';
 
 type TestMessage = {
@@ -34,10 +35,24 @@ function message(index: number, overrides: Partial<TestMessage> = {}): TestMessa
 }
 
 function createStore(messages: TestMessage[]) {
-  const requests: Array<{ before: Date; from?: Date; limit: number; excludeIds: string[] }> = [];
+  const requests: Array<{
+    before: Date;
+    from?: Date;
+    limit: number;
+    excludeIds: string[];
+    participantUserIds?: string[];
+    includeBot?: boolean;
+  }> = [];
   return {
     requests,
-    async getMessages(input: { before: Date; from?: Date; limit: number; excludeIds: string[] }) {
+    async getMessages(input: {
+      before: Date;
+      from?: Date;
+      limit: number;
+      excludeIds: string[];
+      participantUserIds?: string[];
+      includeBot?: boolean;
+    }) {
       requests.push(input);
       const excluded = new Set(input.excludeIds);
       const filtered = messages
@@ -62,6 +77,7 @@ function makeTool(
     defaultBefore?: Date;
     seen?: Set<string>;
     access?: Access;
+    resolution?: ParticipantResolution;
   } = {},
 ) {
   const store = createStore(messages);
@@ -72,6 +88,8 @@ function makeTool(
     ...(options.defaultBefore ? { defaultBefore: options.defaultBefore } : {}),
     seenMessageIds: seen,
     checkAccess: async () => options.access ?? { allowed: true },
+    resolveParticipants: async () =>
+      options.resolution ?? { participants: [], ambiguous: [], notFound: [] },
     getMessages: (input) => store.getMessages(input),
   });
   return { tool, requests: store.requests, seen };
@@ -118,7 +136,7 @@ test('get_local_chat_history does not repeat messages across calls', async () =>
   const secondIds: string[] = second.messages.map((item: { text: string }) => item.text);
 
   assert.equal(new Set([...firstIds, ...secondIds]).size, firstIds.length + secondIds.length);
-  assert.equal(seen.size, 7);
+  assert.equal(seen.size, 1);
 });
 
 test('get_local_chat_history enforces the call limit', async () => {
@@ -244,4 +262,73 @@ test('get_local_chat_history reports direct scope', async () => {
   const result = JSON.parse(await tool.execute({ limit: 10 }));
   assert.equal(result.scope, 'direct');
   assert.equal(result.context_messages, 0);
+});
+
+test('get_local_chat_history filters by participants and marks context messages', async () => {
+  const messages = [
+    message(1, { role: 'user', speaker: 'Иван', content: 'привет' }),
+    message(2, { role: 'assistant', speaker: 'Пенёк', content: 'здравствуйте' }),
+    message(3, { role: 'user', speaker: 'Мария', content: 'привет всем' }),
+  ];
+  const { tool, requests } = makeTool(messages, {
+    seen: new Set(['m2']),
+    resolution: {
+      participants: [
+        { kind: 'user', name: 'Иван', vkId: '1', dbUserId: 'db-1' },
+        { kind: 'bot', name: 'Пенёк' },
+      ],
+      ambiguous: [],
+      notFound: [],
+    },
+  });
+  const result = JSON.parse(await tool.execute({ participants: ['Иван', 'Пенёк'], limit: 10 }));
+  assert.equal(result.status, 'result');
+  assert.equal(result.participant_mode, true);
+  assert.deepEqual(result.participants, [
+    { kind: 'user', name: 'Иван', vkId: '1' },
+    { kind: 'bot', name: 'Пенёк' },
+  ]);
+  assert.deepEqual(requests[0]?.participantUserIds, ['db-1']);
+  assert.equal(requests[0]?.includeBot, true);
+  assert.equal(
+    result.messages.some((item: { in_context?: boolean }) => item.in_context),
+    true,
+  );
+});
+
+test('get_local_chat_history rejects participant filters in direct dialogs', async () => {
+  const { tool, requests } = makeTool([message(1)], { scope: 'direct' });
+  const result = JSON.parse(await tool.execute({ participants: ['Иван'] }));
+  assert.equal(result.status, 'not_executed');
+  assert.match(result.message, /групповой/u);
+  assert.equal(requests.length, 0);
+});
+
+test('get_local_chat_history reports ambiguous and missing participants', async () => {
+  const ambiguous = makeTool([message(1)], {
+    resolution: {
+      participants: [],
+      ambiguous: [
+        {
+          reference: 'Иван',
+          candidates: [
+            { kind: 'user', name: 'Иван', vkId: '1' },
+            { kind: 'user', name: 'Иван', vkId: '2' },
+          ],
+        },
+      ],
+      notFound: [],
+    },
+  });
+  const ambiguousResult = JSON.parse(await ambiguous.tool.execute({ participants: ['Иван'] }));
+  assert.equal(ambiguousResult.status, 'needs_clarification');
+  assert.equal(ambiguous.requests.length, 0);
+
+  const missing = makeTool([message(1)], {
+    resolution: { participants: [], ambiguous: [], notFound: ['Петя'] },
+  });
+  const missingResult = JSON.parse(await missing.tool.execute({ participants: ['Петя'] }));
+  assert.equal(missingResult.status, 'not_found');
+  assert.match(missingResult.message, /Петя/u);
+  assert.equal(missing.requests.length, 0);
 });

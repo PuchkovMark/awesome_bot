@@ -507,8 +507,8 @@ class GameService {
         conversationId,
       );
       switch (character.id) {
-        case 'joker':
-          return 'Ну что, смертные, внимание!';
+        case 'nikon':
+          return 'С миром начинаем.';
         case 'socrates':
           return 'Итак, друзья, зададим себе вопрос...';
         case 'max':

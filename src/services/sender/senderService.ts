@@ -402,7 +402,7 @@ export class SenderService {
     }
   }
 
-  private createSummaryKeyboard(selectedHours: 2 | 6, hasContinuations: boolean): string {
+  createSummaryKeyboard(selectedHours: 2 | 6, hasContinuations: boolean): string {
     return Keyboard.builder()
       .callbackButton({
         label: 'За 2 часа',
@@ -635,6 +635,7 @@ export class SenderService {
     text: string,
     options?: { replyTo?: number; conversationMessageId?: number },
   ): Promise<void> {
+    if (!text.trim()) throw new Error('Voice message must include text');
     const attachment = await this.uploadVoice(peerId, audio);
     await this.send(peerId, text, { ...options, attachment });
   }

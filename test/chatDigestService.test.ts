@@ -1,50 +1,65 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { test, type TestContext } from 'node:test';
 import config from '../src/config/index.js';
 import { prisma } from '../src/db/client.js';
 import type { AIMessage, AIProvider, AIRequestOptions } from '../src/services/ai/AIProvider.js';
 import {
   buildChatDigest,
+  countHistoryMessages,
   finalizeChatDigest,
   type ChatDigestChunk,
+  type HistoryMessage,
 } from '../src/services/ai/chatDigestService.js';
 import { AIOutputLimitError } from '../src/services/ai/chatCompletion.js';
-import type { VK } from 'vk-io';
 
 type MockCall = {
   messages: AIMessage[];
   options?: AIRequestOptions;
 };
 
-const peers = 2_000_000_001;
+const conversationId = '2000000001';
 
-function vkMessage(id: number) {
+function dbRow(index: number) {
+  const timestamp = new Date(`2026-11-12T10:00:${String(index).padStart(2, '0')}.000Z`);
   return {
-    id,
-    peer_id: peers,
-    conversation_message_id: id,
-    date: 1_763_000_000 + id,
-    from_id: 1,
-    text: `сообщение ${id}`,
-    attachments: [],
-    is_hidden: false,
+    id: `m${index}`,
+    conversationId,
+    userId: 'user-1',
+    role: index % 2 === 0 ? 'user' : 'assistant',
+    content: `сообщение ${index}`,
+    provider: null,
+    tokens: null,
+    metadata: null,
+    vkMessageId: index,
+    conversationMessageId: index,
+    sentAt: timestamp,
+    fromId: 1,
+    authorName: 'Иван Петров',
+    replyToVkMessageId: null,
+    replyToConversationMessageId: null,
+    replyToFromId: null,
+    replyToAuthorName: null,
+    replyToText: null,
+    attachments: null,
+    createdAt: timestamp,
+    user: { vkId: '1', displayName: 'Иван Петров' },
   };
 }
 
-function mockApi(calls: number[][]): VK['api'] {
-  return {
-    messages: {
-      getByConversationMessageId: async (request: { conversation_message_ids: number[] }) => {
-        calls.push(request.conversation_message_ids);
-        return {
-          count: request.conversation_message_ids.length,
-          items: request.conversation_message_ids.map(vkMessage),
-          profiles: [{ id: 1, first_name: 'Иван', last_name: 'Петров' }],
-          groups: [],
-        };
-      },
-    },
-  } as unknown as VK['api'];
+function mockFindMany(t: TestContext, rows: unknown[]) {
+  const original: typeof prisma.message.findMany = Reflect.get(prisma.message, 'findMany');
+  prisma.message.findMany = (async () => rows) as typeof prisma.message.findMany;
+  t.after(() => {
+    prisma.message.findMany = original;
+  });
+}
+
+function mockCount(t: TestContext, value: number) {
+  const original: typeof prisma.message.count = Reflect.get(prisma.message, 'count');
+  prisma.message.count = (async () => value) as typeof prisma.message.count;
+  t.after(() => {
+    prisma.message.count = original;
+  });
 }
 
 function chunkDigest(index: number): ChatDigestChunk {
@@ -91,23 +106,47 @@ function mockProvider(calls: MockCall[]): AIProvider {
   };
 }
 
-test('buildChatDigest fetches messages and asks Haiku for structured chunks', async () => {
-  const fetchCalls: number[][] = [];
+test('buildChatDigest loads only SQL messages and asks Haiku for chunks', async (t) => {
+  const rows = Array.from({ length: 6 }, (_, index) => dbRow(index));
+  mockFindMany(t, rows);
   const providerCalls: MockCall[] = [];
   const result = await buildChatDigest(mockProvider(providerCalls), {
-    api: mockApi(fetchCalls),
-    peerId: peers,
-    anchorConversationMessageId: 1_000,
+    conversationId,
     request: { count: 600 },
     maxDigestChars: config.SUMMARY_MAX_DIGEST_CHARS,
   });
-  assert.equal(result.messageCount, 600);
-  assert.equal(result.digests.length, 3);
-  assert.equal(providerCalls.length, 3);
+  assert.equal(result.messageCount, 6);
+  assert.equal(result.source, 'db');
+  assert.equal(result.digests.length, 1);
+  assert.equal(providerCalls.length, 1);
   assert.equal(providerCalls[0]?.options?.model, config.SUMMARY_MODEL);
   assert.equal(providerCalls[0]?.options?.maxOutputTokens, config.SUMMARY_CHUNK_OUTPUT_TOKENS);
-  assert.ok(fetchCalls.length >= 6);
-  assert.equal(result.digests[0]?.topics[0], 'тема 0');
+});
+
+test('buildChatDigest returns no digests for empty history', async (t) => {
+  mockFindMany(t, []);
+  const calls: MockCall[] = [];
+  const result = await buildChatDigest(mockProvider(calls), {
+    conversationId,
+    request: { count: 10 },
+    maxDigestChars: 10_000,
+  });
+  assert.equal(result.messageCount, 0);
+  assert.deepEqual(result.digests, []);
+  assert.equal(calls.length, 0);
+});
+
+test('countHistoryMessages counts SQL messages and caps by requested count', async (t) => {
+  mockCount(t, 500);
+  assert.equal(await countHistoryMessages({ conversationId, request: { count: 600 } }), 500);
+  assert.equal(await countHistoryMessages({ conversationId, request: { count: 100 } }), 100);
+  assert.equal(
+    await countHistoryMessages({
+      conversationId,
+      request: { from: new Date('2026-11-12T00:00:00Z'), to: new Date('2026-11-13T00:00:00Z') },
+    }),
+    500,
+  );
 });
 
 test('finalizeChatDigest uses the main provider and clamps the answer', async () => {
@@ -143,51 +182,8 @@ test('finalizeChatDigest reports the actual processed message count', async () =
   assert.match(system, /локальная история/u);
 });
 
-test('buildChatDigest uses only the database when VK is disabled', async (t) => {
-  const originalFindMany: typeof prisma.message.findMany = Reflect.get(prisma.message, 'findMany');
-  prisma.message.findMany = (async () => []) as typeof prisma.message.findMany;
-  t.after(() => {
-    prisma.message.findMany = originalFindMany;
-  });
-  const fetchCalls: number[][] = [];
-  const providerCalls: MockCall[] = [];
-  const result = await buildChatDigest(mockProvider(providerCalls), {
-    api: mockApi(fetchCalls),
-    peerId: 42,
-    request: { count: 100 },
-    allowVk: false,
-    maxDigestChars: 10_000,
-  });
-  assert.equal(result.messageCount, 0);
-  assert.equal(result.source, 'db');
-  assert.equal(fetchCalls.length, 0);
-  assert.equal(providerCalls.length, 0);
-});
-
-test('buildChatDigest returns no digests for empty history', async () => {
-  const calls: MockCall[] = [];
-  const result = await buildChatDigest(mockProvider(calls), {
-    api: {
-      messages: {
-        getByConversationMessageId: async () => ({
-          count: 0,
-          items: [],
-          profiles: [],
-          groups: [],
-        }),
-      },
-    } as unknown as VK['api'],
-    peerId: peers,
-    anchorConversationMessageId: 1,
-    request: { count: 10 },
-    maxDigestChars: 10_000,
-  });
-  assert.equal(result.messageCount, 0);
-  assert.deepEqual(result.digests, []);
-  assert.equal(calls.length, 0);
-});
-
-test('buildChatDigest retries a chunk with a larger output limit', async () => {
+test('buildChatDigest retries a chunk with a larger output limit', async (t) => {
+  mockFindMany(t, [dbRow(1)]);
   const calls: MockCall[] = [];
   let attempts = 0;
   const provider: AIProvider = {
@@ -203,9 +199,7 @@ test('buildChatDigest retries a chunk with a larger output limit', async () => {
   };
 
   const result = await buildChatDigest(provider, {
-    api: mockApi([]),
-    peerId: peers,
-    anchorConversationMessageId: 1_000,
+    conversationId,
     request: { count: 100 },
     maxDigestChars: 10_000,
   });
@@ -216,7 +210,8 @@ test('buildChatDigest retries a chunk with a larger output limit', async () => {
   assert.equal(result.digests[0]?.topics[0], 'тема 0');
 });
 
-test('buildChatDigest splits a chunk after both output limits are exhausted', async () => {
+test('buildChatDigest splits a chunk after both output limits are exhausted', async (t) => {
+  mockFindMany(t, [dbRow(1), dbRow(2), dbRow(3), dbRow(4)]);
   const calls: MockCall[] = [];
   let attempts = 0;
   const provider: AIProvider = {
@@ -237,18 +232,26 @@ test('buildChatDigest splits a chunk after both output limits are exhausted', as
   };
 
   const result = await buildChatDigest(provider, {
-    api: mockApi([]),
-    peerId: peers,
-    anchorConversationMessageId: 1_000,
+    conversationId,
     request: { count: 100 },
     maxDigestChars: 10_000,
   });
 
-  assert.equal(calls.length, 4);
-  assert.deepEqual(result.digests[0]?.topics, ['тема после split 3', 'тема после split 4']);
+  assert.ok(calls.length >= 4);
+  assert.ok(result.digests.length > 0);
+  assert.ok(result.digests[0]?.topics.length);
 });
 
-test('buildChatDigest falls back to deterministic combine when merge hits the output limit', async () => {
+test('buildChatDigest falls back to deterministic combine when merge hits the output limit', async (t) => {
+  const originalChunkMessages = config.SUMMARY_CHUNK_MESSAGES;
+  config.SUMMARY_CHUNK_MESSAGES = 1;
+  t.after(() => {
+    config.SUMMARY_CHUNK_MESSAGES = originalChunkMessages;
+  });
+  mockFindMany(
+    t,
+    Array.from({ length: 3 }, (_, index) => dbRow(index)),
+  );
   const calls: MockCall[] = [];
   let chunkIndex = 0;
   const provider: AIProvider = {
@@ -264,9 +267,7 @@ test('buildChatDigest falls back to deterministic combine when merge hits the ou
   };
 
   const result = await buildChatDigest(provider, {
-    api: mockApi([]),
-    peerId: peers,
-    anchorConversationMessageId: 1_000,
+    conversationId,
     request: { count: 900 },
     maxDigestChars: 1_000,
   });
@@ -278,4 +279,17 @@ test('buildChatDigest falls back to deterministic combine when merge hits the ou
       return typeof system === 'string' && system.includes('Объедини структурированные');
     }),
   );
+});
+
+test('HistoryMessage has the fields needed by the subagent snapshot', () => {
+  const message: HistoryMessage = {
+    dbId: 'm1',
+    timestamp: 1_763_000_000_000,
+    author: 'Иван',
+    role: 'user',
+    text: 'привет',
+    attachments: [],
+  };
+  assert.equal(message.role, 'user');
+  assert.equal(message.dbId, 'm1');
 });

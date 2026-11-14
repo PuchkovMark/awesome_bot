@@ -2,6 +2,7 @@ import { prisma } from '../../db/client.js';
 import type { Prisma } from '@prisma/client';
 import config from '../../config/index.js';
 import { logger } from '../../logger/index.js';
+import { matchesVkPersonName, parseVkUserReference } from '../vk/vkMention.js';
 
 export type StoredMessage = {
   id: string;
@@ -29,6 +30,49 @@ export type HistoryPage = {
   hasMore: boolean;
   oldestAvailable: Date | null;
 };
+
+export type ResolvedParticipant =
+  { kind: 'user'; name: string; vkId: string; dbUserId: string } | { kind: 'bot'; name: string };
+
+export type ParticipantCandidate = {
+  kind: 'user' | 'bot';
+  name: string;
+  vkId?: string;
+};
+
+export type ParticipantResolution = {
+  participants: ResolvedParticipant[];
+  ambiguous: Array<{ reference: string; candidates: ParticipantCandidate[] }>;
+  notFound: string[];
+};
+
+export const MAX_PARTICIPANTS = 5;
+
+function participantCondition(
+  participantUserIds: readonly string[] | undefined,
+  includeBot: boolean | undefined,
+): Prisma.MessageWhereInput {
+  const userIds = participantUserIds ?? [];
+  if (userIds.length === 0 && !includeBot) {
+    return { role: { in: ['user', 'assistant'] } };
+  }
+  if (includeBot && userIds.length > 0) {
+    return {
+      OR: [{ role: 'assistant' }, { role: 'user', userId: { in: [...userIds] } }],
+    };
+  }
+  if (includeBot) return { role: 'assistant' };
+  return { role: 'user', userId: { in: [...userIds] } };
+}
+
+function normalizedName(value: string): string {
+  return value.trim().toLocaleLowerCase('ru-RU');
+}
+
+function nameParts(value: string): [string, string] {
+  const [first = '', ...rest] = value.trim().split(/\s+/u);
+  return [first, rest.join(' ')];
+}
 
 const proposalAttributionQuestionPattern =
   /(?:^|[^\p{L}\p{N}])кто(?:$|[^\p{L}\p{N}])[\s\S]{0,100}предлож\p{L}*/iu;
@@ -220,6 +264,140 @@ export class MemoryService {
   }
 
   /**
+   * Находит авторов текущей беседы по именам, падежам или VK ID.
+   * Пенёк и текущее имя персонажа определяются как синтетический участник.
+   */
+  async resolveConversationParticipants(
+    conversationId: string,
+    references: readonly string[],
+    botNames: readonly string[] = [],
+  ): Promise<ParticipantResolution> {
+    const uniqueReferences = [
+      ...new Set(references.map((reference) => reference.trim()).filter(Boolean)),
+    ].slice(0, MAX_PARTICIPANTS);
+    if (uniqueReferences.length === 0) {
+      return { participants: [], ambiguous: [], notFound: [] };
+    }
+
+    const users = await prisma.user.findMany({
+      where: {
+        messages: {
+          some: { conversationId, role: 'user' },
+        },
+      },
+      select: { id: true, vkId: true, displayName: true },
+    });
+    const authorSamples = await prisma.message.findMany({
+      where: {
+        conversationId,
+        role: 'user',
+        userId: { in: users.map((user) => user.id) },
+      },
+      select: { userId: true, authorName: true },
+      orderBy: { createdAt: 'desc' },
+      distinct: ['userId'],
+    });
+    const authorNameByUser = new Map(
+      authorSamples.flatMap((sample) =>
+        sample.userId && sample.authorName ? [[sample.userId, sample.authorName] as const] : [],
+      ),
+    );
+    const userCandidates = users.map((user) => ({
+      kind: 'user' as const,
+      name:
+        user.displayName && user.displayName !== user.vkId
+          ? user.displayName
+          : (authorNameByUser.get(user.id) ?? user.vkId),
+      vkId: user.vkId,
+      dbUserId: user.id,
+    }));
+    const botAliases = new Set(
+      ['пенёк', 'пенек', 'пенечек', 'бот', 'bot', ...botNames.map(normalizedName)].filter(Boolean),
+    );
+    const botName = 'Пенёк';
+
+    const participants: ResolvedParticipant[] = [];
+    const ambiguous: ParticipantResolution['ambiguous'] = [];
+    const notFound: string[] = [];
+    const addParticipant = (participant: ResolvedParticipant): void => {
+      const key = participant.kind === 'bot' ? 'bot' : `user:${participant.dbUserId}`;
+      if (
+        !participants.some((existing) =>
+          existing.kind === 'bot'
+            ? key === 'bot'
+            : existing.kind === 'user' && `user:${existing.dbUserId}` === key,
+        )
+      ) {
+        participants.push(participant);
+      }
+    };
+
+    for (const reference of uniqueReferences) {
+      const parsed = parseVkUserReference(reference);
+      if (parsed?.kind === 'id') {
+        const matches = userCandidates.filter((user) => user.vkId === parsed.value);
+        if (matches.length === 1 && matches[0]) {
+          addParticipant({
+            kind: 'user',
+            name: matches[0].name,
+            vkId: matches[0].vkId,
+            dbUserId: matches[0].dbUserId,
+          });
+        } else if (matches.length > 1) {
+          ambiguous.push({
+            reference,
+            candidates: matches.map((user) => ({
+              kind: 'user',
+              name: user.name,
+              vkId: user.vkId,
+            })),
+          });
+        } else {
+          notFound.push(reference);
+        }
+        continue;
+      }
+
+      const nameReference = parsed?.kind === 'screenName' ? parsed.value : reference;
+      const normalized = normalizedName(nameReference);
+      const exactUsers = userCandidates.filter((user) => normalizedName(user.name) === normalized);
+      const inflectedUsers = userCandidates.filter((user) => {
+        const [first, last] = nameParts(user.name);
+        return matchesVkPersonName(first, last, nameReference);
+      });
+      const matchedUsers = exactUsers.length > 0 ? exactUsers : inflectedUsers;
+      const botMatch = botAliases.has(normalized);
+
+      if (botMatch || matchedUsers.length > 0) {
+        const candidates: ParticipantCandidate[] = [
+          ...(botMatch ? [{ kind: 'bot' as const, name: botName }] : []),
+          ...matchedUsers.map((user) => ({
+            kind: 'user' as const,
+            name: user.name,
+            vkId: user.vkId,
+          })),
+        ];
+        if (candidates.length > 1) {
+          ambiguous.push({ reference, candidates });
+        } else if (botMatch) {
+          addParticipant({ kind: 'bot', name: botName });
+        } else if (matchedUsers[0]) {
+          addParticipant({
+            kind: 'user',
+            name: matchedUsers[0].name,
+            vkId: matchedUsers[0].vkId,
+            dbUserId: matchedUsers[0].dbUserId,
+          });
+        }
+      } else {
+        notFound.push(reference);
+      }
+    }
+
+    return { participants, ambiguous, notFound };
+  }
+
+  /**
    * Возвращает страницу сохранённой истории текущей беседы или личного диалога.
    * В личном диалоге выборка дополнительно ограничивается текущим пользователем.
    */
@@ -230,6 +408,8 @@ export class MemoryService {
     from?: Date;
     limit: number;
     excludeIds?: readonly string[];
+    participantUserIds?: readonly string[];
+    includeBot?: boolean;
   }): Promise<HistoryPage> {
     const limit = Math.max(1, Math.min(50, params.limit));
     let userId: string | undefined;
@@ -241,7 +421,7 @@ export class MemoryService {
 
     const baseWhere: Prisma.MessageWhereInput = {
       conversationId: params.conversationId,
-      role: { in: ['user', 'assistant'] },
+      ...participantCondition(params.participantUserIds, params.includeBot),
       ...(userId ? { userId } : {}),
     };
     const excludeIds = [...new Set(params.excludeIds)].filter(Boolean);

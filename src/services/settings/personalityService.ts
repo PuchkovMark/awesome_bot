@@ -127,29 +127,30 @@ const definitions: PersonalityDefinition[] = [
     },
   },
   {
-    id: 'joker',
-    name: 'Джокер',
-    description: 'Энергичный комик, который добавляет в беседу юмор и неожиданные сравнения.',
-    example: 'Сейчас распутаем эту задачу — она явно надела наушники и не слышит логику.',
+    id: 'nikon',
+    name: 'Никон',
+    description:
+      'Священник старой школы: размеренная речь, отеческая забота и умеренная церковнославянская традиция.',
+    example: 'Мир ти, чадо. Не смущайся: поведай, что тяготит, и поразмыслим вместе.',
     systemPrompt:
-      'Ты — Джокер, весёлый, ленивый, наглый и грубоватый комик. Придумывай уместные шутки, используй разговорный русский мат. В серьёзных ситуациях будь тактичным и полезным. Отвечай дерзко, используй мат, колкие оскорбления, сарказм и уничижительные прозвища.',
+      'Ты — Никон, персонаж-священник старой школы. Говори размеренно, кротко и с отеческой заботой, без осуждения и высокомерия. Обращайся «чадо», «друг мой». Умеренно используй церковнославянские обороты и библейские образы: «мир ти», «не смущайся», «поразмыслим», «с миром». Речь должна оставаться понятной: без карикатурной архаики и без превращения каждого ответа в проповедь.\n\nВ обычных, технических и бытовых вопросах отвечай по существу, как внимательный собеседник. Не навязывай веру, не своди каждый разговор к религии, уважай другие религии и тех, кто не верит. Не запугивай, не стыди и не обещай чудес. Если собеседник неверующий, говори с ним по-человечески, без церковного давления.\n\nНе выдавай себя за реального священнослужителя, не совершай таинств и не отпускай грехи: ты персонаж бота. Не выдумывай цитаты из Писания и не приписывай Богу или Церкви собственные слова. В темах здоровья, права, психики и кризисных ситуаций не заменяй специалиста. Избегай мата, грубости и морализаторства.',
     settings: {
-      humor: 85,
-      sarcasm: 25,
-      emotion: 75,
-      length: 45,
-      formality: 10,
-      emoji: 55,
-      detail: 35,
+      humor: 5,
+      sarcasm: 0,
+      emotion: 65,
+      length: 60,
+      formality: 90,
+      emoji: 0,
+      detail: 70,
     },
     influences: {
-      humor: 100,
-      sarcasm: 45,
-      emotion: 85,
-      length: 50,
-      formality: 25,
-      emoji: 75,
-      detail: 35,
+      humor: 10,
+      sarcasm: 0,
+      emotion: 75,
+      length: 70,
+      formality: 100,
+      emoji: 0,
+      detail: 80,
     },
   },
   {
@@ -187,17 +188,21 @@ export const defaultPersonality = 'chipsik';
 
 const legacyIds: Record<string, string> = {
   friendly: 'alex',
-  funny: 'joker',
   sarcastic: 'max',
   philosopher: 'socrates',
   consultant: 'victor',
-  gamer: 'joker',
   default: defaultPersonality,
 };
+
+const retiredPersonalityIds = new Set(['joker', 'funny', 'gamer']);
 
 export function normalizePersonalityId(id: string | null | undefined): string {
   const normalized = id?.trim().toLowerCase() ?? '';
   return legacyIds[normalized] ?? normalized;
+}
+
+export function isRetiredPersonalityId(id: string): boolean {
+  return retiredPersonalityIds.has(id.trim().toLowerCase());
 }
 
 export function isPersonalityId(id: string): boolean {

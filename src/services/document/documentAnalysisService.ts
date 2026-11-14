@@ -1,7 +1,7 @@
-import axios from 'axios';
 import OpenAI from 'openai';
 import type { DocumentAttachment } from 'vk-io';
 import config from '../../config/index.js';
+import { downloadVkFile } from '../vk/vkFileDownload.js';
 
 const MAX_DOCUMENT_BYTES = 8 * 1024 * 1024;
 const FILE_TYPES: Record<string, { mimeType: string; type: 'pdf' | 'zip' | 'text' }> = {
@@ -25,6 +25,15 @@ const FILE_TYPES: Record<string, { mimeType: string; type: 'pdf' | 'zip' | 'text
   rtf: { mimeType: 'application/rtf', type: 'text' },
   txt: { mimeType: 'text/plain', type: 'text' },
 };
+
+export const SUPPORTED_DOCUMENT_EXTENSIONS = Object.freeze(Object.keys(FILE_TYPES));
+
+/**
+ * Проверяет, поддерживается ли документ сервисом анализа.
+ */
+export function isSupportedDocumentExtension(extension: string | undefined): boolean {
+  return extension !== undefined && Object.hasOwn(FILE_TYPES, extension.toLocaleLowerCase('en-US'));
+}
 
 /**
  * Извлекает текст из поддерживаемых документов и готовит его к анализу языковой моделью.
@@ -54,37 +63,7 @@ export class DocumentAnalysisService {
       throw new Error('Document exceeds the 8 MB size limit');
     }
 
-    const parsedUrl = new URL(document.url);
-    const hostname = parsedUrl.hostname.toLowerCase();
-    const allowedHost =
-      hostname === 'vk.com' ||
-      hostname.endsWith('.vk.com') ||
-      hostname.endsWith('.userapi.com') ||
-      hostname.endsWith('.userapi.ru') ||
-      hostname.endsWith('.vkuserphoto.ru') ||
-      hostname.endsWith('.vkuserphoto.com') ||
-      hostname.endsWith('.vkuserphoto.net');
-    if (
-      parsedUrl.protocol !== 'https:' ||
-      !allowedHost ||
-      parsedUrl.username ||
-      parsedUrl.password ||
-      (parsedUrl.port && parsedUrl.port !== '443')
-    ) {
-      throw new Error('VK document URL has an unsupported host');
-    }
-
-    const response = await axios.get<ArrayBuffer>(parsedUrl.toString(), {
-      responseType: 'arraybuffer',
-      timeout: 20_000,
-      maxContentLength: MAX_DOCUMENT_BYTES,
-      maxBodyLength: MAX_DOCUMENT_BYTES,
-      maxRedirects: 0,
-    });
-    const data = Buffer.from(response.data);
-    if (data.length === 0 || data.length > MAX_DOCUMENT_BYTES) {
-      throw new Error('Document is empty or exceeds the 8 MB size limit');
-    }
+    const data = await downloadVkFile(document.url, MAX_DOCUMENT_BYTES);
     this.validateFile(data, fileType.type);
 
     const fileData = `data:${fileType.mimeType};base64,${data.toString('base64')}`;

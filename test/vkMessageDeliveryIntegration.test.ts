@@ -1,14 +1,17 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { ChatSettings, UserSettings } from '@prisma/client';
+import { PhotoAttachment } from 'vk-io';
 import type { AIMessage, AIRequestOptions } from '../src/services/ai/AIProvider.js';
 
 process.env.VK_TOKEN = 'test-token';
 process.env.VK_GROUP_ID = '1';
 process.env.OPENCODE_API_KEY = 'test-key';
+process.env.OPENAI_API_KEY = 'test-key';
 process.env.WEB_SEARCH_PROVIDER = 'none';
 process.env.VOICE_ENABLED = 'false';
 process.env.LOG_LEVEL = 'silent';
+process.env.MAX_REQUESTS_PER_MINUTE = '100';
 
 const { default: config } = await import('../src/config/index.js');
 const { VkService } = await import('../src/services/vk/vkService.js');
@@ -27,6 +30,8 @@ const { default: gameInteractionService } =
   await import('../src/services/games/gameInteractionService.js');
 const { default: requestQueue } = await import('../src/services/queue/requestQueue.js');
 const { OpenCodeProvider } = await import('../src/services/ai/opencodeProvider.js');
+const { default: imageAnalysisService } =
+  await import('../src/services/image/imageAnalysisService.js');
 
 const peerId = 2_000_000_042;
 const timestamp = new Date('2026-01-01T00:00:00Z');
@@ -86,6 +91,7 @@ test('real VK routing delivers exactly one correctly addressed response', async 
   let mode = 'normal';
   let voiceEnabled = false;
   let voiceCalls = 0;
+  let failVoice = false;
   let weatherCalls = 0;
   let failNextDelivery = false;
   let scenario:
@@ -96,9 +102,13 @@ test('real VK routing delivers exactly one correctly addressed response', async 
     | 'active-no'
     | 'active-yes'
     | 'voice'
+    | 'voice-long'
+    | 'voice-failure'
     | 'weather'
     | 'failure'
-    | 'game-first' = 'tool';
+    | 'game-first'
+    | 'attachment'
+    | 'attachment-none' = 'tool';
   const toolStatuses: string[] = [];
   const delivered: Array<{
     peer: number;
@@ -155,6 +165,7 @@ test('real VK routing delivers exactly one correctly addressed response', async 
   t.mock.method(senderService, 'uploadVoice', async () => 'audio_message1_2');
   t.mock.method(voiceService, 'synthesize', async () => {
     voiceCalls += 1;
+    if (failVoice) throw new Error('TTS failed');
     return Buffer.from('test-audio');
   });
   t.mock.method(weatherService, 'getWeather', async () => {
@@ -170,6 +181,7 @@ test('real VK routing delivers exactly one correctly addressed response', async 
     status: 'result',
     message: 'Состояние игры.',
   }));
+  t.mock.method(imageAnalysisService, 'analyze', async () => 'На изображении нарисован человек.');
   t.mock.method(
     OpenCodeProvider.prototype,
     'send',
@@ -184,6 +196,29 @@ test('real VK routing delivers exactly one correctly addressed response', async 
         const parsed: { status: string } = JSON.parse(await result);
         toolStatuses.push(parsed.status);
       };
+      if (scenario === 'voice-long' || scenario === 'voice-failure') {
+        return { content: 'Ответ. '.repeat(700) };
+      }
+      if (scenario === 'attachment') {
+        assert.match(
+          _messages.map((message) => message.content).join('\n'),
+          /В текущем сообщении есть фотография/iu,
+        );
+        await record(
+          findTool('analyze_attachment').execute({
+            prompt: 'Опиши психологический портрет человека на изображении',
+          }),
+        );
+        return { content: 'Психологический портрет: спокойный, задумчивый взгляд.' };
+      }
+      if (scenario === 'attachment-none') {
+        assert.match(
+          _messages.map((message) => message.content).join('\n'),
+          /сначала вызови analyze_attachment/iu,
+        );
+        await record(findTool('analyze_attachment').execute({ prompt: 'Опиши файл' }));
+        return { content: 'Прикрепите фото или документ.' };
+      }
       if (scenario === 'ordinary') return { content: 'Привет!' };
       if (scenario === 'active-no' || scenario === 'active-yes') {
         await record(
@@ -286,7 +321,14 @@ test('real VK routing delivers exactly one correctly addressed response', async 
   await assert.rejects(service.start(), /test: do not start VK polling/iu);
   assert.ok(messageHandler);
 
-  const dispatch = async (id: number, text: string, replyToBot = false) => {
+  const photo = Object.create(PhotoAttachment.prototype) as PhotoAttachment;
+
+  const dispatch = async (
+    id: number,
+    text: string,
+    replyToBot = false,
+    attachments: PhotoAttachment[] = [],
+  ) => {
     assert.ok(messageHandler);
     await messageHandler(
       {
@@ -297,7 +339,7 @@ test('real VK routing delivers exactly one correctly addressed response', async 
         isChat: true,
         isOutbox: false,
         eventType: undefined,
-        attachments: [],
+        attachments,
         text,
         replyMessage: replyToBot
           ? {
@@ -373,6 +415,22 @@ test('real VK routing delivers exactly one correctly addressed response', async 
   assert.equal(delivered[0].text, 'Состояние игры.');
   assert.deepEqual(toolStatuses.slice(-2), ['result', 'not_executed']);
 
+  scenario = 'attachment';
+  delivered.length = 0;
+  await dispatch(11, 'Пенёк, опиши психологический портрет человека на изображении.', false, [
+    photo,
+  ]);
+  assert.equal(delivered.length, 1);
+  assert.match(delivered[0].text, /Психологический портрет/iu);
+  assert.equal(toolStatuses.at(-1), 'result');
+
+  scenario = 'attachment-none';
+  delivered.length = 0;
+  await dispatch(12, 'Пенёк, опиши файл.');
+  assert.equal(delivered.length, 1);
+  assert.match(delivered[0].text, /Прикрепите/iu);
+  assert.equal(toolStatuses.at(-1), 'needs_attachment');
+
   mode = 'active';
   scenario = 'active-no';
   delivered.length = 0;
@@ -382,7 +440,7 @@ test('real VK routing delivers exactly one correctly addressed response', async 
   scenario = 'active-yes';
   delivered.length = 0;
   await dispatch(5, 'Кто знает ответ?');
-  assert.equal(delivered.length, 1);
+  assert.equal(delivered.length, 1, `tool statuses: ${JSON.stringify(toolStatuses)}`);
   assert.equal(delivered[0].options?.conversationMessageId, 105);
 
   scenario = 'voice';
@@ -398,5 +456,32 @@ test('real VK routing delivers exactly one correctly addressed response', async 
   assert.equal(delivered.length, 1);
   assert.equal(delivered[0].options?.conversationMessageId, 106);
   assert.equal(delivered[0].options?.attachment, 'audio_message1_2');
-  assert.match(delivered[0].text, /Голосовой ответ сгенерирован ИИ/u);
+  assert.match(delivered[0].text, /^Ответ\./u);
+  assert.doesNotMatch(delivered[0].text, /Голосовой ответ сгенерирован ИИ/u);
+
+  scenario = 'voice-long';
+  delivered.length = 0;
+  await dispatch(13, 'Пенёк, ответь очень подробно.');
+  assert.equal(delivered.length, 1);
+  assert.ok(delivered[0].text.length <= 4000, `unexpected length: ${delivered[0].text.length}`);
+  assert.ok(delivered[0].text.length > 3900, `unexpected length: ${delivered[0].text.length}`);
+  assert.match(delivered[0].text, /Ответ сокращён/u);
+  assert.equal(delivered[0].options?.attachment, 'audio_message1_2');
+  assert.doesNotMatch(delivered[0].text, /Голосовой ответ сгенерирован ИИ/u);
+
+  failVoice = true;
+  scenario = 'voice-failure';
+  delivered.length = 0;
+  await dispatch(14, 'Пенёк, ответь ещё подробнее.');
+  assert.equal(delivered.length, 1);
+  assert.equal(delivered[0].options?.attachment, undefined);
+  assert.match(delivered[0].text, /Не удалось озвучить ответ/u);
+  failVoice = false;
+
+  delivered.length = 0;
+  await dispatch(15, '/say Привет');
+  assert.equal(delivered.length, 1);
+  assert.equal(delivered[0].text, 'Привет');
+  assert.equal(delivered[0].options?.attachment, 'audio_message1_2');
+  assert.doesNotMatch(delivered[0].text, /Готово, вот озвученный текст/u);
 });

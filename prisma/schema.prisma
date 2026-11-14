@@ -296,11 +296,18 @@ model DigestJob {
   conversationId        String
   userId                String
   activeKey             String?   @unique
+  kind                  String    @default("digest")
   status                String    @default("pending")
+  instruction           String?
+  format                String?
   requestedCount        Int?
   rangeFrom             DateTime?
   rangeTo               DateTime?
   maxDigestChars        Int       @default(15000)
+  maxOutputChars        Int       @default(3500)
+  parts                 Int       @default(1)
+  partResults           String?
+  participants          String?
   messageId             Int?
   conversationMessageId Int?
   digests               String?
@@ -309,8 +316,10 @@ model DigestJob {
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
   completedAt           DateTime?
+  resultSentAt          DateTime?
 
   @@index([conversationId, userId])
+  @@index([conversationId, createdAt])
   @@index([status, updatedAt])
 }
 
