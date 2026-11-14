@@ -5,7 +5,8 @@ import { logger } from '../../logger/index.js';
 import settingsService from '../settings/settingsService.js';
 import type { AIProvider, AIMessage, AIRequestOptions, AIResponse } from './AIProvider.js';
 import { sendChatCompletion } from './chatCompletion.js';
-import { resolveReasoningEffort, TEXT_MODEL } from './effort.js';
+import { resolveReasoningEffort } from './effort.js';
+import { reasoningEffortForModel, resolveTextModel } from './textModels.js';
 
 /**
  * Отправляет запросы к OpenCode Console через совместимый с OpenAI API и нормализует ответы.
@@ -29,16 +30,25 @@ export class OpenCodeProvider implements AIProvider {
   }
 
   async send(messages: AIMessage[], options?: AIRequestOptions): Promise<AIResponse> {
+    let model = options?.model ?? config.OPENCODE_MODEL;
     try {
       const savedEffort = await settingsService.getAppSetting('ai_effort');
       const effort = resolveReasoningEffort(savedEffort, config.AI_EFFORT);
       if (!effort) throw new Error(`Unsupported saved AI effort: ${savedEffort}`);
+      model =
+        options?.model ??
+        resolveTextModel(await settingsService.getAppSetting('ai_model'), config.OPENCODE_MODEL);
+      const reasoningEffort = reasoningEffortForModel(model, effort);
+      logger.debug(
+        { provider: this.name, model, requestedEffort: effort, reasoningEffort },
+        'AI request prepared',
+      );
       return await sendChatCompletion(
         this.client,
-        options?.model ?? TEXT_MODEL,
+        model,
         this.name,
         messages,
-        effort,
+        reasoningEffort,
         options?.maxOutputTokens ?? config.AI_MAX_OUTPUT_TOKENS,
         {
           ...options,
@@ -51,7 +61,7 @@ export class OpenCodeProvider implements AIProvider {
         },
       );
     } catch (err) {
-      logger.error({ err, provider: this.name }, 'AI provider send failed');
+      logger.error({ err, provider: this.name, model }, 'AI provider send failed');
       throw err;
     }
   }

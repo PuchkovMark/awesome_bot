@@ -6,7 +6,11 @@ import type { AIMessage, AIProvider, AIRequestOptions } from '../src/services/ai
 import {
   buildChatDigest,
   countHistoryMessages,
+  estimateHistoryMessages,
   finalizeChatDigest,
+  summarizeHistorySnapshot,
+  UsageBudget,
+  UsageLimitError,
   type ChatDigestChunk,
   type HistoryMessage,
 } from '../src/services/ai/chatDigestService.js';
@@ -146,6 +150,56 @@ test('countHistoryMessages counts SQL messages and caps by requested count', asy
       request: { from: new Date('2026-11-12T00:00:00Z'), to: new Date('2026-11-13T00:00:00Z') },
     }),
     500,
+  );
+});
+
+test('estimateHistoryMessages rejects an over-limit period without loading text', async (t) => {
+  mockCount(t, 3_500);
+  const estimate = await estimateHistoryMessages({
+    conversationId,
+    request: {
+      from: new Date('2026-11-13T11:00:00Z'),
+      to: new Date('2026-11-13T19:00:00Z'),
+    },
+  });
+  assert.deepEqual(estimate, { count: 3_500, chars: 0, capped: true });
+});
+
+test('estimateHistoryMessages returns character volume for a fitting range', async (t) => {
+  mockCount(t, 2);
+  mockFindMany(t, [dbRow(1), dbRow(2)]);
+  const estimate = await estimateHistoryMessages({
+    conversationId,
+    request: { count: 10 },
+  });
+  assert.equal(estimate.count, 2);
+  assert.ok(estimate.chars > 0);
+  assert.equal(estimate.capped, false);
+});
+
+test('UsageBudget stops a summary when the token budget is exceeded', async () => {
+  const budget = new UsageBudget(50, 50);
+  const provider: AIProvider = {
+    name: 'mock',
+    async send() {
+      return {
+        content: JSON.stringify(chunkDigest(0)),
+        inputTokens: 100,
+        outputTokens: 10,
+      };
+    },
+  };
+  const message: HistoryMessage = {
+    dbId: 'm1',
+    timestamp: 1_763_000_000_000,
+    author: 'Иван',
+    role: 'user',
+    text: 'привет',
+    attachments: [],
+  };
+  await assert.rejects(
+    () => summarizeHistorySnapshot(provider, [message], { usage: budget }),
+    (error: unknown) => error instanceof UsageLimitError,
   );
 });
 

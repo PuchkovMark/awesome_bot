@@ -93,7 +93,8 @@ export const ADMIN_COMMAND_PAGES = [
     '/profile edit <@упоминание> <номер ответа> <текст> — изменить чужой ответ (только администратор бота)',
     '',
     'Настройки и обслуживание:',
-    '/effort [low|medium|high] — уровень рассуждения Gemini 4 Argon; по умолчанию low',
+    '/model [deepseek|argon] — основная текстовая модель; по умолчанию DeepSeek',
+    '/effort [low|medium|high] — уровень рассуждения основной текстовой модели; по умолчанию low',
     '/maintenance [on|off] — технический режим',
   ],
   [

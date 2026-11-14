@@ -1,7 +1,11 @@
 import config from '../../../config/index.js';
 import { logger } from '../../../logger/index.js';
 import type { AIProvider, AITool } from '../AIProvider.js';
-import { summarizeHistorySnapshot, type HistoryMessage } from '../chatDigestService.js';
+import {
+  summarizeHistorySnapshot,
+  type HistoryMessage,
+  type UsageBudget,
+} from '../chatDigestService.js';
 import { createCurrentDateTimeTool } from './currentDateTimeTool.js';
 import { isRecord, parseIsoDateTime } from './dateTime.js';
 
@@ -13,6 +17,7 @@ type SubagentHistoryContext = {
   seenMessageIds: Set<string>;
   provider: AIProvider;
   limiter: <T>(fn: () => Promise<T>) => Promise<T>;
+  usage?: UsageBudget;
   isActive: () => boolean;
 };
 
@@ -24,7 +29,7 @@ const MAX_CALLS = 3;
 const MAX_MESSAGE_CHARS = 1_000;
 const MAX_REPLY_CHARS = 500;
 const MAX_SEARCH_TEXT_CHARS = 500;
-const MAX_SUMMARY_CHARS = 15_000;
+const MAX_SUMMARY_CHARS = config.SUMMARY_MAX_DIGEST_CHARS;
 const MIN_SUMMARY_CHARS = 2_000;
 
 function messageKey(message: HistoryMessage): string {
@@ -398,6 +403,7 @@ function createSubagentSummarizeTool(context: SubagentHistoryContext): AITool {
           maxDigestChars: maxChars,
           concurrency: config.SUBAGENT_SUMMARIZE_CONCURRENCY,
           limiter: context.limiter,
+          usage: context.usage,
         });
         return JSON.stringify({
           status: 'result',

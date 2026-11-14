@@ -1,6 +1,6 @@
 import type OpenAI from 'openai';
 import type { AIMessage, AIRequestOptions, AIResponse } from './AIProvider.js';
-import type { ReasoningEffort } from './effort.js';
+import type { ModelReasoningEffort } from './effort.js';
 
 export class AIOutputLimitError extends Error {
   readonly limit: number;
@@ -17,7 +17,7 @@ export async function sendChatCompletion(
   model: string,
   provider: string,
   messages: AIMessage[],
-  effort: ReasoningEffort,
+  effort: ModelReasoningEffort,
   maxOutputTokens: number,
   options?: AIRequestOptions,
   headers?: Record<string, string>,
@@ -40,6 +40,7 @@ export async function sendChatCompletion(
   let totalTokens: number | undefined;
   let inputTokens: number | undefined;
   let outputTokens: number | undefined;
+  let reasoningTokens: number | undefined;
   let toolCallCount = 0;
 
   for (let round = 0; round <= maxToolCalls; round += 1) {
@@ -50,7 +51,8 @@ export async function sendChatCompletion(
         // OpenAI-совместимые провайдеры (включая OpenCode) ожидают max_tokens.
         // eslint-disable-next-line @typescript-eslint/no-deprecated
         max_tokens: maxOutputTokens,
-        reasoning_effort: effort,
+        reasoning_effort:
+          effort as unknown as OpenAI.Chat.Completions.ChatCompletionCreateParams['reasoning_effort'],
         ...(tools.length > 0 ? { tools, tool_choice: 'auto' as const } : {}),
       },
       headers ? { headers } : undefined,
@@ -59,6 +61,10 @@ export async function sendChatCompletion(
       totalTokens = (totalTokens ?? 0) + response.usage.total_tokens;
       inputTokens = (inputTokens ?? 0) + response.usage.prompt_tokens;
       outputTokens = (outputTokens ?? 0) + response.usage.completion_tokens;
+      const details = response.usage.completion_tokens_details;
+      if (typeof details?.reasoning_tokens === 'number') {
+        reasoningTokens = (reasoningTokens ?? 0) + details.reasoning_tokens;
+      }
     }
 
     const choice = response.choices[0];
@@ -84,6 +90,7 @@ export async function sendChatCompletion(
         tokens: totalTokens,
         inputTokens,
         outputTokens,
+        reasoningTokens,
       };
     }
 

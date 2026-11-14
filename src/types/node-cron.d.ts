@@ -18,8 +18,11 @@ declare module 'node-cron' {
     options?: ScheduleOptions,
   ): ScheduledTask;
 
+  export function getTasks(): Map<string, ScheduledTask>;
+
   const cron: {
     schedule: typeof schedule;
+    getTasks: typeof getTasks;
   };
 
   export default cron;

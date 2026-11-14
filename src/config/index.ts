@@ -1,5 +1,6 @@
 import dotenv from 'dotenv';
 import { DEFAULT_REASONING_EFFORT, type ReasoningEffort } from '../services/ai/effort.js';
+import { DEFAULT_TEXT_MODEL } from '../services/ai/textModels.js';
 
 dotenv.config();
 
@@ -11,6 +12,7 @@ export interface AppConfig {
   VK_SERVICE_TOKEN?: string;
   VK_GROUP_ID: string;
   OPENCODE_API_KEY?: string;
+  OPENCODE_MODEL: string;
   OPENCODE_BASE_URL: string;
   AI_EFFORT: ReasoningEffort;
   AI_MAX_OUTPUT_TOKENS: number;
@@ -44,6 +46,10 @@ export interface AppConfig {
   SUBAGENT_PROVIDER_CONCURRENCY: number;
   SUBAGENT_SUMMARIZE_CONCURRENCY: number;
   SUBAGENT_MAX_SUMMARY_CHARS: number;
+  SUBAGENT_MAX_SUMMARY_CHUNKS: number;
+  SUBAGENT_MAX_ESTIMATED_INPUT_TOKENS: number;
+  SUBAGENT_MAX_INPUT_TOKENS: number;
+  SUBAGENT_MAX_OUTPUT_TOKENS: number;
   SUBAGENT_MAX_SUMMARIZE_CALLS: number;
   SUBAGENT_MAX_SEARCH_RESULTS: number;
   SUBAGENT_RESULT_RETENTION_DAYS: number;
@@ -123,12 +129,12 @@ function timezone(name: string, fallback: string): string {
 
 const aiMaxOutputTokens = outputTokenLimit();
 const summaryChunkOutputTokens = Math.min(
-  positiveInteger('SUMMARY_CHUNK_OUTPUT_TOKENS', 3_000),
+  positiveInteger('SUMMARY_CHUNK_OUTPUT_TOKENS', 1_200),
   aiMaxOutputTokens,
 );
 const summaryChunkOutputTokensMax = Math.max(
   summaryChunkOutputTokens,
-  Math.min(positiveInteger('SUMMARY_CHUNK_OUTPUT_TOKENS_MAX', 6_000), aiMaxOutputTokens),
+  Math.min(positiveInteger('SUMMARY_CHUNK_OUTPUT_TOKENS_MAX', 2_400), aiMaxOutputTokens),
 );
 
 export const config: AppConfig = {
@@ -136,6 +142,7 @@ export const config: AppConfig = {
   VK_SERVICE_TOKEN: process.env.VK_SERVICE_TOKEN?.trim() || undefined,
   VK_GROUP_ID: required('VK_GROUP_ID'),
   OPENCODE_API_KEY: process.env.OPENCODE_API_KEY,
+  OPENCODE_MODEL: process.env.OPENCODE_MODEL?.trim() || DEFAULT_TEXT_MODEL,
   OPENCODE_BASE_URL: process.env.OPENCODE_BASE_URL || 'https://opencode.ai/inference/go/openai/v1',
   AI_EFFORT: oneOf('AI_EFFORT', ['low', 'medium', 'high'] as const, DEFAULT_REASONING_EFFORT),
   AI_MAX_OUTPUT_TOKENS: aiMaxOutputTokens,
@@ -158,12 +165,12 @@ export const config: AppConfig = {
   SUMMARY_CHUNK_CHARS: positiveInteger('SUMMARY_CHUNK_CHARS', 12_000),
   SUMMARY_CHUNK_OUTPUT_TOKENS: summaryChunkOutputTokens,
   SUMMARY_CHUNK_OUTPUT_TOKENS_MAX: summaryChunkOutputTokensMax,
-  SUMMARY_MAX_DIGEST_CHARS: positiveInteger('SUMMARY_MAX_DIGEST_CHARS', 15_000),
-  SUMMARY_MAX_CHARS: positiveInteger('SUMMARY_MAX_CHARS', 3_500),
-  SUBAGENT_MAX_MESSAGES: positiveInteger('SUBAGENT_MAX_MESSAGES', 10_000),
+  SUMMARY_MAX_DIGEST_CHARS: positiveInteger('SUMMARY_MAX_DIGEST_CHARS', 8_000),
+  SUMMARY_MAX_CHARS: positiveInteger('SUMMARY_MAX_CHARS', 2_000),
+  SUBAGENT_MAX_MESSAGES: positiveInteger('SUBAGENT_MAX_MESSAGES', 3_000),
   SUBAGENT_MIN_MESSAGES: positiveInteger('SUBAGENT_MIN_MESSAGES', 100),
-  SUBAGENT_MAX_TOOL_CALLS: positiveInteger('SUBAGENT_MAX_TOOL_CALLS', 12),
-  SUBAGENT_MAX_OUTPUT_CHARS: positiveInteger('SUBAGENT_MAX_OUTPUT_CHARS', 3_500),
+  SUBAGENT_MAX_TOOL_CALLS: positiveInteger('SUBAGENT_MAX_TOOL_CALLS', 8),
+  SUBAGENT_MAX_OUTPUT_CHARS: positiveInteger('SUBAGENT_MAX_OUTPUT_CHARS', 2_000),
   SUBAGENT_TIMEOUT_MINUTES: positiveInteger('SUBAGENT_TIMEOUT_MINUTES', 30),
   SUBAGENT_PART_TIMEOUT_MINUTES: positiveInteger('SUBAGENT_PART_TIMEOUT_MINUTES', 15),
   SUBAGENT_DAILY_LIMIT: positiveInteger('SUBAGENT_DAILY_LIMIT', 10),
@@ -171,8 +178,15 @@ export const config: AppConfig = {
   SUBAGENT_MAX_PARTS: positiveInteger('SUBAGENT_MAX_PARTS', 2),
   SUBAGENT_PROVIDER_CONCURRENCY: positiveInteger('SUBAGENT_PROVIDER_CONCURRENCY', 6),
   SUBAGENT_SUMMARIZE_CONCURRENCY: positiveInteger('SUBAGENT_SUMMARIZE_CONCURRENCY', 3),
-  SUBAGENT_MAX_SUMMARY_CHARS: positiveInteger('SUBAGENT_MAX_SUMMARY_CHARS', 2_000_000),
-  SUBAGENT_MAX_SUMMARIZE_CALLS: positiveInteger('SUBAGENT_MAX_SUMMARIZE_CALLS', 2),
+  SUBAGENT_MAX_SUMMARY_CHARS: positiveInteger('SUBAGENT_MAX_SUMMARY_CHARS', 300_000),
+  SUBAGENT_MAX_SUMMARY_CHUNKS: positiveInteger('SUBAGENT_MAX_SUMMARY_CHUNKS', 25),
+  SUBAGENT_MAX_ESTIMATED_INPUT_TOKENS: positiveInteger(
+    'SUBAGENT_MAX_ESTIMATED_INPUT_TOKENS',
+    90_000,
+  ),
+  SUBAGENT_MAX_INPUT_TOKENS: positiveInteger('SUBAGENT_MAX_INPUT_TOKENS', 120_000),
+  SUBAGENT_MAX_OUTPUT_TOKENS: positiveInteger('SUBAGENT_MAX_OUTPUT_TOKENS', 35_000),
+  SUBAGENT_MAX_SUMMARIZE_CALLS: positiveInteger('SUBAGENT_MAX_SUMMARIZE_CALLS', 1),
   SUBAGENT_MAX_SEARCH_RESULTS: positiveInteger('SUBAGENT_MAX_SEARCH_RESULTS', 50),
   SUBAGENT_RESULT_RETENTION_DAYS: positiveInteger('SUBAGENT_RESULT_RETENTION_DAYS', 7),
   MAX_REQUESTS_PER_MINUTE: positiveInteger('MAX_REQUESTS_PER_MINUTE', 10),

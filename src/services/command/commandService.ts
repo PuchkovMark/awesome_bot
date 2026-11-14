@@ -20,14 +20,17 @@ import funService from '../fun/funService.js';
 import locationService, { type LocationSummary } from '../settings/locationService.js';
 import { DEFAULT_CITY, DEFAULT_TIME_ZONE } from '../settings/locationDefaults.js';
 import { parseVkUserReference } from '../vk/vkMention.js';
+import { parseReasoningEffort, reasoningEfforts, resolveReasoningEffort } from '../ai/effort.js';
 import {
-  parseReasoningEffort,
-  reasoningEfforts,
-  resolveReasoningEffort,
-  TEXT_MODEL,
-} from '../ai/effort.js';
+  normalizeTextModel,
+  reasoningEffortForModel,
+  resolveTextModel,
+  TEXT_MODELS,
+  textModelLabel,
+} from '../ai/textModels.js';
 
 const adminCommands = new Set([
+  'model',
   'effort',
   'mode',
   'maintenance',
@@ -366,6 +369,8 @@ export class CommandService {
           );
         case 'settings':
           return this.getSettings(senderId, peerId);
+        case 'model':
+          return this.setTextModel(senderId, args);
         case 'effort':
           return this.setReasoningEffort(senderId, args);
         case 'mode':
@@ -845,6 +850,35 @@ export class CommandService {
     ].join('\n');
   }
 
+  private async getCurrentTextModel(): Promise<string> {
+    return resolveTextModel(await settingsService.getAppSetting('ai_model'), config.OPENCODE_MODEL);
+  }
+
+  private async setTextModel(senderId: string, args: string): Promise<string> {
+    const requested = args.trim();
+    const model = requested ? normalizeTextModel(requested) : undefined;
+    if (requested && !model) {
+      return 'Укажите модель: deepseek (DeepSeek V4.1 Flash) или argon (Gemini 4 Argon).';
+    }
+
+    const current = await this.getCurrentTextModel();
+    if (!model) {
+      const list = TEXT_MODELS.map(
+        (item) => `${item.id === current ? '•' : ' '} ${item.label} (${item.id})`,
+      ).join('\n');
+      return `Текущая модель: ${textModelLabel(current)} (${current}).\n${list}\nПереключить: /модель deepseek или /модель argon.`;
+    }
+
+    await settingsService.setAppSetting('ai_model', model);
+    await settingsService.logAdminAction(senderId, 'ai.model.changed', model);
+    const savedEffort = await settingsService.getAppSetting('ai_effort');
+    const effort = resolveReasoningEffort(savedEffort, config.AI_EFFORT);
+    const effortText = effort
+      ? `\nУровень ${reasoningEfforts[effort]} (${effort}), reasoning_effort=${reasoningEffortForModel(model, effort)}.`
+      : '';
+    return `Основная модель переключена: ${textModelLabel(model)} (${model}).${effortText}`;
+  }
+
   private async setReasoningEffort(senderId: string, args: string): Promise<string> {
     const requested = args.trim();
     const effort = requested ? parseReasoningEffort(requested) : null;
@@ -852,18 +886,23 @@ export class CommandService {
       return 'Укажите уровень рассуждения: low (низкий), medium (средний) или high (высокий).';
     }
 
+    const model = await this.getCurrentTextModel();
     if (!effort) {
       const savedEffort = await settingsService.getAppSetting('ai_effort');
       const currentEffort = resolveReasoningEffort(savedEffort, config.AI_EFFORT);
       if (!currentEffort) {
         return 'Сохранён неизвестный уровень рассуждения. Установите его заново: /effort low.';
       }
-      return `Уровень рассуждения: ${reasoningEfforts[currentEffort]} (${currentEffort}), модель ${TEXT_MODEL}.\nДоступно: low, medium, high.`;
+      return `Уровень рассуждения: ${reasoningEfforts[currentEffort]} (${currentEffort}), модель ${textModelLabel(model)} (${model}), reasoning_effort=${reasoningEffortForModel(model, currentEffort)}.\nДоступно: low, medium, high.`;
     }
 
     await settingsService.setAppSetting('ai_effort', effort);
-    await settingsService.logAdminAction(senderId, 'ai.effort.changed', `${TEXT_MODEL}:${effort}`);
-    return `Уровень рассуждения установлен: ${reasoningEfforts[effort]} (${effort}), модель ${TEXT_MODEL}.`;
+    await settingsService.logAdminAction(
+      senderId,
+      'ai.effort.changed',
+      `${model}:${effort}:${reasoningEffortForModel(model, effort)}`,
+    );
+    return `Уровень рассуждения установлен: ${reasoningEfforts[effort]} (${effort}), модель ${textModelLabel(model)} (${model}), reasoning_effort=${reasoningEffortForModel(model, effort)}.`;
   }
 
   private async setMode(senderId: string, peerId: string, args: string): Promise<string> {

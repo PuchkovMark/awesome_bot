@@ -6,10 +6,8 @@ process.env.VK_GROUP_ID = '1';
 process.env.LOG_LEVEL = 'silent';
 
 const { prisma } = await import('../src/db/client.js');
-const { default: subagentService } = await import('../src/services/ai/subagentService.js');
-const { default: senderService } = await import('../src/services/sender/senderService.js');
-const { default: subagentResultDeliveryService } =
-  await import('../src/services/ai/subagentResultDeliveryService.js');
+const { default: subagentService, SubagentService } =
+  await import('../src/services/ai/subagentService.js');
 
 function jobRow(overrides: Record<string, unknown> = {}) {
   return {
@@ -148,25 +146,51 @@ test('cleanupOldJobs removes old completed jobs', async (t) => {
   assert.equal(deleted, 3);
 });
 
-test('recoverJobs delegates unsent results without sending from the subagent', async (t) => {
-  let sent = 0;
-  let deliveredJobId: string | undefined;
-  const job = jobRow({
-    status: 'finalizing',
-    activeKey: '2000000001',
-    resultSentAt: null,
-    updatedAt: new Date('2026-11-14T10:00:00Z'),
+test('dropInterruptedJobs removes unfinished subagent jobs and clears active keys', async (t) => {
+  const deleteCalls: unknown[] = [];
+  const updateCalls: unknown[] = [];
+  mockMethod(t, prisma.digestJob, 'deleteMany', async (args) => {
+    deleteCalls.push(args);
+    return { count: 2 };
   });
-  mockMethod(t, prisma.digestJob, 'findMany', async () => [job]);
-  mockMethod(t, prisma.digestJob, 'update', async () => job);
-  mockMethod(t, senderService, 'send', async () => {
-    sent += 1;
+  mockMethod(t, prisma.digestJob, 'updateMany', async (args) => {
+    updateCalls.push(args);
+    return { count: 0 };
   });
-  mockMethod(t, subagentResultDeliveryService, 'deliver', async (jobId) => {
-    deliveredJobId = String(jobId);
-    return true;
+
+  const dropped = await subagentService.dropInterruptedJobs();
+
+  assert.equal(dropped, 2);
+  assert.deepEqual((deleteCalls[0] as { where: unknown }).where, {
+    kind: 'history_task',
+    status: { in: ['pending', 'processing', 'finalizing'] },
   });
-  await subagentService.recoverJobs();
-  assert.equal(sent, 0);
-  assert.equal(deliveredJobId, 'job-1');
+  assert.deepEqual((updateCalls[0] as { where: unknown }).where, {
+    activeKey: { not: null },
+  });
+});
+
+test('countActiveJobs reports remaining subagent work and locks', async (t) => {
+  mockMethod(t, prisma.digestJob, 'count', async () => 3);
+  assert.equal(await subagentService.countActiveJobs(), 3);
+});
+
+test('stop prevents new subagent jobs', async () => {
+  const service = new SubagentService(async () => ({
+    name: 'mock',
+    async send() {
+      return { content: 'unused' };
+    },
+  }));
+  service.stop();
+  const result = await service.startJob({
+    conversationId: '2000000001',
+    userId: '42',
+    task: 'Перескажи историю',
+    format: 'summary',
+    maxOutputChars: 3_500,
+    parts: 1,
+    count: 600,
+  });
+  assert.equal(result.status, 'not_executed');
 });

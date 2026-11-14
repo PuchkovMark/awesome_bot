@@ -107,7 +107,6 @@ test('subagent summarize respects the call limit and inactive state', async () =
   const summarize = tools.find((tool) => tool.name === 'summarize_history');
   assert.ok(summarize);
   assert.equal(JSON.parse(await summarize.execute({ max_chars: 2_000 })).status, 'result');
-  assert.equal(JSON.parse(await summarize.execute({ max_chars: 2_000 })).status, 'result');
   const blocked = JSON.parse(await summarize.execute({ max_chars: 2_000 }));
   assert.equal(blocked.status, 'not_executed');
 

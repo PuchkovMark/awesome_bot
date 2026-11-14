@@ -1254,11 +1254,6 @@ export class VkService {
 
     membershipService.setApi(this.vk.api);
     await characterService.initialize();
-    try {
-      await subagentService.recoverJobs();
-    } catch (error) {
-      logger.warn({ err: error }, 'Unable to recover subagent jobs');
-    }
 
     this.vk.updates.on('message_event', async (context: MessageEventContext, next) => {
       const payload = this.parseEventPayload(context.eventPayload);
@@ -2872,6 +2867,9 @@ export class VkService {
                     ? 'Для точных цитат, проверки фактов и небольших фрагментов используй get_local_chat_history. Для пересказа большого фрагмента, хронологии, поиска закономерностей и анализа сотен или тысяч сообщений используй run_subagent; для фрагмента до 100 сообщений субагент не нужен. Субагент работает только по локальной SQL-истории и сам не отправляет сообщения; не дублируй подтверждение.'
                     : '',
                   !questionnaireOnly
+                    ? `Если пользователь называет даты или период, передай from/to, а не count. В анализ попадает не более ${config.SUBAGENT_MAX_MESSAGES} сообщений. Если период больше, инструмент откажет: попроси пользователя сузить диапазон и не запускай несколько задач автоматически.`
+                    : '',
+                  !questionnaireOnly
                     ? 'Если в текущем контексте не хватает более старых сообщений, сначала запроси get_local_chat_history. Для продолжения передавай next_before.'
                     : '',
                   !questionnaireOnly
@@ -3317,8 +3315,8 @@ export class VkService {
                   memoryService.resolveConversationParticipants(String(peerId), references, [
                     personality.name,
                   ]),
-                countMessages: (request) =>
-                  subagentService.countMessages({
+                estimateMessages: (request) =>
+                  subagentService.estimateMessages({
                     conversationId: String(peerId),
                     ...(request.count !== undefined ? { count: request.count } : {}),
                     ...(request.from ? { from: request.from } : {}),
@@ -3878,6 +3876,14 @@ export class VkService {
     startLongTermMemoryJob();
     startSubagentDeliveryJob();
     logger.info('VkService started');
+  }
+
+  async stop(): Promise<void> {
+    try {
+      await this.vk.updates.stop();
+    } catch (error) {
+      logger.warn({ err: error }, 'Unable to stop VK updates');
+    }
   }
 
   /**

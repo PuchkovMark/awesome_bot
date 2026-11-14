@@ -40,6 +40,7 @@ export const commandAliases = {
   reset: ['сброс'],
   forget: ['забыть'],
   admin: ['админка'],
+  model: ['модель'],
   effort: ['усилие'],
   mode: ['режим'],
   imageaccess: ['доступккартинкам'],

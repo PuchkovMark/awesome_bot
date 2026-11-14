@@ -8,10 +8,13 @@ import type { AIProvider } from './AIProvider.js';
 import subagentResultDeliveryService from './subagentResultDeliveryService.js';
 import {
   buildChatDigest,
-  countHistoryMessages,
+  estimateHistoryMessages,
   finalizeChatDigest,
   loadHistoryMessages,
+  UsageBudget,
+  UsageLimitError,
   type ChatDigestRequest,
+  type HistoryEstimate,
   type HistoryMessage,
 } from './chatDigestService.js';
 import { createSubagentTools } from './tools/subagentTools.js';
@@ -165,6 +168,7 @@ export class SubagentService {
   private readonly providerLimiter = new Semaphore(config.SUBAGENT_PROVIDER_CONCURRENCY);
   private readonly enqueued = new Set<string>();
   private readonly providerFactory: ProviderFactory;
+  private stopping = false;
 
   constructor(providerFactory?: ProviderFactory) {
     this.providerFactory =
@@ -175,20 +179,20 @@ export class SubagentService {
       });
   }
 
-  async countMessages(input: {
+  async estimateMessages(input: {
     conversationId: string;
     count?: number;
     from?: Date;
     to?: Date;
     participantUserIds?: string[];
     includeBot?: boolean;
-  }): Promise<number> {
+  }): Promise<HistoryEstimate> {
     const request: ChatDigestRequest = {
       ...(input.count !== undefined ? { count: input.count } : {}),
       ...(input.from ? { from: input.from } : {}),
       ...(input.to ? { to: input.to } : {}),
     };
-    return countHistoryMessages({
+    return estimateHistoryMessages({
       conversationId: input.conversationId,
       request,
       ...(input.participantUserIds ? { participantUserIds: input.participantUserIds } : {}),
@@ -197,6 +201,12 @@ export class SubagentService {
   }
 
   async startJob(input: StartJobInput): Promise<SubagentStartResult> {
+    if (this.stopping) {
+      return {
+        status: 'not_executed',
+        message: 'Бот останавливается. Новые фоновые задачи временно недоступны.',
+      };
+    }
     const activeKey = input.conversationId;
     const existing = await prisma.digestJob.findUnique({ where: { activeKey } });
     const staleMs = config.SUBAGENT_TIMEOUT_MINUTES * 60_000;
@@ -268,7 +278,7 @@ export class SubagentService {
   }
 
   private enqueue(jobId: string): void {
-    if (this.enqueued.has(jobId)) return;
+    if (this.enqueued.has(jobId) || this.stopping) return;
     this.enqueued.add(jobId);
     void this.queue
       .add(async () => {
@@ -322,93 +332,39 @@ export class SubagentService {
     };
   }
 
-  async recoverJobs(): Promise<void> {
-    const staleMs = config.SUBAGENT_TIMEOUT_MINUTES * 60_000;
-    const jobs = await prisma.digestJob.findMany({
+  stop(): void {
+    this.stopping = true;
+    this.queue.pause();
+    this.queue.clear();
+    this.enqueued.clear();
+  }
+
+  async dropInterruptedJobs(): Promise<number> {
+    const deleted = await prisma.digestJob.deleteMany({
+      where: {
+        kind: 'history_task',
+        status: { in: ['pending', 'processing', 'finalizing'] },
+      },
+    });
+    await prisma.digestJob.updateMany({
+      where: { activeKey: { not: null } },
+      data: { activeKey: null },
+    });
+    if (deleted.count > 0) {
+      logger.warn({ dropped: deleted.count }, 'Dropped interrupted subagent jobs');
+    }
+    return deleted.count;
+  }
+
+  async countActiveJobs(): Promise<number> {
+    return prisma.digestJob.count({
       where: {
         OR: [
+          { kind: 'history_task', status: { in: ['pending', 'processing', 'finalizing'] } },
           { activeKey: { not: null } },
-          { status: { in: ['pending', 'processing', 'finalizing'] } },
         ],
       },
-      orderBy: { createdAt: 'asc' },
-      take: 20,
     });
-    const seenConversations = new Set<string>();
-    for (const job of jobs) {
-      if (seenConversations.has(job.conversationId)) {
-        await prisma.digestJob.update({
-          where: { id: job.id },
-          data: {
-            status: 'failed',
-            activeKey: null,
-            error: 'Duplicate active subagent job',
-            completedAt: new Date(),
-          },
-        });
-        continue;
-      }
-      seenConversations.add(job.conversationId);
-
-      if (!job.activeKey) {
-        try {
-          await prisma.digestJob.update({
-            where: { id: job.id },
-            data: { activeKey: job.conversationId },
-          });
-        } catch {
-          await prisma.digestJob.update({
-            where: { id: job.id },
-            data: {
-              status: 'failed',
-              activeKey: null,
-              error: 'Duplicate active subagent job',
-              completedAt: new Date(),
-            },
-          });
-          continue;
-        }
-      }
-
-      if (job.result) {
-        const partResults = parsePartResults(job.partResults);
-        const finalStatus =
-          job.status === 'failed'
-            ? 'failed'
-            : partResults.some((part) => part.status === 'failed')
-              ? 'partial'
-              : 'done';
-        await prisma.digestJob.update({
-          where: { id: job.id },
-          data: {
-            status: finalStatus,
-            activeKey: null,
-            completedAt: job.completedAt ?? new Date(),
-          },
-        });
-        if (!job.resultSentAt) {
-          void subagentResultDeliveryService.deliver(job.id);
-        }
-        continue;
-      }
-      if (Date.now() - job.updatedAt.getTime() > staleMs) {
-        const message =
-          'Не удалось завершить фоновую задачу: истекло время выполнения. Сузьте период и попробуйте снова.';
-        await prisma.digestJob.update({
-          where: { id: job.id },
-          data: {
-            status: 'failed',
-            activeKey: null,
-            result: message,
-            error: 'Subagent job timed out',
-            completedAt: new Date(),
-          },
-        });
-        void subagentResultDeliveryService.deliver(job.id);
-        continue;
-      }
-      this.enqueue(job.id);
-    }
   }
 
   async cleanupOldJobs(): Promise<number> {
@@ -434,6 +390,7 @@ export class SubagentService {
     userMessage: string,
     error: unknown,
   ): Promise<void> {
+    if (this.stopping) return;
     const errorText = error instanceof Error ? error.message : String(error);
     logger.error(
       { err: error, jobId: job.id, conversationId: job.conversationId },
@@ -453,12 +410,14 @@ export class SubagentService {
   }
 
   private async processJob(jobId: string): Promise<void> {
+    if (this.stopping) return;
     const job = await prisma.digestJob.findUnique({ where: { id: jobId } });
     if (!job || job.status === 'done' || job.status === 'failed' || job.status === 'partial') {
       return;
     }
 
     if (job.result) {
+      if (this.stopping) return;
       const partResults = parsePartResults(job.partResults);
       const finalStatus =
         job.status === 'failed'
@@ -514,6 +473,10 @@ export class SubagentService {
         : await settingsService.getUserSettings(job.userId);
       const timeZone = conversationSettings.timeZone ?? conversationSettings.locationTimeZone;
       const provider = await this.providerFactory();
+      const usage = new UsageBudget(
+        config.SUBAGENT_MAX_INPUT_TOKENS,
+        config.SUBAGENT_MAX_OUTPUT_TOKENS,
+      );
 
       if (job.kind === 'digest') {
         const digest = await buildChatDigest(provider, {
@@ -542,6 +505,7 @@ export class SubagentService {
           legacyResult,
           job.maxOutputChars || config.SUBAGENT_MAX_OUTPUT_CHARS,
         );
+        if (this.stopping) return;
         await prisma.digestJob.update({
           where: { id: job.id },
           data: {
@@ -584,8 +548,15 @@ export class SubagentService {
         return;
       }
 
-      const truncated = loaded.messages.length > config.SUBAGENT_MAX_MESSAGES;
-      const messages = loaded.messages.slice(-config.SUBAGENT_MAX_MESSAGES);
+      if (loaded.messages.length > config.SUBAGENT_MAX_MESSAGES) {
+        await this.failJob(
+          job,
+          `В выбранном периоде ${loaded.messages.length} сообщений. Максимум — ${config.SUBAGENT_MAX_MESSAGES}. Сузьте диапазон и попробуйте снова.`,
+          new Error('Subagent message limit exceeded after preflight'),
+        );
+        return;
+      }
+      const messages = loaded.messages;
       const coverage: string[] = [];
       if (job.requestedCount && messages.length < job.requestedCount) {
         coverage.push(
@@ -629,10 +600,24 @@ export class SubagentService {
           timeZone,
           isChat,
           participantFilter,
+          usage,
         );
       });
       const settled = await Promise.all(partPromises);
       partResults.push(...settled);
+      if (this.stopping) return;
+      if (usage.exceeded()) {
+        await this.failJob(
+          job,
+          'Лимит токенов на задачу исчерпан. Сузьте период и попробуйте снова.',
+          new UsageLimitError(
+            usage.snapshot(),
+            config.SUBAGENT_MAX_INPUT_TOKENS,
+            config.SUBAGENT_MAX_OUTPUT_TOKENS,
+          ),
+        );
+        return;
+      }
       await prisma.digestJob.update({
         where: { id: job.id },
         data: { partResults: JSON.stringify(partResults) },
@@ -659,10 +644,8 @@ export class SubagentService {
           result = `Внимание: часть ${failedParts.map((part) => part.index + 1).join(', ')} не обработана. Результат неполный.\n\n${result}`;
         }
       } else {
-        result = await this.coordinate(job, successful, provider, participantFilter);
-      }
-      if (truncated) {
-        coverage.push(`выборка ограничена последними ${messages.length} сообщениями`);
+        result = await this.coordinate(job, successful, provider, participantFilter, usage);
+        usage.ensureWithinLimits();
       }
       if (coverage.length > 0) {
         result = `Внимание: ${coverage.join('; ')}.\n\n${result}`;
@@ -677,6 +660,7 @@ export class SubagentService {
         return;
       }
 
+      if (this.stopping) return;
       await prisma.digestJob.update({
         where: { id: job.id },
         data: {
@@ -688,6 +672,14 @@ export class SubagentService {
       });
       void subagentResultDeliveryService.deliver(job.id);
     } catch (error) {
+      if (error instanceof UsageLimitError) {
+        await this.failJob(
+          job,
+          'Лимит токенов на задачу исчерпан. Сузьте период и попробуйте снова.',
+          error,
+        );
+        return;
+      }
       await this.failJob(
         job,
         'Не удалось выполнить фоновую задачу. Попробуйте ещё раз или сузьте период.',
@@ -705,6 +697,7 @@ export class SubagentService {
     timeZone: string | null,
     isChat: boolean,
     participantFilter: string,
+    usage: UsageBudget,
   ): Promise<PartResult> {
     const timeoutMs = config.SUBAGENT_PART_TIMEOUT_MINUTES * 60_000;
     let timedOut = false;
@@ -719,6 +712,7 @@ export class SubagentService {
       timeZone,
       isChat,
       participantFilter,
+      usage,
       () => !timedOut && Date.now() < deadline,
     ).catch((error: unknown): PartResult => ({
       index,
@@ -757,6 +751,7 @@ export class SubagentService {
     timeZone: string | null,
     isChat: boolean,
     participantFilter: string,
+    usage: UsageBudget,
     isActive: () => boolean,
   ): Promise<PartResult> {
     const from = new Date(messages[0]?.timestamp ?? Date.now()).toISOString();
@@ -773,6 +768,7 @@ export class SubagentService {
       seenMessageIds,
       provider,
       limiter: (fn) => this.providerLimiter.run(fn),
+      usage,
       isActive,
     });
     const format = job.format ?? 'summary';
@@ -800,10 +796,12 @@ export class SubagentService {
       {
         tools,
         maxToolCalls: config.SUBAGENT_MAX_TOOL_CALLS,
-        maxOutputTokens: config.AI_MAX_OUTPUT_TOKENS,
+        maxOutputTokens: Math.min(config.AI_MAX_OUTPUT_TOKENS, 6_000),
         sessionId: `subagent:${job.id}:${index}`,
       },
     );
+    usage.add(response);
+    usage.ensureWithinLimits();
     const result = response.content.trim();
     if (!result) {
       return {
@@ -830,6 +828,7 @@ export class SubagentService {
     parts: ReadonlyArray<PartResult & { result: string }>,
     provider: AIProvider,
     participantFilter: string,
+    usage: UsageBudget,
   ): Promise<string> {
     const response = await provider.send(
       [
@@ -860,6 +859,8 @@ export class SubagentService {
         sessionId: `subagent:${job.instruction ?? 'coordinate'}:merge`,
       },
     );
+    usage.add(response);
+    usage.ensureWithinLimits();
     return response.content.trim();
   }
 }

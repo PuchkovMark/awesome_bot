@@ -1,5 +1,3 @@
-export const TEXT_MODEL = 'gemini-4-argon';
-
 export const reasoningEfforts = {
   low: 'низкий',
   medium: 'средний',
@@ -7,6 +5,7 @@ export const reasoningEfforts = {
 } as const;
 
 export type ReasoningEffort = keyof typeof reasoningEfforts;
+export type ModelReasoningEffort = ReasoningEffort | 'max';
 
 export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'low';
 

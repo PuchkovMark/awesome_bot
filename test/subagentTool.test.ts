@@ -12,6 +12,8 @@ type Access = { allowed: true } | { allowed: false; message: string };
 function makeTool(
   options: {
     available?: number;
+    availableChars?: number;
+    capped?: boolean;
     start?: SubagentStartResult;
     access?: Access;
     isChat?: boolean;
@@ -19,7 +21,7 @@ function makeTool(
   } = {},
 ) {
   const requests: SubagentRequest[] = [];
-  const countRequests: Array<{
+  const estimateRequests: Array<{
     count?: number;
     from?: Date;
     to?: Date;
@@ -33,9 +35,14 @@ function makeTool(
     checkAccess: async () => options.access ?? { allowed: true },
     resolveParticipants: async () =>
       options.resolution ?? { participants: [], ambiguous: [], notFound: [] },
-    countMessages: async (input) => {
-      countRequests.push(input);
-      return options.available ?? 500;
+    estimateMessages: async (input) => {
+      estimateRequests.push(input);
+      const count = options.available ?? 500;
+      return {
+        count,
+        chars: options.availableChars ?? count * 100,
+        capped: options.capped ?? false,
+      };
     },
     startJob: async (request) => {
       requests.push(request);
@@ -51,7 +58,7 @@ function makeTool(
   return {
     tool,
     requests,
-    countRequests,
+    estimateRequests,
     acknowledgements,
     wasStarted: () => started,
   };
@@ -68,35 +75,65 @@ test('run_subagent rejects short history and suggests local history', async () =
 });
 
 test('run_subagent rejects more than the maximum available messages', async () => {
-  const { tool, requests } = makeTool({ available: 35_000 });
+  const { tool, requests } = makeTool({ available: 3_500 });
   const result = JSON.parse(
     await tool.execute({ task: 'Перескажи последние сообщения', count: 50_000 }),
   );
   assert.equal(result.status, 'not_executed');
-  assert.equal(result.available_count, 35_000);
-  assert.equal(result.max_messages, 10_000);
-  assert.match(result.message, /не более 10000/u);
+  assert.equal(result.reason, 'too_many_messages');
+  assert.equal(result.available_count, 3_500);
+  assert.equal(result.max_messages, 3_000);
+  assert.match(result.message, /Максимум.*3000/u);
+  assert.equal(requests.length, 0);
+});
+
+test('run_subagent rejects a period with more than 3000 messages', async () => {
+  const { tool, requests } = makeTool({ available: 3_500 });
+  const result = JSON.parse(
+    await tool.execute({
+      task: 'Перескажи вчерашний вечер',
+      from: '2026-11-13T14:00:00+03:00',
+      to: '2026-11-13T22:00:00+03:00',
+    }),
+  );
+  assert.equal(result.status, 'not_executed');
+  assert.equal(result.reason, 'too_many_messages');
+  assert.equal(result.period.from, '2026-11-13T11:00:00.000Z');
+  assert.equal(result.period.to, '2026-11-13T19:00:00.000Z');
+  assert.match(result.message, /Сузьте диапазон/u);
+  assert.equal(requests.length, 0);
+});
+
+test('run_subagent rejects too much text even when messages fit', async () => {
+  const { tool, requests } = makeTool({ available: 2_500, availableChars: 400_000 });
+  const result = JSON.parse(
+    await tool.execute({ task: 'Перескажи последние сообщения', count: 2_500 }),
+  );
+  assert.equal(result.status, 'not_executed');
+  assert.equal(result.reason, 'too_many_chars');
+  assert.equal(result.available_chars, 400_000);
+  assert.equal(result.max_chars, 300_000);
   assert.equal(requests.length, 0);
 });
 
 test('run_subagent accepts a large request when SQL has fewer messages than requested', async () => {
-  const { tool, requests, acknowledgements, wasStarted } = makeTool({ available: 8_000 });
+  const { tool, requests, acknowledgements, wasStarted } = makeTool({ available: 2_500 });
   const result = JSON.parse(
     await tool.execute({ task: 'Перескажи большой период истории', count: 50_000 }),
   );
   assert.equal(result.status, 'accepted');
-  assert.equal(result.available_count, 8_000);
+  assert.equal(result.available_count, 2_500);
   assert.equal(requests.length, 1);
-  assert.match(acknowledgements[0] ?? '', /8000/u);
+  assert.match(acknowledgements[0] ?? '', /2500/u);
   assert.equal(wasStarted(), true);
 });
 
 test('run_subagent passes parts and format to the job', async () => {
-  const { tool, requests } = makeTool({ available: 6_000 });
+  const { tool, requests } = makeTool({ available: 2_500 });
   const result = JSON.parse(
     await tool.execute({
       task: 'Составь хронологию обсуждения ремонта',
-      count: 6_000,
+      count: 2_500,
       format: 'timeline',
       parts: 2,
       max_output_chars: 2_000,
@@ -120,7 +157,7 @@ test('run_subagent reports an already running job without acknowledging', async 
 });
 
 test('run_subagent passes participants to the job', async () => {
-  const { tool, requests, countRequests, acknowledgements } = makeTool({
+  const { tool, requests, estimateRequests, acknowledgements } = makeTool({
     available: 500,
     resolution: {
       participants: [
@@ -144,8 +181,8 @@ test('run_subagent passes participants to the job', async () => {
     { kind: 'user', name: 'Иван', vkId: '1', dbUserId: 'db-1' },
     { kind: 'bot', name: 'Пенёк' },
   ]);
-  assert.deepEqual(countRequests[0]?.participantUserIds, ['db-1']);
-  assert.equal(countRequests[0]?.includeBot, true);
+  assert.deepEqual(estimateRequests[0]?.participantUserIds, ['db-1']);
+  assert.equal(estimateRequests[0]?.includeBot, true);
   assert.match(acknowledgements[0] ?? '', /Иван, Пенёк/u);
 });
 

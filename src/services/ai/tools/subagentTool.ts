@@ -6,6 +6,7 @@ import {
   type ResolvedParticipant,
 } from '../../memory/memoryService.js';
 import type { AITool } from '../AIProvider.js';
+import type { HistoryEstimate } from '../chatDigestService.js';
 import { isRecord, parseIsoDateTime } from './dateTime.js';
 
 export type SubagentFormat = 'summary' | 'timeline' | 'list' | 'answer';
@@ -30,13 +31,13 @@ type SubagentToolContext = {
   isChat: boolean;
   checkAccess: () => Promise<{ allowed: true } | { allowed: false; message: string }>;
   resolveParticipants: (references: string[]) => Promise<ParticipantResolution>;
-  countMessages: (input: {
+  estimateMessages: (input: {
     count?: number;
     from?: Date;
     to?: Date;
     participantUserIds?: string[];
     includeBot?: boolean;
-  }) => Promise<number>;
+  }) => Promise<HistoryEstimate>;
   startJob: (request: SubagentRequest) => Promise<SubagentStartResult>;
   acknowledge: (text: string) => Promise<void>;
   onStarted: () => void;
@@ -59,6 +60,7 @@ export function createSubagentTool(context: SubagentToolContext): AITool {
     description: [
       'Запусти фонового субагента для большой задачи по сохранённой SQL-истории текущей беседы или личного диалога.',
       'Используй для пересказа большого периода, хронологии, поиска закономерностей, извлечения решений и анализа сотен или тысяч сообщений.',
+      `Для периода указывай from/to; для последних сообщений — count. В анализ попадает не более ${config.SUBAGENT_MAX_MESSAGES} сообщений. Если период больше, инструмент откажет — попроси пользователя сузить диапазон, не запускай несколько задач автоматически.`,
       'Субагент читает только SQL, не обращается к VK, не отправляет сообщения и не выполняет действия.',
       `Можно ограничить выборку участниками: participants — от 1 до ${MAX_PARTICIPANTS} имён, полных имён или VK ID. Пенёк и имя текущего персонажа означают сообщения бота.`,
       'В task опиши точную задачу и формат результата: субагент не сможет задать уточняющий вопрос. Не делегируй короткие фрагменты — для них есть get_local_chat_history.',
@@ -251,9 +253,9 @@ export function createSubagentTool(context: SubagentToolContext): AITool {
         return JSON.stringify({ status: 'not_executed', message: access.message });
       }
 
-      let availableCount: number;
+      let estimate: HistoryEstimate;
       try {
-        availableCount = await context.countMessages({
+        estimate = await context.estimateMessages({
           ...(count ? { count } : {}),
           ...(from ? { from } : {}),
           ...(to ? { to } : {}),
@@ -263,7 +265,7 @@ export function createSubagentTool(context: SubagentToolContext): AITool {
       } catch (error) {
         logger.warn(
           { errorName: error instanceof Error ? error.name : 'UnknownError' },
-          'Unable to count subagent history',
+          'Unable to estimate subagent history',
         );
         return JSON.stringify({
           status: 'error',
@@ -271,9 +273,12 @@ export function createSubagentTool(context: SubagentToolContext): AITool {
         });
       }
 
+      const availableCount = estimate.count;
+      const period = from && to ? { from: from.toISOString(), to: to.toISOString() } : undefined;
       if (availableCount < config.SUBAGENT_MIN_MESSAGES) {
         return JSON.stringify({
           status: 'not_executed',
+          ...(period ? { period } : {}),
           requested_count: count ?? null,
           available_count: availableCount,
           message:
@@ -283,10 +288,66 @@ export function createSubagentTool(context: SubagentToolContext): AITool {
       if (availableCount > config.SUBAGENT_MAX_MESSAGES) {
         return JSON.stringify({
           status: 'not_executed',
+          reason: 'too_many_messages',
+          ...(period ? { period } : {}),
           requested_count: count ?? null,
           available_count: availableCount,
           max_messages: config.SUBAGENT_MAX_MESSAGES,
-          message: `За один раз можно обработать не более ${config.SUBAGENT_MAX_MESSAGES} сообщений. В локальной истории доступно ${availableCount}. Уточни период или запроси последние ${config.SUBAGENT_MAX_MESSAGES}.`,
+          message: period
+            ? `В выбранном периоде ${period.from} — ${period.to} ${availableCount} сообщений. Максимум для одного пересказа — ${config.SUBAGENT_MAX_MESSAGES}. Сузьте диапазон.`
+            : `В локальной истории доступно ${availableCount} сообщений. Максимум для одного пересказа — ${config.SUBAGENT_MAX_MESSAGES}. Запросите последние ${config.SUBAGENT_MAX_MESSAGES} сообщений.`,
+        });
+      }
+
+      const estimatedChunks = Math.max(
+        1,
+        Math.ceil(availableCount / config.SUMMARY_CHUNK_MESSAGES),
+        Math.ceil(estimate.chars / config.SUMMARY_CHUNK_CHARS),
+      );
+      const estimatedInputTokens = Math.ceil(estimate.chars / 4) + estimatedChunks * 300;
+      if (estimate.chars > config.SUBAGENT_MAX_SUMMARY_CHARS) {
+        return JSON.stringify({
+          status: 'not_executed',
+          reason: 'too_many_chars',
+          ...(period ? { period } : {}),
+          requested_count: count ?? null,
+          available_count: availableCount,
+          available_chars: estimate.chars,
+          max_chars: config.SUBAGENT_MAX_SUMMARY_CHARS,
+          message: period
+            ? `В выбранном периоде ${period.from} — ${period.to} ${estimate.chars} символов истории. Максимум — ${config.SUBAGENT_MAX_SUMMARY_CHARS}. Сузьте диапазон.`
+            : `В локальной истории ${estimate.chars} символов. Максимум — ${config.SUBAGENT_MAX_SUMMARY_CHARS}. Запросите меньший фрагмент.`,
+        });
+      }
+      if (estimatedChunks > config.SUBAGENT_MAX_SUMMARY_CHUNKS) {
+        return JSON.stringify({
+          status: 'not_executed',
+          reason: 'too_many_chunks',
+          ...(period ? { period } : {}),
+          requested_count: count ?? null,
+          available_count: availableCount,
+          available_chars: estimate.chars,
+          estimated_chunks: estimatedChunks,
+          max_chunks: config.SUBAGENT_MAX_SUMMARY_CHUNKS,
+          message: period
+            ? `Выбранный период требует примерно ${estimatedChunks} чанков; максимум — ${config.SUBAGENT_MAX_SUMMARY_CHUNKS}. Сузьте диапазон.`
+            : `Выборка требует примерно ${estimatedChunks} чанков; максимум — ${config.SUBAGENT_MAX_SUMMARY_CHUNKS}. Запросите меньший фрагмент.`,
+        });
+      }
+      if (estimatedInputTokens > config.SUBAGENT_MAX_ESTIMATED_INPUT_TOKENS) {
+        return JSON.stringify({
+          status: 'not_executed',
+          reason: 'too_many_tokens',
+          ...(period ? { period } : {}),
+          requested_count: count ?? null,
+          available_count: availableCount,
+          available_chars: estimate.chars,
+          estimated_chunks: estimatedChunks,
+          estimated_input_tokens: estimatedInputTokens,
+          max_estimated_input_tokens: config.SUBAGENT_MAX_ESTIMATED_INPUT_TOKENS,
+          message: period
+            ? `Выбранный период требует примерно ${estimatedInputTokens} input-токенов; максимум — ${config.SUBAGENT_MAX_ESTIMATED_INPUT_TOKENS}. Сузьте диапазон.`
+            : `Выборка требует примерно ${estimatedInputTokens} input-токенов; максимум — ${config.SUBAGENT_MAX_ESTIMATED_INPUT_TOKENS}. Запросите меньший фрагмент.`,
         });
       }
 
@@ -318,9 +379,12 @@ export function createSubagentTool(context: SubagentToolContext): AITool {
       if (started.status === 'not_executed') {
         return JSON.stringify({
           status: 'not_executed',
+          ...(period ? { period } : {}),
           message: started.message,
           requested_count: count ?? null,
           available_count: availableCount,
+          available_chars: estimate.chars,
+          estimated_chunks: estimatedChunks,
         });
       }
       if (started.status === 'already_running') {
@@ -355,8 +419,12 @@ export function createSubagentTool(context: SubagentToolContext): AITool {
       return JSON.stringify({
         status: 'accepted',
         job_id: started.jobId,
+        ...(period ? { period } : {}),
         requested_count: count ?? null,
         available_count: availableCount,
+        available_chars: estimate.chars,
+        estimated_chunks: estimatedChunks,
+        estimated_input_tokens: estimatedInputTokens,
         parts,
         ...(resolvedParticipants.length > 0
           ? { participants: resolvedParticipants.map((participant) => participant.name) }

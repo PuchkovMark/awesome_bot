@@ -49,12 +49,76 @@ export type ChatDigestMeta = {
   source: 'db';
 };
 
+export type HistoryEstimate = {
+  count: number;
+  chars: number;
+  capped: boolean;
+};
+
+export type UsageSnapshot = {
+  inputTokens: number;
+  outputTokens: number;
+};
+
+export class UsageLimitError extends Error {
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly maxInputTokens: number;
+  readonly maxOutputTokens: number;
+
+  constructor(snapshot: UsageSnapshot, maxInputTokens: number, maxOutputTokens: number) {
+    super(
+      `Лимит токенов на задачу исчерпан: вход ${snapshot.inputTokens}/${maxInputTokens}, выход ${snapshot.outputTokens}/${maxOutputTokens}`,
+    );
+    this.name = 'UsageLimitError';
+    this.inputTokens = snapshot.inputTokens;
+    this.outputTokens = snapshot.outputTokens;
+    this.maxInputTokens = maxInputTokens;
+    this.maxOutputTokens = maxOutputTokens;
+  }
+}
+
+export class UsageBudget {
+  private inputTokens = 0;
+  private outputTokens = 0;
+  private readonly maxInputTokens: number;
+  private readonly maxOutputTokens: number;
+
+  constructor(maxInputTokens: number, maxOutputTokens: number) {
+    this.maxInputTokens = Math.max(1, maxInputTokens);
+    this.maxOutputTokens = Math.max(1, maxOutputTokens);
+  }
+
+  add(response: Pick<AIResponse, 'inputTokens' | 'outputTokens'>): void {
+    this.inputTokens += response.inputTokens ?? 0;
+    this.outputTokens += response.outputTokens ?? 0;
+  }
+
+  exceeded(): boolean {
+    return this.inputTokens > this.maxInputTokens || this.outputTokens > this.maxOutputTokens;
+  }
+
+  ensureWithinLimits(): void {
+    if (this.exceeded()) {
+      throw new UsageLimitError(this.snapshot(), this.maxInputTokens, this.maxOutputTokens);
+    }
+  }
+
+  snapshot(): UsageSnapshot {
+    return {
+      inputTokens: this.inputTokens,
+      outputTokens: this.outputTokens,
+    };
+  }
+}
+
 export type SummarizeHistoryOptions = {
   timeZone?: string | null;
   focus?: string;
   maxDigestChars?: number;
   concurrency?: number;
   limiter?: <T>(fn: () => Promise<T>) => Promise<T>;
+  usage?: UsageBudget;
 };
 
 const MAX_MESSAGE_CHARS = 1_000;
@@ -159,9 +223,7 @@ async function loadDbMessages(input: HistoryLoadInput): Promise<HistoryMessage[]
   const rows: DbMessageRow[] = await prisma.message.findMany({
     where: messageWhere(input),
     orderBy: [{ sentAt: 'desc' }, { createdAt: 'desc' }],
-    ...(input.request.count
-      ? { take: Math.min(input.request.count, config.SUBAGENT_MAX_MESSAGES) }
-      : {}),
+    ...(input.request.count ? { take: input.request.count } : {}),
     include: { user: { select: { vkId: true, displayName: true } } },
   });
 
@@ -217,6 +279,34 @@ export async function countHistoryMessages(input: HistoryLoadInput): Promise<num
     return Math.min(total, input.request.count);
   }
   return prisma.message.count({ where });
+}
+
+export async function estimateHistoryMessages(input: HistoryLoadInput): Promise<HistoryEstimate> {
+  const where = messageWhere(input);
+  const total = await prisma.message.count({ where });
+  const count = input.request.count !== undefined ? Math.min(total, input.request.count) : total;
+  if (count === 0) {
+    return { count: 0, chars: 0, capped: false };
+  }
+  if (count > config.SUBAGENT_MAX_MESSAGES) {
+    return { count, chars: 0, capped: true };
+  }
+
+  const rows = await prisma.message.findMany({
+    where,
+    select: { content: true, attachments: true },
+    orderBy: [{ sentAt: 'desc' }, { createdAt: 'desc' }],
+    take: Math.max(1, count),
+  });
+  const chars = rows.reduce(
+    (sum, row) =>
+      sum +
+      Math.min(row.content.trim().length, MAX_MESSAGE_CHARS) +
+      (row.attachments?.length ?? 0) +
+      40,
+    0,
+  );
+  return { count, chars, capped: false };
 }
 
 function stringArray(value: unknown, maxItems: number, maxLength: number): string[] {
@@ -406,6 +496,7 @@ async function summarizeChunk(
   timeZone?: string | null,
   depth = 0,
   focus?: string,
+  usage?: UsageBudget,
 ): Promise<ChatDigestChunk> {
   const transcript = formatTranscript(messages, timeZone);
   const focusInstruction = focus
@@ -439,6 +530,8 @@ async function summarizeChunk(
       },
       digestOutputLimits(),
     );
+    usage?.add(response);
+    usage?.ensureWithinLimits();
     return parseDigest(response.content, messages);
   } catch (error) {
     if (!(error instanceof AIOutputLimitError)) throw error;
@@ -468,6 +561,7 @@ async function summarizeChunk(
       timeZone,
       depth + 1,
       focus,
+      usage,
     );
     const right = await summarizeChunk(
       provider,
@@ -477,6 +571,7 @@ async function summarizeChunk(
       timeZone,
       depth + 1,
       focus,
+      usage,
     );
     return combineDigests([left, right]);
   }
@@ -487,6 +582,7 @@ async function mergeDigests(
   digests: readonly ChatDigestChunk[],
   focus?: string,
   limiter?: <T>(fn: () => Promise<T>) => Promise<T>,
+  usage?: UsageBudget,
 ): Promise<ChatDigestChunk> {
   const run = async (): Promise<ChatDigestChunk> => {
     try {
@@ -516,6 +612,8 @@ async function mergeDigests(
         },
         digestOutputLimits(),
       );
+      usage?.add(response);
+      usage?.ensureWithinLimits();
       const parsed = parseDigest(response.content, []);
       return parsed.facts.length > 0 ? parsed : combineDigests(digests);
     } catch (error) {
@@ -556,6 +654,7 @@ async function reduceDigests(
   maxChars: number,
   focus?: string,
   limiter?: <T>(fn: () => Promise<T>) => Promise<T>,
+  usage?: UsageBudget,
 ): Promise<ChatDigestChunk[]> {
   let current = digests;
   for (let round = 0; round < 3 && digestSize(current) > maxChars; round += 1) {
@@ -565,7 +664,9 @@ async function reduceDigests(
     for (const group of groups) {
       const only = group[0];
       reduced.push(
-        group.length === 1 && only ? only : await mergeDigests(provider, group, focus, limiter),
+        group.length === 1 && only
+          ? only
+          : await mergeDigests(provider, group, focus, limiter, usage),
       );
     }
     current = reduced;
@@ -610,15 +711,36 @@ export async function summarizeHistorySnapshot(
   provider: AIProvider,
   messages: readonly HistoryMessage[],
   options: SummarizeHistoryOptions = {},
-): Promise<{ digests: ChatDigestChunk[]; messageCount: number; text: string }> {
+): Promise<{
+  digests: ChatDigestChunk[];
+  messageCount: number;
+  text: string;
+  usage?: UsageSnapshot;
+}> {
   if (messages.length === 0) {
-    return { digests: [], messageCount: 0, text: '' };
+    return {
+      digests: [],
+      messageCount: 0,
+      text: '',
+      ...(options.usage ? { usage: options.usage.snapshot() } : {}),
+    };
   }
+  options.usage?.ensureWithinLimits();
   const chunks = chunkMessages(messages);
   const concurrency = Math.max(1, options.concurrency ?? config.SUBAGENT_SUMMARIZE_CONCURRENCY);
   const digests = await mapWithConcurrency(chunks, concurrency, async (chunk, index) => {
     const run = () =>
-      summarizeChunk(provider, chunk, index, chunks.length, options.timeZone, 0, options.focus);
+      summarizeChunk(
+        provider,
+        chunk,
+        index,
+        chunks.length,
+        options.timeZone,
+        0,
+        options.focus,
+        options.usage,
+      );
+    options.usage?.ensureWithinLimits();
     return options.limiter ? options.limiter(run) : run();
   });
   const reduced = await reduceDigests(
@@ -627,11 +749,14 @@ export async function summarizeHistorySnapshot(
     options.maxDigestChars ?? config.SUMMARY_MAX_DIGEST_CHARS,
     options.focus,
     options.limiter,
+    options.usage,
   );
+  options.usage?.ensureWithinLimits();
   return {
     digests: reduced,
     messageCount: messages.length,
     text: formatDigestText(reduced),
+    ...(options.usage ? { usage: options.usage.snapshot() } : {}),
   };
 }
 
@@ -668,7 +793,7 @@ export async function finalizeChatDigest(
       {
         role: 'system',
         content: [
-          'Ты Аргон, основная модель бота. Составь финальный краткий пересказ беседы или личного диалога на русском языке.',
+          'Ты — основная модель бота. Составь финальный краткий пересказ беседы или личного диалога на русском языке.',
           'Используй только предоставленные структурированные выжимки, не выдумывай факты и не выводи JSON.',
           `Ответ должен быть не длиннее ${maxChars} символов. Выдели основные темы, решения, нерешённые вопросы и договорённости.`,
           actualText,

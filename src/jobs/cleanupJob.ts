@@ -14,7 +14,6 @@ export function startCleanupJob(minutes = 60) {
         memoryService.cleanupOldContext(),
         subagentService.cleanupOldJobs(),
       ]);
-      await subagentService.recoverJobs();
       logger.info({ deleted, deletedJobs }, 'Cleanup job executed');
     } catch (err) {
       logger.error({ err }, 'Cleanup job failed');

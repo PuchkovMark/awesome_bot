@@ -13,6 +13,7 @@ export type AIResponse = {
   tokens?: number;
   inputTokens?: number;
   outputTokens?: number;
+  reasoningTokens?: number;
 };
 
 export type AITool = {
