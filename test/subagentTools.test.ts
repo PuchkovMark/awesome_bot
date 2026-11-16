@@ -88,6 +88,50 @@ test('subagent search is case-insensitive and reports totals', async () => {
   assert.equal(result.returned, 2);
 });
 
+test('subagent history exposes message ids and reply targets', async () => {
+  const messages: HistoryMessage[] = [
+    { ...message(1, 'Исходное сообщение'), conversationMessageId: 10 },
+    {
+      ...message(2, 'Ответ на исходное'),
+      conversationMessageId: 11,
+      replyToConversationMessageId: 10,
+      replyToAuthor: 'Иван',
+      replyToText: 'Исходное сообщение',
+    },
+  ];
+  const tools = createSubagentTools({
+    messages,
+    task: 'Проверь ответы',
+    timeZone: 'Europe/Moscow',
+    isChat: true,
+    seenMessageIds: new Set<string>(),
+    provider: mockProvider(),
+    limiter: (fn) => fn(),
+    isActive: () => true,
+  });
+  const pager = tools.find((tool) => tool.name === 'get_local_chat_history');
+  assert.ok(pager);
+  const page = JSON.parse(await pager.execute({ limit: 10 }));
+  assert.deepEqual(
+    page.messages.find((item: { message_id?: number }) => item.message_id === 11)?.reply_to,
+    {
+      message_id: 10,
+      author: 'Иван',
+      text: 'Исходное сообщение',
+    },
+  );
+
+  const search = tools.find((tool) => tool.name === 'search_history');
+  assert.ok(search);
+  const found = JSON.parse(await search.execute({ query: 'Ответ на исходное' }));
+  assert.equal(found.matches[0]?.message_id, 11);
+  assert.deepEqual(found.matches[0]?.reply_to, {
+    message_id: 10,
+    author: 'Иван',
+    text: 'Исходное сообщение',
+  });
+});
+
 test('subagent summarize returns a compressed overview', async () => {
   const calls: unknown[] = [];
   const tools = makeTools(true, calls);

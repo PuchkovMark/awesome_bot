@@ -6,8 +6,12 @@ process.env.VK_GROUP_ID = '1';
 process.env.LOG_LEVEL = 'silent';
 
 const { prisma } = await import('../src/db/client.js');
-const { default: subagentService, SubagentService } =
-  await import('../src/services/ai/subagentService.js');
+const { default: config } = await import('../src/config/index.js');
+const {
+  default: subagentService,
+  requiredSubagentParts,
+  SubagentService,
+} = await import('../src/services/ai/subagentService.js');
 
 function jobRow(overrides: Record<string, unknown> = {}) {
   return {
@@ -70,6 +74,12 @@ function mockMethod(
   });
 }
 
+test('requiredSubagentParts uses one part until the volume threshold', () => {
+  assert.equal(requiredSubagentParts(config.SUBAGENT_SECOND_PART_MIN_MESSAGES - 1), 1);
+  assert.equal(requiredSubagentParts(config.SUBAGENT_SECOND_PART_MIN_MESSAGES), 2);
+  assert.equal(requiredSubagentParts(config.SUBAGENT_SECOND_PART_MIN_MESSAGES + 1), 2);
+});
+
 test('startJob creates one job per conversation and uses conversationId as activeKey', async (t) => {
   let createdData: Record<string, unknown> | undefined;
   mockMethod(t, prisma.digestJob, 'findUnique', async (args: unknown) => {
@@ -89,7 +99,6 @@ test('startJob creates one job per conversation and uses conversationId as activ
     task: 'Перескажи 6000 сообщений',
     format: 'summary',
     maxOutputChars: 3_500,
-    parts: 2,
     count: 6_000,
   });
   assert.equal(result.status, 'accepted');
@@ -109,7 +118,6 @@ test('startJob rejects a second active job in the same chat', async (t) => {
     task: 'Перескажи 6000 сообщений',
     format: 'summary',
     maxOutputChars: 3_500,
-    parts: 1,
     count: 6_000,
   });
   assert.equal(result.status, 'already_running');
@@ -124,7 +132,6 @@ test('startJob enforces the daily limit', async (t) => {
     task: 'Перескажи 6000 сообщений',
     format: 'summary',
     maxOutputChars: 3_500,
-    parts: 1,
     count: 6_000,
   });
   assert.equal(result.status, 'not_executed');
@@ -189,7 +196,6 @@ test('stop prevents new subagent jobs', async () => {
     task: 'Перескажи историю',
     format: 'summary',
     maxOutputChars: 3_500,
-    parts: 1,
     count: 600,
   });
   assert.equal(result.status, 'not_executed');

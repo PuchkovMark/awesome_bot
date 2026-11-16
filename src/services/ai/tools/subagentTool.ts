@@ -18,7 +18,6 @@ export type SubagentRequest = {
   to?: Date;
   format: SubagentFormat;
   maxOutputChars: number;
-  parts: number;
   participants: ResolvedParticipant[];
 };
 
@@ -64,7 +63,7 @@ export function createSubagentTool(context: SubagentToolContext): AITool {
       'Субагент читает только SQL, не обращается к VK, не отправляет сообщения и не выполняет действия.',
       `Можно ограничить выборку участниками: participants — от 1 до ${MAX_PARTICIPANTS} имён, полных имён или VK ID. Пенёк и имя текущего персонажа означают сообщения бота.`,
       'В task опиши точную задачу и формат результата: субагент не сможет задать уточняющий вопрос. Не делегируй короткие фрагменты — для них есть get_local_chat_history.',
-      `Задача выполняется в фоне; результат придёт отдельным сообщением позже. До ${config.SUBAGENT_MAX_PARTS} частей.`,
+      'Задача выполняется в фоне; результат придёт отдельным сообщением позже. Число частей определяется автоматически по объёму истории.',
     ].join(' '),
     parameters: {
       type: 'object',
@@ -92,12 +91,6 @@ export function createSubagentTool(context: SubagentToolContext): AITool {
           minimum: 500,
           maximum: MAX_OUTPUT_CHARS,
         },
-        parts: {
-          type: 'integer',
-          minimum: 1,
-          maximum: config.SUBAGENT_MAX_PARTS,
-          description: 'Сколько частей обрабатывать параллельно: 1 или 2.',
-        },
         participants: {
           type: 'array',
           minItems: 1,
@@ -121,7 +114,6 @@ export function createSubagentTool(context: SubagentToolContext): AITool {
             key !== 'to' &&
             key !== 'format' &&
             key !== 'max_output_chars' &&
-            key !== 'parts' &&
             key !== 'participants',
         )
       ) {
@@ -191,16 +183,6 @@ export function createSubagentTool(context: SubagentToolContext): AITool {
       ) {
         return invalid(`max_output_chars должен быть от 500 до ${MAX_OUTPUT_CHARS}.`);
       }
-      const parts = input.parts ?? 1;
-      if (
-        typeof parts !== 'number' ||
-        !Number.isSafeInteger(parts) ||
-        parts < 1 ||
-        parts > config.SUBAGENT_MAX_PARTS
-      ) {
-        return invalid(`parts должен быть от 1 до ${config.SUBAGENT_MAX_PARTS}.`);
-      }
-
       let participantReferences: string[] = [];
       if (input.participants !== undefined) {
         if (!context.isChat) {
@@ -274,6 +256,10 @@ export function createSubagentTool(context: SubagentToolContext): AITool {
       }
 
       const availableCount = estimate.count;
+      const parts =
+        availableCount >= config.SUBAGENT_SECOND_PART_MIN_MESSAGES
+          ? Math.max(1, Math.min(2, config.SUBAGENT_MAX_PARTS))
+          : 1;
       const period = from && to ? { from: from.toISOString(), to: to.toISOString() } : undefined;
       if (availableCount < config.SUBAGENT_MIN_MESSAGES) {
         return JSON.stringify({
@@ -358,7 +344,6 @@ export function createSubagentTool(context: SubagentToolContext): AITool {
         ...(to ? { to } : {}),
         format,
         maxOutputChars,
-        parts,
         participants: resolvedParticipants,
       };
 
@@ -404,7 +389,7 @@ export function createSubagentTool(context: SubagentToolContext): AITool {
         resolvedParticipants.length > 0
           ? ` Участники: ${resolvedParticipants.map((participant) => participant.name).join(', ')}.`
           : '';
-      const text = `Принял задачу. Обрабатываю ${availableCount} сообщений в фоне${parts > 1 ? ' двумя частями' : ''}.${participantText} Пришлю результат ответом на это сообщение.${coverage}`;
+      const text = `Принял задачу. Обрабатываю ${availableCount} сообщений в фоне.${participantText} Пришлю результат ответом на это сообщение.${coverage}`;
       try {
         await context.acknowledge(text);
       } catch (error) {

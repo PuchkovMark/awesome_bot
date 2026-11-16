@@ -170,8 +170,12 @@ export function formatTranscript(
           }).format(new Date(message.timestamp))
         : new Date(message.timestamp).toISOString();
       const attachments = message.attachments.length ? ` [${message.attachments.join(', ')}]` : '';
+      const replyId =
+        message.replyToConversationMessageId !== undefined
+          ? ` #${message.replyToConversationMessageId}`
+          : '';
       const reply = message.replyToText
-        ? ` (ответ на${message.replyToAuthor ? ` ${message.replyToAuthor}` : ''}: «${message.replyToText.slice(0, 300)}»)`
+        ? ` (ответ на${message.replyToAuthor ? ` ${message.replyToAuthor}` : ''}${replyId}: «${message.replyToText.slice(0, 300)}»)`
         : '';
       return `[${time}] ${message.author}${reply}: ${message.text}${attachments}`;
     })

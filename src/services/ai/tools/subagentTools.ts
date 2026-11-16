@@ -40,24 +40,39 @@ function messageKey(message: HistoryMessage): string {
   return `${message.timestamp}:${message.author}:${message.text.slice(0, 64)}`;
 }
 
+function replyEntry(message: HistoryMessage): Record<string, unknown> | undefined {
+  if (!message.replyToText && message.replyToConversationMessageId === undefined) {
+    return undefined;
+  }
+  const text = message.replyToText?.trim() ?? '';
+  return {
+    ...(message.replyToConversationMessageId !== undefined
+      ? { message_id: message.replyToConversationMessageId }
+      : {}),
+    ...(message.replyToAuthor ? { author: message.replyToAuthor } : {}),
+    ...(text
+      ? {
+          text: text.slice(0, MAX_REPLY_CHARS),
+          ...(text.length > MAX_REPLY_CHARS ? { truncated: true } : {}),
+        }
+      : {}),
+  };
+}
+
 function messageEntry(message: HistoryMessage): Record<string, unknown> {
   const text = message.text.trim();
+  const reply = replyEntry(message);
   return {
+    ...(message.conversationMessageId !== undefined
+      ? { message_id: message.conversationMessageId }
+      : {}),
     time: new Date(message.timestamp).toISOString(),
     speaker: message.author,
     role: message.role,
     text: text.slice(0, MAX_MESSAGE_CHARS),
     ...(text.length > MAX_MESSAGE_CHARS ? { truncated: true } : {}),
     ...(message.attachments.length > 0 ? { attachments: message.attachments.slice(0, 5) } : {}),
-    ...(message.replyToText
-      ? {
-          reply_to: {
-            ...(message.replyToAuthor ? { author: message.replyToAuthor } : {}),
-            text: message.replyToText.slice(0, MAX_REPLY_CHARS),
-            ...(message.replyToText.length > MAX_REPLY_CHARS ? { truncated: true } : {}),
-          },
-        }
-      : {}),
+    ...(reply ? { reply_to: reply } : {}),
   };
 }
 
@@ -294,12 +309,17 @@ function createSubagentSearchTool(context: SubagentHistoryContext): AITool {
         .slice(0, limit)
         .map((message) => {
           const text = message.text.trim();
+          const reply = replyEntry(message);
           return {
+            ...(message.conversationMessageId !== undefined
+              ? { message_id: message.conversationMessageId }
+              : {}),
             time: new Date(message.timestamp).toISOString(),
             speaker: message.author,
             role: message.role,
             text: text.slice(0, MAX_SEARCH_TEXT_CHARS),
             ...(text.length > MAX_SEARCH_TEXT_CHARS ? { truncated: true } : {}),
+            ...(reply ? { reply_to: reply } : {}),
           };
         });
 

@@ -3338,7 +3338,6 @@ export class VkService {
                       task: request.task,
                       format: request.format,
                       maxOutputChars: request.maxOutputChars,
-                      parts: request.parts,
                       ...(request.count !== undefined ? { count: request.count } : {}),
                       ...(request.from ? { from: request.from } : {}),
                       ...(request.to ? { to: request.to } : {}),

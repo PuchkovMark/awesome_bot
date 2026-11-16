@@ -128,21 +128,32 @@ test('run_subagent accepts a large request when SQL has fewer messages than requ
   assert.equal(wasStarted(), true);
 });
 
-test('run_subagent passes parts and format to the job', async () => {
+test('run_subagent passes format and output limit to the job', async () => {
   const { tool, requests } = makeTool({ available: 2_500 });
   const result = JSON.parse(
     await tool.execute({
       task: 'Составь хронологию обсуждения ремонта',
       count: 2_500,
       format: 'timeline',
-      parts: 2,
       max_output_chars: 2_000,
     }),
   );
   assert.equal(result.status, 'accepted');
-  assert.equal(requests[0]?.parts, 2);
   assert.equal(requests[0]?.format, 'timeline');
   assert.equal(requests[0]?.maxOutputChars, 2_000);
+  assert.equal(result.parts, 2);
+});
+
+test('run_subagent uses one part for a small history', async () => {
+  const { tool } = makeTool({ available: 400 });
+  const result = JSON.parse(
+    await tool.execute({
+      task: 'Перескажи обсуждение ремонта',
+      count: 400,
+    }),
+  );
+  assert.equal(result.status, 'accepted');
+  assert.equal(result.parts, 1);
 });
 
 test('run_subagent reports an already running job without acknowledging', async () => {
