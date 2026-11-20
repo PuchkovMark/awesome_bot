@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
@@ -78,4 +78,15 @@ test('очистка повторных и пересекающихся секр
   const redact = createRedactor(['abc', 'bcd', 'abc', '']);
   expect(redact('abcd abc bcd')).toBe('[REDACTED] [REDACTED] [REDACTED]');
   expect(createRedactor([])('plain')).toBe('plain');
+});
+
+test('пример окружения соответствует выбранной модели и конфигурации', () => {
+  const example = readFileSync('.env.example', 'utf8')
+    .replace('replace-with-vk-community-token', valid.VK_TOKEN)
+    .replace('replace-with-opencode-api-key', valid.OPENCODE_API_KEY);
+  const { config } = loadConfig({ env: {}, readFile: () => example });
+  expect(config.llm.provider).toBe('opencode');
+  expect(config.llm.model).toBe('deepseek-v4.1-flash');
+  expect(config.vk.token).toBe(valid.VK_TOKEN);
+  expect(config.llm.apiKey).toBe(valid.OPENCODE_API_KEY);
 });
