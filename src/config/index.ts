@@ -1,215 +1,53 @@
-import dotenv from 'dotenv';
-import { DEFAULT_REASONING_EFFORT, type ReasoningEffort } from '../services/ai/effort.js';
-import { DEFAULT_TEXT_MODEL } from '../services/ai/textModels.js';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { parseEnv } from 'node:util';
+import { ConfigError } from './errors.js';
+import { createRedactor } from './secrets.js';
+import { configParameters, logLevels } from './types.js';
+import type { ConfigParameter, LoadedConfig, LogLevel } from './types.js';
 
-dotenv.config();
+export { ConfigError } from './errors.js';
+export type { AppConfig, LoadedConfig, LogLevel, Redact } from './types.js';
 
-/**
- * Типизированная конфигурация приложения.
- */
-export interface AppConfig {
-  VK_TOKEN: string;
-  VK_SERVICE_TOKEN?: string;
-  VK_GROUP_ID: string;
-  OPENCODE_API_KEY?: string;
-  OPENCODE_MODEL: string;
-  OPENCODE_BASE_URL: string;
-  AI_EFFORT: ReasoningEffort;
-  AI_MAX_OUTPUT_TOKENS: number;
-  OPENAI_API_KEY?: string;
-  OPENAI_MODEL: string;
-  OPENAI_IMAGE_MODEL: string;
-  OPENAI_TRANSCRIPTION_MODEL: string;
-  OPENAI_TTS_MODEL: string;
-  VOICE_ENABLED: boolean;
-  VK_ADMIN_IDS: string[];
-  IMAGE_ADMIN_ONLY: boolean;
-  IMAGE_MAX_PER_USER_PER_DAY: number;
-  AI_MAX_RETRIES: number;
-  AI_MAX_TOOL_CALLS: number;
-  SUMMARY_MODEL: string;
-  SUMMARY_CHUNK_MESSAGES: number;
-  SUMMARY_CHUNK_CHARS: number;
-  SUMMARY_CHUNK_OUTPUT_TOKENS: number;
-  SUMMARY_CHUNK_OUTPUT_TOKENS_MAX: number;
-  SUMMARY_MAX_DIGEST_CHARS: number;
-  SUMMARY_MAX_CHARS: number;
-  SUBAGENT_MAX_MESSAGES: number;
-  SUBAGENT_MIN_MESSAGES: number;
-  SUBAGENT_MAX_TOOL_CALLS: number;
-  SUBAGENT_MAX_OUTPUT_CHARS: number;
-  SUBAGENT_TIMEOUT_MINUTES: number;
-  SUBAGENT_PART_TIMEOUT_MINUTES: number;
-  SUBAGENT_DAILY_LIMIT: number;
-  SUBAGENT_CONCURRENCY: number;
-  SUBAGENT_MAX_PARTS: number;
-  SUBAGENT_SECOND_PART_MIN_MESSAGES: number;
-  SUBAGENT_PROVIDER_CONCURRENCY: number;
-  SUBAGENT_SUMMARIZE_CONCURRENCY: number;
-  SUBAGENT_MAX_SUMMARY_CHARS: number;
-  SUBAGENT_MAX_SUMMARY_CHUNKS: number;
-  SUBAGENT_MAX_ESTIMATED_INPUT_TOKENS: number;
-  SUBAGENT_MAX_INPUT_TOKENS: number;
-  SUBAGENT_MAX_OUTPUT_TOKENS: number;
-  SUBAGENT_MAX_SUMMARIZE_CALLS: number;
-  SUBAGENT_MAX_SEARCH_RESULTS: number;
-  SUBAGENT_RESULT_RETENTION_DAYS: number;
-  MAX_REQUESTS_PER_MINUTE: number;
-  MAX_HISTORY_MESSAGES: number;
-  MAX_INPUT_CHARS: number;
-  WEB_SEARCH_PROVIDER: 'none' | 'serper' | 'tavily';
-  MEMEDAY_TIMEZONE: string;
-  MEMORY_EMBEDDING_API_KEY?: string;
-  MEMORY_EMBEDDING_MODEL: string;
-  SERPER_API_KEY?: string;
-  TAVILY_API_KEY?: string;
-  PORT: number;
-  LOG_LEVEL: string;
-  BOT_NAME: string;
-  CONTEXT_TTL_HOURS: number;
-  MAX_HISTORY_TOKENS: number;
+export interface ConfigOptions {
+  env?: Readonly<Record<string, string | undefined>>;
+  cwd?: string;
+  envFile?: string;
+  readFile?: (path: string) => string;
 }
 
-function required(name: string): string {
-  const v = process.env[name];
-  if (!v) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error(`Environment variable ${name} is required`);
-    }
-    // In non-production allow startup for local development — return empty string and warn.
-    // Avoid importing logger here to prevent circular dependency.
-    // eslint-disable-next-line no-console
-    console.warn(`Environment variable ${name} is not set; using empty string (development mode)`);
-    return '';
-  }
-  return v;
-}
-
-function optionalNumber(name: string, fallback: number): number {
-  const v = process.env[name];
-  if (!v) return fallback;
-  const n = Number(v);
-  if (Number.isNaN(n)) throw new TypeError(`Environment variable ${name} must be a number`);
-  return n;
-}
-
-function positiveInteger(name: string, fallback: number): number {
-  const value = optionalNumber(name, fallback);
-  if (!Number.isInteger(value) || value < 1) {
-    throw new Error(`Environment variable ${name} must be a positive integer`);
-  }
-  return value;
-}
-
-function outputTokenLimit(): number {
-  const value = positiveInteger('AI_MAX_OUTPUT_TOKENS', 32_768);
-  if (value > 32_768) {
-    throw new Error('Environment variable AI_MAX_OUTPUT_TOKENS must not exceed 32768');
-  }
-  return value;
-}
-
-function oneOf<T extends string>(name: string, values: readonly T[], fallback: T): T {
-  const value = process.env[name];
-  if (!value) return fallback;
-  if (!values.includes(value as T)) {
-    throw new Error(`Environment variable ${name} must be one of: ${values.join(', ')}`);
-  }
-  return value as T;
-}
-
-function timezone(name: string, fallback: string): string {
-  const value = process.env[name] || fallback;
+export function loadConfig(options: ConfigOptions = {}): LoadedConfig {
+  const env = options.env ?? process.env;
+  const readFile = options.readFile ?? ((path: string) => readFileSync(path, 'utf8'));
+  let file: Record<string, string | undefined> = {};
   try {
-    new Intl.DateTimeFormat('en-US', { timeZone: value });
-  } catch {
-    throw new Error(`Environment variable ${name} must be a valid IANA timezone`);
+    file = parseEnv(readFile(resolve(options.cwd ?? process.cwd(), options.envFile ?? '.env')));
+  } catch (error) {
+    const missing = typeof error === 'object' && error !== null
+      && Object.getOwnPropertyDescriptor(error, 'code')?.value === 'ENOENT';
+    if (!missing || options.envFile !== undefined) {
+      throw new ConfigError(missing ? 'env_file_missing' : 'env_file_unreadable');
+    }
   }
-  return value;
+
+  const values = Object.fromEntries(configParameters.map((key) => [key, env[key] ?? file[key]]));
+  const required = ['VK_TOKEN', 'OPENCODE_API_KEY', 'LLM_MODEL'] as const;
+  for (const parameter of required) {
+    const value = values[parameter];
+    if (value === undefined) throw new ConfigError('missing', [parameter]);
+    if (typeof value !== 'string' || !value || value.trim() !== value || /[\r\n]/.test(value)) {
+      throw new ConfigError('invalid', [parameter]);
+    }
+  }
+  const level = values.LOG_LEVEL === undefined ? 'info' : values.LOG_LEVEL;
+  if (!logLevels.includes(level as LogLevel)) throw new ConfigError('invalid', ['LOG_LEVEL']);
+  const config = Object.freeze({
+    vk: Object.freeze({ token: values.VK_TOKEN as string }),
+    llm: Object.freeze({ provider: 'opencode' as const, apiKey: values.OPENCODE_API_KEY as string, model: values.LLM_MODEL as string }),
+    log: Object.freeze({ level: level as LogLevel }),
+  });
+  const secretParameters: readonly ConfigParameter[] = ['VK_TOKEN', 'OPENCODE_API_KEY'];
+  const secrets = secretParameters.flatMap((key) => [env[key], file[key]])
+    .filter((value): value is string => typeof value === 'string');
+  return Object.freeze({ config, redact: createRedactor(secrets) });
 }
-
-const aiMaxOutputTokens = outputTokenLimit();
-const summaryChunkOutputTokens = Math.min(
-  positiveInteger('SUMMARY_CHUNK_OUTPUT_TOKENS', 1_200),
-  aiMaxOutputTokens,
-);
-const summaryChunkOutputTokensMax = Math.max(
-  summaryChunkOutputTokens,
-  Math.min(positiveInteger('SUMMARY_CHUNK_OUTPUT_TOKENS_MAX', 2_400), aiMaxOutputTokens),
-);
-
-export const config: AppConfig = {
-  VK_TOKEN: required('VK_TOKEN'),
-  VK_SERVICE_TOKEN: process.env.VK_SERVICE_TOKEN?.trim() || undefined,
-  VK_GROUP_ID: required('VK_GROUP_ID'),
-  OPENCODE_API_KEY: process.env.OPENCODE_API_KEY,
-  OPENCODE_MODEL: process.env.OPENCODE_MODEL?.trim() || DEFAULT_TEXT_MODEL,
-  OPENCODE_BASE_URL: process.env.OPENCODE_BASE_URL || 'https://opencode.ai/inference/go/openai/v1',
-  AI_EFFORT: oneOf('AI_EFFORT', ['low', 'medium', 'high'] as const, DEFAULT_REASONING_EFFORT),
-  AI_MAX_OUTPUT_TOKENS: aiMaxOutputTokens,
-  OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-  OPENAI_MODEL: process.env.OPENAI_MODEL || 'gpt-4.1-mini',
-  OPENAI_IMAGE_MODEL: process.env.OPENAI_IMAGE_MODEL || 'gpt-image-2.6-flare',
-  OPENAI_TRANSCRIPTION_MODEL: process.env.OPENAI_TRANSCRIPTION_MODEL || 'gpt-transcribe',
-  OPENAI_TTS_MODEL: process.env.OPENAI_TTS_MODEL || 'gpt-4o-mini-tts',
-  VOICE_ENABLED: process.env.VOICE_ENABLED === 'true',
-  VK_ADMIN_IDS: (process.env.VK_ADMIN_IDS || '')
-    .split(',')
-    .map((id) => id.trim())
-    .filter(Boolean),
-  IMAGE_ADMIN_ONLY: process.env.IMAGE_ADMIN_ONLY !== 'false',
-  IMAGE_MAX_PER_USER_PER_DAY: positiveInteger('IMAGE_MAX_PER_USER_PER_DAY', 20),
-  AI_MAX_RETRIES: positiveInteger('AI_MAX_RETRIES', 2),
-  AI_MAX_TOOL_CALLS: positiveInteger('AI_MAX_TOOL_CALLS', 10),
-  SUMMARY_MODEL: process.env.SUMMARY_MODEL || 'claude-haiku-5-5',
-  SUMMARY_CHUNK_MESSAGES: positiveInteger('SUMMARY_CHUNK_MESSAGES', 300),
-  SUMMARY_CHUNK_CHARS: positiveInteger('SUMMARY_CHUNK_CHARS', 12_000),
-  SUMMARY_CHUNK_OUTPUT_TOKENS: summaryChunkOutputTokens,
-  SUMMARY_CHUNK_OUTPUT_TOKENS_MAX: summaryChunkOutputTokensMax,
-  SUMMARY_MAX_DIGEST_CHARS: positiveInteger('SUMMARY_MAX_DIGEST_CHARS', 8_000),
-  SUMMARY_MAX_CHARS: positiveInteger('SUMMARY_MAX_CHARS', 2_000),
-  SUBAGENT_MAX_MESSAGES: positiveInteger('SUBAGENT_MAX_MESSAGES', 3_000),
-  SUBAGENT_MIN_MESSAGES: positiveInteger('SUBAGENT_MIN_MESSAGES', 100),
-  SUBAGENT_MAX_TOOL_CALLS: positiveInteger('SUBAGENT_MAX_TOOL_CALLS', 8),
-  SUBAGENT_MAX_OUTPUT_CHARS: positiveInteger('SUBAGENT_MAX_OUTPUT_CHARS', 2_000),
-  SUBAGENT_TIMEOUT_MINUTES: positiveInteger('SUBAGENT_TIMEOUT_MINUTES', 30),
-  SUBAGENT_PART_TIMEOUT_MINUTES: positiveInteger('SUBAGENT_PART_TIMEOUT_MINUTES', 15),
-  SUBAGENT_DAILY_LIMIT: positiveInteger('SUBAGENT_DAILY_LIMIT', 10),
-  SUBAGENT_CONCURRENCY: positiveInteger('SUBAGENT_CONCURRENCY', 2),
-  SUBAGENT_MAX_PARTS: positiveInteger('SUBAGENT_MAX_PARTS', 2),
-  SUBAGENT_SECOND_PART_MIN_MESSAGES: positiveInteger('SUBAGENT_SECOND_PART_MIN_MESSAGES', 500),
-  SUBAGENT_PROVIDER_CONCURRENCY: positiveInteger('SUBAGENT_PROVIDER_CONCURRENCY', 6),
-  SUBAGENT_SUMMARIZE_CONCURRENCY: positiveInteger('SUBAGENT_SUMMARIZE_CONCURRENCY', 3),
-  SUBAGENT_MAX_SUMMARY_CHARS: positiveInteger('SUBAGENT_MAX_SUMMARY_CHARS', 300_000),
-  SUBAGENT_MAX_SUMMARY_CHUNKS: positiveInteger('SUBAGENT_MAX_SUMMARY_CHUNKS', 25),
-  SUBAGENT_MAX_ESTIMATED_INPUT_TOKENS: positiveInteger(
-    'SUBAGENT_MAX_ESTIMATED_INPUT_TOKENS',
-    90_000,
-  ),
-  SUBAGENT_MAX_INPUT_TOKENS: positiveInteger('SUBAGENT_MAX_INPUT_TOKENS', 120_000),
-  SUBAGENT_MAX_OUTPUT_TOKENS: positiveInteger('SUBAGENT_MAX_OUTPUT_TOKENS', 35_000),
-  SUBAGENT_MAX_SUMMARIZE_CALLS: positiveInteger('SUBAGENT_MAX_SUMMARIZE_CALLS', 1),
-  SUBAGENT_MAX_SEARCH_RESULTS: positiveInteger('SUBAGENT_MAX_SEARCH_RESULTS', 50),
-  SUBAGENT_RESULT_RETENTION_DAYS: positiveInteger('SUBAGENT_RESULT_RETENTION_DAYS', 7),
-  MAX_REQUESTS_PER_MINUTE: positiveInteger('MAX_REQUESTS_PER_MINUTE', 10),
-  MAX_HISTORY_MESSAGES: positiveInteger('MAX_HISTORY_MESSAGES', 30),
-  MAX_INPUT_CHARS: positiveInteger('MAX_INPUT_CHARS', 12_000),
-  WEB_SEARCH_PROVIDER: oneOf(
-    'WEB_SEARCH_PROVIDER',
-    ['none', 'serper', 'tavily'] as const,
-    'serper',
-  ),
-  MEMEDAY_TIMEZONE: timezone('MEMEDAY_TIMEZONE', 'UTC'),
-  MEMORY_EMBEDDING_API_KEY:
-    process.env.MEMORY_EMBEDDING_API_KEY || process.env.OPENAI_API_KEY || undefined,
-  MEMORY_EMBEDDING_MODEL: process.env.MEMORY_EMBEDDING_MODEL || 'text-embedding-3-small',
-  SERPER_API_KEY: process.env.SERPER_API_KEY,
-  TAVILY_API_KEY: process.env.TAVILY_API_KEY,
-  PORT: optionalNumber('PORT', 3000),
-  LOG_LEVEL: process.env.LOG_LEVEL || 'info',
-  BOT_NAME: process.env.BOT_NAME || 'awesome_bot',
-  CONTEXT_TTL_HOURS: Math.min(24, positiveInteger('CONTEXT_TTL_HOURS', 24)),
-  MAX_HISTORY_TOKENS: positiveInteger('MAX_HISTORY_TOKENS', 4000),
-};
-
-export default config;
