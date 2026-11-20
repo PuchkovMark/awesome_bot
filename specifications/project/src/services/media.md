@@ -17,7 +17,7 @@
 
 ## VK-вложения и direct commands
 
-`DetectorService.parseImageCommand` распознаёт `/` или `!` image/edit после удаления адресного префикса бота; aliases нормализуются через общий `commandAliases`. Prompt — весь остаток строки после команды. Пустой prompt возвращает подсказку. Для image/edit не-администратор бота допускается только при `ChatSettings.imageAccess=all`. Один дневной UTC счётчик объединяет image generate и edit по `ApiUsage`; лимит берётся из `IMAGE_MAX_PER_USER_PER_DAY`.
+`DetectorService.parseImageCommand` распознаёт `/` или `!` image/edit после удаления адресного префикса бота; aliases нормализуются через общий `commandAliases`. Prompt — остаток строки после команды. Пустой prompt возвращает подсказку. Для image/edit не-администратор бота допускается только при `ChatSettings.imageAccess=all`. После проверки конфигурации и фото для edit общий [ImageQuotaService](image/imageQuotaService.md) резервирует место автора за UTC-день, независимо от беседы/процесса, с лимитом `IMAGE_MAX_PER_USER_PER_DAY`. ApiUsage используется только при однократном seed старого расхода и для best-effort статистики после отправки со временем резервации. Только доказанный отказ подготовки до Images API освобождает место; ошибки после API/доставки сохраняют расход.
 
 | Команда | Выбор и маршрут |
 | --- | --- |
@@ -32,7 +32,9 @@
 
 ## Голосовые сценарии
 
-Входящее `AudioMessageAttachment` транскрибируется только когда включён `VOICE_ENABLED` и `UserSettings.voiceEnabled`; транскрипт заменяет текст сообщения и дальше проходит обычный addressed/command/AI pipeline. При отключённом голосе сообщение пропускается; при ошибке отправляется уведомление, текст не передаётся дальше. Успешная транскрипция учитывается как `voice_transcription`.
+Входящее `AudioMessageAttachment` транскрибируется только когда включён `VOICE_ENABLED` и `UserSettings.voiceEnabled`; транскрипт заменяет текст сообщения и дальше проходит обычный addressed/command/AI pipeline. При отключённом голосе сообщение пропускается; при ошибке отправляется уведомление, текст не передаётся дальше. Успешная транскрипция учитывается как `voice_transcription`. В историю сохраняется исходный набранный текст, а не транскрипт; при выключенном голосе или ошибке распознавания непустой набранный текст смешанного сообщения также сохраняется. См. [MemoryService](memory/memoryService.md).
+
+По просьбе пользователя модель также может вызвать [`listen_reply_voice`](ai/tools.md#listen_reply_voice) для голосового в сообщении, на которое он ответил. Требуются включённый `VOICE_ENABLED`, `OPENAI_API_KEY` и голосовая настройка отправителя. Расшифровка целиком передаётся модели как временный результат инструмента; сам инструмент не сохраняет её в историю.
 
 `/say <текст>` синтезирует выбранным пользовательским голосом, default `coral`; в беседе без аргумента можно ответить на текстовое сообщение. Ответ с аудио содержит исходный текст и вложение. Проверяются модуль, ключ, длина до 4096 JS code units и rate limit группы. При ошибке синтеза/загрузки отправляется текст с `VOICE_FAILURE_NOTICE`; успешный вызов учитывается как `voice_say`.
 
@@ -40,4 +42,4 @@
 
 ## Свидетельства
 
-Тесты, относящиеся к части маршрута: `vkFileDownload.test.ts` проверяет загрузку и URL guards; `voiceResponseService.test.ts` — отправку/fallback озвучки; `vkMessageDeliveryIntegration.test.ts` проверяет интеграционный delivery harness, а не полный media `runBotCommand`. Прямых тестов `VkService` для каждого image/document/meme/say маршрута и тестов самих image/document service нет; runtime/VK/OpenAI не запускались.
+Тесты, относящиеся к части маршрута: `vkFileDownload.test.ts` проверяет URL guards; `voiceResponseService.test.ts` — отправку/fallback озвучки. [VK integration](../../../../test/vkMessageDeliveryIntegration.test.ts) дополнен image command/tool сценариями с отдельной SQLite, подменёнными VK/AI. [Генератор](../../../../test/imageGenerationService.test.ts) проверяет ранние ошибки и API boundary, [квота](../../../../test/imageQuotaService.test.ts) — транзакции, процессы, рестарт и сутки. Все document/meme маршруты и живые внешние сервисы этим не покрываются.

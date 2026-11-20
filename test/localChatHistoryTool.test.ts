@@ -15,8 +15,6 @@ type TestMessage = {
   attachments: string[];
 };
 
-type Access = { allowed: true } | { allowed: false; message: string };
-
 const BASE_TIME = new Date('2026-11-14T10:00:00.000Z');
 
 function message(index: number, overrides: Partial<TestMessage> = {}): TestMessage {
@@ -76,7 +74,6 @@ function makeTool(
     contextMessageCount?: number;
     defaultBefore?: Date;
     seen?: Set<string>;
-    access?: Access;
     resolution?: ParticipantResolution;
   } = {},
 ) {
@@ -87,7 +84,6 @@ function makeTool(
     contextMessageCount: options.contextMessageCount ?? 0,
     ...(options.defaultBefore ? { defaultBefore: options.defaultBefore } : {}),
     seenMessageIds: seen,
-    checkAccess: async () => options.access ?? { allowed: true },
     resolveParticipants: async () =>
       options.resolution ?? { participants: [], ambiguous: [], notFound: [] },
     getMessages: (input) => store.getMessages(input),
@@ -213,7 +209,7 @@ test('get_local_chat_history returns an empty result', async () => {
   assert.equal(result.has_more, false);
 });
 
-test('get_local_chat_history validates input and access', async () => {
+test('get_local_chat_history validates input', async () => {
   const messages = Array.from({ length: 5 }, (_, index) => message(index));
   const { tool, requests } = makeTool(messages, {
     defaultBefore: new Date('2026-11-15T00:00:00.000Z'),
@@ -239,17 +235,6 @@ test('get_local_chat_history validates input and access', async () => {
   const future = JSON.parse(await tool.execute({ before: '2999-01-01T00:00:00.000Z' }));
   assert.equal(future.status, 'not_executed');
 
-  const denied = JSON.parse(
-    await (async () => {
-      const blocked = makeTool(messages, {
-        defaultBefore: new Date('2026-11-15T00:00:00.000Z'),
-        access: { allowed: false, message: 'Нет доступа' },
-      });
-      return blocked.tool.execute({ limit: 5 });
-    })(),
-  );
-  assert.equal(denied.status, 'not_executed');
-  assert.equal(denied.message, 'Нет доступа');
   assert.equal(requests.length, 0);
 });
 

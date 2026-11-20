@@ -3,6 +3,7 @@ import { connectDb, prisma } from './db/client.js';
 import { logger } from './logger/index.js';
 import vkService from './services/vk/vkService.js';
 import subagentService from './services/ai/subagentService.js';
+import directSubagentService from './services/ai/directSubagentService.js';
 import { startCleanupJob } from './jobs/cleanupJob.js';
 import { startGameTimeoutJob } from './jobs/gameTimeoutJob.js';
 import { logScheduledTasksOnStartup, stopAllScheduledTasks } from './jobs/scheduler.js';
@@ -17,6 +18,7 @@ async function shutdown(signal: string): Promise<void> {
   try {
     const scheduledTasksStopped = stopAllScheduledTasks();
     subagentService.stop();
+    await directSubagentService.stop();
     await vkService.stop();
     const dropped = await subagentService.dropInterruptedJobs();
     const active = await subagentService.countActiveJobs();

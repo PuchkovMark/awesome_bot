@@ -4,6 +4,7 @@ import { toFile } from 'openai/uploads';
 import sharp from 'sharp';
 import type { PhotoAttachment } from 'vk-io';
 import config from '../../config/index.js';
+import { ImageNotExecutedError } from './imageError.js';
 
 const MAX_SOURCE_IMAGE_BYTES = 20 * 1024 * 1024;
 const allowedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -26,7 +27,8 @@ export class ImageGenerationService {
     : undefined;
 
   async generate(prompt: string): Promise<GeneratedImage> {
-    const response = await this.getOpenAIClient().images.generate({
+    const client = this.getOpenAIClient();
+    const response = await client.images.generate({
       model: config.OPENAI_IMAGE_MODEL,
       prompt,
       quality: 'high',
@@ -41,18 +43,29 @@ export class ImageGenerationService {
   }
 
   async edit(photo: PhotoAttachment, prompt: string): Promise<GeneratedImage> {
-    const data = await this.downloadPhoto(photo);
+    let data: Buffer;
+    try {
+      data = await this.downloadPhoto(photo);
+    } catch (error) {
+      throw new ImageNotExecutedError(error);
+    }
     return this.editBuffer(data, prompt);
   }
 
   async editBuffer(data: Buffer, prompt: string): Promise<GeneratedImage> {
-    const sourceImage = await sharp(data)
-      .rotate()
-      .resize({ width: 2048, height: 2048, fit: 'inside', withoutEnlargement: true })
-      .jpeg({ quality: 90 })
-      .toBuffer();
-    const imageFile = await toFile(sourceImage, 'source.jpg', { type: 'image/jpeg' });
-    const response = await this.getOpenAIClient().images.edit({
+    let imageFile: Awaited<ReturnType<typeof toFile>>;
+    try {
+      const sourceImage = await sharp(data)
+        .rotate()
+        .resize({ width: 2048, height: 2048, fit: 'inside', withoutEnlargement: true })
+        .jpeg({ quality: 90 })
+        .toBuffer();
+      imageFile = await toFile(sourceImage, 'source.jpg', { type: 'image/jpeg' });
+    } catch (error) {
+      throw new ImageNotExecutedError(error);
+    }
+    const client = this.getOpenAIClient();
+    const response = await client.images.edit({
       model: config.OPENAI_IMAGE_MODEL,
       image: imageFile,
       prompt,
@@ -81,7 +94,9 @@ export class ImageGenerationService {
 
   private getOpenAIClient(): OpenAI {
     if (!this.openai) {
-      throw new Error('OPENAI_API_KEY must be configured for OpenAI image features');
+      throw new ImageNotExecutedError(
+        new Error('OPENAI_API_KEY must be configured for OpenAI image features'),
+      );
     }
     return this.openai;
   }

@@ -20,7 +20,7 @@
 
 1. логирует запрос;
 2. вызывает `stopAllScheduledTasks()` и получает число снятых записей cron;
-3. вызывает `subagentService.stop()`, затем ожидает `vkService.stop()`;
+3. вызывает `subagentService.stop()`, ожидает отмены и завершения прямых операций через `directSubagentService.stop()`, затем ожидает `vkService.stop()`;
 4. вызывает `dropInterruptedJobs()` и пересчитывает активные jobs, записывая warning, если такие остались;
 5. журналирует результат shutdown cleanup;
 6. в `finally` пытается отключить Prisma и вызывает `process.exit(0)`.

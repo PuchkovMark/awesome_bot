@@ -10,11 +10,14 @@
 
 ## Большая история и субагенты
 
-`run_subagent` запускает фоновую задачу по сохранённой SQL-истории, а `get_subagent_status` возвращает состояние последней задачи. [subagentService.ts](../../../../../src/services/ai/subagentService.ts) управляет очередью, лимитами и обработкой частей; `subagentTools.ts` предоставляет чтение, поиск и суммаризацию истории, а также внешний инструмент текущего времени. `chatDigestService.ts` выполняет обработку фрагментов, а `subagentResultDeliveryService.ts` отвечает за доставку результата. Субагент не выполняет пользовательские действия и формирует внутренний отчёт для основной модели. Параметры лимитов указаны в `.env.example`; поведение восстановления и остановки проверяйте по реализации.
+`run_subagent` в текущем VK-пути ожидает [прямую обработку](directSubagentService.md) сохранённой истории и возвращает текст основной модели. Старые [SubagentService](subagentService.md), его инструменты и доставка сохраняются для фонового пути; `get_subagent_status` относится к сохранённым заданиям, не к прямой операции.
 
 
 ## Описание по модулям
 
+- [DirectSubagentService](directSubagentService.md) — прямой последовательный пересказ.
+- [historySnapshot](historySnapshot.md) — фиксирование ID и постраничное чтение.
+- [historyTranscript](historyTranscript.md) — границы и деление Unicode-текста.
 - [AIProvider](AIProvider.md) — общий TypeScript-контракт запроса, ответа и инструмента.
 - [chatDigestService](chatDigestService.md) — выборка истории, чанковая суммаризация и финальный пересказ.
 - [chatCompletion](chatCompletion.md) — общий цикл запроса и инструментов.

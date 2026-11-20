@@ -23,6 +23,7 @@ import {
 } from './vkInfoTool.js';
 
 type ToolAccess = { allowed: true; isAdmin: boolean } | { allowed: false; message: string };
+type ChatInfoAccessRequirement = 'public' | 'bot_admin';
 
 type ChatInfoContext = {
   api: VK['api'];
@@ -33,7 +34,7 @@ type ChatInfoContext = {
   replySenderId?: number;
   timeZone?: string | null;
   checkAccess: () => Promise<ToolAccess>;
-  onInfoReturned: () => void;
+  onInfoReturned: (requirement: ChatInfoAccessRequirement) => void;
   getMembershipStats?: (input: MembershipStatsInput) => Promise<MembershipStats>;
 };
 
@@ -491,7 +492,7 @@ export function createChatInfoTool(context: ChatInfoContext): AITool {
             typeof input.days === 'number' ? input.days : DEFAULT_BIRTHDAY_DAYS,
             typeof input.count === 'number' ? input.count : MEMBER_PAGE_SIZE,
           );
-          context.onInfoReturned();
+          context.onInfoReturned('public');
           return JSON.stringify({
             status: 'result',
             action: 'birthdays',
@@ -515,7 +516,7 @@ export function createChatInfoTool(context: ChatInfoContext): AITool {
           const stats = context.getMembershipStats
             ? await context.getMembershipStats(statsInput)
             : await membershipService.getStats(statsInput);
-          context.onInfoReturned();
+          context.onInfoReturned('bot_admin');
           return JSON.stringify({
             status: 'result',
             action: 'membership',
@@ -540,12 +541,13 @@ export function createChatInfoTool(context: ChatInfoContext): AITool {
           const response = await context.api.messages.getConversationsById({
             peer_ids: [context.peerId],
           });
-          context.onInfoReturned();
+          const conversation = conversationInfo(response, context.peerId);
+          context.onInfoReturned('public');
           return JSON.stringify({
             status: 'result',
             action: 'overview',
             scope: 'chat',
-            conversation: conversationInfo(response, context.peerId),
+            conversation,
           });
         }
         if (action === 'members') {
@@ -554,7 +556,7 @@ export function createChatInfoTool(context: ChatInfoContext): AITool {
           const page = await getMembers(offset, count);
           const nextOffset = offset + page.items.length;
           const hasMore = nextOffset < page.count;
-          context.onInfoReturned();
+          context.onInfoReturned('public');
           return JSON.stringify({
             status: 'result',
             action: 'members',
@@ -570,7 +572,7 @@ export function createChatInfoTool(context: ChatInfoContext): AITool {
             typeof input.days === 'number' ? input.days : DEFAULT_BIRTHDAY_DAYS,
             typeof input.count === 'number' ? input.count : MEMBER_PAGE_SIZE,
           );
-          context.onInfoReturned();
+          context.onInfoReturned('public');
           return JSON.stringify({
             status: 'result',
             action: 'birthdays',
@@ -637,7 +639,7 @@ export function createChatInfoTool(context: ChatInfoContext): AITool {
           });
         }
         const member = context.isChat ? await findMember(String(id)) : undefined;
-        context.onInfoReturned();
+        context.onInfoReturned('public');
         return JSON.stringify({
           status: 'result',
           action: 'member',

@@ -30,7 +30,6 @@ type LocalHistoryToolContext = {
   contextMessageCount: number;
   defaultBefore?: Date;
   seenMessageIds: Set<string>;
-  checkAccess: () => Promise<{ allowed: true } | { allowed: false; message: string }>;
   resolveParticipants: (references: string[]) => Promise<ParticipantResolution>;
   getMessages: (input: {
     before: Date;
@@ -255,11 +254,6 @@ export function createLocalChatHistoryTool(context: LocalHistoryToolContext): AI
           message:
             'Лимит контекста истории исчерпан. Уточните период или используйте run_subagent.',
         });
-      }
-
-      const access = await context.checkAccess();
-      if (!access.allowed) {
-        return JSON.stringify({ status: 'not_executed', message: access.message });
       }
 
       const effectiveLimit = Math.min(limit, remainingMessages);

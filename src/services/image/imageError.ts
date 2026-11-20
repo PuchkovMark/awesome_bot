@@ -1,3 +1,15 @@
+/** Только локальная подготовка, завершившаяся до обращения к Images API. */
+export class ImageNotExecutedError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = 'ImageNotExecutedError';
+  }
+}
+
+export function isImageNotExecutedError(error: unknown): error is ImageNotExecutedError {
+  return error instanceof ImageNotExecutedError;
+}
+
 export type SafeImageErrorDetails = {
   name: string;
   message: string;

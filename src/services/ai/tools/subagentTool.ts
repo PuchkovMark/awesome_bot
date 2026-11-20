@@ -28,7 +28,7 @@ export type SubagentStartResult =
 
 type SubagentToolContext = {
   isChat: boolean;
-  checkAccess: () => Promise<{ allowed: true } | { allowed: false; message: string }>;
+  runDirect?: (request: SubagentRequest) => Promise<string>;
   resolveParticipants: (references: string[]) => Promise<ParticipantResolution>;
   estimateMessages: (input: {
     count?: number;
@@ -54,16 +54,17 @@ function invalid(message: string): string {
  * Запускает фонового субагента для большой задачи по SQL-истории.
  */
 export function createSubagentTool(context: SubagentToolContext): AITool {
+  const maxOutputLimit = context.runDirect ? 60_000 : MAX_OUTPUT_CHARS;
   return {
     name: 'run_subagent',
     description: [
-      'Запусти фонового субагента для большой задачи по сохранённой SQL-истории текущей беседы или личного диалога.',
+      'Запусти субагента с заданием по сохранённой истории текущей беседы или личного диалога.',
       'Используй для пересказа большого периода, хронологии, поиска закономерностей, извлечения решений и анализа сотен или тысяч сообщений.',
-      `Для периода указывай from/to; для последних сообщений — count. В анализ попадает не более ${config.SUBAGENT_MAX_MESSAGES} сообщений. Если период больше, инструмент откажет — попроси пользователя сузить диапазон, не запускай несколько задач автоматически.`,
+      'Укажи from/to для периода или count для последних сообщений; без них используется история за 24 часа. Все варианты ограничены последними 24 часами.',
       'Субагент читает только SQL, не обращается к VK, не отправляет сообщения и не выполняет действия.',
       `Можно ограничить выборку участниками: participants — от 1 до ${MAX_PARTICIPANTS} имён, полных имён или VK ID. Пенёк и имя текущего персонажа означают сообщения бота.`,
       'В task опиши точную задачу и формат результата: субагент не сможет задать уточняющий вопрос. Не делегируй короткие фрагменты — для них есть get_local_chat_history.',
-      'Задача выполняется в фоне; результат придёт отдельным сообщением позже. Число частей определяется автоматически по объёму истории.',
+      'Инструмент ожидает завершения и возвращает результат тебе; ответ пользователю сформируй сам.',
     ].join(' '),
     parameters: {
       type: 'object',
@@ -89,7 +90,7 @@ export function createSubagentTool(context: SubagentToolContext): AITool {
         max_output_chars: {
           type: 'integer',
           minimum: 500,
-          maximum: MAX_OUTPUT_CHARS,
+          maximum: maxOutputLimit,
         },
         participants: {
           type: 'array',
@@ -135,7 +136,7 @@ export function createSubagentTool(context: SubagentToolContext): AITool {
       if (hasCount && (hasFrom || hasTo)) {
         return invalid('Используй либо count, либо from и to, но не одновременно.');
       }
-      if (!hasCount && (!hasFrom || !hasTo)) {
+      if (!hasCount && (hasFrom !== hasTo || (!hasFrom && !context.runDirect))) {
         return invalid('Укажи count или полный период from/to.');
       }
       let count: number | undefined;
@@ -174,14 +175,14 @@ export function createSubagentTool(context: SubagentToolContext): AITool {
       ) {
         return invalid('format должен быть summary, timeline, list или answer.');
       }
-      const maxOutputChars = input.max_output_chars ?? MAX_OUTPUT_CHARS;
+      const maxOutputChars = input.max_output_chars ?? maxOutputLimit;
       if (
         typeof maxOutputChars !== 'number' ||
         !Number.isSafeInteger(maxOutputChars) ||
         maxOutputChars < 500 ||
-        maxOutputChars > MAX_OUTPUT_CHARS
+        maxOutputChars > maxOutputLimit
       ) {
-        return invalid(`max_output_chars должен быть от 500 до ${MAX_OUTPUT_CHARS}.`);
+        return invalid(`max_output_chars должен быть от 500 до ${maxOutputLimit}.`);
       }
       let participantReferences: string[] = [];
       if (input.participants !== undefined) {
@@ -230,9 +231,21 @@ export function createSubagentTool(context: SubagentToolContext): AITool {
       );
       const includeBot = resolvedParticipants.some((participant) => participant.kind === 'bot');
 
-      const access = await context.checkAccess();
-      if (!access.allowed) {
-        return JSON.stringify({ status: 'not_executed', message: access.message });
+      if (context.runDirect) {
+        const now = Date.now();
+        const earliest = now - 24 * 60 * 60 * 1000;
+        if (from && (from.getTime() < earliest || (to && to.getTime() > now))) {
+          return 'Можно обработать только историю за последние 24 часа.';
+        }
+        return context.runDirect({
+          task: input.task.trim(),
+          ...(count !== undefined ? { count } : {}),
+          ...(from ? { from } : {}),
+          ...(to ? { to } : {}),
+          format,
+          maxOutputChars,
+          participants: resolvedParticipants,
+        });
       }
 
       let estimate: HistoryEstimate;

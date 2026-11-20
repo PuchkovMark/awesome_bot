@@ -51,6 +51,8 @@
 | `SUBAGENT_MAX_ESTIMATED_INPUT_TOKENS`, `SUBAGENT_MAX_INPUT_TOKENS`, `SUBAGENT_MAX_OUTPUT_TOKENS` | 90000, 120000 и 35000. |
 | `SUBAGENT_MAX_SUMMARIZE_CALLS`, `SUBAGENT_MAX_SEARCH_RESULTS`, `SUBAGENT_RESULT_RETENTION_DAYS` | 1, 50 и 7 дней. |
 
+Для прямого `run_subagent` из перечисленных ограничений используется `SUBAGENT_PROVIDER_CONCURRENCY`; остальные `SUBAGENT_*` лимиты относятся к старому фоновому пути или иным потребителям. Прямой путь задаёт `maxOutputTokens=8000` явно, независимо от `AI_MAX_OUTPUT_TOKENS`, и использует `SUMMARY_MODEL`. См. [DirectSubagentService](../services/ai/directSubagentService.md).
+
 Все 60 ключей `AppConfig` присутствуют в `.env.example`; единственный дополнительный ключ `DATABASE_URL` принадлежит Prisma, а не `AppConfig`. Сверка литеральных значений примера с кодом показала одно намеренное различие: в примере `VOICE_ENABLED=true`, при отсутствии переменной код выключает голос. Все потребители ниже найдены статическим поиском по текущему рабочему дереву.
 
 ## Прямые потребители `AppConfig`
@@ -77,7 +79,7 @@
 | `OPENAI_TTS_MODEL` | `string` | [VoiceService](../../../../src/services/voice/voiceService.ts) выбирает модель синтеза речи. |
 | `VOICE_ENABLED` | `boolean` | [capabilityService](../../../../src/services/ai/capabilityService.ts), [SubagentResultDeliveryService](../../../../src/services/ai/subagentResultDeliveryService.ts), [CommandService](../../../../src/services/command/commandService.ts), [VkService](../../../../src/services/vk/vkService.ts) и [VoiceService](../../../../src/services/voice/voiceService.ts) проверяют глобальный switch. Пользовательская настройка применяется дополнительно для автоматической озвучки ответов. |
 | `IMAGE_ADMIN_ONLY` | `boolean` | Только [SettingsService](../../../../src/services/settings/settingsService.ts): задаёт `ChatSettings.imageAccess` при первом создании настроек беседы. Существующее сохранённое значение этой переменной не перезаписывается. |
-| `IMAGE_MAX_PER_USER_PER_DAY` | `number` | [image tool](../../../../src/services/ai/tools/imageTool.ts) и [VkService](../../../../src/services/vk/vkService.ts) ограничивают генерации/редактирования на пользователя за UTC-день. |
+| `IMAGE_MAX_PER_USER_PER_DAY` | `number` | [ImageQuotaService](../../../../src/services/image/imageQuotaService.ts) проверяет лимит внутри атомарной резервации автора/UTC-дня, общей для команд и image tool. [Tool](../../../../src/services/ai/tools/imageTool.ts) и [VkService](../../../../src/services/vk/vkService.ts) также используют значение в сообщении об исчерпании квоты. |
 | `MAX_REQUESTS_PER_MINUTE` | `number` | [VkService](../../../../src/services/vk/vkService.ts) создаёт rate limiter для запросов пользователя. |
 | `MAX_HISTORY_MESSAGES` | `number` | [MemoryService](../../../../src/services/memory/memoryService.ts) ограничивает число сообщений в нескольких выборках контекста. |
 | `MAX_HISTORY_TOKENS` | `number` | [MemoryService](../../../../src/services/memory/memoryService.ts) ограничивает token budget контекста. |
@@ -106,7 +108,7 @@
 | `SUBAGENT_CONCURRENCY` | `number` | [SubagentService](../../../../src/services/ai/subagentService.ts) задаёт параллелизм основной очереди. |
 | `SUBAGENT_MAX_PARTS` | `number` | [SubagentService](../../../../src/services/ai/subagentService.ts) и [subagent tool](../../../../src/services/ai/tools/subagentTool.ts) определяют максимальное разбиение задачи. |
 | `SUBAGENT_SECOND_PART_MIN_MESSAGES` | `number` | [SubagentService](../../../../src/services/ai/subagentService.ts) и [subagent tool](../../../../src/services/ai/tools/subagentTool.ts) определяют порог второй части. |
-| `SUBAGENT_PROVIDER_CONCURRENCY` | `number` | [SubagentService](../../../../src/services/ai/subagentService.ts) ограничивает параллельные запросы провайдера. |
+| `SUBAGENT_PROVIDER_CONCURRENCY` | `number` | [SubagentService](../../../../src/services/ai/subagentService.ts) и [DirectSubagentService](../../../../src/services/ai/directSubagentService.ts) ограничивают параллельные запросы провайдера отдельными счётчиками. |
 | `SUBAGENT_SUMMARIZE_CONCURRENCY` | `number` | [ChatDigestService](../../../../src/services/ai/chatDigestService.ts) и [subagent tools](../../../../src/services/ai/tools/subagentTools.ts) ограничивают параллельные summarize-вызовы. |
 | `SUBAGENT_MAX_SUMMARY_CHARS` | `number` | [SubagentService](../../../../src/services/ai/subagentService.ts) и [subagent tool](../../../../src/services/ai/tools/subagentTool.ts) ограничивают объём исходной истории в символах. |
 | `SUBAGENT_MAX_SUMMARY_CHUNKS` | `number` | [subagent tool](../../../../src/services/ai/tools/subagentTool.ts) ограничивает оценочное число чанков. |

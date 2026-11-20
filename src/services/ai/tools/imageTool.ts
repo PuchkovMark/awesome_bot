@@ -1,9 +1,11 @@
+import { randomUUID } from 'node:crypto';
 import config from '../../../config/index.js';
 import { logger } from '../../../logger/index.js';
 import type { AITool } from '../AIProvider.js';
 import type { GeneratedImage } from '../../image/imageGenerationService.js';
 import imageGenerationService from '../../image/imageGenerationService.js';
-import { getSafeImageErrorDetails } from '../../image/imageError.js';
+import { getSafeImageErrorDetails, isImageNotExecutedError } from '../../image/imageError.js';
+import type { ImageQuotaService, ImageQuotaOutcome } from '../../image/imageQuotaService.js';
 import type { PhotoAttachment } from 'vk-io';
 
 const MAX_PROMPT_CHARS = 4_000;
@@ -17,8 +19,8 @@ type ImageToolContext = {
   >;
   getPhoto: () => Promise<PhotoAttachment | undefined>;
   sendPhoto: (image: GeneratedImage, caption: string) => Promise<void>;
-  countDailyImages: () => Promise<number>;
-  recordUsage: (feature: 'image_generate' | 'image_edit') => Promise<void>;
+  quota: Pick<ImageQuotaService, 'reserve' | 'finish'>;
+  recordUsage: (feature: 'image_generate' | 'image_edit', reservedAt: Date) => Promise<void>;
   onImageSent: () => void;
   startActivity?: () => () => void;
   service?: Pick<typeof imageGenerationService, 'generate' | 'edit'>;
@@ -92,14 +94,6 @@ export function createImageTool(context: ImageToolContext): AITool {
         });
       }
 
-      const used = await context.countDailyImages();
-      if (used >= config.IMAGE_MAX_PER_USER_PER_DAY) {
-        return JSON.stringify({
-          status: 'limit_reached',
-          message: `Дневной лимит изображений исчерпан (${config.IMAGE_MAX_PER_USER_PER_DAY}). Попробуйте завтра.`,
-        });
-      }
-
       const action = input.action;
       let photo: PhotoAttachment | undefined;
       if (action === 'edit') {
@@ -113,26 +107,70 @@ export function createImageTool(context: ImageToolContext): AITool {
         }
       }
 
-      const stopActivity = context.startActivity?.();
+      const operationId = randomUUID();
+      const feature = action === 'generate' ? 'image_generate' : 'image_edit';
+      let reservation;
       try {
+        reservation = await context.quota.reserve({
+          operationId,
+          vkUserId: context.senderId,
+          feature,
+        });
+      } catch (error) {
+        logger.error({ error, operationId }, 'Failed to reserve image quota');
+        return JSON.stringify({
+          status: 'error',
+          message: 'Не удалось выполнить запрос изображения.',
+        });
+      }
+      if (reservation.status === 'limit_reached') {
+        return JSON.stringify({
+          status: 'limit_reached',
+          message: `Дневной лимит изображений исчерпан (${config.IMAGE_MAX_PER_USER_PER_DAY}). Попробуйте завтра.`,
+        });
+      }
+      if (reservation.status === 'already_processed') {
+        return JSON.stringify({ status: 'not_executed', message: 'Запрос уже обработан.' });
+      }
+      const finish = async (outcome: ImageQuotaOutcome) => {
+        try {
+          await context.quota.finish(operationId, outcome);
+        } catch (error) {
+          // Устойчивый reserved продолжает занимать место при сбое финализации.
+          logger.error({ error, operationId, outcome }, 'Failed to finish image quota attempt');
+        }
+      };
+      let stopActivity: (() => void) | undefined;
+      let generated = false;
+      try {
+        stopActivity = context.startActivity?.();
         const prompt = input.prompt.trim();
         const image =
           action === 'generate'
             ? await service.generate(prompt)
             : await service.edit(photo as PhotoAttachment, prompt);
+        generated = true;
+        await finish('consumed');
         const caption =
           action === 'generate'
             ? 'Готово! Вот изображение по твоему описанию.'
             : 'Готово! Вот преобразованное изображение.';
         await context.sendPhoto(image, caption);
-        await context.recordUsage(action === 'generate' ? 'image_generate' : 'image_edit');
         context.onImageSent();
+        try {
+          await context.recordUsage(feature, reservation.reservedAt);
+        } catch (error) {
+          logger.warn({ error, operationId }, 'Failed to record image tool usage');
+        }
         return JSON.stringify({
           status: 'result',
           action,
           message: 'Изображение отправлено в текущий диалог.',
         });
       } catch (error) {
+        if (!generated) {
+          await finish(isImageNotExecutedError(error) ? 'released' : 'uncertain');
+        }
         const imageError = getSafeImageErrorDetails(error);
         const safetyRejected = imageError.code === 'moderation_blocked';
         const logDetails = {

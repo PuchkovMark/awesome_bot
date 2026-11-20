@@ -14,6 +14,7 @@ Reusable agent instructions are stored in [.agents/skills/](.agents/skills/). Se
 | [awesome-bot-spec-update](.agents/skills/awesome-bot-spec-update/SKILL.md) | Synchronize existing specifications with implemented changes or a completed task. |
 | [awesome-bot-task](.agents/skills/awesome-bot-task/SKILL.md) | Define a development task, scope and acceptance criteria before implementation planning. |
 | [awesome-bot-plan](.agents/skills/awesome-bot-plan/SKILL.md) | Create an implementation plan for a defined task. |
+| [awesome-bot-implementation-plan](.agents/skills/awesome-bot-implementation-plan/SKILL.md) | Detail task.md and plan.md into implenent.md with concrete files, symbols, changes and checks before implementation. |
 | [awesome-bot-implement](.agents/skills/awesome-bot-implement/SKILL.md) | Implement a defined task according to its task document and plan. |
 | [awesome-bot-review](.agents/skills/awesome-bot-review/SKILL.md) | Review requested changes for concrete defects, regressions, permission errors and data isolation issues. |
 | [systematic-debugging](.agents/skills/systematic-debugging/SKILL.md) | Investigate bugs, failing tests and unexpected behavior before proposing fixes. |
@@ -21,7 +22,7 @@ Reusable agent instructions are stored in [.agents/skills/](.agents/skills/). Se
 
 The [specifications index](specifications/README.md) separates the [general project specification](specifications/project/README.md) from [individual task documents](specifications/tasks/README.md). Verify documented behavior against current code. Keep general documentation in `specifications/project/` and task requirements, plans and reviews in the relevant task folder under `specifications/tasks/`.
 
-For implementation requests, follow task definition → planning → implementation as described by the skills; reuse existing task documents when continuing work. A documentation-only, planning-only or review-only request does not authorize implementation. Use the specification skill for comprehensive exploration and the update skill for incremental maintenance.
+For implementation requests, follow task definition → planning → detailed implementation planning (`implenent.md`) → implementation as described by the skills; reuse existing task documents when continuing work. During implementation, do not change any plan, including status, progress or check results, without a specific user instruction to edit it. Ask about new or changed implementation decisions before dependent edits; agreement to a solution does not itself authorize changing plans. A documentation-only, planning-only or review-only request does not authorize implementation. Use the specification skill for comprehensive exploration and the update skill for incremental maintenance.
 
 ## Build, Test, and Development Commands
 

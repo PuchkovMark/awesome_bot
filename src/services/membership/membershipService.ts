@@ -24,8 +24,8 @@ export type RecordMembershipEventInput = {
 };
 
 export type MembershipStats = {
-  current: number;
-  currentSource: 'vk' | 'db';
+  current: number | null;
+  currentSource: 'vk' | 'unavailable' | 'db';
   joined: number;
   left: number;
   net: number;
@@ -44,20 +44,10 @@ export type MembershipStatsInput = {
   days: number;
 };
 
-const MEMBERSHIP_SYNC_PAGE_SIZE = 200;
-const MEMBERSHIP_SYNC_BATCH_SIZE = 100;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 function isUniqueConstraintError(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === 'P2002';
-}
-
-function chunk<T>(items: T[], size: number): T[][] {
-  const result: T[][] = [];
-  for (let index = 0; index < items.length; index += size) {
-    result.push(items.slice(index, index + size));
-  }
-  return result;
 }
 
 function formatDays(days: number): string {
@@ -75,12 +65,11 @@ function formatLocalDate(date: Date, timeZone: string): string {
 }
 
 /**
- * Считает входы и выходы участников и поддерживает актуальность текущего состава.
+ * Считает входы и выходы участников и запрашивает текущую численность у VK.
  * Агрегаты не хранятся: они рассчитываются из MembershipEvent при каждом запросе.
  */
 export class MembershipService {
   private api?: VK['api'];
-  private readonly syncLocks = new Set<string>();
 
   setApi(api: VK['api']): void {
     this.api = api;
@@ -107,42 +96,6 @@ export class MembershipService {
     }
   }
 
-  /**
-   * Обновляет ConversationMember по текущему списку VK не чаще раза в локальный день.
-   * События MembershipEvent при этом не создаются.
-   */
-  async syncIfStale(input: { conversationId: string; api?: VK['api'] }): Promise<void> {
-    if (this.syncLocks.has(input.conversationId)) return;
-    this.syncLocks.add(input.conversationId);
-
-    try {
-      const api = input.api ?? this.api;
-      if (!api) return;
-
-      const settings = await settingsService.getChatSettings(input.conversationId);
-      const timeZone = resolveReminderTimeZone(settings.timeZone, settings.locationTimeZone);
-      const today = getLocalDateTime(new Date(), timeZone).date;
-      const claimed = await prisma.chatSettings.updateMany({
-        where: {
-          conversationId: input.conversationId,
-          OR: [{ membershipLastSyncDay: null }, { membershipLastSyncDay: { not: today } }],
-        },
-        data: { membershipLastSyncDay: today },
-      });
-      if (claimed.count === 0) return;
-
-      const memberIds = await this.fetchMemberIds(api, Number(input.conversationId));
-      await this.updatePresentMembers(input.conversationId, memberIds);
-    } catch (error) {
-      logger.warn(
-        { err: error, conversationId: input.conversationId },
-        'Unable to sync conversation membership',
-      );
-    } finally {
-      this.syncLocks.delete(input.conversationId);
-    }
-  }
-
   async getStats(input: MembershipStatsInput): Promise<MembershipStats> {
     const settings = await settingsService.getChatSettings(input.conversationId);
     const timeZone = resolveReminderTimeZone(settings.timeZone, settings.locationTimeZone);
@@ -164,8 +117,8 @@ export class MembershipService {
     ]);
 
     const api = input.api ?? this.api;
-    let current: number;
-    let currentSource: 'vk' | 'db';
+    let current: number | null = null;
+    let currentSource: MembershipStats['currentSource'] = 'unavailable';
     if (api) {
       try {
         const response = await api.messages.getConversationMembers({
@@ -182,12 +135,7 @@ export class MembershipService {
           { err: error, conversationId: input.conversationId },
           'Unable to retrieve current conversation member count',
         );
-        current = await this.countPresentMembers(input.conversationId);
-        currentSource = 'db';
       }
-    } else {
-      current = await this.countPresentMembers(input.conversationId);
-      currentSource = 'db';
     }
 
     const trackingSince = settings.membershipTrackingSince;
@@ -206,96 +154,12 @@ export class MembershipService {
       partial: from.getTime() < trackingSince.getTime(),
     };
   }
-
-  private async countPresentMembers(conversationId: string): Promise<number> {
-    return prisma.conversationMember.count({
-      where: { conversationId, isPresent: true },
-    });
-  }
-
-  private async fetchMemberIds(api: VK['api'], peerId: number): Promise<Set<string>> {
-    const memberIds = new Set<string>();
-    let offset = 0;
-    let total = 0;
-    let fetched = 0;
-
-    while (offset < total || offset === 0) {
-      const page = await api.messages.getConversationMembers({
-        peer_id: peerId,
-        offset,
-        count: MEMBERSHIP_SYNC_PAGE_SIZE,
-      });
-      total = page.count;
-      fetched += page.items.length;
-      for (const item of page.items) {
-        if (Number.isSafeInteger(item.member_id) && item.member_id > 0) {
-          memberIds.add(String(item.member_id));
-        }
-      }
-      if (page.items.length === 0) break;
-      offset += page.items.length;
-      if (offset >= total) break;
-    }
-
-    if (total > 0 && fetched === 0) {
-      throw new Error('VK returned an empty participant list for a non-empty conversation');
-    }
-    if (total > 0 && fetched < total) {
-      throw new Error(`VK returned an incomplete participant list (${fetched}/${total})`);
-    }
-    return memberIds;
-  }
-
-  private async updatePresentMembers(
-    conversationId: string,
-    memberIds: Set<string>,
-  ): Promise<void> {
-    const now = new Date();
-    const currentIds = [...memberIds];
-
-    for (const batch of chunk(currentIds, MEMBERSHIP_SYNC_BATCH_SIZE)) {
-      await prisma.$transaction(
-        batch.map((vkUserId) =>
-          prisma.conversationMember.upsert({
-            where: { conversationId_vkUserId: { conversationId, vkUserId } },
-            create: {
-              conversationId,
-              vkUserId,
-              isPresent: true,
-              firstJoinedAt: now,
-              lastJoinedAt: now,
-            },
-            update: { isPresent: true, leftAt: null },
-          }),
-        ),
-      );
-    }
-
-    const presentRows = await prisma.conversationMember.findMany({
-      where: { conversationId, isPresent: true },
-      select: { vkUserId: true },
-    });
-    const absentIds = presentRows
-      .map(({ vkUserId }) => vkUserId)
-      .filter((vkUserId) => !memberIds.has(vkUserId));
-
-    for (const batch of chunk(absentIds, MEMBERSHIP_SYNC_BATCH_SIZE)) {
-      await prisma.conversationMember.updateMany({
-        where: {
-          conversationId,
-          isPresent: true,
-          vkUserId: { in: batch },
-        },
-        data: { isPresent: false, leftAt: now },
-      });
-    }
-  }
 }
 
 export function formatMembershipStats(stats: MembershipStats): string {
   const lines = [
     `📊 Участники за ${formatDays(stats.period.days)}`,
-    `Сейчас: ${stats.current}`,
+    `Сейчас: ${stats.current ?? 'недоступно'}`,
     `Вошло: ${stats.joined}`,
     `Вышло: ${stats.left}`,
     `Прирост: ${stats.net > 0 ? '+' : ''}${stats.net}`,
@@ -307,6 +171,8 @@ export function formatMembershipStats(stats: MembershipStats): string {
   }
   if (stats.currentSource === 'db') {
     lines.push('ℹ️ VK недоступен, текущее число взято из данных бота и может быть неполным.');
+  } else if (stats.currentSource === 'unavailable') {
+    lines.push('ℹ️ VK недоступен, поэтому текущее число участников определить не удалось.');
   }
   if (stats.joined === 0 && stats.left === 0) {
     lines.push('За этот период входов и выходов не было.');

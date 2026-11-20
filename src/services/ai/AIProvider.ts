@@ -24,6 +24,7 @@ export type AITool = {
 };
 
 export type AIRequestOptions = {
+  signal?: AbortSignal;
   sessionId?: string;
   tools?: readonly AITool[];
   model?: string;

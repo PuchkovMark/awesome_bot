@@ -1,6 +1,6 @@
 # История миграций SQLite
 
-Источник — 22 файла `migration.sql` и [schema.prisma](../../../prisma/schema.prisma); связанный [migration lock](../../../prisma/migrations/migration_lock.toml) указывает SQLite. Описания ниже основаны на чтении SQL-файлов, а не на состоянии рабочей базы: БД, журналы применённых миграций и секреты не открывались; миграции не запускались.
+Источник — 23 файла `migration.sql` и [schema.prisma](../../../prisma/schema.prisma); связанный [migration lock](../../../prisma/migrations/migration_lock.toml) указывает SQLite. Описания основаны на SQL-файлах, а не на состоянии рабочей базы; operational DB и секреты не открывались. Миграция R09 добавлена отдельно; результаты проверок сообщаются в чате.
 
 | Миграция | Изменение по SQL | Основные модели/данные |
 | --- | --- | --- |
@@ -26,6 +26,7 @@
 | [20261114160000_subagent_jobs](../../../prisma/migrations/20261114160000_subagent_jobs/migration.sql) | Расширяет `DigestJob` для многосоставных задач/доставки; сбрасывает активный ключ существующих строк и добавляет индекс. | `DigestJob`. |
 | [20261114170000_participant_history](../../../prisma/migrations/20261114170000_participant_history/migration.sql) | Добавляет JSON-текст участников, выбранных для анализа истории. | `DigestJob`. |
 | [20261114180000_personality_nikon](../../../prisma/migrations/20261114180000_personality_nikon/migration.sql) | Data migration переименовывает/обновляет системный выбор персонажа в AppSetting и пользовательских/беседных настройках; таблицы не добавляет. | `AppSetting`, `UserSettings`, `ChatSettings`. |
+| [20261120000000_image_daily_quota](../../../prisma/migrations/20261120000000_image_daily_quota/migration.sql) | Добавляет дневной счётчик, попытки, составной FK/индекс. ApiUsage не переписывается; seed выполняет сервис при первом запросе автора за UTC-день. | `ImageDailyQuota`, `ImageQuotaAttempt`. |
 
 Data migrations `chipsik_default`, `conversation_member_profiles`, `subagent_jobs` и `personality_nikon` меняют существующие строки, а не только DDL. Идемпотентность их ручного повторного запуска не подтверждалась. `ConversationParticipant` создаётся начальной миграцией, но статический поиск по `src/` не обнаружил прямых readers/writers; это отмечено также в [матрице операций моделей](models.md#доступ-приложения-и-хранение).
 

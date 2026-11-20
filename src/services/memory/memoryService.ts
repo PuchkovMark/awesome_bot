@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import config from '../../config/index.js';
 import { logger } from '../../logger/index.js';
 import { matchesVkPersonName, parseVkUserReference } from '../vk/vkMention.js';
+import { cleanHistoryText } from './historyText.js';
 
 export type StoredMessage = {
   id: string;
@@ -151,8 +152,10 @@ export class MemoryService {
     replyToAuthorName?: string;
     replyToText?: string;
     attachments?: string;
-  }): Promise<StoredMessage> {
-    const { conversationId, vkUserId, displayName, role, content, provider } = params;
+  }): Promise<StoredMessage | null> {
+    const { conversationId, vkUserId, displayName, role, provider } = params;
+    const content = cleanHistoryText(params.content);
+    if (!content) return null;
 
     if (vkUserId) await this.ensureUser(vkUserId, displayName);
     await this.ensureConversation(conversationId);
@@ -178,8 +181,9 @@ export class MemoryService {
         replyToConversationMessageId: params.replyToConversationMessageId,
         replyToFromId: params.replyToFromId,
         replyToAuthorName: params.replyToAuthorName,
-        replyToText: params.replyToText,
-        attachments: params.attachments,
+        replyToText: params.replyToText
+          ? cleanHistoryText(params.replyToText) || undefined
+          : undefined,
       },
     });
 

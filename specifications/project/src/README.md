@@ -9,8 +9,8 @@
 | [Конфигурация](config/README.md) | [`src/config/index.ts`](../../../src/config/index.ts) | Настройки приложения и значения по умолчанию. |
 | [База данных](db/README.md) | [`src/db/client.ts`](../../../src/db/client.ts) | Общий Prisma client. [`src/db/index.ts`](../../../src/db/index.ts) только переэкспортирует `client.ts`. |
 | [Контейнер зависимостей](di/README.md) | [`src/di/container.ts`](../../../src/di/container.ts) | Регистрация и разрешение зависимостей. |
-| [Фоновые задания](jobs/README.md) | [`src/jobs/`](../../../src/jobs/) | Регистрация, расписания и обработка фоновой работы. |
+| [Фоновые задания](jobs/README.md) | [`src/jobs/`](../../../src/jobs) | Регистрация, расписания и обработка фоновой работы. |
 | [Журналирование](logger/README.md) | [`src/logger/index.ts`](../../../src/logger/index.ts) | Общий структурированный logger и файловая ротация. |
-| [Сервисы](services/README.md) | [каталог `src/services/`](../../../src/services/) | VK-маршрутизация и доменные возможности бота. |
+| [Сервисы](services/README.md) | [каталог `src/services/`](../../../src/services) | VK-маршрутизация и доменные возможности бота. |
 | [Объявления типов](types/README.md) | [`src/types/node-cron.d.ts`](../../../src/types/node-cron.d.ts) | Compile-time контракт `node-cron`; runtime-поведения не добавляет. |
 

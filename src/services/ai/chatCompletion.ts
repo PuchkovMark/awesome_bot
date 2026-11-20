@@ -55,7 +55,7 @@ export async function sendChatCompletion(
           effort as unknown as OpenAI.Chat.Completions.ChatCompletionCreateParams['reasoning_effort'],
         ...(tools.length > 0 ? { tools, tool_choice: 'auto' as const } : {}),
       },
-      headers ? { headers } : undefined,
+      { ...(headers ? { headers } : {}), ...(options?.signal ? { signal: options.signal } : {}) },
     );
     if (response.usage) {
       totalTokens = (totalTokens ?? 0) + response.usage.total_tokens;

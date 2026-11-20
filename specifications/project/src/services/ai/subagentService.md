@@ -1,10 +1,12 @@
 # SubagentService
 
-**Тип:** сервис фонового анализа локальной истории. **Runtime identity:** экспортируемый класс `SubagentService` и singleton `subagentService`. **Источник:** [`subagentService.ts`](../../../../../src/services/ai/subagentService.ts).
+**Тип:** сервис прежнего фонового анализа локальной истории, сохранённый для совместимости и работы с сохранёнными заданиями. **Runtime identity:** экспортируемый класс `SubagentService` и singleton `subagentService`. **Источник:** [`subagentService.ts`](../../../../../src/services/ai/subagentService.ts).
 
 ## Входы и регистрация
 
-Основной путь создаётся в [`VkService`](../vk/vkService.md): модель вызывает [`run_subagent`](tools.md#run_subagent), а bound callbacks передают `conversationId`, инициатора `userId`, выбранный диапазон, формат и фильтр участников. Tool сначала делает предварительную оценку; сервис повторно грузит SQL-историю при обработке задачи. Публичные аргументы и предварительные ограничения описаны в [контракте `run_subagent`](tools.md#run_subagent).
+Текущий основной VK-путь [`run_subagent`](tools.md#run_subagent) выполняет [DirectSubagentService](directSubagentService.md): [`VkService`](../../../../../src/services/vk/vkService.ts) передаёт `runDirect` в `createSubagentTool`, и [фабрика](../../../../../src/services/ai/tools/subagentTool.ts) возвращает результат прямой ветки до `estimateMessages` и `startJob`. Прямой сервис возвращает текст основной модели без создания `DigestJob` и отдельной фоновой доставки. Его ограничения и прекращение по общему timeout описаны в [собственном контракте](directSubagentService.md#ресурсы-и-ограничения).
+
+Ниже описан сохраняемый прежний фоновый путь фабрики **без `runDirect`** и API `SubagentService`. В этом пути bound callbacks передают `conversationId`, инициатора `userId`, выбранный диапазон, формат и фильтр участников; tool делает предварительную оценку, а сервис повторно грузит SQL-историю при обработке задачи. Старые callbacks `estimateMessages`/`startJob` остаются в VK context, но при переданном `runDirect` эта ветка не исполняется. Описанные далее постановка, суточный лимит, части и отдельная доставка относятся к фоновым заданиям, а не к текущему прямому вызову. Различие ветвей также зафиксировано в [каталоге инструмента](tools.md#run_subagent).
 
 `estimateMessages` делегирует `estimateHistoryMessages` с беседой и `count` либо датами; применяет `participantUserIds` и `includeBot`, если они переданы. Групповой peer определяется сравнением числового ID со смещением `2_000_000_000`; для настроек timezone используется `timeZone ?? locationTimeZone` беседы, а для ЛС — пользователя.
 
@@ -30,7 +32,7 @@
 
 ## Статус, доставка, очистка и остановка
 
-`getLatestStatus(conversationId)` читает последнюю запись по `createdAt` без фильтров `userId` и `kind`, преобразует неизвестные состояния в `pending`, считает `partsDone` по валидным JSON-элементам. Результат показывается только для `done`/`partial`; текст ошибки — только для `failed` и обрезан до 500 символов. Это даёт статус уровня беседы, а не строго пользователя, инициировавшего текущую задачу; публичный формат — в [`get_subagent_status`](tools.md#get_subagent_status).
+`getLatestStatus(conversationId)` читает последнюю сохранённую `DigestJob` по `createdAt` без фильтров `userId` и `kind`, преобразует неизвестные состояния в `pending`, считает `partsDone` по валидным JSON-элементам. Результат показывается только для `done`/`partial`; текст ошибки — только для `failed` и обрезан до 500 символов. Это статус сохранённого задания уровня беседы, а не строго инициатора. Прямая операция `DirectSubagentService` не создаёт `DigestJob` и здесь не отслеживается: даже во время или после текущего прямого вызова [`get_subagent_status`](tools.md#get_subagent_status) может вернуть старую задачу этой беседы либо `none`, если сохранённых задач нет.
 
 Готовый или ошибочный результат передаётся в [`SubagentResultDeliveryService`](subagentResultDeliveryService.md), а [`subagentDeliveryJob`](../../jobs/subagentDeliveryJob.md) повторно проверяет ожидающую доставку. `cleanupOldJobs` удаляет строки старше `SUBAGENT_RESULT_RETENTION_DAYS` (7 дней) только со статусами `done`, `partial`, `failed`; проверка `resultSentAt` не является условием.
 

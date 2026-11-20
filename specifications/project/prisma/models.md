@@ -36,6 +36,8 @@
 - [`GamePlayerStats`](#gameplayerstats)
 - [`Achievement`](#achievement)
 - [`ApiUsage`](#apiusage)
+- [`ImageDailyQuota`](#imagedailyquota)
+- [`ImageQuotaAttempt`](#imagequotaattempt)
 - [`AdminLog`](#adminlog)
 
 ## Схема и ограничения интерпретации
@@ -140,7 +142,7 @@
 
 **Тип:** модель Prisma. **Источник:** [`Message` в schema.prisma](../../../prisma/schema.prisma); [миграции](../../../prisma/migrations).
 
-Роль и содержимое, необязательный пользователь, провайдер и токены, VK ID, время, автор, метаданные ответа и вложения. Пара `conversationId,conversationMessageId` уникальна; индексы поддерживают выборки по беседе, времени, роли, ответам и пользователю. `metadata` и `attachments` — строки для JSON.
+Роль и содержимое, необязательный пользователь, провайдер и токены, VK ID, время, автор, метаданные ответа и поле вложений. Новые записи через `MemoryService.addMessage` содержат очищенный текст без emoji и не заполняют вложения; старые записи не переписываются. См. [MemoryService](../src/services/memory/memoryService.md). Пара `conversationId,conversationMessageId` уникальна; индексы поддерживают выборки по беседе, времени, роли, ответам и пользователю. `metadata` и `attachments` — строки для JSON.
 
 Прямые readers/writers и известные правила удаления/хранения перечислены в [матрице доступа и хранения](#доступ-приложения-и-хранение). Для query filters, прав и транзакций используйте спецификацию соответствующего сервиса.
 
@@ -349,7 +351,7 @@
 | `memoryEnabled` | `Boolean` | `@default(true)` | — |
 | `autoMemoryEnabled` | `Boolean` | `@default(true)` | — |
 | `membershipTrackingSince` | `DateTime` | `@default(now())` | — |
-| `membershipLastSyncDay` | `String?` | `—` | — |
+| `membershipLastSyncDay` | `String?` | `—` | Legacy после R07: сохранено без миграции; приложение больше не читает и не обновляет поле. |
 | `createdAt` | `DateTime` | `@default(now())` | — |
 | `updatedAt` | `DateTime` | `@updatedAt` | — |
 
@@ -1143,6 +1145,49 @@ Read-команды ограничивают выбор conversationId и сем
 
 Внешние связи и допустимость `NULL` видны в таблице полей; scalar ID без `@relation` не является объявленным FK. Прямые readers/writers и найденные deletion/retention правила сведены в [матрице доступа и хранения](#доступ-приложения-и-хранение); связи и каскады показаны в полях выше. Авторизацию, область выборки и транзакционные границы проверяйте по связанным сервисам.
 
+## ImageDailyQuota
+
+**Источник:** [schema.prisma](../../../prisma/schema.prisma),
+[ImageQuotaService](../src/services/image/imageQuotaService.md).
+Дневной расход изображений, общий для команд/tool и всех бесед автора.
+
+| Поле | Тип | Атрибуты и назначение |
+| --- | --- | --- |
+| `vkUserId` | `String` | VK ID, без relation к `User.id`. |
+| `utcDay` | `String` | UTC-день YYYY-MM-DD. |
+| `used` | `Int` | default 0; legacyUsed + попытки со status != released. |
+| `legacyUsed` | `Int` | default 0; однократный count image usage автора за этот день. |
+| `createdAt` | `DateTime` | default now. |
+| `updatedAt` | `DateTime` | updatedAt. |
+| `attempts` | `ImageQuotaAttempt[]` | Обратная составная relation. |
+
+Составной PK `@@id([vkUserId, utcDay])`. Созданная в commit строка означает,
+что seed завершён. Старый расход может превышать лимит и не обрезается.
+Не хранит изображения, prompt, беседу или стоимость. Очистки/TTL нет.
+
+## ImageQuotaAttempt
+
+**Источник:** [schema.prisma](../../../prisma/schema.prisma),
+[ImageQuotaService](../src/services/image/imageQuotaService.md).
+Устойчивая попытка генерации, отдельная от статистики ApiUsage.
+
+| Поле | Тип | Атрибуты и назначение |
+| --- | --- | --- |
+| `operationId` | `String` | PK; randomUUID на invocation. |
+| `vkUserId` | `String` | Автор резерва. |
+| `utcDay` | `String` | Исходный UTC-день резерва. |
+| `feature` | `String` | Сервис ограничивает image_generate/image_edit. |
+| `status` | `String` | default reserved; сервис допускает reserved/consumed/uncertain/released. |
+| `createdAt` | `DateTime` | default now; при reserve явно задаётся reservedAt. |
+| `updatedAt` | `DateTime` | updatedAt. |
+| `quota` | `ImageDailyQuota` | FK (vkUserId, utcDay), onDelete Restrict, onUpdate Cascade. |
+
+Индекс `@@index([vkUserId, utcDay])`. Только reserved может перейти в терминальное
+состояние; только переход в released уменьшает used в той же транзакции.
+Повторы и поздний release после consumed/uncertain не возвращают место.
+Незавершённые записи переживают рестарт без автоматического освобождения.
+SQL enums/cleanup/relations к пользовательским сообщениям не вводятся.
+
 ## AdminLog
 
 **Тип:** модель Prisma. **Источник:** [`AdminLog` в schema.prisma](../../../prisma/schema.prisma); [миграции](../../../prisma/migrations).
@@ -1187,7 +1232,7 @@ Read-команды ограничивают выбор conversationId и сем
 | `Reminder` | `ReminderService` (create/findMany/findUnique/update/updateMany), в том числе транзакции claims и переходов. | Отмена/пауза/ошибки меняют status; прямого удаления напоминания не найдено. Временная очистка не удаляет историю напоминаний. FK `sourcePeerId` каскадный. |
 | `ReminderDelivery` | `ReminderService` (create/findFirst/findMany/update/updateMany), в том числе транзакции резервирования и результата доставки. | Статус и попытки сохраняются; прямого удаления delivery или отдельной retention очистки не найдено. FK Reminder каскадный. |
 | `ReminderDraft` | `ReminderService` (findFirst/findMany/upsert/delete/deleteMany). | Временные черновики удаляются при отмене/завершении/истечении; для создания действует срок 30 минут, для согласия на fallback-доставку — 24 часа. |
-| `ConversationMember` | `MemberService` (count/findMany/findUnique/update/updateMany/upsert), `MembershipService` (count/findMany/updateMany/upsert), `CommandService` (findMany/findUnique). | Выход отмечается как отсутствие/изменение полей, direct delete не найден; сведения о бывших участниках сохраняются. FK беседы каскадный. |
+| `ConversationMember` | `MemberService` (count/findMany/findUnique/update/updateMany/upsert), `CommandService` (findMany/findUnique). После R07 `MembershipService` модель не читает и не изменяет. | Анкеты, представления, модерация и event-driven presence сохраняются. Полная daily-синхронизация и fallback текущего count удалены; выход отмечается как отсутствие/изменение полей, direct delete не найден; сведения о бывших участниках сохраняются. FK беседы каскадный. |
 | `MembershipEvent` | `MembershipService` (create/count/groupBy). | Прямое удаление и retention job не найдены; история событий накапливается. В схеме нет FK к Conversation или ConversationMember. |
 | `DigestJob` | `SubagentService` (count/create/deleteMany/findFirst/findUnique/update/updateMany), `SubagentResultDeliveryService` (findMany/findUnique/update). | Прерванные/устаревшие активные задания и завершённые `done/failed/partial` старше `SUBAGENT_RESULT_RETENTION_DAYS` удаляются. Модель не имеет FK к User/Conversation. Подробности — [контракт модели выше](#digestjob). |
 | `FunPreference` | `FunService` (upsert), `MemeService` и `VkService` (findMany). | Прямое удаление и retention не найдены; настройки сохраняются по паре автора и беседы. |
@@ -1207,7 +1252,9 @@ Read-команды ограничивают выбор conversationId и сем
 | `GameEvent` | `GameService`, `MafiaService`, `GameInteractionService` (create/findUnique). | Используется для дедупликации игровых событий; прямого удаления нет, FK сессии каскадный. |
 | `GamePlayerStats` | `GameService`, `MafiaService` (findUnique/upsert), `GameService` также findMany. | Агрегаты обновляются upsert; retention/удаление не найдены, FK к сессии нет. |
 | `Achievement` | `GameService` (findMany/upsert). | Выдача уникальна по пользовательскому/игровому ключу; direct delete/retention не найдены. |
-| `ApiUsage` | Запись: `CommandService`, `FunService`, `MemeService`, `AdventureService`, `SubagentResultDeliveryService`, `VkService`; чтение: `CommandService` (count/aggregate). | Записи учитывают статистику/стоимость, direct delete и retention job не найдены; возможен неограниченный рост таблицы. |
+| `ApiUsage` | Запись: `CommandService`, `FunService`, `MemeService`, `AdventureService`, `SubagentResultDeliveryService`, `VkService`; чтение: `CommandService` (count/aggregate), `ImageQuotaService` (однократный seed). | Статистика/стоимость; для image_generate/image_edit время соответствует резерву, запись после подтверждённой отправки. Direct delete и retention job не найдены. |
+| `ImageDailyQuota` | `ImageQuotaService`: INSERT OR IGNORE, update/updateMany/findUniqueOrThrow внутри транзакций. | Очистки нет; FK попыток запрещает удаление занятого родителя. |
+| `ImageQuotaAttempt` | `ImageQuotaService`: create/findUnique/updateMany внутри транзакций; callers — команды и image tool. | Очистки/TTL/replay после рестарта нет. |
 | `AdminLog` | `SettingsService` (create), `CommandService` (findMany). | Журнал доступен в `/logs`; direct delete/retention не найдены. |
 
 ## Области запросов, транзакции и тестовые свидетельства
@@ -1227,7 +1274,7 @@ Read-команды ограничивают выбор conversationId и сем
 | `Reminder` | `ReminderService` ограничивает управление автором, scope, текущей беседой/peer, статусом и идентификатором цели; due selection только `status=active, nextRunAt<=now`. | [ReminderService](../src/services/reminders/reminderService.md) |
 | `ReminderDelivery` | Связь с reminder; создание уникально для occurrence. Claim ограничен delivery ID/status/сроком попытки, повторный sender вызов использует сохранённый `randomId`. | [ReminderService](../src/services/reminders/reminderService.md) |
 | `ReminderDraft` | Ключ `(creatorVkId, conversationId)` привязывает один pending flow к автору и peer; каждый обработчик повторно проверяет статус/срок и ожидаемый тип draft. | [ReminderService](../src/services/reminders/reminderService.md) |
-| `ConversationMember` | Ключ `(conversationId,vkUserId)`; профили и присутствие всегда беседо-специфичны. Admin profile operations получают target ID только после command-level authorization. Синхронизация ограничена peer и `isPresent`. | [MemberService](../src/services/member/memberService.md), [MembershipService](../src/services/membership/membershipService.md), [команды профиля](../src/services/command/commands.md#command-profile) |
+| `ConversationMember` | Ключ `(conversationId,vkUserId)`; профили и присутствие всегда беседо-специфичны. Admin profile operations получают target ID только после command-level authorization. Presence обновляется event-driven; полной синхронизации и использования для текущей численности статистики нет. | [MemberService](../src/services/member/memberService.md), [MembershipService](../src/services/membership/membershipService.md), [команды профиля](../src/services/command/commands.md#command-profile) |
 | `MembershipEvent` | Уникальность `conversationId,eventId`; статистика фильтрует `conversationId`, период `occurredAt`, тип `join/leave`; агрегация группирует по `memberId`. | [MembershipService](../src/services/membership/membershipService.md), [VK events](../src/services/membership/vkEvents.md) |
 | `DigestJob` | Создание привязано к requester/conversation; active `activeKey` сериализует одну выполняемую задачу на peer. Статусный lookup намеренно выбирает последнюю запись беседы без `kind/userId` фильтра. | [SubagentService](../src/services/ai/subagentService.md), [status tool](../src/services/ai/tools.md#get_subagent_status) |
 | `FunPreference` | Уникальная пара VK user ID и conversation ID; персональные настройки юмора не смешиваются между участниками и беседами. | [FunService](../src/services/fun/funService.md) |
@@ -1247,17 +1294,46 @@ Read-команды ограничивают выбор conversationId и сем
 | `GameEvent` | Дедупликация по уникальному `(sessionId,eventId)` внутри конкретной игровой сессии; события создаются вместе с state commit в соответствующих сервисах. | [GameService](../src/services/games/gameService.md), [MafiaService](../src/services/games/mafiaService.md) |
 | `GamePlayerStats` | Upsert и aggregation по `(scope,scopeId,vkUserId)`; текущая беседа и глобальный scope разделены. | [GameService](../src/services/games/gameService.md) |
 | `Achievement` | Lookup/upsert по user/code; не имеет relation к User, поэтому пользовательская область основана на VK ID в строке. | [GameService](../src/services/games/gameService.md) |
-| `ApiUsage` | Пользовательские отчёты фильтруют `vkUserId`; admin aggregates считают глобальный объём либо feature/day selectors. Retention не найден. | [команды статистики](../src/services/command/commands.md#command-stats), [VkService](../src/services/vk/vkService.md) |
+| `ApiUsage` | Пользовательские отчёты фильтруют vkUserId; admin aggregates — глобальный объём/feature/day. Квота читает автора + две image features + полуоткрытый UTC-интервал один раз при seed. Retention не найден. | [статистика](../src/services/command/commands.md#command-stats), [квота](../src/services/image/imageQuotaService.md) |
+| `ImageDailyQuota`, `ImageQuotaAttempt` | Общий scope vkUserId+UTC-день, независимо от peer/процесса. Increment+создание попытки и release+decrement атомарны; внешних вызовов внутри транзакций нет. | [ImageQuotaService](../src/services/image/imageQuotaService.md), [SQLite-тесты](../../../test/imageQuotaService.test.ts) |
 | `AdminLog` | Запись по actor VK ID; `/logs` читает последние 10 записей глобально без фильтра по peer или вызывающему админу. | [SettingsService](../src/services/settings/settingsService.md), [logs command](../src/services/command/commands.md#command-logs) |
 
 ### Транзакционные границы
 
-Статический поиск `prisma.$transaction` обнаружил 17 call sites в четырёх сервисах. `MembershipService` группирует до 100 upsert-ов `ConversationMember` в транзакцию на batch, но mark-absent выполняет отдельными `updateMany`. `CharacterService` атомарно сохраняет текущее изменение выбора/профиля вместе с audit/version row для операций выбора, создания, edit, enable и rollback; предварительное чтение не входит в транзакцию. `GameService` и `MafiaService` связывают `GameEvent`, состояние сессии, очки и/или агрегаты статистики внутри callback-транзакций. `ReminderService` связывает claim напоминания с созданием delivery, отправленную delivery с продвижением occurrence, постоянную ошибку с переходом reminder, а также несколько операций управления/cancel. Все остальные прямые Prisma операции из матрицы не входят в явную `$transaction`; отдельные conditional `updateMany`/unique constraints всё равно обеспечивают локальные атомарные guards. Внешние VK/API вызовы не являются частью Prisma-транзакций.
+Статический поиск `$transaction` в `src/` после R07 (20.11.2026) обнаружил 18 мест вызова
+в пяти сервисах: 16 через `prisma`, два через `this.client` в
+[ImageQuotaService](../src/services/image/imageQuotaService.md).
+`MembershipService` больше не содержит batch-транзакции обновления состава;
+его агрегатные чтения и запрос count VK не объединены в snapshot. `CharacterService` атомарно сохраняет
+изменение выбора/профиля вместе с audit/version row; предварительное чтение
+не входит в транзакцию. `GameService` и `MafiaService` связывают GameEvent,
+сессию, очки и/или агрегаты. `ReminderService` связывает claim с delivery,
+завершение delivery с продвижением occurrence, постоянную ошибку с reminder,
+а также операции управления/cancel.
+
+`ImageQuotaService.reserve` объединяет инициализацию дневной квоты из ApiUsage,
+проверку operationId, условный increment и создание попытки; `finish` — guarded
+переход попытки и decrement только при release. При нарушении счётчика release
+откатывается. Остальные прямые операции из матрицы не входят в явную
+`$transaction`; отдельные conditional updateMany/unique constraints сохраняют
+локальные атомарные guards. Внешние VK/API вызовы находятся вне транзакций.
 
 ### Тестовые свидетельства и границы
 
-Текущие 21 `test/*.test.ts` перечислены в [test README](../test/README.md). Тесты в основном проверяют pure formatting/validation и моки сервисов/tools; прямого теста Prisma schema, миграций или реальной SQLite транзакции нет. Из относящихся к моделям сценариев: `membershipService.test.ts` проверяет только formatter; `membershipCommand.test.ts` проверяет guards/аргументы команды с mock service; `personalityService.test.ts` проверяет IDs/aliases, не историю версий; `vkMessageDeliveryIntegration.test.ts` подменяет memory stores; domain Prisma state paths игр, напоминаний, member profiles и memory extraction напрямую не проверяются. Это описывает имеющиеся доказательства; отсутствие теста не является неописанным runtime behavior.
+Текущие 23 `test/*.test.ts` перечислены в [карте тестов](../test/README.md).
+[imageQuotaService.test.ts](../../../test/imageQuotaService.test.ts) содержит
+проверки реальной SQLite и миграций на синтетических данных: seed, переходы,
+rollback, полночь, конкуренция процессов, рестарт и upgrade с сохранением usage/стоимости.
+[VK integration](../../../test/vkMessageDeliveryIntegration.test.ts) использует
+отдельную SQLite для image command/tool, подменяя внешние VK/AI и memory stores.
+Остальные доменные Prisma-пути игр, напоминаний, member profiles и memory extraction
+этими сценариями не проверяются. Membership tests используют formatter/mock service,
+personality tests — IDs/aliases, без истории версий.
 
-Физическая operational DB намеренно не читалась. Schema и все 22 migration SQL описаны статически; это не подтверждает, что конкретный файл БД уже применил последнюю миграцию или не содержит legacy rows.
+Это описание assertions, а не успешного прогона: тесты R09 и fresh/upgrade
+не выполнялись, как зафиксировано в [ревью](../../tasks/completed/2026-11-19-audit-r09-image-quota-atomicity/review.md).
+При настоящей синхронизации тесты также не запускались.
+
+Физическая operational DB намеренно не читалась. Schema и все 23 migration SQL описаны статически; это не подтверждает, что конкретный файл БД уже применил последнюю миграцию или не содержит legacy rows.
 
 

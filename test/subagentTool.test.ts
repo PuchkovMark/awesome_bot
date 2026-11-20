@@ -7,15 +7,12 @@ import {
   type SubagentStartResult,
 } from '../src/services/ai/tools/subagentTool.js';
 
-type Access = { allowed: true } | { allowed: false; message: string };
-
 function makeTool(
   options: {
     available?: number;
     availableChars?: number;
     capped?: boolean;
     start?: SubagentStartResult;
-    access?: Access;
     isChat?: boolean;
     resolution?: ParticipantResolution;
   } = {},
@@ -32,7 +29,6 @@ function makeTool(
   let started = false;
   const tool = createSubagentTool({
     isChat: options.isChat ?? true,
-    checkAccess: async () => options.access ?? { allowed: true },
     resolveParticipants: async () =>
       options.resolution ?? { participants: [], ambiguous: [], notFound: [] },
     estimateMessages: async (input) => {
@@ -238,7 +234,7 @@ test('run_subagent reports ambiguous participants', async () => {
   assert.equal(requests.length, 0);
 });
 
-test('run_subagent validates input, period, and access', async () => {
+test('run_subagent validates input and period', async () => {
   const { tool, requests } = makeTool();
 
   const invalidTask = JSON.parse(await tool.execute({ task: 'коротко', count: 500 }));
@@ -272,13 +268,5 @@ test('run_subagent validates input, period, and access', async () => {
   );
   assert.equal(future.status, 'not_executed');
 
-  const denied = JSON.parse(
-    await (async () => {
-      const blocked = makeTool({ access: { allowed: false, message: 'Нет доступа' } });
-      return blocked.tool.execute({ task: 'Перескажи последние сообщения', count: 500 });
-    })(),
-  );
-  assert.equal(denied.status, 'not_executed');
-  assert.equal(denied.message, 'Нет доступа');
   assert.equal(requests.length, 0);
 });
