@@ -1,26 +1,22 @@
 {
   "compilerOptions": {
-    "target": "ES2023",
+    "target": "ES2024",
+    "lib": ["ES2024"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "lib": ["ES2023"],
-    "outDir": "dist",
-    "rootDir": "src",
-    "tsBuildInfoFile": "dist/tsconfig.tsbuildinfo",
+    "types": ["node"],
     "strict": true,
-    "noImplicitAny": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": false,
-    "noFallthroughCasesInSwitch": true,
-    "forceConsistentCasingInFileNames": true,
-    "esModuleInterop": true,
-    "resolveJsonModule": true,
-    "skipLibCheck": true,
-    "allowSyntheticDefaultImports": true,
-    "sourceMap": true,
-    "incremental": true,
-    "types": ["node"]
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "erasableSyntaxOnly": true,
+    "rewriteRelativeImportExtensions": true,
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "skipLibCheck": true
   },
-  "include": ["src"],
-  "exclude": ["node_modules", "dist"]
+  "include": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.mjs", "*.config.mjs", "vitest.config.ts"],
+  "exclude": ["node_modules", "dist", "coverage"]
 }
