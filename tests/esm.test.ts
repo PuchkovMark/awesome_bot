@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { expect, test } from 'vitest';
 
 test('Node.js загружает собранные ESM-модули без запуска приложения', () => {
-  const modules = ['core', 'channels', 'tools', 'storage', 'llm', 'config', 'logger'].map(
+  const modules = ['core', 'channels', 'tools', 'storage', 'llm', 'config', 'logger', 'contracts'].map(
     (layer) => pathToFileURL(resolve('dist', layer, 'index.js')).href,
   );
   const directory = mkdtempSync(join(tmpdir(), 'awesome-import-'));
@@ -34,5 +34,5 @@ test('Node.js загружает собранные ESM-модули без за
     expect(output.stdout).toBe('IMPORT_COMPLETED');
     expect(output.stderr).toBe('');
   } finally { rmSync(directory, { recursive: true, force: true }); }
-  expect(readdirSync('dist').sort()).toEqual(['channels', 'config', 'core', 'llm', 'logger', 'storage', 'tools']);
+  expect(readdirSync('dist').sort()).toEqual(['channels', 'config', 'contracts', 'core', 'llm', 'logger', 'storage', 'tools']);
 });

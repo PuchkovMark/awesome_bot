@@ -22,7 +22,7 @@ const forbidden = [
   'void import(`vk-${platform}`);',
 ];
 
-for (const layer of ['core', 'tools']) {
+for (const layer of ['core', 'tools', 'contracts']) {
   test.each(forbidden)(`${layer}: отклоняется %s`, async (code) => {
     const results = await eslint.lintText(code, { filePath: `src/${layer}/nested/example.ts` });
     const messages = results.flatMap((result) => result.messages);

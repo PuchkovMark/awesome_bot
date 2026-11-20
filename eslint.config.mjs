@@ -10,7 +10,7 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ['src/{core,tools}/**/*.{ts,mts,cts}'],
+    files: ['src/{core,tools,contracts}/**/*.{ts,mts,cts}'],
     plugins: { boundaries: { rules: { 'platform-imports': platformImports } } },
     rules: { 'boundaries/platform-imports': ['error', { packages: platformPackages }] },
   },
