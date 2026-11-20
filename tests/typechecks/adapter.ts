@@ -20,5 +20,10 @@ export const missingMethod: ChannelAdapter = { platform: 'test-a', capabilities:
 export const badHandler: EventHandler = (event: string) => event;
 // @ts-expect-error — id результата строковые.
 export const badSend: ChannelAdapter['send'] = async () => [42];
-// @ts-expect-error — время наблюдения снимка обязательно.
-export const incompleteSnapshot: CapabilitySnapshot = { context: { chatId: 'test-a:chat' }, support: {}, maxMessageLength: 'unknown', textFormats: [] };
+export async function requireObservation(): Promise<CapabilitySnapshot> {
+  const { observedAt, ...withoutObservation } = await adapter.capabilities({ chatId: 'test-a:chat' });
+  void observedAt;
+  // @ts-expect-error — все остальные поля корректны, но время наблюдения обязательно.
+  const incompleteSnapshot: CapabilitySnapshot = withoutObservation;
+  return incompleteSnapshot;
+}
