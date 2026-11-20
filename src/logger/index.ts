@@ -1,67 +1,53 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import { multistream, pino, type DestinationStream } from 'pino';
-import config from '../config/index.js';
+import pino from 'pino';
+import type { DestinationStream } from 'pino';
+import { createRedactor } from '../config/secrets.js';
+import { logLevels } from '../config/types.js';
+import type { LogLevel, Redact } from '../config/types.js';
+import { errorCategory, errorText, ownData, safeEvent } from './sanitize.js';
+import type { EventLevel, SafeLogger } from './types.js';
 
-// Пути формируются из фиксированного каталога logs/, а не из пользовательского ввода.
-/* eslint-disable security/detect-non-literal-fs-filename */
+export type { LogEvent, SafeLogger } from './types.js';
 
-const LOG_DIR = path.resolve('logs');
-const ERROR_LOG_PATH = path.join(LOG_DIR, 'error.log');
-const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024;
-const MAX_ROTATED_FILES = 3;
-
-/**
- * Поток с ротацией по размеру: error.log -> error.log.1 -> ... -> error.log.3.
- * Самый старый файл удаляется. Ошибки ротации не должны ронять приложение.
- */
-function createRotatingFileStream(filePath: string): { write: (chunk: string) => void } {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  let stream = fs.createWriteStream(filePath, { flags: 'a' });
-  let size = fs.existsSync(filePath) ? fs.statSync(filePath).size : 0;
-
-  return {
-    write(chunk: string) {
-      const chunkSize = Buffer.byteLength(chunk);
-      if (size + chunkSize > MAX_FILE_SIZE_BYTES && size > 0) {
-        try {
-          stream.end();
-          for (let index = MAX_ROTATED_FILES - 1; index >= 1; index--) {
-            const from = `${filePath}.${index}`;
-            if (!fs.existsSync(from)) continue;
-            if (index === MAX_ROTATED_FILES - 1) fs.unlinkSync(from);
-            else fs.renameSync(from, `${filePath}.${index + 1}`);
-          }
-          fs.renameSync(filePath, `${filePath}.1`);
-        } catch {
-          // Ротация не удалась — продолжаем писать в текущий файл.
-        }
-        stream = fs.createWriteStream(filePath, { flags: 'a' });
-        size = 0;
-      }
-      size += chunkSize;
-      stream.write(chunk);
-    },
-  };
+export interface LoggerOptions {
+  level?: LogLevel;
+  redact?: Redact;
+  additionalSecrets?: readonly string[];
+  destination?: DestinationStream;
 }
 
-const prettyStdout = pino.transport({
-  target: 'pino-pretty',
-  options: {
-    colorize: true,
-    translateTime: 'SYS:standard',
-  },
-}) as unknown as DestinationStream;
+export function createLogger(options: LoggerOptions = {}): SafeLogger {
+  const level = options.level ?? 'info';
+  if (!logLevels.includes(level)) throw new TypeError('Invalid log level');
+  const sink = pino({ level, base: null }, options.destination ?? process.stdout);
+  const additionalRedact = createRedactor(options.additionalSecrets ?? []);
+  const redact = (text: string) => (options.redact ?? ((value: string) => value))(additionalRedact(text));
+  const eventLevels: readonly EventLevel[] = ['debug', 'info', 'warn', 'error', 'fatal'];
+  const event: SafeLogger['event'] = (input, selectedLevel) => {
+    const clean = safeEvent(input);
+    if (!clean) return;
+    const target = selectedLevel ?? (clean.event === 'config_loaded' ? 'info' : 'error');
+    if (!eventLevels.includes(target)) return;
+    sink[target](clean);
+  };
+  return Object.freeze({
+    event,
+    componentError(error: unknown) { event({ event: 'component_error', category: errorCategory(error) }); },
+    debugText(text: string) {
+      if (typeof text === 'string' && sink.isLevelEnabled('debug')) sink.debug({ event: 'debug_message', text: redact(text) });
+    },
+    debugError(error: unknown) {
+      if (sink.isLevelEnabled('debug')) sink.debug({ event: 'debug_error', text: redact(errorText(error)) });
+    },
+  });
+}
 
-// В консоль — всё согласно LOG_LEVEL; в logs/error.log — только error и fatal (JSON).
-const baseLogger = pino(
-  { level: config.LOG_LEVEL },
-  multistream([
-    { level: config.LOG_LEVEL, stream: prettyStdout },
-    { level: 'error', stream: createRotatingFileStream(ERROR_LOG_PATH) },
-  ]),
-);
-
-export const logger = baseLogger;
-
-export default logger;
+// Диагностика до полной загрузки конфига принимает только безопасные поля.
+export function reportConfigError(error: unknown, destination?: DestinationStream): void {
+  const candidate = safeEvent({
+    event: 'config_invalid',
+    code: ownData(error, 'code'),
+    parameters: ownData(error, 'parameters'),
+  });
+  const logger = createLogger(destination ? { level: 'error', destination } : { level: 'error' });
+  logger.event(candidate ?? { event: 'config_invalid', code: 'invalid', parameters: [] });
+}
