@@ -128,6 +128,7 @@ const roundBasedGameKinds = Object.values(gameModes)
 const associationSeeds = ['лес', 'музыка', 'путешествие', 'космос', 'лето', 'еда'];
 const truthChoices = ['правда', 'действие'];
 const voteDurationMs = 30_000;
+const teamWinBonusPoints = 3;
 
 class GameService {
   private async sendAI(
@@ -158,6 +159,42 @@ class GameService {
       select: { id: true, conversationId: true, game: true, state: true, data: true },
       orderBy: { updatedAt: 'desc' },
     });
+  }
+
+  private async getLatestFinishedSession(
+    conversationId: string,
+  ): Promise<GameSessionWithData | null> {
+    return prisma.gameSession.findFirst({
+      where: { conversationId, state: 'finished', game: { in: roundBasedGameKinds } },
+      select: { id: true, conversationId: true, game: true, state: true, data: true },
+      orderBy: { updatedAt: 'desc' },
+    });
+  }
+
+  private renderSavedResult(session: GameSessionWithData, state: GameState): string {
+    const title = `🎮 «${this.gameTitle(state.kind)}» · раунд ${state.round}/${state.settings.rounds}`;
+    const result = state.roundResults?.at(-1)?.summary;
+    if (session.state === 'waiting') {
+      return `${title}\nОжидаем участников.\n${this.scoreboard(state)}`;
+    }
+    const lines = [title];
+    if (result) lines.push(result);
+    else if (session.state === 'finished' || session.state === 'round_complete') {
+      lines.push('Полный итог прошлого раунда не сохранён.');
+    }
+    if (session.state === 'finished') {
+      const winners = this.getWinningPlayers(state, state.statsRecorded ? teamWinBonusPoints : 0);
+      const names = winners.length
+        ? winners.map((player) => player.name).join(', ')
+        : 'победителя нет';
+      lines.push('🏁 Игра завершена.', `Победитель: ${names}.`, this.scoreboard(state));
+    } else if (session.state === 'round_complete') {
+      lines.push('Раунд завершён. Напишите «следующий раунд», чтобы продолжить.');
+    } else {
+      if (session.state === 'paused') lines.push('⏸ Игра приостановлена.');
+      lines.push(state.question?.prompt ?? 'Текущее задание не сохранено.');
+    }
+    return lines.join('\n');
   }
 
   private parseState(session: GameSessionWithData): GameState {
@@ -837,17 +874,7 @@ class GameService {
     if (action.type === 'score') return this.scoreboard(state);
     if (action.type === 'hint') return this.giveHint(session, state, userId, options.eventId);
     if (action.type === 'repeat') {
-      if (!state.question) return 'Сейчас нет активного задания.';
-      if (
-        !(await this.commit(
-          session,
-          state,
-          session.state as GameSessionStatus,
-          this.eventOptions(options.eventId, userId, 'repeat'),
-        ))
-      )
-        return null;
-      return state.question.prompt;
+      return this.renderSavedResult(session, state);
     }
     if (action.type === 'pause' || action.type === 'resume') {
       if (state.creatorId !== userId && !options.isAdmin && !options.canManageChat) {
@@ -1460,8 +1487,8 @@ class GameService {
       );
       for (const player of state.participants) {
         if (player.team !== null && winningTeams.has(player.team)) {
-          player.score += 3;
-          extraDeltas.push({ vkUserId: player.vkUserId, points: 3 });
+          player.score += teamWinBonusPoints;
+          extraDeltas.push({ vkUserId: player.vkUserId, points: teamWinBonusPoints });
         }
       }
     }
@@ -1472,13 +1499,16 @@ class GameService {
     return `🏁 Игра «${this.gameTitle(state.kind)}» завершена. ${reason}\nПобедитель: ${name}.\n${this.scoreboard(state)}\n${status}`;
   }
 
-  private getWinningPlayers(state: GameState): GameParticipant[] {
+  private getWinningPlayers(state: GameState, awardedTeamBonus = 0): GameParticipant[] {
     if (state.participants.length === 0) return [];
     if (state.settings.playMode === 'team') {
       const totals = new Map<number, number>();
       for (const player of state.participants) {
-        if (player.team !== null)
-          totals.set(player.team, (totals.get(player.team) ?? 0) + player.score);
+        if (player.team !== null) {
+          // Winners return to their pre-bonus totals; losing teams only fall further behind.
+          const score = player.score - awardedTeamBonus;
+          totals.set(player.team, (totals.get(player.team) ?? 0) + score);
+        }
       }
       const high = Math.max(0, ...totals.values());
       const teams = new Set(
@@ -1838,6 +1868,12 @@ class GameService {
     }
 
     const session = await this.getActiveSession(conversationId);
+    if (['repeat', 'повторить'].includes(first)) {
+      const saved = session ?? (await this.getLatestFinishedSession(conversationId));
+      return saved
+        ? this.renderSavedResult(saved, this.parseState(saved))
+        : 'Сейчас нет сохранённой игры.';
+    }
     if (first === 'join' || first === 'присоединиться' || first === 'войти') {
       return (
         (await this.handleNaturalMessage(conversationId, userId, 'присоединиться', options)) ??
@@ -1943,12 +1979,6 @@ class GameService {
     if (session && ['skip', 'пропуск', 'пропустить'].includes(first)) {
       return (
         (await this.handleNaturalMessage(conversationId, userId, 'пропустить вопрос', options)) ??
-        'Сейчас нет активной игры.'
-      );
-    }
-    if (session && ['repeat', 'повторить'].includes(first)) {
-      return (
-        (await this.handleNaturalMessage(conversationId, userId, 'повтори вопрос', options)) ??
         'Сейчас нет активной игры.'
       );
     }

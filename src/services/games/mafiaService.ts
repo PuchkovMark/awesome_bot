@@ -51,6 +51,7 @@ interface MafiaState {
   winner: MafiaWinner | null;
   started: boolean;
   statsRecorded: boolean;
+  lastPublicResult?: string;
 }
 
 export interface MafiaRequestOptions {
@@ -201,6 +202,23 @@ function phaseDescription(state: MafiaState): string {
     case 'cancelled':
       return 'Набор отменён.';
   }
+}
+
+function renderPublicResult(state: MafiaState): string {
+  if (typeof state.lastPublicResult === 'string' && state.lastPublicResult.trim()) {
+    return [
+      state.lastPublicResult,
+      phaseDescription(state),
+      state.phase === 'finished' ? '' : renderPlayers(state),
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+  }
+  const result =
+    state.phase === 'finished'
+      ? renderFinishedResults(state)
+      : `${phaseDescription(state)}\n${renderPlayers(state)}`;
+  return `${result}\nПолный публичный итог последнего перехода не сохранён.`;
 }
 
 function stableRandomId(sessionId: string, userId: string, kind: string): number {
@@ -547,6 +565,7 @@ export class MafiaService {
     state.deadlineAt = null;
     state.remainingMs = null;
     state.rolesDelivered = [];
+    state.lastPublicResult = phaseDescription(state);
     phaseEvent('роли распределены приватно', state);
     if (
       !(await this.persist(session, state, { userId: triggerUserId, kind: 'mafia-deal-start' }))
@@ -609,11 +628,13 @@ export class MafiaService {
         });
         state.events = [];
         state.rolesDelivered = [];
+        const text = `Не удалось доставить личную роль игроку ${player.name}; партию отменил. Роли в беседе не раскрываю. Проверьте личные сообщения и создайте новый набор.`;
+        state.lastPublicResult = text;
         await this.persist(currentSession, state, {
           userId: triggerUserId,
           kind: 'mafia-deal-failed',
         });
-        return `Не удалось доставить личную роль игроку ${player.name}; партию отменил. Роли в беседе не раскрываю. Проверьте личные сообщения и создайте новый набор.`;
+        return text;
       }
       state.rolesDelivered.push(player.vkUserId);
       if (
@@ -637,6 +658,8 @@ export class MafiaService {
     state.deadlineAt = Date.now() + state.settings.nightSeconds * 1000;
     state.nightActions = {};
     phaseEvent('наступила ночь', state);
+    const text = `🔒 Роли отправлены в личные сообщения. Началась ночь ${state.nightNumber} (${displayDuration(state.settings.nightSeconds)}). Ночные действия принимаю только в личке.`;
+    state.lastPublicResult = text;
     if (
       !(await this.persist(currentSession, state, {
         userId: triggerUserId,
@@ -651,7 +674,7 @@ export class MafiaService {
       data: JSON.stringify(state),
     };
     await this.sendNightPrompts(activeSession, state);
-    return `🔒 Роли отправлены в личные сообщения. Началась ночь ${state.nightNumber} (${displayDuration(state.settings.nightSeconds)}). Ночные действия принимаю только в личке.`;
+    return text;
   }
 
   private async sendNightPrompts(session: MafiaSession, state: MafiaState): Promise<void> {
@@ -771,13 +794,13 @@ export class MafiaService {
       });
     }
     if (options.isGroup ?? isGroupPeer(conversationId)) {
-      if (/^(?:результаты|итоги|покажи результаты)$/u.test(normalize(text))) {
+      if (/^(?:результаты|итоги|покажи результаты|статус игры|статус)$/u.test(normalize(text))) {
         const session =
           (await this.getActiveSession(conversationId)) ??
           (await this.getLatestFinishedSession(conversationId));
         if (!session) return null;
         const state = readState(session);
-        return state.phase === 'finished' ? renderFinishedResults(state) : phaseDescription(state);
+        return renderPublicResult(state);
       }
       return serializeGameConversation(conversationId, async () => {
         const session = await this.getActiveSession(conversationId);
@@ -799,11 +822,11 @@ export class MafiaService {
     const normalized = normalize(text)
       .replace(/[.!?]+$/u, '')
       .trim();
-    if (/^(?:игроки|список игроков|кто играет|статус игры|статус)$/u.test(normalized)) {
+    if (/^(?:игроки|список игроков|кто играет)$/u.test(normalized)) {
       return `${phaseDescription(state)}\n${renderPlayers(state)}`;
     }
-    if (/^(?:результаты|итоги|покажи результаты)$/u.test(normalized)) {
-      return state.phase === 'finished' ? renderFinishedResults(state) : phaseDescription(state);
+    if (/^(?:результаты|итоги|покажи результаты|статус игры|статус)$/u.test(normalized)) {
+      return renderPublicResult(state);
     }
     if (state.phase === 'lobby') {
       if (
@@ -827,6 +850,7 @@ export class MafiaService {
         state.phase = 'cancelled';
         state.deadlineAt = null;
         state.events = [];
+        state.lastPublicResult = 'Набор в мафию отменён.';
         if (
           !(await this.persist(session, state, {
             eventId: options.eventId,
@@ -855,6 +879,8 @@ export class MafiaService {
         state.pausedPhase = null;
         state.deadlineAt = Date.now() + Math.max(1000, state.remainingMs ?? 1000);
         state.remainingMs = null;
+        const text = `Партия продолжается. ${phaseDescription(state)}`;
+        state.lastPublicResult = text;
         if (
           !(await this.persist(session, state, {
             eventId: options.eventId,
@@ -865,7 +891,7 @@ export class MafiaService {
           return null;
         }
         if (phase === 'night') await this.sendNightPrompts(session, state);
-        return `Партия продолжается. ${phaseDescription(state)}`;
+        return text;
       }
       return null;
     }
@@ -880,6 +906,8 @@ export class MafiaService {
       state.phase = 'paused';
       state.remainingMs = Math.max(1000, (state.deadlineAt ?? Date.now()) - Date.now());
       state.deadlineAt = null;
+      const text = '⏸ Партия приостановлена. Продолжить можно сообщением «продолжай игру».';
+      state.lastPublicResult = text;
       if (
         !(await this.persist(session, state, {
           eventId: options.eventId,
@@ -889,7 +917,7 @@ export class MafiaService {
       ) {
         return null;
       }
-      return '⏸ Партия приостановлена. Продолжить можно сообщением «продолжай игру».';
+      return text;
     }
     if (/^(?:заверши игру|останови игру|закончить партию)$/u.test(normalized)) {
       if (!isGameManager(state, userId, options))
@@ -1124,9 +1152,10 @@ export class MafiaService {
     state.phase = 'discussion';
     state.deadlineAt = Date.now() + state.settings.discussionSeconds * 1000;
     phaseEvent('началось дневное обсуждение', state);
+    publicResult += `\n💬 Обсуждение продлится ${displayDuration(state.settings.discussionSeconds)}.`;
+    state.lastPublicResult = publicResult;
     if (!(await this.persist(session, state, event))) return 'Ход уже обработан.';
     await this.deliverInvestigations(session, state, resolution.investigations);
-    publicResult += `\n💬 Обсуждение продлится ${displayDuration(state.settings.discussionSeconds)}.`;
     return publicResult;
   }
 
@@ -1165,13 +1194,15 @@ export class MafiaService {
     state.revoteRound = 0;
     state.deadlineAt = Date.now() + state.settings.votingSeconds * 1000;
     phaseEvent('началось голосование', state);
-    if (!(await this.persist(session, state, { kind: 'mafia-voting-start' }))) {
-      return 'Не удалось сохранить начало голосования.';
-    }
     const candidates = state.players
       .map((player, index) => (player.alive ? `${index + 1}. ${player.name}` : null))
       .filter((value): value is string => value !== null);
-    return `🗳 Голосование открыто на ${displayDuration(state.settings.votingSeconds)}. Ответьте на сообщение или обратитесь к боту: «голос за N», где N — номер игрока.\n${candidates.join('\n')}`;
+    const text = `🗳 Голосование открыто на ${displayDuration(state.settings.votingSeconds)}. Ответьте на сообщение или обратитесь к боту: «голос за N», где N — номер игрока.\n${candidates.join('\n')}`;
+    state.lastPublicResult = text;
+    if (!(await this.persist(session, state, { kind: 'mafia-voting-start' }))) {
+      return 'Не удалось сохранить начало голосования.';
+    }
+    return text;
   }
 
   private async completeVoting(
@@ -1197,10 +1228,12 @@ export class MafiaService {
       state.votes = {};
       state.deadlineAt = Date.now() + state.settings.votingSeconds * 1000;
       phaseEvent('равенство голосов — переголосование', state);
-      if (!(await this.persist(session, state, event))) return 'Голосование уже обработано.';
-      return `⚖️ Ничья (${summary}). Проведём переголосование между:\n${result.leaders
+      const text = `⚖️ Ничья (${summary}). Проведём переголосование между:\n${result.leaders
         .map((id) => `${playerIndex(state, id) + 1}. ${state.players[playerIndex(state, id)].name}`)
         .join('\n')}`;
+      state.lastPublicResult = text;
+      if (!(await this.persist(session, state, event))) return 'Голосование уже обработано.';
+      return text;
     }
     if (result.eliminatedId) {
       const eliminated = state.players.find((player) => player.vkUserId === result.eliminatedId);
@@ -1236,9 +1269,11 @@ export class MafiaService {
     state.deadlineAt = Date.now() + state.settings.nightSeconds * 1000;
     state.nightActions = {};
     phaseEvent('наступила ночь', state);
+    const text = `${announcement}\n🌙 Наступила ночь ${state.nightNumber} (${displayDuration(state.settings.nightSeconds)}). Ночные действия — только в личных сообщениях.`;
+    state.lastPublicResult = text;
     if (!(await this.persist(session, state, event))) return 'Этап уже был обработан.';
     await this.sendNightPrompts(session, state);
-    return `${announcement}\n🌙 Наступила ночь ${state.nightNumber} (${displayDuration(state.settings.nightSeconds)}). Ночные действия — только в личных сообщениях.`;
+    return text;
   }
 
   private async finishGame(
@@ -1254,7 +1289,6 @@ export class MafiaService {
     state.remainingMs = null;
     state.pausedPhase = null;
     state.events.push(summary);
-    if (!(await this.persist(session, state, event))) return 'Партия уже завершена.';
     const winnerLabel = winner
       ? { town: 'мирные жители', mafia: 'мафия', maniac: 'маньяк' }[winner]
       : 'победителя нет';
@@ -1265,7 +1299,10 @@ export class MafiaService {
       )
       .join('\n');
     const history = state.events.slice(-20).join('\n');
-    return `🏁 Партия завершена. Победили: ${winnerLabel}.\n${summary}\n\nРоли:\n${roles}\n\nХод партии:\n${history || 'Событий нет.'}`;
+    const text = `🏁 Партия завершена. Победили: ${winnerLabel}.\n${summary}\n\nРоли:\n${roles}\n\nХод партии:\n${history || 'Событий нет.'}`;
+    state.lastPublicResult = text;
+    if (!(await this.persist(session, state, event))) return 'Партия уже завершена.';
+    return text;
   }
 
   async handleCommand(
@@ -1300,8 +1337,13 @@ export class MafiaService {
         });
       }
       if (!session) {
-        if (subcommand === 'results' || subcommand === 'результаты' || subcommand === 'итоги') {
-          return this.handleNaturalMessage(conversationId, userId, 'результаты', options);
+        if (['results', 'результаты', 'итоги', 'status', 'статус'].includes(subcommand)) {
+          return this.handleNaturalMessage(
+            conversationId,
+            userId,
+            subcommand === 'status' || subcommand === 'статус' ? 'статус игры' : 'результаты',
+            options,
+          );
         }
         return null;
       }
@@ -1391,10 +1433,12 @@ export class MafiaService {
           state.phase = 'cancelled';
           state.deadlineAt = null;
         }
+        const text = `${player.name} вышел из набора в мафию.`;
+        state.lastPublicResult = text;
         if (!(await this.persist(session, state, { eventId, userId, kind: 'mafia-member-left' }))) {
           return null;
         }
-        return `${player.name} вышел из набора в мафию.`;
+        return text;
       }
       if (!player.alive) return null;
       player.alive = false;
@@ -1428,10 +1472,12 @@ export class MafiaService {
       ) {
         return this.completeVoting(session, state, { eventId, userId, kind: 'mafia-member-left' });
       }
+      const text = `${player.name} покинул беседу и выбыл из партии.`;
+      state.lastPublicResult = text;
       if (!(await this.persist(session, state, { eventId, userId, kind: 'mafia-member-left' }))) {
         return null;
       }
-      return `${player.name} покинул беседу и выбыл из партии.`;
+      return text;
     });
   }
 
@@ -1464,6 +1510,7 @@ export class MafiaService {
             state.phase = 'cancelled';
             state.deadlineAt = null;
             const text = `Набор завершён: записалось ${state.players.length}, а нужно минимум ${state.settings.minPlayers}. Партию не запускал.`;
+            state.lastPublicResult = text;
             if (await this.persist(session, state, { kind: 'mafia-lobby-timeout' })) {
               expired.push({ conversationId: session.conversationId, text });
             }
@@ -1472,6 +1519,7 @@ export class MafiaService {
           const text = await this.beginParty(session, state);
           if (state.phase === 'lobby') {
             state.deadlineAt = Date.now() + 60_000;
+            state.lastPublicResult = text;
             await this.persist(session, state, { kind: 'mafia-retry-lobby' });
           }
           expired.push({ conversationId: session.conversationId, text });
@@ -1554,6 +1602,8 @@ export class MafiaService {
       state.phase = 'cancelled';
       state.deadlineAt = null;
     }
+    const text = `${departed.name} вышел из набора. Игроков: ${state.players.length}/${state.settings.maxPlayers}.`;
+    state.lastPublicResult = text;
     if (
       !(await this.persist(session, state, {
         eventId: options.eventId,
@@ -1563,7 +1613,7 @@ export class MafiaService {
     ) {
       return 'Это сообщение уже было обработано.';
     }
-    return `${departed.name} вышел из набора. Игроков: ${state.players.length}/${state.settings.maxPlayers}.`;
+    return text;
   }
 
   private isSettingsRequest(text: string): boolean {

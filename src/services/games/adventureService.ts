@@ -349,6 +349,13 @@ export class AdventureService {
     });
   }
 
+  private async getLatestFinished(conversationId: string): Promise<GameSession | null> {
+    return prisma.gameSession.findFirst({
+      where: { conversationId, game: 'ai_adventure', state: 'finished' },
+      orderBy: { startedAt: 'desc' },
+    });
+  }
+
   async hasActive(conversationId: string): Promise<boolean> {
     return Boolean(
       await prisma.gameSession.findFirst({
@@ -855,15 +862,18 @@ export class AdventureService {
       });
     }
     if (!active) {
-      if (action === 'journal') {
-        const finished = await prisma.gameSession.findFirst({
-          where: { conversationId, game: 'ai_adventure', state: 'finished' },
-          orderBy: { startedAt: 'desc' },
-        });
+      if (action === 'journal' || action === 'continue') {
+        const finished = await this.getLatestFinished(conversationId);
         if (finished) {
           const state = parseState(finished.data);
           if (!this.getPlayer(state, requesterId)) {
             return { text: 'Вы не участвовали в последнем приключении.' };
+          }
+          if (action === 'continue') {
+            return {
+              text: `🎲 ${state.title}\n\n${state.scene || 'Финальная сцена не сохранена.'}\n\n🏁 Приключение завершено.`,
+              sessionId: finished.id,
+            };
           }
           return {
             text: `${state.title} — журнал:\n${

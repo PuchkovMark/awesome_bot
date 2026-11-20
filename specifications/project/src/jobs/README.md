@@ -4,6 +4,8 @@
 
 ## Состав каталога
 
+Инкремент R08, 20.11.2026: [gameTimeoutJob](gameTimeoutJob.md#доставка-и-ошибки) независимо получает/публикует результаты двух семейств, [adventureVoteJob](adventureVoteJob.md#публикация-и-сбои) изолирует ошибки publish без image-fallback в callback VkService. Автоматического retry нет; сохранённые результаты доступны через read-команды. Перечень и расписания jobs не изменились; сверка статическая, исторический полный снимок выше сохранён.
+
 | Сущность | Тип и точка входа | Спецификация |
 | --- | --- | --- |
 | `cleanupJob` | Job, `startCleanupJob` | [cleanupJob.md](cleanupJob.md) |

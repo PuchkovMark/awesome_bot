@@ -625,12 +625,7 @@ export class VkService {
           { err: error, conversationId, sessionId: result.sessionId },
           'Failed to reuse adventure scene image',
         );
-        await senderService.send(
-          peerId,
-          `${result.text}\n\n(Не удалось отправить иллюстрацию.)`,
-          options,
-        );
-        return;
+        throw error;
       }
     }
     if (result.image && result.imageKey && result.sessionId) {
@@ -655,12 +650,7 @@ export class VkService {
           { err: error, conversationId, sessionId: result.sessionId },
           'Failed to send adventure scene image',
         );
-        await senderService.send(
-          peerId,
-          `${result.text}\n\n(Не удалось отправить иллюстрацию.)`,
-          options,
-        );
-        return;
+        throw error;
       }
     }
     await senderService.send(peerId, result.text, options);

@@ -10,18 +10,26 @@ export function startGameTimeoutJob(): void {
     if (running) return;
     running = true;
     try {
-      const expired = [
-        ...(await gameService.handleTimeouts()),
-        ...(await mafiaService.handleTimeouts()),
-      ];
-      for (const result of expired) {
+      for (const [family, service] of [
+        ['standard', gameService],
+        ['mafia', mafiaService],
+      ] as const) {
+        let expired: Array<{ conversationId: string; text: string }>;
         try {
-          await senderService.send(Number(result.conversationId), result.text);
+          expired = await service.handleTimeouts();
         } catch (error) {
-          logger.error(
-            { err: error, conversationId: result.conversationId },
-            'Failed to publish a game timeout result',
-          );
+          logger.error({ err: error, family }, 'Failed to collect game timeout results');
+          continue;
+        }
+        for (const result of expired) {
+          try {
+            await senderService.send(Number(result.conversationId), result.text);
+          } catch (error) {
+            logger.error(
+              { err: error, family, conversationId: result.conversationId },
+              'Failed to publish a game timeout result',
+            );
+          }
         }
       }
     } catch (error) {

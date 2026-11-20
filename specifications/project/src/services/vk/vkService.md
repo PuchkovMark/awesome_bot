@@ -5,6 +5,12 @@
 **Источник:** [`src/services/vk/vkService.ts`](../../../../../src/services/vk/vkService.ts). Снимок обследования: 2026-11-16, Git `2dbb190`; файл содержит незакоммиченные изменения и описан по рабочей копии.
 **Связанные документы:** [поток сообщений](../../architecture.md), [команды](../command/commands.md), [каталог AI-инструментов](../ai/tools.md), [очередь](../queue/requestQueue.md), [лимитер](../queue/rateLimitService.md), [sender](../sender/senderService.md), [детектор](../detector/detectorService.md), [VK download](vkFileDownload.md), [membership](../membership/README.md), [задачи](../../jobs/README.md).
 
+## Доставка результата приключения
+
+`sendAdventureResult` в [исходнике](../../../../../src/services/vk/vkService.ts) вызывается callback adventure-vote job и интерактивными command/tool путями. Для reusedAttachment выполняет sendPhotoAttachment с текстом сцены; для image/imageKey/sessionId — sendPhoto, включающий upload и send. Исключение любой image-операции логируется с conversationId/sessionId и пробрасывается исходным, без второго текстового send. Это относится и к ошибке до send: автоматическая текстовая доставка в такой ситуации не гарантируется. Text-only результат отправляется один раз обычным send.
+
+После успешного sendPhoto сбой `recordImage` перехватывается отдельно и только логируется. Job изолирует ошибку каждого результата и продолжает обход; прямой command caller может вернуть общую ошибку команды, не повторяя сцену. В model-tool caller attempted/beginAction до исполнения препятствуют повтору изменяющего действия в том же ответе. Новых retries/хранилища доставки нет; сохранённая сцена восстанавливается по [continue](../games/adventureService.md) без AI и нового игрового перехода. Это локальный контракт приключения, а не общий новый тип исхода доставки для остальных медиа.
+
 ## Запуск и состояние процесса
 
 Конструктор создаёт VK-клиент из `VK_TOKEN`, опционально разбирает `VK_GROUP_ID` в числовой polling group ID и создаёт отдельный `vkPublicApi` только при наличии `VK_SERVICE_TOKEN`. Лимитер экземпляра получает `MAX_REQUESTS_PER_MINUTE` с окном 60 секунд. В памяти экземпляра также живут кэш имён, объединение конкурентных запросов имени и map обработанных message keys; эти структуры не переживают рестарт.
