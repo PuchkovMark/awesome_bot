@@ -13,6 +13,8 @@ export async function openConnection(path: string, initialize?: (database: Datab
   try {
     const { default: Driver } = await import('better-sqlite3');
     database = new Driver(path);
+    database.pragma('foreign_keys = ON');
+    if (database.pragma('foreign_keys', { simple: true }) !== 1) throw new StorageError('unavailable');
     initialize?.(database);
     const opened = database;
     return {

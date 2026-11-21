@@ -5,3 +5,7 @@ export type {
   Storage, MessageStore, MessageInput, StoredMessage, AppendResult, HistoryQuery,
   ChatStore, ChatInput, ChatPatch, ChatSettings, CreateChatResult, ResponseMode,
 } from './types.js';
+export type {
+  ParticipantRole, ParticipantStatus, FactSourceKind, FactReliability, FactVisibility,
+  ParticipantRecord, ParticipantProfileRecord, ProfileFactRecord,
+} from './participant-types.js';
