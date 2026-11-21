@@ -31,3 +31,11 @@ test('единственное исключение реестра — реги�
  f.put('src/storage/storage.ts',"import {registerVersions,versionBackend} from './version-registry.js';");expect(checkCatalogBoundary(f.directory)).toHaveLength(1);
  }finally{f.cleanup();}
 });
+
+test.each(['queue-registry.ts','queue-store.ts'])('очередь: инфраструктура %s недоступна через транзитивный импорт',module=>{
+ const f=fixture();try{
+ f.put('src/storage/'+module,'export const admin=1;');
+ f.put('src/helper.ts',`export * from './storage/${module.replace('.ts','.js')}';`);
+ f.put('src/core/context.ts',"import '../helper.js';");expect(checkCatalogBoundary(f.directory)).toHaveLength(1);
+ }finally{f.cleanup();}
+});

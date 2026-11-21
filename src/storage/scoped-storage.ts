@@ -1,4 +1,5 @@
-import type { QueueBackend } from './queue-store.js';
+import type { ConnectionScope } from '../contracts/index.js';
+import type { QueueRecord } from './queue-types.js';
 import type { VersionBackend } from './version-store.js';
 import type { Connection } from './connection.js';
 import type { LifecycleBackend } from './lifecycle-store.js';
@@ -7,7 +8,7 @@ import { readMessage, createMessageStore } from './messages.js';
 import { createChatStore } from './chats.js';
 import { createAuthorizationStore } from './authorization-store.js';
 import { requireInput } from './validation.js';
-export function createScopedStorage(connection:Connection,backend:LifecycleBackend,versions:VersionBackend,queue:QueueBackend):ScopedStorage {
+export function createScopedStorage(connection:Connection,backend:LifecycleBackend,versions:VersionBackend,queue:{get(scope:ConnectionScope,id:number):QueueRecord|null}):ScopedStorage {
   const messages=createMessageStore(connection),chats=createChatStore(connection),authorization=createAuthorizationStore(connection);
   return {
     queue:{async get(scope,id){return queue.get(scope,id);}},

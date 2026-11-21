@@ -11,3 +11,5 @@ export { createAgentLoop } from './agent-loop/service.js';
 export { createChatQueue } from './chat-queue/service.js';
 export { QueueError } from './chat-queue/errors.js';
 export type { ChatQueue, ChatQueueOptions, QueueHandler, QueueHandlerInput, QueueAdmission, QueueConfig, QueueDecision, QueueOutcome, QueueStats } from './chat-queue/types.js';
+export { createAgentLoopQueue } from './chat-queue/agent-loop-adapter.js';
+export type { AgentLoopQueueOptions } from './chat-queue/agent-loop-adapter.js';

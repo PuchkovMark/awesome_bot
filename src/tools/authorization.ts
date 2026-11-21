@@ -1,5 +1,5 @@
 import type { AuthorizationContext, ToolContext } from '../contracts/index.js';
-import type { AuthorizationResult } from '../core/index.js';
+import type { AuthorizationResult } from '../core/authorization/service.js';
 
 /** Проверяет согласованность области. Происхождение и актуальные права проверяет операция сервиса. */
 export function toolAuthorization(context: ToolContext): AuthorizationResult<AuthorizationContext> {
