@@ -12,7 +12,11 @@ test('Node.js загружает собранные ESM-модули без за
   const directory = mkdtempSync(join(tmpdir(), 'awesome-import-'));
   try {
     const script = `
-      const { syncBuiltinESMExports } = await import('node:module');
+      const { syncBuiltinESMExports, registerHooks } = await import('node:module');
+      registerHooks({resolve(specifier, context, nextResolve) {
+        if (specifier === 'better-sqlite3') throw new Error('Driver loaded during import');
+        return nextResolve(specifier, context);
+      }});
       const fs = (await import('node:fs')).default;
       const original = fs.readFileSync;
       fs.readFileSync = function(path, ...args) {
