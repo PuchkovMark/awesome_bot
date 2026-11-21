@@ -1,3 +1,4 @@
+import { StorageError } from '../../storage/errors.js';
 import { randomUUID } from 'node:crypto';
 import { queueBackend } from '../../storage/queue-registry.js';
 import type { QueueWork } from '../../storage/queue-types.js';
@@ -9,6 +10,11 @@ interface Task { work: QueueWork; controller: AbortController; timer: ReturnType
 function safeFailure(error: unknown): QueueError {
   // Не читать произвольные свойства ошибок внедрённого обработчика.
   if (error instanceof QueueError) return error;
+  if (error instanceof StorageError) {
+    if(error.code==='queue_lost_ownership') return new QueueError('lost_ownership');
+    if(error.code==='queue_owned') return new QueueError('owned');
+    if(['invalid_input','stale_scope','uncertain_connection'].includes(error.code)) return new QueueError('invalid_input');
+  }
   return new QueueError('storage_failed');
 }
 export function createChatQueue(options: ChatQueueOptions): ChatQueue {
@@ -100,7 +106,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
       if(phase!=='idle')throw new QueueError('stopped');
       token=randomUUID();
       try { counters.interrupted=backend.acquire(token,config.leaseMs,config.renewIntervalMs); }
-      catch { throw new QueueError('owned'); }
+      catch(error) { throw safeFailure(error); }
       phase='running';renewAt=performance.now()+config.renewIntervalMs;pump();armTick();
       if(failure)throw failure;
     },
