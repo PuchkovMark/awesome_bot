@@ -9,7 +9,11 @@ import { requireInput } from './validation.js';
 export function createScopedStorage(connection:Connection,backend:LifecycleBackend,versions:VersionBackend):ScopedStorage {
   const messages=createMessageStore(connection),chats=createChatStore(connection),authorization=createAuthorizationStore(connection);
   return {
-    versions:{async append(scope,input){return versions.appendLocal(scope,input);},async get(scope,ref){return versions.get(scope,ref);},async systemPrompt(scope){return versions.systemPrompt(scope);}},
+    versions:{
+      async selected(scope,kind){return versions.selected(scope,kind);},
+      async select(scope,kind,ref,expected){return versions.select(scope,kind,ref,expected);},
+      async reset(scope,kind,expected){return versions.select(scope,kind,null,expected);},
+      async append(scope,input){return versions.appendLocal(scope,input);},async get(scope,ref){return versions.get(scope,ref);},async systemPrompt(scope){return versions.systemPrompt(scope);}},
     messages:{
       async append(scope,message) {return backend.transaction(scope,()=>{const snapshot={...message};requireInput(snapshot.chatId===scope.chatId);return messages.append(snapshot);});},
       async list(scope,query) {return backend.transaction(scope,()=>messages.list(scope.chatId,query));},
