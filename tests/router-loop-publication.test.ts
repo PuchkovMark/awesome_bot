@@ -5,7 +5,7 @@ import {scopeFor} from './helpers/connection-scope.js';
 import {flushQueue} from './helpers/chat-queue.js';
 import type {IncomingMessage} from '../src/contracts/index.js';
 const message:IncomingMessage={kind:'message',chatId:'vk:a',userId:'vk:u',authorName:'',isGroupChat:true,isAdmin:false,isBot:false,text:'Пенек помоги',messageId:'1',isMentioned:false,isReplyToBot:false,timestamp:0,attachments:[]};
-const prepare=async()=>({system:'',messages:[{role:'user' as const,text:'hi'}],maxOutputTokens:5,sessionId:'opaque'});
+const prepare=async()=>({kind:'ready' as const,input:{system:'',messages:[{role:'user' as const,text:'hi'}],maxOutputTokens:5,sessionId:'opaque'}});
 for(const mode of ['normal','active'] as const)for(const kind of ['complete','incomplete','refused','empty','rate_limit'] as const)test(`связка ${mode}/${kind}`,async()=>{
  const storage=await openStorage(':memory:'),scope=scopeFor(storage,'vk:a');await storage.chats.create(scope,{responseMode:mode,enabled:true,createdAt:0});
  const publish=vi.fn(async()=>({kind:'delivered' as const,receipt:{messageId:'out',userId:'vk:bot' as const,authorName:'',timestamp:1}}));

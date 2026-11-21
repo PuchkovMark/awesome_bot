@@ -3,7 +3,7 @@ import { openStorage } from '../src/storage/index.js';
 import { createAgentLoopQueue } from '../src/core/index.js';
 import { scopeFor } from './helpers/connection-scope.js';
 import { queueMessage,flushQueue } from './helpers/chat-queue.js';
-const prepare=async()=>({system:'',messages:[{role:'user' as const,text:'private'}],maxOutputTokens:1,sessionId:'opaque'});
+const prepare=async()=>({kind:'ready' as const,input:{system:'',messages:[{role:'user' as const,text:'private'}],maxOutputTokens:1,sessionId:'opaque'}});
 test('rate_limit конечен, server повторяется только внутри цикла, очередь продолжает',async()=>{
  vi.useFakeTimers();const storage=await openStorage(':memory:');const scope=scopeFor(storage,'vk:a');
  let calls=0;const q=createAgentLoopQueue({storage,prepare,client:{async complete(){calls++;if(calls===1)return{kind:'error',code:'rate_limit',message:'private'};if(calls===2)return{kind:'error',code:'server',message:'private'};return{kind:'complete',text:'private',usage:{input:0,output:0}};}}});

@@ -113,7 +113,7 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
     },
     valid(token: string, work: QueueWork): boolean {
       return transaction(token, db => {
-        const row=db.prepare("SELECT j.id FROM queue_jobs j JOIN chat_connections c ON c.chat_id=j.chat_id AND c.generation=j.generation LEFT JOIN chats s ON s.chat_id=j.chat_id WHERE j.id=? AND j.owner=? AND j.state='running' AND c.state='active' AND coalesce(s.enabled,1)=1").get(work.id,token);
+        const row=db.prepare("SELECT j.id FROM queue_jobs j JOIN chat_connections c ON c.chat_id=j.chat_id AND c.generation=j.generation LEFT JOIN chats s ON s.chat_id=j.chat_id WHERE j.id=? AND j.owner=? AND j.state='running' AND c.state='active' AND coalesce(s.enabled,1)=1 AND (j.route_kind IS NULL OR s.response_mode!='silent')").get(work.id,token);
         return !!row;
       });
     },

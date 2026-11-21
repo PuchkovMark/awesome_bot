@@ -93,7 +93,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
       if(!message){finish(task,'message_missing');return;}
       if(!backend.valid(token,work)){finish(task,'interrupted');return;}
       if(work.route){const settings=await options.storage.chats.get(work.scope);if(task.done)return;if(!settings?.enabled||settings.responseMode==='silent'||!backend.valid(token,work)){finish(task,'interrupted');return;}}
-      const outcome:unknown=await handler(Object.freeze({scope:work.scope,messageId:work.messageId,signal:controller.signal}));
+      const outcome:unknown=await handler(Object.freeze({scope:work.scope,messageId:work.messageId,signal:controller.signal,route:work.route,isCurrent:()=>{if(task.done||phase!=='running'||controller.signal.aborted||performance.now()>=task.deadline)return false;try{return backend.valid(token,work);}catch{return false;}}}));
       const completion:QueueCompletion=typeof outcome==='object'&&outcome!==null&&outcomes.has((outcome as QueueCompletion).outcome)?outcome as QueueCompletion:{outcome:outcomes.has(outcome)?outcome as QueueOutcome:'failed'};
       finish(task,completion.outcome,completion);
     }).catch(()=>finish(task,'failed'));
