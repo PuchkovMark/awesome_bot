@@ -3,3 +3,4 @@ export type {
   LlmMessage, LlmRequest, LlmResponse, LlmResult, LlmToolCall, LlmToolDescription, LlmUsage,
 } from './types.js';
 export { createLlmSessionId } from './session.js';
+export { createLlmClient } from './client.js';
