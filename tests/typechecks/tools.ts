@@ -30,3 +30,5 @@ export const chatExample = chatId;
 export const missingChat: ToolContext = withoutChat;
 // @ts-expect-error — параметры модели проверяются по Parameters.
 export const badCall = () => tool.execute({ query: 1 }, context);
+// @ts-expect-error — простая строка роли не является контекстом авторизации.
+export const fakeAuthorization: ToolContext = { ...context, authorization: 'owner' };

@@ -1,3 +1,4 @@
+import type { AuthorizationContext } from './authorization.js';
 import type { ChannelAdapter } from './adapter.js';
 import type { CapabilityName } from './capabilities.js';
 import type { KnownBoolean } from './events.js';
@@ -10,6 +11,7 @@ export interface ToolContext {
   readonly platform: PlatformId;
   readonly userId: UserId;
   readonly isAdmin: KnownBoolean;
+  readonly authorization?: AuthorizationContext;
   readonly adapter: ChannelAdapter;
 }
 
