@@ -4,6 +4,7 @@ import { parseEnv } from 'node:util';
 import { ConfigError } from './errors.js';
 import { createRedactor } from './secrets.js';
 import { configParameters, logLevels } from './types.js';
+import type { UserId } from '../contracts/index.js';
 import type { ConfigParameter, LoadedConfig, LogLevel } from './types.js';
 
 export { ConfigError } from './errors.js';
@@ -31,7 +32,7 @@ export function loadConfig(options: ConfigOptions = {}): LoadedConfig {
   }
 
   const values = Object.fromEntries(configParameters.map((key) => [key, env[key] ?? file[key]]));
-  const required = ['VK_TOKEN', 'OPENCODE_API_KEY', 'LLM_MODEL'] as const;
+  const required = ['VK_TOKEN', 'OPENCODE_API_KEY', 'LLM_MODEL', 'BOT_OWNER_ID'] as const;
   for (const parameter of required) {
     const value = values[parameter];
     if (value === undefined) throw new ConfigError('missing', [parameter]);
@@ -41,7 +42,19 @@ export function loadConfig(options: ConfigOptions = {}): LoadedConfig {
   }
   const level = values.LOG_LEVEL === undefined ? 'info' : values.LOG_LEVEL;
   if (!logLevels.includes(level as LogLevel)) throw new ConfigError('invalid', ['LOG_LEVEL']);
+  if (!/^[a-z][a-z0-9_-]*:[^\s]+$/.test(values.BOT_OWNER_ID as string)) throw new ConfigError('invalid', ['BOT_OWNER_ID']);
+  function positive(parameter: ConfigParameter, fallback: number, unit = 1): number {
+    const raw = values[parameter];
+    const number = raw === undefined ? fallback : (typeof raw === 'string' && /^[0-9]+$/.test(raw) ? Number(raw) : NaN);
+    if (!Number.isSafeInteger(number) || number <= 0 || !Number.isSafeInteger(number * unit)) throw new ConfigError('invalid', [parameter]);
+    return number;
+  }
   const config = Object.freeze({
+    authorization: Object.freeze({
+      ownerId: values.BOT_OWNER_ID as UserId,
+      reasonMaxLength: positive('ADMIN_REVOCATION_REASON_MAX_LENGTH', 500),
+      reasonRetentionDays: positive('ADMIN_REVOCATION_REASON_RETENTION_DAYS', 90, 86_400_000),
+    }),
     vk: Object.freeze({ token: values.VK_TOKEN as string }),
     llm: Object.freeze({ provider: 'opencode' as const, apiKey: values.OPENCODE_API_KEY as string, model: values.LLM_MODEL as string }),
     log: Object.freeze({ level: level as LogLevel }),

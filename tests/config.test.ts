@@ -5,22 +5,23 @@ import { expect, test } from 'vitest';
 import { ConfigError, loadConfig } from '../src/config/index.js';
 import { createRedactor } from '../src/config/secrets.js';
 
-const valid = { VK_TOKEN: 'vk-test-secret', OPENCODE_API_KEY: 'opencode-test-secret', LLM_MODEL: 'deepseek-v4.1-flash' };
+const valid = { BOT_OWNER_ID: 'vk:owner', VK_TOKEN: 'vk-test-secret', OPENCODE_API_KEY: 'opencode-test-secret', LLM_MODEL: 'deepseek-v4.1-flash' };
 const absent = () => { throw Object.assign(new Error('private path'), { code: 'ENOENT' }); };
 
 test('валидный неизменяемый конфиг и info по умолчанию, без изменения окружения', () => {
   const env = { ...valid, PRIVATE_EXTRA: 'not copied' };
   const { config } = loadConfig({ env, readFile: absent });
   expect(config).toEqual({
+    authorization: { ownerId: valid.BOT_OWNER_ID, reasonMaxLength: 500, reasonRetentionDays: 90 },
     vk: { token: valid.VK_TOKEN },
     llm: { provider: 'opencode', apiKey: valid.OPENCODE_API_KEY, model: valid.LLM_MODEL },
     log: { level: 'info' },
   });
   expect(env).toEqual({ ...valid, PRIVATE_EXTRA: 'not copied' });
-  for (const value of [config, config.vk, config.llm, config.log]) expect(Object.isFrozen(value)).toBe(true);
+  for (const value of [config, config.vk, config.llm, config.log, config.authorization]) expect(Object.isFrozen(value)).toBe(true);
 });
 
-for (const parameter of ['VK_TOKEN', 'OPENCODE_API_KEY', 'LLM_MODEL'] as const) {
+for (const parameter of ['VK_TOKEN', 'OPENCODE_API_KEY', 'LLM_MODEL', 'BOT_OWNER_ID'] as const) {
   test.each([undefined, '', ' ', ' x', 'x ', 'x\ny', 'x\ry'])(`${parameter}: отклоняется %j`, (value) => {
     try {
       loadConfig({ env: { ...valid, [parameter]: value }, readFile: absent });
@@ -44,7 +45,7 @@ test.each(['', ' ', 'DEBUG', 'trace', 'invalid'])( 'некорректный у�
 test('временный .env, приоритет окружения и очистка перекрытых секретов', () => {
   const directory = mkdtempSync(join(tmpdir(), 'awesome-config-'));
   try {
-    writeFileSync(join(directory, '.env'), 'VK_TOKEN=file-vk-secret\nOPENCODE_API_KEY=file-key-secret\nLLM_MODEL=deepseek-v4.1-flash\nLOG_LEVEL=debug\n');
+    writeFileSync(join(directory, '.env'), 'VK_TOKEN=file-vk-secret\nOPENCODE_API_KEY=file-key-secret\nLLM_MODEL=deepseek-v4.1-flash\nBOT_OWNER_ID=vk:owner\nLOG_LEVEL=debug\n');
     const loaded = loadConfig({ env: { VK_TOKEN: valid.VK_TOKEN }, cwd: directory });
     expect(loaded.config.vk.token).toBe(valid.VK_TOKEN);
     expect(loaded.config.llm.apiKey).toBe('file-key-secret');
@@ -89,4 +90,18 @@ test('пример окружения соответствует выбранн�
   expect(config.llm.model).toBe('deepseek-v4.1-flash');
   expect(config.vk.token).toBe(valid.VK_TOKEN);
   expect(config.llm.apiKey).toBe(valid.OPENCODE_API_KEY);
+});
+
+test.each(['owner', ':owner', 'vk:', 'VK:owner', 'vk:a b'])( 'неверный владелец %s', (owner) => {
+  expect(() => loadConfig({ env: { ...valid, BOT_OWNER_ID: owner }, readFile: absent })).toThrow('BOT_OWNER_ID');
+});
+for (const parameter of ['ADMIN_REVOCATION_REASON_MAX_LENGTH', 'ADMIN_REVOCATION_REASON_RETENTION_DAYS'] as const) {
+  test.each(['', ' ', '0', '-1', '1.5', 'NaN', '1e2', '9007199254740992'])(`${parameter}: %s`, value => {
+    expect(() => loadConfig({ env: { ...valid, [parameter]: value }, readFile: absent })).toThrow(parameter);
+  });
+}
+test('настройки аудита переопределяются без изменения схемы', () => {
+  const loaded = loadConfig({ env: { ...valid, ADMIN_REVOCATION_REASON_MAX_LENGTH: '25', ADMIN_REVOCATION_REASON_RETENTION_DAYS: '7' }, readFile: absent });
+  expect(loaded.config.authorization).toEqual({ ownerId: 'vk:owner', reasonMaxLength: 25, reasonRetentionDays: 7 });
+  expect(() => loadConfig({ env: { ...valid, ADMIN_REVOCATION_REASON_RETENTION_DAYS: '9007199254740991' }, readFile: absent })).toThrow('ADMIN_REVOCATION');
 });
