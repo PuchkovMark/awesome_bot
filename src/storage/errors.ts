@@ -1,5 +1,5 @@
 export type StorageErrorCode = 'invalid_input' | 'unavailable' | 'schema_incompatible'
-  | 'migration_failed' | 'operation_failed' | 'closed';
+  | 'stale_scope' | 'uncertain_connection' | 'migration_failed' | 'operation_failed' | 'closed';
 
 export class StorageError extends Error {
   readonly code: StorageErrorCode;

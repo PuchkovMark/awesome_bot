@@ -11,3 +11,4 @@ export type { ChannelAdapter, EventHandler, SendResult } from './adapter.js';
 export type { JsonPrimitive, JsonValue, JsonObject, ObjectParameterSchema } from './json.js';
 export type { ToolContext, ToolAccess, PlatformAvailability, ToolDefinition } from './tool.js';
 export type { BotRole, GrantBasis, AuthorizationAction, AuthorizationDecision, AuthorizationDenial, AuthorizationContext } from './authorization.js';
+export type { ConnectionScope, LifecycleObservation, LifecycleSource } from './lifecycle.js';
