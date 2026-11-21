@@ -23,3 +23,16 @@ test('общие виды, конфликты, точный выбор/отка�
  }finally{await storage.close();}
  await expect(admin.systemPrompt()).rejects.toMatchObject({code:'closed'});
 });
+
+test('ошибка SQL при сохранении версии откатывает вставку и позволяет повтор',async()=>{
+ const {storageFixture}=await import('./helpers/storage-fixture.js');const {default:Database}=await import('better-sqlite3');const {scopeFor}=await import('./helpers/connection-scope.js');
+ const f=storageFixture(),storage=await openStorage(f.path),db=new Database(f.path),admin=catalogAdministration(storage),scope=scopeFor(storage,'vk:a');
+ try{
+  for(const area of ['global','local']){
+   const input={kind:'persona' as const,key:'k',text:'private text',createdAt:0,expectedHead:null};const append=()=>area==='global'?admin.append(input):storage.versions.append(scope,input);
+   db.exec(`CREATE TRIGGER fail_version_insert AFTER INSERT ON ${area}_content_versions BEGIN SELECT RAISE(ABORT,'private text'); END`);
+   await expect(append()).rejects.toMatchObject({code:'operation_failed',message:'Storage: operation_failed'});expect(db.prepare(`SELECT * FROM ${area}_content_versions`).all()).toEqual([]);
+   db.exec('DROP TRIGGER fail_version_insert');const saved=await append();expect(saved.status).toBe('created');if(saved.status==='created')expect(saved.value.ref.version).toBe(1);
+  }
+ }finally{db.close();await storage.close();f.cleanup();}
+});

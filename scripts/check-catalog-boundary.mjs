@@ -11,13 +11,13 @@ export function checkCatalogBoundary(root=process.cwd()) {
  const parsed=ts.parseJsonConfigFileContent(config.config,ts.sys,root);
  if(parsed.errors.length)throw new Error('catalog_boundary: invalid_config');
  const target=resolve(root,'src/storage/catalog-admin.ts');
- /** @type {Map<string,{edges:string[],computed:boolean,unresolved:boolean}>} */
+ /** @type {Map<string,{edges:string[],computed:boolean,unresolved:boolean,privileged:boolean}>} */
  const graph=new Map();
  /** @param {string} file */
  function dependencies(file){
   const cached=graph.get(file);if(cached)return cached;
-  /** @type {{edges:string[],computed:boolean,unresolved:boolean}} */
-  const result={edges:[],computed:false,unresolved:false};graph.set(file,result);
+  /** @type {{edges:string[],computed:boolean,unresolved:boolean,privileged:boolean}} */
+  const result={edges:[],computed:false,unresolved:false,privileged:false};graph.set(file,result);
   const source=ts.sys.readFile(file);if(source===undefined){result.unresolved=true;return result;}
   const sf=ts.createSourceFile(file,source,ts.ScriptTarget.Latest,true);
   /** @param {ts.Node|undefined} node */
@@ -26,7 +26,15 @@ export function checkCatalogBoundary(root=process.cwd()) {
    if(ts.isLiteralTypeNode(node))node=node.literal;
    if(!ts.isStringLiteralLike(node)){result.computed=true;return;}
    const name=node.text,resolved=ts.resolveModuleName(name,file,parsed.options,ts.sys).resolvedModule;
-   if(resolved){const p=resolve(resolved.resolvedFileName);if(!p.split(sep).includes('node_modules'))result.edges.push(p);}
+   if(resolved){const p=resolve(resolved.resolvedFileName);
+    if(p===resolve(root,'src/storage/version-registry.ts')){
+     const parent=node.parent;
+     const registration=ts.isImportDeclaration(parent)&&!parent.importClause?.name&&parent.importClause?.namedBindings;
+     const allowed=file===resolve(root,'src/storage/storage.ts')&&registration&&ts.isNamedImports(registration)&&registration.elements.every(e=>(e.propertyName??e.name).text==='registerVersions');
+     if(!allowed)result.privileged=true;
+    }
+    if(!p.split(sep).includes('node_modules'))result.edges.push(p);
+   }
    else if(name.startsWith('.')||name.startsWith('/')||Object.keys(parsed.options.paths??{}).some(k=>name.startsWith(k.split('*')[0]??k)))result.unresolved=true;
   }
   /** @param {ts.Node} node */
@@ -43,7 +51,7 @@ export function checkCatalogBoundary(root=process.cwd()) {
  /** @type {string[]} */ const errors=[];
  for(const start of roots){const seen=new Set();const queue=[start];while(queue.length){const file=queue.pop();if(!file||seen.has(file))continue;seen.add(file);
   if(file===target){errors.push(`${relative(root,start)}: catalog_boundary: forbidden_access`);break;}
-  const deps=dependencies(file);if(deps.computed||deps.unresolved){errors.push(`${relative(root,start)}: catalog_boundary: uncheckable_import`);break;}queue.push(...deps.edges);
+  const deps=dependencies(file);if(deps.privileged){errors.push(`${relative(root,start)}: catalog_boundary: forbidden_access`);break;}if(deps.computed||deps.unresolved){errors.push(`${relative(root,start)}: catalog_boundary: uncheckable_import`);break;}queue.push(...deps.edges);
  }}
  return errors;
 }

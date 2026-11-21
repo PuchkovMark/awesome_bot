@@ -22,3 +22,12 @@ test('проверка графа останавливает команду сб
 });
 function requirePackage(){return readFileSync('package.json','utf8');}
 import {readFileSync} from 'node:fs';
+
+test.each(["import {versionBackend as get} from './storage/version-registry.js';","export {versionBackend as get} from './storage/version-registry.js';","export * from './storage/version-registry.js';","import * as registry from './storage/version-registry.js';","void import('./storage/version-registry.js');","require('./storage/version-registry.js');","import {registerVersions} from './storage/version-registry.js';"] )('внутренний реестр не даёт обход: %s',code=>{
+ const f=fixture();try{f.put('src/storage/version-registry.ts','export const versionBackend=1,registerVersions=1;');f.put('src/helper.ts',code);f.put('src/tools/a.ts',"import '../helper.js';");expect(checkCatalogBoundary(f.directory)).toHaveLength(1);}finally{f.cleanup();}
+});
+test('единственное исключение реестра — регистрация из открытия Storage',()=>{
+ const f=fixture();try{f.put('src/storage/version-registry.ts','export const versionBackend=1,registerVersions=1;');f.put('src/storage/storage.ts',"import {registerVersions} from './version-registry.js';");f.put('src/storage/index.ts',"import './storage.js';");f.put('src/tools/a.ts',"import '../storage/index.js';");expect(checkCatalogBoundary(f.directory)).toEqual([]);
+ f.put('src/storage/storage.ts',"import {registerVersions,versionBackend} from './version-registry.js';");expect(checkCatalogBoundary(f.directory)).toHaveLength(1);
+ }finally{f.cleanup();}
+});

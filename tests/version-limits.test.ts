@@ -14,3 +14,12 @@ test.each(['0','-1','1.5','','9007199254740992','private'])('отклоняет 
 test('значения файла и приоритет env',()=>{
  expect(loadConfig({env:{...env,VERSION_MAX_PER_ENTITY:'3'},readFile:()=> 'VERSION_TEXT_MAX_LENGTH=4\nVERSION_MAX_PER_ENTITY=5'}).config.versioning).toEqual({textMaxLength:4,maxPerEntity:3});
 });
+
+test('ошибки getter и неизвестные options безопасны и не открывают БД',async()=>{
+ const {openStorage}=await import('../src/storage/index.js');const {storageFixture}=await import('./helpers/storage-fixture.js');const {existsSync}=await import('node:fs');const f=storageFixture();
+ try{
+  await expect(openStorage(f.path,{get versioning():never{throw new Error('private text');}})).rejects.toMatchObject({code:'invalid_input',message:'Storage: invalid_input'});
+  expect(()=>versionLimits({get textMaxLength():never{throw new Error('private text');},maxPerEntity:1})).toThrow('Storage: invalid_input');
+  expect(existsSync(f.path)).toBe(false);
+ }finally{f.cleanup();}
+});
