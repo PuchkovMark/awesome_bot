@@ -27,7 +27,7 @@ test('дубликат с изменённым текстом не меняет 
   const { store, connection } = await setup();
   const first = await store.append(base);
   expect(await store.append({ ...base, text: 'секретныйдубликат' })).toEqual({ status: 'duplicate', id: first.id });
-  expect(await store.list(base.chatId, { limit: 10 })).toEqual([{ ...base, id: first.id }]);
+  expect(await store.list(base.chatId, { limit: 10 })).toEqual([{ ...base, id: first.id, purpose: 'conversation' }]);
   connection.run((db) => {
     expect(db.prepare('SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?').all('секретныйдубликат')).toEqual([]);
     expect(db.prepare('SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?').all('Кот')).toHaveLength(1);

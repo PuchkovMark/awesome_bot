@@ -15,13 +15,13 @@ function validateMessage(message: MessageInput): void {
 }
 const columns = `id, chat_id AS chatId, platform_message_id AS messageId,
   user_id AS userId, author_name AS authorName, role, text,
-  reply_to_message_id AS replyToMessageId, timestamp`;
+  reply_to_message_id AS replyToMessageId, timestamp, purpose`;
 type MessageRow = Omit<StoredMessage, 'replyToMessageId'> & { replyToMessageId: string | null };
 function fromRow(row: MessageRow): StoredMessage {
   const { replyToMessageId, ...message } = row;
   return replyToMessageId === null ? message : { ...message, replyToMessageId };
 }
-export function createMessageStore(connection: Connection): SyncStore<MessageStore> {
+export function createMessageStore(connection: Connection, contextOnly=false): SyncStore<MessageStore> {
   return {
     append(message) {
       return connection.run((db) => {
@@ -47,7 +47,7 @@ export function createMessageStore(connection: Connection): SyncStore<MessageSto
         if ('from' in query) timestamp(query.from);
         if ('to' in query) timestamp(query.to);
         if (query.from !== undefined && query.to !== undefined) requireInput(query.from < query.to);
-        const rows = db.prepare(`SELECT ${columns} FROM messages WHERE chat_id = ?
+        const rows = db.prepare(`SELECT ${columns} FROM messages WHERE chat_id = ? ${contextOnly?"AND purpose='conversation'":''}
           AND (? IS NULL OR timestamp >= ?) AND (? IS NULL OR timestamp < ?)
           ORDER BY timestamp DESC, id DESC LIMIT ?`).all(
           chatId, query.from ?? null, query.from ?? null, query.to ?? null, query.to ?? null, query.limit,
@@ -59,8 +59,8 @@ export function createMessageStore(connection: Connection): SyncStore<MessageSto
 }
 
 /** Ограниченное чтение по ссылке; проверку подлинной scope выполняет вызывающий backend. */
-export function readMessage(db: import('better-sqlite3').Database, chatId: string, id: number): StoredMessage | null {
+export function readMessage(db: import('better-sqlite3').Database, chatId: string, id: number, contextOnly=false): StoredMessage | null {
   requireInput(Number.isSafeInteger(id) && id > 0);
-  const row = db.prepare(`SELECT ${columns} FROM messages WHERE chat_id=? AND id=?`).get(chatId, id) as MessageRow | undefined;
+  const row = db.prepare(`SELECT ${columns} FROM messages WHERE chat_id=? AND id=? ${contextOnly?"AND purpose='conversation'":''}`).get(chatId, id) as MessageRow | undefined;
   return row ? fromRow(row) : null;
 }

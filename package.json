@@ -11,10 +11,11 @@
   "scripts": {
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "build": "npm run lint && npm run check:catalog && npm run typecheck && tsc -p tsconfig.build.json",
+    "build": "npm run lint && npm run check:catalog && npm run check:context && npm run typecheck && tsc -p tsconfig.build.json",
     "test": "vitest run",
     "check:catalog": "node scripts/check-catalog-boundary.mjs",
-    "test:queue-load": "vitest run --config vitest.queue-load.config.ts"
+    "test:queue-load": "vitest run --config vitest.queue-load.config.ts",
+    "check:context": "node scripts/check-context-boundary.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

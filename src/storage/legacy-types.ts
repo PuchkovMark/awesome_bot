@@ -11,7 +11,7 @@ export interface MessageInput {
   readonly replyToMessageId?: PlatformMessageId;
   readonly timestamp: Timestamp;
 }
-export interface StoredMessage extends MessageInput { readonly id: number }
+export interface StoredMessage extends MessageInput { readonly id: number; readonly purpose:'conversation'|'service_notice' }
 export interface AppendResult { readonly status: 'inserted' | 'duplicate'; readonly id: number }
 export interface HistoryQuery { readonly limit: number; readonly from?: Timestamp; readonly to?: Timestamp }
 export type ResponseMode = 'silent' | 'normal' | 'active';
