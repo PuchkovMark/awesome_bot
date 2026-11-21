@@ -57,7 +57,7 @@ export function createLifecycleBackend(connection: Connection) {
   return {
     assertScope,
     transaction<T>(scope:ConnectionScope,fn:(db:Database)=>T):T {
-      return connection.run(db=>db.transaction(()=>{assertScope(db,scope);return fn(db);}).immediate());
+      return connection.run(db=>db.transaction(()=>{assertScope(db,scope);const result=fn(db);assertScope(db,scope);return result;}).immediate());
     },
     begin(chatId:ChatId):Verification {
       return connection.run(db=>{
@@ -75,7 +75,7 @@ export function createLifecycleBackend(connection: Connection) {
       });
     },
     apply(proof:Verification,observation:LifecycleObservation) {
-      return connection.run(db=>db.transaction(()=>{
+      return connection.run(db=>{requireInput(!db.inTransaction);return db.transaction(()=>{
         requireInput(checks.has(proof)); checks.delete(proof);
         if(!matches(db,proof.expected))return {status:'stale' as const};
         const {chatId}=proof.expected;
@@ -108,13 +108,13 @@ export function createLifecycleBackend(connection: Connection) {
           db.prepare("DELETE FROM bot_admin_grants WHERE chat_id=? AND basis='creator' AND (? IS NULL OR user_id<>?)").run(chatId,next,next);
           if(state.creatorId!==next)db.prepare('UPDATE chat_connections SET creator_id=?,creator_applied=0 WHERE chat_id=?').run(next,chatId);
         }
-        if(state.inviterId===null && observation.inviterId!=null)db.prepare('UPDATE chat_connections SET inviter_id=? WHERE chat_id=?').run(observation.inviterId,chatId);
+        if(state.inviterId===null && observation.inviterId!=null)db.prepare('UPDATE chat_connections SET inviter_id=?,inviter_applied=0 WHERE chat_id=?').run(observation.inviterId,chatId);
         installAuthorities(db,chatId);
         return {status:'applied' as const,scope:issue(state)};
-      }).immediate());
+      }).immediate();});
     },
     ownerDecision(proof:Verification,decision:'continue'|'new'):ConnectionScope {
-      return connection.run(db=>db.transaction(()=>{
+      return connection.run(db=>{requireInput(!db.inTransaction);return db.transaction(()=>{
         requireInput(checks.has(proof)); checks.delete(proof);
         if(!matches(db,proof.expected))throw new StorageError('stale_scope');
         const {chatId}=proof.expected; const state=read(db,chatId);
@@ -124,7 +124,7 @@ export function createLifecycleBackend(connection: Connection) {
           bump(db,chatId);db.prepare("UPDATE chat_connections SET state='active' WHERE chat_id=?").run(chatId);
         }
         return issue(read(db,chatId)!);
-      }).immediate());
+      }).immediate();});
     },
     revision(scope:ConnectionScope):number {return this.transaction(scope,db=>read(db,scope.chatId)!.revision);},
     bump,

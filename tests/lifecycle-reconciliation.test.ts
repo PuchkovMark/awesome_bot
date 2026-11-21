@@ -77,3 +77,13 @@ test('подтверждённый отдельный выход снимает 
   expect(await storage.authorization.transaction(scope,tx=>tx.bases('vk:a'))).toEqual(['creator']);
  }finally{await storage.close();}
 });
+
+test('позднее подтверждение пригласившего создаёт основание ровно один раз',async()=>{
+ const storage=await openStorage(':memory:');let observation:LifecycleObservation={confidence:'confirmed',bot:'present'};
+ const life=createLifecycleService({storage,ownerId:'vk:owner',source:{async observe(){return observation;}}});
+ try{
+  const scope=(await life.verify('vk:1')).scope!;await storage.chats.create(scope,{responseMode:'mention',enabled:true,createdAt:0});
+  observation={...observation,inviterId:'vk:a'};await life.verify('vk:1');await life.verify('vk:1');
+  expect(await storage.authorization.transaction(scope,tx=>tx.bases('vk:a'))).toEqual(['inviter']);
+ }finally{await storage.close();}
+});

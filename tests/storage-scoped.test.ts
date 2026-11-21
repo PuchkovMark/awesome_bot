@@ -33,3 +33,29 @@ test('пауза отклоняет все запросные операции, 
   expect((await storage.chats.get(next))!.title).toBeNull();
  }finally{auth.dispose();await storage.close();}
 });
+
+test('вход сообщения фиксируется до проверки области, getter не переносит запись в другой чат',async()=>{
+ const storage=await openStorage(':memory:');
+ const life=createLifecycleService({storage,ownerId:'vk:owner',source:{async observe(){return {confidence:'confirmed',bot:'present'};}}});
+ try{
+  const scope=(await life.verify('vk:1')).scope!,other=(await life.verify('vk:other')).scope!;let reads=0;
+  await storage.messages.append(scope,{get chatId(){return ++reads===1?'vk:1':'vk:other';},userId:'vk:a',messageId:'1',authorName:'',role:'user',text:'scoped',timestamp:0});
+  expect(await storage.messages.list(other,{limit:5})).toEqual([]);
+  expect(await storage.messages.list(scope,{limit:5})).toMatchObject([{text:'scoped'}]);
+ }finally{await storage.close();}
+});
+
+test('смена подключения внутри транзакции авторизации отклоняется до выдачи новой области',async()=>{
+ const storage=await openStorage(':memory:');
+ const life=createLifecycleService({storage,ownerId:'vk:owner',source:{async observe(){return {confidence:'confirmed',bot:'present'};}}});
+ try{
+  const scope=(await life.verify('vk:1')).scope!;
+  await storage.chats.create(scope,{responseMode:'mention',enabled:true,createdAt:0});
+  const proof=life.owner('vk:1','vk:owner');
+  await expect(storage.authorization.transaction(scope,()=>life.decide(proof,'new'))).rejects.toMatchObject({code:'invalid_input'});
+  expect(life.current('vk:1').generation).toBe(scope.generation);
+  expect(await storage.chats.get(scope)).not.toBeNull();
+  const next=life.decide(life.owner('vk:1','vk:owner'),'new');
+  expect(next.generation).toBeGreaterThan(scope.generation);
+ }finally{await storage.close();}
+});

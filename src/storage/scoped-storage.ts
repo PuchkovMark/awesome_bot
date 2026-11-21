@@ -9,7 +9,7 @@ export function createScopedStorage(connection:Connection,backend:LifecycleBacke
   const messages=createMessageStore(connection),chats=createChatStore(connection),authorization=createAuthorizationStore(connection);
   return {
     messages:{
-      async append(scope,message) {return backend.transaction(scope,()=>{requireInput(message.chatId===scope.chatId);return messages.append(message);});},
+      async append(scope,message) {return backend.transaction(scope,()=>{const snapshot={...message};requireInput(snapshot.chatId===scope.chatId);return messages.append(snapshot);});},
       async list(scope,query) {return backend.transaction(scope,()=>messages.list(scope.chatId,query));},
     },
     chats:{

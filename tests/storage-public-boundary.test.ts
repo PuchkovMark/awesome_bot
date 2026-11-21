@@ -11,6 +11,7 @@ test('все публичные запросные методы требуют �
  export interface Nested { get(target:{chatId:string}):Promise<void> }
  export interface Any { get(target:any):Promise<void> }
  export interface Alias { get(scope:ConnectionScope):Promise<void> }
+ export interface BadInfra { close(chatId:OldId):void; authorization:{pruneReasons(chatId:OldId):void} }
  `;
  const host=ts.createCompilerHost({});const original=host.getSourceFile.bind(host);
  host.getSourceFile=(p,version,...args)=>p===path?ts.createSourceFile(p,fixture,version,true):original(p,version,...args);
@@ -19,7 +20,7 @@ test('все публичные запросные методы требуют �
  const scopeFile=program.getSourceFile(resolve('src/contracts/lifecycle.ts'))!;
  const scopeSymbol=checker.getExportsOfModule(checker.getSymbolAtLocation(scopeFile)!).find(s=>s.name==='ConnectionScope')!;
  const scopeType=checker.getDeclaredTypeOfSymbol(scopeSymbol);
- function examine(file:string,name:string) {
+ function examine(file:string,name:string,root=name) {
   const sf=program.getSourceFile(file)!;const symbol=checker.getExportsOfModule(checker.getSymbolAtLocation(sf)!).find(s=>s.name===name)!;
   const seen=new Set<ts.Type>(),failures:string[]=[];
   function visit(type:ts.Type,path:string) {
@@ -28,7 +29,13 @@ test('все публичные запросные методы требуют �
     const next=path+'.'+property.name;const target=checker.getTypeOfSymbolAtLocation(property,property.valueDeclaration??property.declarations![0]!);
     const signatures=target.getCallSignatures();
     if(!signatures.length){visit(target,next);continue;}
-    if(next==='Storage.close'||next==='Storage.authorization.pruneReasons')continue;
+    if(next==='Storage.close'||next==='Storage.authorization.pruneReasons'){
+     for(const signature of signatures){
+      const count=next==='Storage.close'?0:2;
+      if(signature.parameters.length!==count||signature.parameters.some(p=>{const d=p.valueDeclaration!;const t=checker.getTypeOfSymbolAtLocation(p,d);return !(t.flags&ts.TypeFlags.Number)||!!(ts.isParameter(d)&&(d.questionToken||d.initializer||d.dotDotDotToken));}))failures.push(next);
+     }
+     continue;
+    }
     for(const signature of signatures){const param=signature.parameters[0];
      if(!param){failures.push(next);continue;}
      const decl=param.valueDeclaration!;const t=checker.getTypeOfSymbolAtLocation(param,decl);
@@ -36,9 +43,10 @@ test('все публичные запросные методы требуют �
     }
    }
   }
-  visit(checker.getDeclaredTypeOfSymbol(symbol),name);return failures;
+  visit(checker.getDeclaredTypeOfSymbol(symbol),root);return failures;
  }
  expect(examine(resolve('src/storage/types.ts'),'Storage')).toEqual([]);
  for(const name of ['Bare','Optional','Nested','Any'])expect(examine(path,name)).toEqual([name+'.get']);
  expect(examine(path,'Alias')).toEqual([]);
+ expect(examine(path,'BadInfra','Storage')).toEqual(['Storage.close','Storage.authorization.pruneReasons']);
 });
