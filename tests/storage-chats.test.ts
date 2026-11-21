@@ -7,7 +7,7 @@ const chatStores=new WeakMap<object,Storage>();
 function chatScope(chats:object,chatId:unknown){return scopeFor(chatStores.get(chats)!,chatId);}
 afterEach(async () => { for (const storage of opened.splice(0)) await storage.close(); });
 async function setup() { const storage = await openStorage(':memory:'); opened.push(storage); chatStores.set(storage.chats,storage); return storage.chats; }
-const initial: ChatInput = { responseMode: 'mention', enabled: false, createdAt: 0 };
+const initial: ChatInput = { responseMode: 'normal', enabled: false, createdAt: 0 };
 test('явная начальная политика, default таймзоны и nullable полей', async () => {
   const chats = await setup();
   expect(await chats.get(chatScope(chats,'vk:1'))).toBeNull();
@@ -15,17 +15,17 @@ test('явная начальная политика, default таймзоны �
   expect(await chats.create(chatScope(chats,'vk:1'), initial)).toEqual({ status: 'created', settings: {
     chatId: 'vk:1', ...initial, title: null, systemPrompt: null, timezone: 'Europe/Moscow',
   } });
-  expect(await chats.create(chatScope(chats,'vk:2'), { ...initial, responseMode: 'always', enabled: true, timezone: 'UTC', title: 'Имя', systemPrompt: 'Текст' }))
-    .toMatchObject({ settings: { responseMode: 'always', enabled: true, timezone: 'UTC', title: 'Имя', systemPrompt: 'Текст' } });
+  expect(await chats.create(chatScope(chats,'vk:2'), { ...initial, responseMode: 'active', enabled: true, timezone: 'UTC', title: 'Имя', systemPrompt: 'Текст' }))
+    .toMatchObject({ settings: { responseMode: 'active', enabled: true, timezone: 'UTC', title: 'Имя', systemPrompt: 'Текст' } });
 });
 test('patch изолирован, не меняет дату, null сбрасывает промпт, повторное создание сохраняет изменения', async () => {
   const chats = await setup();
   await chats.create(chatScope(chats,'vk:1'), initial); await chats.create(chatScope(chats,'vk:2'), initial);
-  await chats.update(chatScope(chats,'vk:1'), { title: 'Новый', systemPrompt: 'Текст', enabled: true, responseMode: 'always', timezone: 'UTC' });
+  await chats.update(chatScope(chats,'vk:1'), { title: 'Новый', systemPrompt: 'Текст', enabled: true, responseMode: 'active', timezone: 'UTC' });
   const expected = await chats.update(chatScope(chats,'vk:1'), { systemPrompt: null });
   expect(expected).toMatchObject({ title: 'Новый', systemPrompt: null, createdAt: 0, enabled: true });
   expect(await chats.create(chatScope(chats,'vk:1'), { ...initial, createdAt: 100 })).toEqual({ status: 'existing', settings: expected });
-  expect(await chats.get(chatScope(chats,'vk:2'))).toMatchObject({ title: null, enabled: false, responseMode: 'mention' });
+  expect(await chats.get(chatScope(chats,'vk:2'))).toMatchObject({ title: null, enabled: false, responseMode: 'normal' });
 });
 for (const input of [
   {}, { ...initial, enabled: 1 }, { ...initial, responseMode: 'other' },

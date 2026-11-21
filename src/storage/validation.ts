@@ -28,5 +28,5 @@ export function timezone(value: unknown): asserts value is string {
   try { new Intl.DateTimeFormat('en', { timeZone: value }); }
   catch { throw new StorageError('invalid_input'); }
 }
-export function mode(value: unknown): void { requireInput(value === 'always' || value === 'mention'); }
+export function mode(value: unknown): void { requireInput(value === 'silent' || value === 'normal' || value === 'active'); }
 export function nullableString(value: unknown): void { if (value !== null) string(value); }

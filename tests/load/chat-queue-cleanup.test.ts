@@ -14,7 +14,7 @@ test('300000 сообщений с FTS, профилями и заданиями
  let child:ReturnType<typeof spawn>|undefined;
  try{
  const scope=scopeFor(storage,'vk:large'),other=scopeFor(storage,'vk:other');
- await storage.chats.create(scope,{responseMode:'mention',enabled:true,createdAt:0});
+ await storage.chats.create(scope,{responseMode: 'normal',enabled:true,createdAt:0});
  await storage.messages.append(other,{chatId:'vk:other',messageId:'keep',userId:'vk:u',authorName:'',role:'user',text:'сохранённыйкот',timestamp:0});
  seedLargeQueueChat(db,scope.generation,300000);
  const backend=queueBackend(storage);backend.acquire('owner',30000,10000);

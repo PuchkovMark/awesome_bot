@@ -10,8 +10,8 @@ import { storageFixture } from './helpers/storage-fixture.js';
 
 async function memory() {
   const s = await openStorage(':memory:');
-  await s.chats.create(scopeFor(s, 'vk:one'), { responseMode: 'mention', enabled: true, createdAt: 0 });
-  await s.chats.create(scopeFor(s, 'vk:two'), { responseMode: 'always', enabled: false, createdAt: 0 });
+  await s.chats.create(scopeFor(s, 'vk:one'), { responseMode: 'normal', enabled: true, createdAt: 0 });
+  await s.chats.create(scopeFor(s, 'vk:two'), { responseMode: 'active', enabled: false, createdAt: 0 });
   return s;
 }
 const grant = { userId: 'vk:user', basis: 'creator', grantedAt: 10, grantedBy: null } as const;
@@ -87,7 +87,7 @@ test('версия 3 → 4 сохраняет данные и метаданны
   try {
     let s = await openStorage(f.path);
     expect(await s.authorization.transaction(scopeFor(s, 'vk:one'), tx => tx.bases('vk:user'))).toEqual([]);
-    expect(await s.chats.get(scopeFor(s, 'vk:one'))).toMatchObject({ responseMode: 'always', enabled: false, systemPrompt: 'prompt' });
+    expect(await s.chats.get(scopeFor(s, 'vk:one'))).toMatchObject({ responseMode: 'normal', enabled: false, systemPrompt: 'prompt' });
     await s.authorization.transaction(scopeFor(s, 'vk:one'), tx => { tx.grant(grant); tx.revoke(audit); });
     await s.close(); s = await openStorage(f.path);
     try {

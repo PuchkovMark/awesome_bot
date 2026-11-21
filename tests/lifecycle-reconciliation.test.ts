@@ -9,11 +9,11 @@ test.each([false,true])('два пересекающихся запроса: п�
  const life=createLifecycleService({storage,ownerId:'vk:owner',source:{observe(){return ++call===1?Promise.resolve(observed('vk:a')):call===2?a.promise:b.promise;}}});
  try {
   const initial=(await life.verify('vk:1')).scope!;
-  await storage.chats.create(initial,{responseMode:'mention',enabled:true,createdAt:0});
+  await storage.chats.create(initial,{responseMode: 'normal',enabled:true,createdAt:0});
   const pa=life.verify('vk:1'),pb=life.verify('vk:1');
   const first=reverse?a:b,second=reverse?b:a;const pf=reverse?pa:pb,ps=reverse?pb:pa;
   first.resolve(observed('vk:a'));const accepted=await pf;expect(accepted.status).toBe('applied');
-  await storage.chats.create(accepted.scope!,{responseMode:'mention',enabled:true,createdAt:0});
+  await storage.chats.create(accepted.scope!,{responseMode: 'normal',enabled:true,createdAt:0});
   second.resolve(observed('vk:b'));expect((await ps).status).toBe('stale');
   expect(await storage.authorization.transaction(life.current('vk:1'),tx=>tx.holder('creator'))).toBe('vk:a');
   const fresh=createLifecycleService({storage,ownerId:'vk:owner',source:{async observe(){return observed('vk:b');}}});
@@ -24,7 +24,7 @@ test('частичный состав не снимает explicit; полный
  const storage=await openStorage(':memory:');let observation:LifecycleObservation={confidence:'confirmed',bot:'present',creatorId:'vk:a',inviterId:'vk:a'};
  const life=createLifecycleService({storage,ownerId:'vk:owner',source:{async observe(){return observation;}}});
  try{
-  const scope=(await life.verify('vk:1')).scope!;await storage.chats.create(scope,{responseMode:'mention',enabled:true,createdAt:0});
+  const scope=(await life.verify('vk:1')).scope!;await storage.chats.create(scope,{responseMode: 'normal',enabled:true,createdAt:0});
   await storage.authorization.transaction(scope,tx=>tx.grant({userId:'vk:a',basis:'explicit',grantedAt:0,grantedBy:'vk:owner'}));
   observation={...observation,members:{complete:false,ids:[]}};await life.verify('vk:1');
   expect(await storage.authorization.transaction(scope,tx=>tx.bases('vk:a'))).toContain('explicit');
@@ -49,7 +49,7 @@ test('отзыв во время сверки инвалидирует отве�
  const life=createLifecycleService({storage,ownerId:'vk:owner',source:{observe(){return ++call===2?response.promise:Promise.resolve(observed('vk:a'));}}});
  const auth=await createAuthorizationService({config:{ownerId:'vk:owner',reasonMaxLength:500,reasonRetentionDays:90},store:storage.authorization,now:()=>100});
  try{
-  const scope=(await life.verify('vk:1')).scope!;await storage.chats.create(scope,{responseMode:'mention',enabled:true,createdAt:0});
+  const scope=(await life.verify('vk:1')).scope!;await storage.chats.create(scope,{responseMode: 'normal',enabled:true,createdAt:0});
   const owner=auth.context({scope,userId:'vk:owner',kind:'owner'});
   const oldProof=await auth.confirmMembership(scope,'vk:new');const pending=life.verify('vk:1');
   expect((await auth.revoke(owner,'vk:a','private')).allowed).toBe(true);
@@ -71,7 +71,7 @@ test('подтверждённый отдельный выход снимает 
  const storage=await openStorage(':memory:');let observation:LifecycleObservation={confidence:'confirmed',bot:'present',creatorId:'vk:a'};
  const life=createLifecycleService({storage,ownerId:'vk:owner',source:{async observe(){return observation;}}});
  try{
-  const scope=(await life.verify('vk:1')).scope!;await storage.chats.create(scope,{responseMode:'mention',enabled:true,createdAt:0});
+  const scope=(await life.verify('vk:1')).scope!;await storage.chats.create(scope,{responseMode: 'normal',enabled:true,createdAt:0});
   await storage.authorization.transaction(scope,tx=>tx.grant({userId:'vk:a',basis:'explicit',grantedAt:0,grantedBy:'vk:owner'}));
   observation={confidence:'confirmed',bot:'present',members:{complete:false,ids:[]},departedIds:['vk:a']};await life.verify('vk:1');
   expect(await storage.authorization.transaction(scope,tx=>tx.bases('vk:a'))).toEqual(['creator']);
@@ -82,7 +82,7 @@ test('позднее подтверждение пригласившего со�
  const storage=await openStorage(':memory:');let observation:LifecycleObservation={confidence:'confirmed',bot:'present'};
  const life=createLifecycleService({storage,ownerId:'vk:owner',source:{async observe(){return observation;}}});
  try{
-  const scope=(await life.verify('vk:1')).scope!;await storage.chats.create(scope,{responseMode:'mention',enabled:true,createdAt:0});
+  const scope=(await life.verify('vk:1')).scope!;await storage.chats.create(scope,{responseMode: 'normal',enabled:true,createdAt:0});
   observation={...observation,inviterId:'vk:a'};await life.verify('vk:1');await life.verify('vk:1');
   expect(await storage.authorization.transaction(scope,tx=>tx.bases('vk:a'))).toEqual(['inviter']);
  }finally{await storage.close();}

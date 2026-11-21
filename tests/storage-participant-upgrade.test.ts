@@ -23,7 +23,7 @@ test('F1.4 → версия 3 сохраняет историю, настрой�
     const storage = await openStorage(fixture.path);
     try {
       expect(await storage.messages.list(scopeFor(storage, oldMessage.chatId), { limit: 10 })).toMatchObject([oldMessage]);
-      expect(await storage.chats.get(scopeFor(storage, oldMessage.chatId))).toMatchObject({ title: 'Изменённое название', systemPrompt: 'Сохранённый промпт', responseMode: 'always', timezone: 'UTC', enabled: true, createdAt: 0 });
+      expect(await storage.chats.get(scopeFor(storage, oldMessage.chatId))).toMatchObject({ title: 'Изменённое название', systemPrompt: 'Сохранённый промпт', responseMode: 'normal', timezone: 'UTC', enabled: true, createdAt: 0 });
       expect(await storage.messages.append(scopeFor(storage, ({ ...oldMessage, text: 'неподменять' }).chatId), { ...oldMessage, text: 'неподменять' })).toMatchObject({ status: 'duplicate' });
       await storage.messages.append(scopeFor(storage, ({ ...oldMessage, chatId: 'a:before-settings', messageId: 'new' }).chatId), { ...oldMessage, chatId: 'a:before-settings', messageId: 'new' });
       expect(await storage.chats.get(scopeFor(storage, 'a:before-settings'))).toBeNull();
@@ -31,7 +31,7 @@ test('F1.4 → версия 3 сохраняет историю, настрой�
       try {
         inspection.run((db) => {
           expect(db.prepare('SELECT * FROM schema_migrations WHERE version <= 2 ORDER BY version').all()).toEqual(previous);
-          expect(db.prepare('SELECT version FROM schema_migrations ORDER BY version').all()).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }]);
+          expect(db.prepare('SELECT version FROM schema_migrations ORDER BY version').all()).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }]);
           expect(db.prepare('SELECT * FROM chat_participants').all()).toEqual([]);
           expect(db.prepare('SELECT * FROM participant_profiles').all()).toEqual([]);
           expect(db.prepare('SELECT * FROM profile_facts').all()).toEqual([]);
@@ -55,7 +55,7 @@ test('F1.4 → версия 3 сохраняет историю, настрой�
           expect(f.profiles('a:old', 'a:u')).toMatchObject([{ created_at: 0, updated_at: 0 }]);
           expect(f.facts('a:old', 'a:u')).toMatchObject([{ value: 'Сохранённый 🐈', visibility: 'bot', reliability: 'unverified' }]);
           expect(db.prepare('SELECT * FROM schema_migrations WHERE version <= 2 ORDER BY version').all()).toEqual(previous);
-          expect(db.prepare('SELECT count(*) AS n FROM schema_migrations').get()).toEqual({ n: 7 });
+          expect(db.prepare('SELECT count(*) AS n FROM schema_migrations').get()).toEqual({ n: 8 });
           expect(db.pragma('foreign_key_check')).toEqual([]);
         });
       } finally { inspection.close(); }

@@ -14,7 +14,7 @@ test('удаление всех сущностей и FTS, SQL-откат, из�
   const scopes=[];
   for(const chatId of ['vk:one','vk:two'] as const){
    const scope=(await life.verify(chatId)).scope!;scopes.push(scope);
-   await storage.chats.create(scope,{responseMode:'mention',enabled:true,createdAt:0});
+   await storage.chats.create(scope,{responseMode: 'normal',enabled:true,createdAt:0});
    await storage.messages.append(scope,{chatId,userId:'vk:a',messageId:'1',authorName:'',role:'user',text:chatId==='vk:one'?'удаляемыйкот':'сохранённыйкот',timestamp:0});
    await storage.messages.append(scope,{chatId,userId:'vk:bot',messageId:'2',authorName:'',role:'assistant',text:'reply',timestamp:1});
    await storage.authorization.transaction(scope,tx=>{
@@ -79,7 +79,7 @@ test('решение владельца new сбрасывает uncertain; по
  const storage=await openStorage(':memory:');let observation:LifecycleObservation={confidence:'confirmed',bot:'present'};
  const life=createLifecycleService({storage,ownerId:'vk:owner',source:{async observe(){return observation;}}});
  try{
-  const first=(await life.verify('vk:1')).scope!;await storage.chats.create(first,{responseMode:'mention',enabled:true,createdAt:0});
+  const first=(await life.verify('vk:1')).scope!;await storage.chats.create(first,{responseMode: 'normal',enabled:true,createdAt:0});
   const old=life.owner('vk:1','vk:owner');
   observation={confidence:'uncertain',bot:'unknown'};await life.verify('vk:1');
   observation={confidence:'confirmed',bot:'absent'};expect((await life.verify('vk:1')).status).toBe('uncertain');

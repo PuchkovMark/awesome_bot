@@ -11,7 +11,7 @@ test('ошибка SQL-аудита откатывает отзыв; после 
   let storage = await openStorage(f.path);
   let service = await createAuthorizationService({ config: authConfig, store: storage.authorization, now: () => 100 });
   try {
-    await storage.chats.create(scopeFor(storage, 'vk:one'), { responseMode: 'mention', enabled: true, createdAt: 0 });
+    await storage.chats.create(scopeFor(storage, 'vk:one'), { responseMode: 'normal', enabled: true, createdAt: 0 });
     await service.applyTrustedInitialAuthorities(scopeForService(service, 'vk:one'), { creatorId: 'vk:user', inviterId: 'vk:user' });
     const owner = service.context({ scope: scopeForService(service, 'vk:one'), userId: 'vk:owner', kind: 'owner' });
     await service.grant(owner, 'vk:user', await service.confirmMembership(scopeForService(service, 'vk:one'), 'vk:user'));

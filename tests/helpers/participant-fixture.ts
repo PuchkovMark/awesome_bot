@@ -20,7 +20,7 @@ export function participantFixture(db: Database) {
   }
   return {
     participant, profile, fact,
-    chat(chatId: string) { db.prepare("INSERT INTO chats(chat_id,response_mode,timezone,enabled,created_at) VALUES (?,'mention','Europe/Moscow',0,0)").run(chatId); },
+    chat(chatId: string) { db.prepare("INSERT INTO chats(chat_id,response_mode,timezone,enabled,created_at) VALUES (?,?,'Europe/Moscow',0,0)").run(chatId, (db.prepare('SELECT max(version) AS v FROM schema_migrations').get() as {v:number}).v>=8?'normal':'mention'); },
     participants(chatId: string, userId: string) { return db.prepare('SELECT * FROM chat_participants WHERE chat_id = ? AND user_id = ?').all(chatId, userId); },
     profiles(chatId: string, userId: string) { return db.prepare('SELECT * FROM participant_profiles WHERE chat_id = ? AND user_id = ?').all(chatId, userId); },
     facts(chatId: string, userId: string) { return db.prepare('SELECT * FROM profile_facts WHERE chat_id = ? AND user_id = ? ORDER BY id').all(chatId, userId); },

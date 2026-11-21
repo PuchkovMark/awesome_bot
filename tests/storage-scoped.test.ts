@@ -23,13 +23,13 @@ test('пауза отклоняет все запросные операции, 
  const life=createLifecycleService({storage,ownerId:'vk:owner',source:{async observe(){return result;}}});
  const auth=await createAuthorizationService({config:{ownerId:'vk:owner',reasonMaxLength:500,reasonRetentionDays:90},store:storage.authorization,now:()=>100});
  try{
-  const scope=(await life.verify('vk:1')).scope!;await storage.chats.create(scope,{responseMode:'mention',enabled:true,createdAt:0});
+  const scope=(await life.verify('vk:1')).scope!;await storage.chats.create(scope,{responseMode: 'normal',enabled:true,createdAt:0});
   const owner=auth.context({scope,userId:'vk:owner',kind:'owner'});
   result={confidence:'uncertain',bot:'unknown'};await life.verify('vk:1');
-  for(const operation of [()=>storage.messages.list(scope,{limit:1}),()=>storage.chats.get(scope),()=>storage.chats.create(scope,{responseMode:'mention',enabled:true,createdAt:0}),()=>storage.chats.update(scope,{title:'bad'}),()=>storage.authorization.transaction(scope,tx=>tx.bases('vk:a')),()=>auth.check(owner,'admin.grant')])await expect(operation()).rejects.toMatchObject({code:'uncertain_connection'});
+  for(const operation of [()=>storage.messages.list(scope,{limit:1}),()=>storage.chats.get(scope),()=>storage.chats.create(scope,{responseMode: 'normal',enabled:true,createdAt:0}),()=>storage.chats.update(scope,{title:'bad'}),()=>storage.authorization.transaction(scope,tx=>tx.bases('vk:a')),()=>auth.check(owner,'admin.grant')])await expect(operation()).rejects.toMatchObject({code:'uncertain_connection'});
   const next=life.decide(life.owner('vk:1','vk:owner'),'new');
   await expect(auth.check(owner,'admin.grant')).rejects.toMatchObject({code:'stale_scope'});
-  await storage.chats.create(next,{responseMode:'mention',enabled:true,createdAt:0});
+  await storage.chats.create(next,{responseMode: 'normal',enabled:true,createdAt:0});
   expect((await storage.chats.get(next))!.title).toBeNull();
  }finally{auth.dispose();await storage.close();}
 });
@@ -50,7 +50,7 @@ test('смена подключения внутри транзакции авт
  const life=createLifecycleService({storage,ownerId:'vk:owner',source:{async observe(){return {confidence:'confirmed',bot:'present'};}}});
  try{
   const scope=(await life.verify('vk:1')).scope!;
-  await storage.chats.create(scope,{responseMode:'mention',enabled:true,createdAt:0});
+  await storage.chats.create(scope,{responseMode: 'normal',enabled:true,createdAt:0});
   const proof=life.owner('vk:1','vk:owner');
   await expect(storage.authorization.transaction(scope,()=>life.decide(proof,'new'))).rejects.toMatchObject({code:'invalid_input'});
   expect(life.current('vk:1').generation).toBe(scope.generation);

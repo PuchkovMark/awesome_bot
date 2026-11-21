@@ -11,7 +11,7 @@ test('публичный цикл сохраняет сообщения и на�
   const first = await openStorage(fixture.path);
   try {
     await first.messages.append(scopeFor(first, (message).chatId), message);
-    await first.chats.create(scopeFor(first, message.chatId), { responseMode: 'mention', enabled: true, createdAt: 0 });
+    await first.chats.create(scopeFor(first, message.chatId), { responseMode: 'normal', enabled: true, createdAt: 0 });
     await first.chats.update(scopeFor(first, message.chatId), { systemPrompt: 'Сохранённый' });
     await first.messages.append(scopeFor(first, ({ ...message, role: 'assistant', userId: 'vk:-3', messageId: 'two', text: 'Ответ', replyToMessageId: 'one', timestamp: 1 }).chatId), { ...message, role: 'assistant', userId: 'vk:-3', messageId: 'two', text: 'Ответ', replyToMessageId: 'one', timestamp: 1 });
     await first.close(); await first.close();
@@ -23,7 +23,7 @@ test('публичный цикл сохраняет сообщения и на�
     } finally { await second.close(); }
     for (const operation of [
       () => first.messages.append(scopeFor(first, (message).chatId), message), () => first.messages.list(scopeFor(first, message.chatId), { limit: 1 }),
-      () => first.chats.get(scopeFor(first, message.chatId)), () => first.chats.create(scopeFor(first, message.chatId), { responseMode: 'always', enabled: true, createdAt: 0 }),
+      () => first.chats.get(scopeFor(first, message.chatId)), () => first.chats.create(scopeFor(first, message.chatId), { responseMode: 'active', enabled: true, createdAt: 0 }),
       () => first.chats.update(scopeFor(first, message.chatId), { title: 'Новое' }),
     ]) await expect(operation()).rejects.toMatchObject({ code: 'closed' });
   } finally { await first.close(); fixture.cleanup(); }

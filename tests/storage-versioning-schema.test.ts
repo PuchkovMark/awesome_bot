@@ -15,7 +15,7 @@ test('миграция 6 сохраняет данные версии 5 и пр�
   db.exec("INSERT INTO messages(chat_id,platform_message_id,user_id,author_name,role,text,timestamp) VALUES ('vk:1','1','vk:u','','user','сохранённыйкот',0); INSERT INTO bot_admin_grants VALUES ('vk:1','vk:u','creator',0,NULL); INSERT INTO bot_admin_revocations VALUES ('vk:1','vk:r','vk:owner',1); INSERT INTO bot_admin_revocation_audit VALUES ('vk:1','vk:r',1,0,0,'private'); INSERT INTO bot_admin_controls VALUES ('vk:1',1)");
   const oldTables=['messages','chats','chat_participants','participant_profiles','profile_facts','bot_admin_grants','bot_admin_revocations','bot_admin_revocation_audit','bot_admin_controls','lifecycle_clock'];
   const saved=oldTables.map(t=>db.prepare('SELECT * FROM '+t).all());
-  const before=db.prepare('SELECT * FROM schema_migrations').all(),connections=db.prepare('SELECT * FROM chat_connections').all();migrate(db);migrate(db);
+  const before=db.prepare('SELECT * FROM schema_migrations').all(),connections=db.prepare('SELECT * FROM chat_connections').all();migrate(db,migrations.slice(0,7));migrate(db,migrations.slice(0,7));
   oldTables.forEach((t,i)=>expect(db.prepare('SELECT * FROM '+t).all()).toEqual(saved[i]));expect(db.prepare("SELECT rowid FROM messages_fts WHERE messages_fts MATCH 'сохранённыйкот'").all()).toHaveLength(1);
   expect(db.prepare('SELECT * FROM schema_migrations WHERE version<=5').all()).toEqual(before);expect(db.prepare('SELECT * FROM chat_connections').all()).toEqual(connections);
   db.exec("INSERT INTO global_content_versions VALUES ('system_prompt','base',1,'literal',0),('persona','p',1,'global',0)");

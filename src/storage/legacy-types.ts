@@ -14,7 +14,7 @@ export interface MessageInput {
 export interface StoredMessage extends MessageInput { readonly id: number }
 export interface AppendResult { readonly status: 'inserted' | 'duplicate'; readonly id: number }
 export interface HistoryQuery { readonly limit: number; readonly from?: Timestamp; readonly to?: Timestamp }
-export type ResponseMode = 'always' | 'mention';
+export type ResponseMode = 'silent' | 'normal' | 'active';
 export interface ChatInput {
   readonly responseMode: ResponseMode;
   readonly enabled: boolean;

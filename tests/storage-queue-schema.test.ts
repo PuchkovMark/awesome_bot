@@ -7,7 +7,7 @@ test('миграция 7 сохраняет первые 6 версий и жу�
   try {
     migrate(db, migrations.slice(0,6));
     db.exec("INSERT INTO chat_connections(chat_id,generation,revision,state) VALUES ('vk:a',1,0,'active'),('vk:b',2,0,'active'); INSERT INTO messages VALUES (1,'vk:a','m','vk:u','','user','кот',NULL,0)");
-    const before = db.prepare('SELECT * FROM schema_migrations').all(); migrate(db);
+    const before = db.prepare('SELECT * FROM schema_migrations').all(); migrate(db,migrations.slice(0,7));
     expect(db.prepare('SELECT * FROM schema_migrations WHERE version<=6').all()).toEqual(before);
     expect(db.prepare('SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?').all('кот')).toHaveLength(1);
     expect(db.prepare('SELECT * FROM queue_jobs').all()).toEqual([]);
