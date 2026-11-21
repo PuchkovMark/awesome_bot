@@ -39,10 +39,10 @@ for (const sql of [
     } finally { db.close(); }
   });
 }
-test('посторонняя БД не меняется', () => {
+test.each(['legacy', 'sqliteXlegacy'])('посторонняя БД с таблицей %s не меняется', (table) => {
   const db = new Database(':memory:');
   try {
-    db.exec('CREATE TABLE legacy(secret TEXT)');
+    db.exec(`CREATE TABLE ${table}(secret TEXT)`);
     const before = db.serialize();
     expect(() => migrate(db)).toThrow('schema_incompatible');
     expect(db.serialize()).toEqual(before);

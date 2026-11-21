@@ -14,7 +14,7 @@ export function migrate(database: Database, available: readonly Migration[] = mi
       throw new StorageError('schema_incompatible');
     }
     database.transaction(() => {
-      const objects = database.prepare("SELECT name FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'").all() as { name: string }[];
+      const objects = database.prepare("SELECT name FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*'").all() as { name: string }[];
       const hasMetadata = objects.some(({ name }) => name === 'schema_migrations');
       if (!hasMetadata && objects.length > 0) throw new StorageError('schema_incompatible');
       database.exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
