@@ -1,5 +1,6 @@
+import type { SyncStore } from './legacy-types.js';
 import type { Connection } from './connection.js';
-import type { MessageInput, MessageStore, StoredMessage } from './types.js';
+import type { MessageInput, MessageStore, StoredMessage } from './legacy-types.js';
 import { compositeId, object, requireInput, string, timestamp } from './validation.js';
 
 const fields = ['chatId', 'messageId', 'userId', 'authorName', 'role', 'text', 'replyToMessageId', 'timestamp'];
@@ -20,9 +21,9 @@ function fromRow(row: MessageRow): StoredMessage {
   const { replyToMessageId, ...message } = row;
   return replyToMessageId === null ? message : { ...message, replyToMessageId };
 }
-export function createMessageStore(connection: Connection): MessageStore {
+export function createMessageStore(connection: Connection): SyncStore<MessageStore> {
   return {
-    async append(message) {
+    append(message) {
       return connection.run((db) => {
         validateMessage(message);
         const inserted = db.prepare(`INSERT INTO messages
@@ -38,7 +39,7 @@ export function createMessageStore(connection: Connection): MessageStore {
         return { status: 'duplicate', id: existing.id };
       });
     },
-    async list(chatId, query) {
+    list(chatId, query) {
       return connection.run((db) => {
         compositeId(chatId);
         object(query, ['limit', 'from', 'to']);

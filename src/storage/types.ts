@@ -1,3 +1,4 @@
+import type { ScopedStorage } from './scoped-types.js';
 import type { AuthorizationStore } from './authorization-types.js';
 import type { ChatId, UserId, PlatformMessageId, Timestamp } from '../contracts/index.js';
 
@@ -50,6 +51,7 @@ export interface ChatStore {
   update(chatId: ChatId, patch: ChatPatch): Promise<ChatSettings | null>;
 }
 export interface Storage {
+  readonly scoped: ScopedStorage;
   readonly authorization: AuthorizationStore;
   readonly messages: MessageStore;
   readonly chats: ChatStore;

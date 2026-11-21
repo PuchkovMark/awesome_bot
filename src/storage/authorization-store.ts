@@ -1,13 +1,13 @@
 import type { UserId, GrantBasis } from '../contracts/index.js';
 import type { Connection } from './connection.js';
-import type { AuthorizationStore, AuthorizationTransaction, RevocationAudit, AdminGrant } from './authorization-types.js';
+import type { SyncAuthorizationStore, AuthorizationTransaction, RevocationAudit, AdminGrant } from './legacy-authorization-types.js';
 import { compositeId, requireInput, string, timestamp } from './validation.js';
 import { StorageError } from './errors.js';
 
 const allBases: readonly GrantBasis[] = ['creator', 'inviter', 'explicit'];
-export function createAuthorizationStore(connection: Connection): AuthorizationStore {
+export function createAuthorizationStore(connection: Connection): SyncAuthorizationStore {
   return {
-    async transaction(chatId, callback) {
+    transaction(chatId, callback) {
       return connection.run(db => {
         compositeId(chatId);
         const scope = chatId.slice(0, chatId.indexOf(':'));
@@ -86,7 +86,7 @@ export function createAuthorizationStore(connection: Connection): AuthorizationS
         }).immediate();
       });
     },
-    async pruneReasons(now, retentionMs) {
+    pruneReasons(now, retentionMs) {
       return connection.run(db => {
         timestamp(now); requireInput(Number.isSafeInteger(retentionMs) && retentionMs > 0);
         return db.transaction(() => {

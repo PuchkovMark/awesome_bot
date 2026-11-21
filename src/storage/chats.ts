@@ -1,6 +1,7 @@
+import type { SyncStore } from './legacy-types.js';
 import type { ChatId } from '../contracts/index.js';
 import type { Connection } from './connection.js';
-import type { ChatInput, ChatPatch, ChatSettings, ChatStore } from './types.js';
+import type { ChatInput, ChatPatch, ChatSettings, ChatStore } from './legacy-types.js';
 import { compositeId, mode, nullableString, object, requireInput, timestamp, timezone } from './validation.js';
 
 const patchFields = ['title', 'systemPrompt', 'responseMode', 'enabled', 'timezone'] as const;
@@ -25,15 +26,15 @@ function validateCreate(input: ChatInput): void {
   void createdAt;
   validatePatch(settings);
 }
-export function createChatStore(connection: Connection): ChatStore {
+export function createChatStore(connection: Connection): SyncStore<ChatStore> {
   function read(chatId: ChatId): ChatSettings | null {
     return connection.run((db) => fromRow(db.prepare(`SELECT ${columns} FROM chats WHERE chat_id = ?`).get(chatId) as ChatRow | undefined));
   }
   return {
-    async get(chatId) {
+    get(chatId) {
       return connection.run(() => { compositeId(chatId); return read(chatId); });
     },
-    async create(chatId, input) {
+    create(chatId, input) {
       return connection.run((db) => {
         compositeId(chatId); validateCreate(input);
         const result = db.prepare(`INSERT INTO chats
@@ -47,7 +48,7 @@ export function createChatStore(connection: Connection): ChatStore {
         return { status: result.changes === 1 ? 'created' : 'existing', settings };
       });
     },
-    async update(chatId, patch) {
+    update(chatId, patch) {
       return connection.run((db) => {
         compositeId(chatId); validatePatch(patch);
         requireInput(Object.keys(patch).length > 0);

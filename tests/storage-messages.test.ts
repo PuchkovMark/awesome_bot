@@ -1,3 +1,4 @@
+import { asyncStore } from '../src/storage/legacy-types.js';
 import { afterEach, expect, test } from 'vitest';
 import type { MessageInput } from '../src/storage/types.js';
 import { openConnection, type Connection } from '../src/storage/connection.js';
@@ -9,7 +10,7 @@ const connections: Connection[] = [];
 afterEach(() => { for (const connection of connections.splice(0)) connection.close(); });
 async function setup(path = ':memory:') {
   const connection = await openConnection(path, migrate); connections.push(connection);
-  return { connection, store: createMessageStore(connection) };
+  return { connection, store: asyncStore(createMessageStore(connection)) };
 }
 const base: MessageInput = { chatId: 'test-a:chat', messageId: '1', userId: 'test-a:user', authorName: 'Имя', role: 'user', text: 'Кот 🐈\nновая строка', timestamp: 10 };
 test('запись до настроек, обе роли, reply и буквальный SQL-текст', async () => {
