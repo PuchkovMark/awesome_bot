@@ -10,3 +10,4 @@ export type {
   ParticipantRecord, ParticipantProfileRecord, ProfileFactRecord,
 } from './participant-types.js';
 export type { AuthorizationStore, AuthorizationTransaction, RevocationAudit, AdminGrant } from './authorization-types.js';
+export type { VersionStore } from './version-types.js';

@@ -13,7 +13,8 @@ export async function openStorage(path:string,options:{readonly versioning?:Vers
  const connection=await openConnection(path,migrate);
  try {
   const backend=createLifecycleBackend(connection);
-  const storage:Storage={...createScopedStorage(connection,backend),async close(){connection.close();}};
-  registerLifecycle(storage,backend);registerVersions(storage,createVersionBackend(connection,backend,limits));return storage;
+  const versions=createVersionBackend(connection,backend,limits);
+  const storage:Storage={...createScopedStorage(connection,backend,versions),async close(){connection.close();}};
+  registerLifecycle(storage,backend);registerVersions(storage,versions);return storage;
  }catch(error){connection.close();throw error;}
 }
