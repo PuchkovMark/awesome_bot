@@ -1,20 +1,23 @@
+import type { QueueBackend } from './queue-store.js';
 import type { VersionBackend } from './version-store.js';
 import type { Connection } from './connection.js';
 import type { LifecycleBackend } from './lifecycle-store.js';
 import type { ScopedStorage } from './scoped-types.js';
-import { createMessageStore } from './messages.js';
+import { readMessage, createMessageStore } from './messages.js';
 import { createChatStore } from './chats.js';
 import { createAuthorizationStore } from './authorization-store.js';
 import { requireInput } from './validation.js';
-export function createScopedStorage(connection:Connection,backend:LifecycleBackend,versions:VersionBackend):ScopedStorage {
+export function createScopedStorage(connection:Connection,backend:LifecycleBackend,versions:VersionBackend,queue:QueueBackend):ScopedStorage {
   const messages=createMessageStore(connection),chats=createChatStore(connection),authorization=createAuthorizationStore(connection);
   return {
+    queue:{async get(scope,id){return queue.get(scope,id);}},
     versions:{
       async selected(scope,kind){return versions.selected(scope,kind);},
       async select(scope,kind,ref,expected){return versions.select(scope,kind,ref,expected);},
       async reset(scope,kind,expected){return versions.select(scope,kind,null,expected);},
       async append(scope,input){return versions.appendLocal(scope,input);},async get(scope,ref){return versions.get(scope,ref);},async systemPrompt(scope){return versions.systemPrompt(scope);}},
     messages:{
+      async get(scope,id){return backend.transaction(scope,db=>readMessage(db,scope.chatId,id));},
       async append(scope,message) {return backend.transaction(scope,()=>{const snapshot={...message};requireInput(snapshot.chatId===scope.chatId);return messages.append(snapshot);});},
       async list(scope,query) {return backend.transaction(scope,()=>messages.list(scope.chatId,query));},
     },

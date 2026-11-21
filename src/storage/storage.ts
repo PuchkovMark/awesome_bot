@@ -19,7 +19,8 @@ export async function openStorage(path:string,options:{readonly versioning?:Vers
  try {
   const backend=createLifecycleBackend(connection);
   const versions=createVersionBackend(connection,backend,limits);
-  const storage:Storage={...createScopedStorage(connection,backend,versions),async close(){connection.close();}};
-  registerQueue(storage,createQueueBackend(connection,backend));registerLifecycle(storage,backend);registerVersions(storage,versions);return storage;
+  const queue=createQueueBackend(connection,backend);
+  const storage:Storage={...createScopedStorage(connection,backend,versions,queue),async close(){connection.close();}};
+  registerQueue(storage,queue);registerLifecycle(storage,backend);registerVersions(storage,versions);return storage;
  }catch(error){connection.close();throw error;}
 }

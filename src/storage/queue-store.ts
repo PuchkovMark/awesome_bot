@@ -1,3 +1,6 @@
+import { createMessageStore, readMessage } from './messages.js';
+import type { MessageInput } from './types.js';
+import type { QueueConfig, QueueDecision, QueueAdmission } from './queue-types.js';
 import type { Database } from 'better-sqlite3';
 import type { ConnectionScope } from '../contracts/index.js';
 import type { Connection } from './connection.js';
@@ -13,8 +16,30 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
   function transaction<T>(token: string, operation: (db: Database) => T): T {
     return connection.run(db => db.transaction(() => { owned(db, token); const result = operation(db); owned(db, token); return result; }).immediate());
   }
+  const messages = createMessageStore(connection);
   return {
     transaction,
+    admit(token: string, scope: ConnectionScope, message: MessageInput, decision: QueueDecision, config: QueueConfig): QueueAdmission {
+      const snapshotMessage = {...message};
+      requireInput(typeof decision === 'function');
+      return transaction(token, () => lifecycle.transaction(scope, db => {
+        requireInput(snapshotMessage.chatId === scope.chatId);
+        const enabled = db.prepare('SELECT enabled FROM chats WHERE chat_id=?').get(scope.chatId) as {enabled:number}|undefined;
+        requireInput(enabled?.enabled !== 0);
+        const appended = messages.append(snapshotMessage);
+        if (appended.status === 'duplicate') return {status:'duplicate', messageId:appended.id};
+        const now = Date.now(); const expires = now + config.maxQueueAgeMs; timestamp(expires);
+        const snapshot = Object.freeze({message:Object.freeze(readMessage(db, scope.chatId, appended.id)!), receivedAt:now});
+        const result: unknown = decision(snapshot);
+        if (result instanceof Promise) { void result.catch(() => {}); throw new StorageError('invalid_input'); }
+        requireInput(typeof result === 'boolean');
+        if (!result) return {status:'not_needed',messageId:appended.id};
+        const count = (chat: string | null) => (db.prepare("SELECT count(*) AS n FROM queue_jobs WHERE state='queued' AND expires_at>? AND (? IS NULL OR chat_id=?)").get(now,chat,chat) as {n:number}).n;
+        if (count(null) >= config.maxQueuedTotal || count(scope.chatId) >= config.maxQueuedPerChat) return {status:'queue_full', messageId:appended.id};
+        db.prepare("INSERT INTO queue_jobs(chat_id,generation,message_id,received_at,expires_at,state) VALUES(?,?,?,?,?,'queued')").run(scope.chatId,scope.generation,appended.id,now,expires);
+        return {status:'queued',messageId:appended.id};
+      }));
+    },
     acquire(token: string, leaseMs: number, safetyMs: number) {
       requireInput(typeof token === 'string' && token.length > 0); timestamp(leaseMs); timestamp(safetyMs);
       return connection.run(db => db.transaction(() => {

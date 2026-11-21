@@ -3,8 +3,10 @@ import type { ConnectionScope } from '../contracts/index.js';
 import type { AppendResult, ChatInput, ChatPatch, ChatSettings, CreateChatResult, HistoryQuery, MessageInput, StoredMessage } from './types.js';
 import type { AuthorizationTransaction } from './authorization-types.js';
 export interface ScopedStorage {
+  readonly queue: import('./queue-types.js').QueueStore;
   readonly versions:VersionStore;
   readonly messages: {
+    get(scope:ConnectionScope,id:number):Promise<StoredMessage|null>;
     append(scope:ConnectionScope,message:MessageInput):Promise<AppendResult>;
     list(scope:ConnectionScope,query:HistoryQuery):Promise<readonly StoredMessage[]>;
   };
