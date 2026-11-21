@@ -29,6 +29,7 @@ export function createAgentLoop(client: LlmClient, options: AgentLoopOptions = {
       const controller = new AbortController();
       const deadline = started + config.timeoutMs;
       let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+      let pauseTimer: ReturnType<typeof setTimeout> | undefined;
       let stopped: Stop | undefined;
       let resolveStop: (value: ParsedAttempt) => void = () => {};
       const halted = new Promise<ParsedAttempt>((resolve) => { resolveStop = resolve; });
@@ -51,25 +52,38 @@ export function createAgentLoop(client: LlmClient, options: AgentLoopOptions = {
         prepared.signal?.addEventListener('abort', onAbort, { once: true });
         if (prepared.signal?.aborted) onAbort();
         armDeadline();
-        const before = checkStopped();
-        if (before) return finish(before);
-        // Единственный логический шаг. Вызов получает собственную изменяемую копию.
-        const request: LlmRequest = {
-          system: prepared.system, messages: prepared.messages.map((message) => ({ role: message.role, text: message.text })),
-          maxOutputTokens: prepared.maxOutputTokens, sessionId: prepared.sessionId, signal: controller.signal,
-        };
-        summary.beginAttempt();
-        let pending: Promise<ParsedAttempt>;
-        try { pending = Promise.resolve(invoke(request)).then(parseAttempt, () => parseAttempt(undefined)); }
-        catch { pending = Promise.resolve(parseAttempt(undefined)); }
-        const result = await Promise.race([pending, halted]);
-        const after = checkStopped();
-        if (after) return finish(after);
-        summary.recordUsage(result.usage);
-        return finish(result.outcome);
+        let attempts = 0;
+        for (;;) {
+          const before = checkStopped();
+          if (before) return finish(before);
+          // Единственный логический шаг. Вызов получает собственную изменяемую копию.
+          const request: LlmRequest = {
+            system: prepared.system, messages: prepared.messages.map((message) => ({ role: message.role, text: message.text })),
+            maxOutputTokens: prepared.maxOutputTokens, sessionId: prepared.sessionId, signal: controller.signal,
+          };
+          summary.beginAttempt();
+          attempts++;
+          let pending: Promise<ParsedAttempt>;
+          try { pending = Promise.resolve(invoke(request)).then(parseAttempt, () => parseAttempt(undefined)); }
+          catch { pending = Promise.resolve(parseAttempt(undefined)); }
+          const result = await Promise.race([pending, halted]);
+          const after = checkStopped();
+          if (after) return finish(after);
+          summary.recordUsage(result.usage);
+          const outcome = result.outcome;
+          if (outcome.kind === 'error' && outcome.code === 'server' && config.retryServerErrors) {
+            if (attempts >= config.maxAttemptsPerStep) return finish({ kind: 'attempt_limit', lastErrorCode: 'server' });
+            const pause = new Promise<void>((resolve) => { pauseTimer = setTimeout(resolve, config.retryDelayMs); });
+            try { await Promise.race([pause, halted]); }
+            finally { clearTimeout(pauseTimer); pauseTimer = undefined; }
+            continue;
+          }
+          return finish(outcome);
+        }
       } catch { return finish(stopped ?? agentError('client_failure')); }
       finally {
         clearTimeout(deadlineTimer);
+        clearTimeout(pauseTimer);
         try { prepared.signal?.removeEventListener('abort', onAbort); } catch { /* Без исходной диагностики. */ }
       }
     },
