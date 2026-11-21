@@ -31,7 +31,7 @@ function copyJson(value: unknown, ancestors = new Set<object>()): JsonValue {
 export function transportCalls(value: unknown): LlmToolCall[] {
   requireInput(Array.isArray(value) && value.length > 0);
   const ids = new Set<string>();
-  return value.map((entry: unknown) => {
+  return Array.from(value, (entry: unknown) => {
     requireInput(isRecord(entry) && nonblank(entry.id) && nonblank(entry.name) && typeof entry.arguments === 'string');
     requireInput(!ids.has(entry.id)); ids.add(entry.id);
     return { id: entry.id, name: entry.name, arguments: entry.arguments };
@@ -42,12 +42,14 @@ export function wireCalls(calls: readonly LlmToolCall[]) {
 }
 export interface PreparedRequest { readonly body: string; readonly sessionId: string; readonly signal: AbortSignal | undefined }
 export function prepareRequest(request: LlmRequest, model: string): PreparedRequest {
-  requireInput(isRecord(request) && typeof request.system === 'string');
-  requireInput(Array.isArray(request.messages) && request.messages.length > 0 && positiveInteger(request.maxOutputTokens));
-  requireInput(typeof request.sessionId === 'string' && /^[A-Za-z0-9._-]{1,256}$/.test(request.sessionId));
-  requireInput(request.signal === undefined || request.signal instanceof AbortSignal);
-  const messages: unknown[] = [{ role: 'system', content: request.system }];
-  for (const message of request.messages as readonly unknown[]) {
+  requireInput(isRecord(request));
+  const { system, messages: inputMessages, maxOutputTokens, sessionId, signal, tools: inputTools } = request;
+  requireInput(typeof system === 'string');
+  requireInput(Array.isArray(inputMessages) && inputMessages.length > 0 && positiveInteger(maxOutputTokens));
+  requireInput(typeof sessionId === 'string' && /^[A-Za-z0-9._-]{1,256}$/.test(sessionId));
+  requireInput(signal === undefined || (signal instanceof AbortSignal && typeof signal.aborted === 'boolean'));
+  const messages: unknown[] = [{ role: 'system', content: system }];
+  for (const message of inputMessages as readonly unknown[]) {
     requireInput(isRecord(message));
     if (message.role === 'user') {
       requireInput(typeof message.text === 'string');
@@ -62,16 +64,16 @@ export function prepareRequest(request: LlmRequest, model: string): PreparedRequ
       messages.push({ role: 'assistant', content: message.text ?? null, ...(calls ? { tool_calls: wireCalls(calls) } : {}) });
     }
   }
-  requireInput(request.tools === undefined || Array.isArray(request.tools));
+  requireInput(inputTools === undefined || Array.isArray(inputTools));
   const names = new Set<string>();
-  const tools = request.tools?.map((tool: unknown) => {
+  const tools = inputTools === undefined ? undefined : Array.from(inputTools, (tool: unknown) => {
     requireInput(isRecord(tool) && nonblank(tool.name) && typeof tool.description === 'string');
     requireInput(!names.has(tool.name)); names.add(tool.name);
     requireInput(isRecord(tool.parameters) && tool.parameters.type === 'object');
     return { type: 'function', function: { name: tool.name, description: tool.description, parameters: copyJson(tool.parameters) } };
   });
   return {
-    body: JSON.stringify({ model, messages, max_tokens: request.maxOutputTokens, ...(tools?.length ? { tools } : {}) }),
-    sessionId: request.sessionId, signal: request.signal,
+    body: JSON.stringify({ model, messages, max_tokens: maxOutputTokens, ...(tools?.length ? { tools } : {}) }),
+    sessionId, signal,
   };
 }

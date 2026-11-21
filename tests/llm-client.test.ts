@@ -44,3 +44,28 @@ test('циклы и непредставимые схемы не теряютс�
     expect(fetch).not.toHaveBeenCalled();
   }
 });
+test('разреженные массивы инструментов и вызовов отклоняются до HTTP', async () => {
+  const holes = new Array(1);
+  for (const patch of [{ tools: holes }, { messages: [{ role: 'assistant', toolCalls: holes }] }]) {
+    const { client, fetch } = fakeClient();
+    expect(await client.complete(llmRequest(patch as Partial<LlmRequest>))).toMatchObject({ code: 'invalid_request' });
+    expect(fetch).not.toHaveBeenCalled();
+  }
+});
+test('сигнал с одним подделанным прототипом безопасно отклоняется до HTTP', async () => {
+  const { client, fetch } = fakeClient();
+  const signal = Object.create(AbortSignal.prototype) as AbortSignal;
+  await expect(client.complete(llmRequest({ signal }))).resolves.toMatchObject({ code: 'invalid_request' });
+  expect(fetch).not.toHaveBeenCalled();
+});
+test('служебные поля запроса считываются один раз при создании снимка', async () => {
+  let reads = 0;
+  const request = llmRequest();
+  Object.defineProperty(request, 'sessionId', { get() { reads++; return reads === 1 ? 'opaque' : 'vk:raw'; } });
+  const fetch = vi.fn(async (_url: string, init: RequestInit) => {
+    void _url; expect(init.headers).toMatchObject({ 'x-opencode-session': 'opaque' });
+    return Response.json(completion());
+  });
+  const result = await createLlmClient(llmConfig, { fetch }).complete(request);
+  expect(result.kind).toBe('complete'); expect(reads).toBe(1);
+});
