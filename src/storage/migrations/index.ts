@@ -1,4 +1,5 @@
 import { journalAndChats } from './001-journal-and-chats.js';
 import { messagesFts } from './002-messages-fts.js';
+import { participantsAndProfiles } from './003-participants-and-profiles.js';
 export interface Migration { readonly version: number; readonly name: string; readonly sql: string }
-export const migrations: readonly Migration[] = [journalAndChats, messagesFts];
+export const migrations: readonly Migration[] = [journalAndChats, messagesFts, participantsAndProfiles];

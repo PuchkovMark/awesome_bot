@@ -24,7 +24,7 @@ test('переход первой схемы ко второй, история �
   } finally { db.close(); fixture.cleanup(); }
 });
 for (const sql of [
-  "UPDATE schema_migrations SET version = 3 WHERE version = 2",
+  `UPDATE schema_migrations SET version = ${migrations.length + 1} WHERE version = ${migrations.length}`,
   'DELETE FROM schema_migrations WHERE version = 1',
   "UPDATE schema_migrations SET name = 'changed' WHERE version = 1",
   "UPDATE schema_migrations SET checksum = 'changed' WHERE version = 1",
@@ -53,7 +53,7 @@ test('откат всего недостающего набора и сохра�
   try {
     migrate(db, migrations.slice(0, 1)); db.exec(insert);
     const before = db.serialize();
-    expect(() => migrate(db, [...migrations, { version: 3, name: 'broken', sql: 'CREATE TABLE partial(x); SECRET SQL;' }])).toThrow('migration_failed');
+    expect(() => migrate(db, [...migrations, { version: migrations.length + 1, name: 'broken', sql: 'CREATE TABLE partial(x); SECRET SQL;' }])).toThrow('migration_failed');
     expect(db.serialize()).toEqual(before);
     expect(db.prepare('SELECT text FROM messages').get()).toEqual({ text: 'старый' });
   } finally { db.close(); }
