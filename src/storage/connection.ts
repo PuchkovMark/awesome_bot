@@ -1,0 +1,35 @@
+import type { Database } from 'better-sqlite3';
+import { safeError, StorageError } from './errors.js';
+import { databasePath } from './validation.js';
+
+/** Внутренний доступ; наружу через index.ts не экспортируется. */
+export interface Connection {
+  run<T>(operation: (database: Database) => T): T;
+  close(): void;
+}
+export async function openConnection(path: string, initialize?: (database: Database) => void): Promise<Connection> {
+  databasePath(path);
+  let database: Database | undefined;
+  try {
+    const { default: Driver } = await import('better-sqlite3');
+    database = new Driver(path);
+    initialize?.(database);
+    const opened = database;
+    return {
+      run<T>(operation: (database: Database) => T): T {
+        if (!opened.open) throw new StorageError('closed');
+        try { return operation(opened); }
+        catch (error) { throw safeError(error, 'operation_failed'); }
+      },
+      close() {
+        if (opened.open) {
+          try { opened.close(); }
+          catch { throw new StorageError('operation_failed'); }
+        }
+      },
+    };
+  } catch (error) {
+    if (database?.open) { try { database.close(); } catch { /* Сохраняем безопасную первичную ошибку. */ } }
+    throw safeError(error, 'unavailable');
+  }
+}

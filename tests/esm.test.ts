@@ -33,6 +33,7 @@ test('Node.js загружает собранные ESM-модули без за
     expect(output.signal).toBeNull();
     expect(output.stdout).toBe('IMPORT_COMPLETED');
     expect(output.stderr).toBe('');
+    expect(readdirSync(directory)).toEqual([]);
   } finally { rmSync(directory, { recursive: true, force: true }); }
   expect(readdirSync('dist').sort()).toEqual(['channels', 'config', 'contracts', 'core', 'llm', 'logger', 'storage', 'tools']);
 });
