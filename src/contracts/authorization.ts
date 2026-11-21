@@ -1,3 +1,4 @@
+import type { ConnectionScope } from './lifecycle.js';
 import type { ChatId, PlatformId, UserId } from './identifiers.js';
 
 export type BotRole = 'member' | 'admin' | 'owner';
@@ -18,6 +19,7 @@ declare const contextBrand: unique symbol;
 /** Создаётся только доверенной границей; бренд сам по себе не доказывает происхождение. */
 export interface AuthorizationContext {
   readonly [contextBrand]: true;
+  readonly scope: ConnectionScope;
   readonly chatId: ChatId;
   readonly userId: UserId;
   readonly platform: PlatformId;

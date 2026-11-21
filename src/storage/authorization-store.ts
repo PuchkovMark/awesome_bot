@@ -21,6 +21,7 @@ export function createAuthorizationStore(connection: Connection): SyncAuthorizat
             }
           }
           const tx: AuthorizationTransaction = Object.freeze({
+            revision() {check();return (db.prepare('SELECT revision FROM chat_connections WHERE chat_id=?').get(chatId) as {revision:number}|undefined)?.revision??0;},
             settings() {
               check();
               const row = db.prepare('SELECT enabled FROM chats WHERE chat_id=?').get(chatId) as { enabled: number } | undefined;

@@ -1,7 +1,8 @@
+import { openStorage, scopeFor } from './helpers/connection-scope.js';
 import Database from 'better-sqlite3';
 import { expect, test, vi } from 'vitest';
 import * as api from '../src/storage/index.js';
-import { openStorage } from '../src/storage/index.js';
+
 import { storageFixture } from './helpers/storage-fixture.js';
 
 const message = { chatId: 'vk:1', userId: 'vk:2', messageId: 'one', authorName: 'Имя', role: 'user', text: 'SECRET-TEXT', timestamp: 0 } as const;
@@ -9,21 +10,21 @@ test('публичный цикл сохраняет сообщения и на�
   const fixture = storageFixture();
   const first = await openStorage(fixture.path);
   try {
-    await first.messages.append(message);
-    await first.chats.create(message.chatId, { responseMode: 'mention', enabled: true, createdAt: 0 });
-    await first.chats.update(message.chatId, { systemPrompt: 'Сохранённый' });
-    await first.messages.append({ ...message, role: 'assistant', userId: 'vk:-3', messageId: 'two', text: 'Ответ', replyToMessageId: 'one', timestamp: 1 });
+    await first.scoped.messages.append(scopeFor(first, (message).chatId), message);
+    await first.scoped.chats.create(scopeFor(first, message.chatId), { responseMode: 'mention', enabled: true, createdAt: 0 });
+    await first.scoped.chats.update(scopeFor(first, message.chatId), { systemPrompt: 'Сохранённый' });
+    await first.scoped.messages.append(scopeFor(first, ({ ...message, role: 'assistant', userId: 'vk:-3', messageId: 'two', text: 'Ответ', replyToMessageId: 'one', timestamp: 1 }).chatId), { ...message, role: 'assistant', userId: 'vk:-3', messageId: 'two', text: 'Ответ', replyToMessageId: 'one', timestamp: 1 });
     await first.close(); await first.close();
     const second = await openStorage(fixture.path);
     try {
-      expect(await second.messages.append(message)).toMatchObject({ status: 'duplicate' });
-      expect(await second.messages.list(message.chatId, { limit: 10 })).toMatchObject([message, { messageId: 'two', role: 'assistant', replyToMessageId: 'one' }]);
-      expect(await second.chats.get(message.chatId)).toMatchObject({ enabled: true, systemPrompt: 'Сохранённый', createdAt: 0 });
+      expect(await second.scoped.messages.append(scopeFor(second, (message).chatId), message)).toMatchObject({ status: 'duplicate' });
+      expect(await second.scoped.messages.list(scopeFor(second, message.chatId), { limit: 10 })).toMatchObject([message, { messageId: 'two', role: 'assistant', replyToMessageId: 'one' }]);
+      expect(await second.scoped.chats.get(scopeFor(second, message.chatId))).toMatchObject({ enabled: true, systemPrompt: 'Сохранённый', createdAt: 0 });
     } finally { await second.close(); }
     for (const operation of [
-      () => first.messages.append(message), () => first.messages.list(message.chatId, { limit: 1 }),
-      () => first.chats.get(message.chatId), () => first.chats.create(message.chatId, { responseMode: 'always', enabled: true, createdAt: 0 }),
-      () => first.chats.update(message.chatId, { title: 'Новое' }),
+      () => first.scoped.messages.append(scopeFor(first, (message).chatId), message), () => first.scoped.messages.list(scopeFor(first, message.chatId), { limit: 1 }),
+      () => first.scoped.chats.get(scopeFor(first, message.chatId)), () => first.scoped.chats.create(scopeFor(first, message.chatId), { responseMode: 'always', enabled: true, createdAt: 0 }),
+      () => first.scoped.chats.update(scopeFor(first, message.chatId), { title: 'Новое' }),
     ]) await expect(operation()).rejects.toMatchObject({ code: 'closed' });
   } finally { await first.close(); fixture.cleanup(); }
 });
@@ -38,7 +39,7 @@ test('ошибки операций скрывают текст/SQL, модул�
     const db = new Database(fixture.path);
     try { db.exec("CREATE TRIGGER fail_message BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'SECRET-SQL'); END"); }
     finally { db.close(); }
-    const error: unknown = await storage.messages.append(message).catch((error: unknown) => error);
+    const error: unknown = await storage.scoped.messages.append(scopeFor(storage, (message).chatId), message).catch((error: unknown) => error);
     expect(error).toMatchObject({ code: 'operation_failed', message: 'Storage: operation_failed' });
     expect(error).not.toHaveProperty('cause');
     expect(String(error)).not.toMatch(/SECRET|sqlite|INSERT/);

@@ -10,7 +10,7 @@ const defaultScheduler: AuthorizationScheduler = {
     timer.unref(); return () => clearTimeout(timer);
   },
 };
-export function createReasonMaintenance(store: AuthorizationStore, retentionMs: number, now: () => number,
+export function createReasonMaintenance(store: Pick<AuthorizationStore,'pruneReasons'>, retentionMs: number, now: () => number,
   scheduler: AuthorizationScheduler = defaultScheduler) {
   let cancel: (() => void) | undefined;
   let stopped = false;

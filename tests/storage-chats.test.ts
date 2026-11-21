@@ -1,5 +1,6 @@
+import { openStorage } from './helpers/connection-scope.js';
 import { afterEach, expect, test } from 'vitest';
-import { openStorage, type ChatInput, type ChatPatch, type Storage } from '../src/storage/index.js';
+import { type ChatInput, type ChatPatch, type Storage } from '../src/storage/index.js';
 
 const opened: Storage[] = [];
 afterEach(async () => { for (const storage of opened.splice(0)) await storage.close(); });

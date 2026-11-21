@@ -1,8 +1,9 @@
+import type { ScopedStorage } from '../../storage/scoped-types.js';
 import { createReasonMaintenance } from './maintenance.js';
 import type { AuthorizationScheduler } from './maintenance.js';
-import type { AuthorizationContext, AuthorizationDecision, AuthorizationDenial, ChatId, GrantBasis, UserId } from '../../contracts/index.js';
+import type { AuthorizationContext, AuthorizationDecision, AuthorizationDenial, ConnectionScope, GrantBasis, UserId } from '../../contracts/index.js';
 import type { AppConfig } from '../../config/types.js';
-import type { AuthorizationStore, AuthorizationTransaction, RevocationAudit } from '../../storage/index.js';
+import type { AuthorizationTransaction, RevocationAudit } from '../../storage/index.js';
 import { createContextAuthority } from './context.js';
 import { botRole, evaluatePolicy } from './policy.js';
 import { platformOf, validId, validTime } from './validation.js';
@@ -10,7 +11,7 @@ import { platformOf, validId, validTime } from './validation.js';
 export type AuthorizationResult<T> = { readonly allowed: true; readonly value: T } | { readonly allowed: false; readonly code: AuthorizationDenial; readonly maxLength?: number };
 export interface AuthorizationOptions {
   readonly config: AppConfig['authorization'];
-  readonly store: AuthorizationStore;
+  readonly store: ScopedStorage['authorization'];
   readonly scheduler?: AuthorizationScheduler;
   readonly now?: () => number;
 }
@@ -41,7 +42,7 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
   async function guarded<T>(context: AuthorizationContext, action: unknown, subjectId: UserId | undefined,
     operation: (tx: AuthorizationTransaction) => AuthorizationResult<T>): Promise<AuthorizationResult<T>> {
     if (disposed || !authority.contains(context)) return deny('invalid_context');
-    return options.store.transaction(context.chatId, tx => {
+    return options.store.transaction(context.scope, tx => {
       const decision = policy(tx, context, action, subjectId);
       return decision.allowed ? operation(tx) : decision;
     });
@@ -54,19 +55,23 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
     maintain: maintenance.run,
     /** Только подтверждённая приложением личность, не данные из текста/инструмента. */
     context: authority.create,
-    confirmMembership: authority.confirmMembership,
+    async confirmMembership(scope:ConnectionScope,userId:UserId) {
+      if(disposed)throw new TypeError('Authorization: invalid_context');
+      return options.store.transaction(scope,tx=>authority.confirmMembership(scope,userId,tx.revision()));
+    },
     async check(context: AuthorizationContext, action: unknown, subjectId?: UserId): Promise<AuthorizationDecision> {
       return guarded(context, action, subjectId, () => ({ allowed: true, value: undefined }));
     },
     async role(context: AuthorizationContext) {
       if (disposed || !authority.contains(context)) return deny('invalid_context');
-      return options.store.transaction(context.chatId, tx => ({ allowed: true as const, value: botRole(context.userId, config.ownerId,
+      return options.store.transaction(context.scope, tx => ({ allowed: true as const, value: botRole(context.userId, config.ownerId,
         context.userId === config.ownerId ? [] : tx.bases(context.userId),
         context.userId === config.ownerId ? false : tx.isRevoked(context.userId)) }));
     },
     /** Системный вход подтверждённых исходных сведений; не метод инструмента. */
-    async applyTrustedInitialAuthorities(chatId: ChatId, input: { readonly creatorId?: UserId | null; readonly inviterId?: UserId | null }): Promise<AuthorizationResult<'applied'>> {
+    async applyTrustedInitialAuthorities(scope: ConnectionScope, input: { readonly creatorId?: UserId | null; readonly inviterId?: UserId | null }): Promise<AuthorizationResult<'applied'>> {
       if (disposed) return deny('invalid_context');
+      const chatId=scope.chatId;
       if (!validId(chatId)) return deny('wrong_scope');
       const entries: { userId: UserId; basis: GrantBasis }[] = [];
       for (const [basis, userId] of [['creator', input.creatorId], ['inviter', input.inviterId]] as const) {
@@ -75,7 +80,7 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
         entries.push({ userId, basis });
       }
       const time = now();
-      return options.store.transaction(chatId, tx => {
+      return options.store.transaction(scope, tx => {
         if (!tx.settings()) return deny('not_found');
         for (const entry of entries) {
           const holder = tx.holder(entry.basis);
@@ -90,7 +95,7 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
     async grant(context: AuthorizationContext, userId: UserId, membership: unknown): Promise<AuthorizationResult<'granted' | 'existing'>> {
       return guarded(context, 'admin.grant', userId, tx => {
         if (tx.isRevoked(userId)) return deny('revoked');
-        if (!authority.hasMembership(membership, context.chatId, userId)) return deny('unconfirmed_member');
+        if (!authority.hasMembership(membership, context.scope, userId, tx.revision())) return deny('unconfirmed_member');
         const existing = tx.bases(userId).includes('explicit');
         tx.grant({ userId, basis: 'explicit', grantedAt: now(), grantedBy: context.userId });
         return { allowed: true, value: existing ? 'existing' : 'granted' };
