@@ -11,6 +11,11 @@ export function ownData(object: unknown, key: string): unknown {
 
 export function safeEvent(input: unknown): LogEvent | undefined {
   const event = ownData(input, 'event');
+  if(event==='context_stats'&&ownData(input,'window')==='run'){
+   const keys=['missing_system_prompt','static_budget_too_small','current_message_too_large','internal_error','cancelled','unavailable','deadline_exceeded'] as const;
+   const fields=Object.fromEntries(keys.map(key=>[key,ownData(input,key)]));
+   if(keys.every(key=>Number.isSafeInteger(fields[key])&&(fields[key] as number)>=0))return {event,window:'run',...fields} as LogEvent;
+  }
   if(event==='router_stats'&&ownData(input,'window')==='run'){const n=ownData(input,'senderUnknown');if(Number.isSafeInteger(n)&&(n as number)>=0)return {event,window:'run',senderUnknown:n as number};}
   if (event === 'queue_stats' && ownData(input, 'window') === 'run') {
     const keys = ['depthQueued', 'depthRunning', 'waitCount', 'waitTotalMs', 'waitMaxMs', 'rejected', 'expired', 'interrupted'] as const;

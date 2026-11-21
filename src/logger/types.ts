@@ -4,6 +4,7 @@ import type { ConfigParameter } from '../config/types.js';
 export type ErrorCategory = 'configuration' | 'type' | 'range' | 'unknown';
 export type EventLevel = 'debug' | 'info' | 'warn' | 'error' | 'fatal';
 export type LogEvent =
+  | ({event:'context_stats';window:'run'} & Readonly<Record<'missing_system_prompt'|'static_budget_too_small'|'current_message_too_large'|'internal_error'|'cancelled'|'unavailable'|'deadline_exceeded',number>>)
   | {event:'router_stats';window:'run';senderUnknown:number}
   | ({ event: 'queue_stats'; window: 'run' } & import('../storage/queue-types.js').QueueStats)
   | { event: 'config_loaded' }

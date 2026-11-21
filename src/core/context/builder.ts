@@ -14,10 +14,12 @@ export interface ContextBuilderOptions {
  readonly messages:ContextMessageReader;readonly state:ContextStateReader;
  readonly config:Pick<ContextConfig,'modelContextTokens'>&Partial<ContextConfig>;
  readonly capabilities:(scope:ConnectionScope)=>Promise<CapabilitySnapshot>;
+ readonly onStats?:(stats:ReturnType<ReturnType<typeof createContextMetrics>['snapshot']>)=>void;
  readonly sessionId:(scope:ConnectionScope)=>string;readonly now?:()=>number;
 }
 export function createContextBuilder(options:ContextBuilderOptions){
  const c=contextConfig(options.config),metrics=createContextMetrics();
+ const emit=()=>{try{options.onStats?.(metrics.snapshot());}catch{/* Диагностика не меняет подготовку. */}};
  async function build(w:ContextWork,signal:AbortSignal):Promise<PreparationResult>{
   const valid=()=>!signal.aborted&&w.isCurrent();
   if(!valid())return {kind:'cancelled'};
@@ -76,15 +78,15 @@ export function createContextBuilder(options:ContextBuilderOptions){
   const messages=Object.freeze(serialize().map(m=>Object.freeze({...m})));
   const estimatedTokens=estimateInput(system,messages);
   if(estimatedTokens>c.inputBudgetTokens)return {kind:'failed',reason:'internal_error'};
-  const metadata=Object.freeze({version:Object.freeze({...version.ref}),cutoffId:current.id,messageIds:Object.freeze([...history.map(e=>e.message.id),...(reply?[reply.message.id]:[]),current.id]),estimatedTokens,scanned,historyTruncated:truncated,reply:replyState,absentLayers:Object.freeze(['persona','passport','profiles','memory','summaries'])});
+  const metadata=Object.freeze({version:Object.freeze({...version.ref}),cutoffId:current.id,messageIds:Object.freeze([...history.map(e=>e.message.id),...(reply?[reply.message.id]:[]),current.id]),layerBytes:Object.freeze({system:Buffer.byteLength(version.text),environment:Buffer.byteLength(env),messages:messages.reduce((n,m)=>n+Buffer.byteLength(m.text),0)}),estimatedTokens,scanned,historyTruncated:truncated,reply:replyState,absentLayers:Object.freeze(['persona','passport','profiles','memory','summaries'])});
   return {kind:'ready',input:Object.freeze({system,messages,maxOutputTokens:c.maxOutputTokens,sessionId:options.sessionId(w.scope)}),metadata};
  }
- return Object.freeze({config:c,stats:metrics.snapshot,async prepare(work:ContextWork):Promise<PreparationResult>{
+ return Object.freeze({config:c,stats:metrics.snapshot,checkStartup(version:Parameters<typeof validateContextStartup>[0]){const failure=validateContextStartup(version,c);if(failure)metrics.record(failure);emit();return failure;},async prepare(work:ContextWork):Promise<PreparationResult>{
   const timer=new AbortController();const signal=AbortSignal.any([work.signal,timer.signal]);let abort:()=>void=()=>{};
   const interrupted=new Promise<PreparationResult>(resolve=>{abort=()=>resolve({kind:work.signal.aborted?'cancelled':'deadline_exceeded'});signal.addEventListener('abort',abort,{once:true});if(signal.aborted)abort();});
   const timeout=setTimeout(()=>timer.abort(),c.preparationTimeoutMs);
   try{
-   const result=await Promise.race([build(work,signal).catch(():PreparationResult=>signal.aborted?{kind:work.signal.aborted?'cancelled':'deadline_exceeded'}:{kind:'failed',reason:'internal_error'}),interrupted]);metrics.record(result);return result;
+   const result=await Promise.race([build(work,signal).catch(():PreparationResult=>signal.aborted?{kind:work.signal.aborted?'cancelled':'deadline_exceeded'}:{kind:'failed',reason:'internal_error'}),interrupted]);metrics.record(result);emit();return result;
   }finally{clearTimeout(timeout);signal.removeEventListener('abort',abort);}
  }});
 }

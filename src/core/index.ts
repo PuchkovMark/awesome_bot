@@ -23,3 +23,7 @@ export { createPublicationService } from './message-router/publication-service.j
 export type { PublicationPort, PublicationRequest, PublicationResult } from './message-router/publication-service.js';
 export { createRouterMetrics } from './message-router/metrics.js';
 export type { QueueCompletion, QueueSettlement } from './chat-queue/types.js';
+
+export {createContextPreparation} from './prepare-context.js';
+export {createContextBuilder,contextConfig,validateContextStartup} from './context/index.js';
+export type {ContextConfig,ContextMetadata,PreparationResult,PreparationFailure,ContextBuilderOptions,ContextWork} from './context/index.js';
