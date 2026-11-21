@@ -25,6 +25,8 @@ test('Node.js загружает собранные ESM-модули без за
       };
       syncBuiltinESMExports();
       const before = JSON.stringify(process.env);
+      globalThis.setTimeout = () => { throw new Error('Timer created during import'); };
+      globalThis.setInterval = () => { throw new Error('Interval created during import'); };
       await Promise.all(${JSON.stringify(modules)}.map(url => import(url)));
       if (before !== JSON.stringify(process.env)) throw new Error('Environment changed during import');
       process.stdout.write('IMPORT_COMPLETED');

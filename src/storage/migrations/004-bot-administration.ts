@@ -31,7 +31,7 @@ CREATE TABLE bot_admin_revocation_audit (
   had_creator INTEGER NOT NULL CHECK(had_creator IN (0,1)),
   had_inviter INTEGER NOT NULL CHECK(had_inviter IN (0,1)),
   had_explicit INTEGER NOT NULL CHECK(had_explicit IN (0,1)),
-  reason TEXT CHECK(reason IS NULL OR length(reason) > 0),
+  reason TEXT CHECK(reason IS NULL OR length(CAST(reason AS BLOB)) > 0),
   PRIMARY KEY(chat_id,user_id),
   FOREIGN KEY(chat_id,user_id) REFERENCES bot_admin_revocations(chat_id,user_id) ON DELETE RESTRICT ON UPDATE RESTRICT,
   CHECK(had_creator + had_inviter > 0)

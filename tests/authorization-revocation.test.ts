@@ -36,10 +36,14 @@ test('причина обязательна, длина в code points пров�
     const { service: s, owner } = f;
     await s.applyTrustedInitialAuthorities('vk:one', { creatorId: 'vk:user' });
     for (const reason of ['', ' \n\t', null, undefined, 123]) expect(await s.revoke(owner, 'vk:user', reason)).toEqual({ allowed: false, code: 'invalid_reason' });
-    expect(await s.revoke(owner, 'vk:user', '😀😀😀')).toEqual({ allowed: false, code: 'reason_too_long' });
+    expect(await s.revoke(owner, 'vk:user', '😀😀😀')).toEqual({ allowed: false, code: 'reason_too_long', maxLength: 2 });
     expect(await s.audit(owner, 'vk:user')).toEqual({ allowed: true, value: null });
     expect(await s.revoke(owner, 'vk:user', '😀😀')).toMatchObject({ allowed: true });
     expect(await s.audit(owner, 'vk:user')).toMatchObject({ value: { reason: '😀😀' } });
+    await s.restore(owner, 'vk:user');
+    await s.applyTrustedInitialAuthorities('vk:one', { creatorId: 'vk:user' });
+    expect(await s.revoke(owner, 'vk:user', '\0x')).toMatchObject({ allowed: true });
+    expect(await s.audit(owner, 'vk:user')).toMatchObject({ value: { reason: '\0x' } });
     await s.applyTrustedInitialAuthorities('vk:two', { creatorId: 'vk:owner' });
     const targetOwner = s.context({ chatId: 'vk:two', userId: 'vk:owner', kind: 'owner' });
     await s.revoke(targetOwner, 'vk:owner', 'ok');

@@ -7,7 +7,7 @@ import { createContextAuthority } from './context.js';
 import { botRole, evaluatePolicy } from './policy.js';
 import { platformOf, validId, validTime } from './validation.js';
 
-export type AuthorizationResult<T> = { readonly allowed: true; readonly value: T } | { readonly allowed: false; readonly code: AuthorizationDenial };
+export type AuthorizationResult<T> = { readonly allowed: true; readonly value: T } | { readonly allowed: false; readonly code: AuthorizationDenial; readonly maxLength?: number };
 export interface AuthorizationOptions {
   readonly config: AppConfig['authorization'];
   readonly store: AuthorizationStore;
@@ -106,7 +106,7 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
         let length = 0;
         for (const character of reason) {
           void character;
-          if (++length > config.reasonMaxLength) return deny('reason_too_long');
+          if (++length > config.reasonMaxLength) return { allowed: false, code: 'reason_too_long', maxLength: config.reasonMaxLength };
         }
         if (tx.isRevoked(userId)) return { allowed: true, value: 'existing' };
         const bases = tx.bases(userId);
