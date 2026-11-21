@@ -1,3 +1,4 @@
+import { contextOrderIndex } from './010-context-order-index.js';
 import { contextInput } from './009-context-input.js';
 import { messageRouting } from './008-message-routing.js';
 import { chatQueue } from './007-chat-queue.js';
@@ -8,4 +9,4 @@ import { journalAndChats } from './001-journal-and-chats.js';
 import { messagesFts } from './002-messages-fts.js';
 import { participantsAndProfiles } from './003-participants-and-profiles.js';
 export interface Migration { readonly version: number; readonly name: string; readonly sql: string }
-export const migrations: readonly Migration[] = [journalAndChats, messagesFts, participantsAndProfiles, botAdministration, chatConnectionLifecycle, versionedContent, chatQueue, messageRouting, contextInput];
+export const migrations: readonly Migration[] = [journalAndChats, messagesFts, participantsAndProfiles, botAdministration, chatConnectionLifecycle, versionedContent, chatQueue, messageRouting, contextInput, contextOrderIndex];

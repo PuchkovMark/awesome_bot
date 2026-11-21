@@ -29,8 +29,8 @@ export function checkContextBoundary(root=process.cwd()) {
       const facade=ts.sys.readFile(next);if(facade===undefined){invalid=true;return;}
       const body=ts.createSourceFile(next,facade,ts.ScriptTarget.Latest,true);
       for(const statement of body.statements){
-       if(ts.isInterfaceDeclaration(statement)&&statement.name.text==='ContextMessageReader')continue;
-       if(ts.isImportDeclaration(statement)&&statement.importClause?.isTypeOnly&&statement.importClause.namedBindings&&ts.isNamedImports(statement.importClause.namedBindings)&&statement.importClause.namedBindings.elements.every(e=>['ConnectionScope','StoredMessage','HistoryQuery'].includes((e.propertyName??e.name).text)))continue;
+       if(ts.isInterfaceDeclaration(statement)&&['ContextMessageReader','ContextStateReader','ContextRecord','ContextPageQuery'].includes(statement.name.text)&&statement.members.every(m=>!m.name||['get','list','page','reply','settings','systemPrompt','truncated','cutoffId','beforeId','limit','textLimit'].includes(m.name.getText(body))))continue;
+       if(ts.isImportDeclaration(statement)&&statement.importClause?.isTypeOnly&&statement.importClause.namedBindings&&ts.isNamedImports(statement.importClause.namedBindings)&&statement.importClause.namedBindings.elements.every(e=>['ConnectionScope','StoredMessage','HistoryQuery','ContentVersion'].includes((e.propertyName??e.name).text)))continue;
        invalid=true;
       }
       return;

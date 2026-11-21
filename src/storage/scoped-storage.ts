@@ -1,3 +1,4 @@
+import { createContextStateReader } from './context-state-reader.js';
 import { createContextReader } from './context-reader.js';
 import type { ConnectionScope } from '../contracts/index.js';
 import type { QueueRecord } from './queue-types.js';
@@ -12,6 +13,7 @@ import { requireInput } from './validation.js';
 export function createScopedStorage(connection:Connection,backend:LifecycleBackend,versions:VersionBackend,queue:{get(scope:ConnectionScope,id:number):QueueRecord|null}):ScopedStorage {
   const messages=createMessageStore(connection),chats=createChatStore(connection),authorization=createAuthorizationStore(connection);
   return {
+    contextState:createContextStateReader(connection,backend,versions),
     contextMessages:createContextReader(connection,backend),
     queue:{async get(scope,id){return queue.get(scope,id);}},
     versions:{
