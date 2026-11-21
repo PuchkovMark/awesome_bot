@@ -24,3 +24,9 @@ test('новое поколение во время canReply не получае
  let release:(x:boolean)=>void=()=>{};const publish=vi.fn(async()=>({kind:'unknown' as const}));const service=createPublicationService({storage,port:{canReply:()=>new Promise(r=>{release=r;}),publish}});
  const pending=service.queueFull(scope,m.id,route,{signal:new AbortController().signal,isCurrent:()=>true});await flushQueue();const life=lifecycleBackend(storage);life.ownerDecision(life.begin(scope.chatId),'new');release(true);await pending;expect(publish).not.toHaveBeenCalled();await storage.close();
 });
+test('выключение отменяет уже ожидающий порт и освобождает слот до общего срока',async()=>{
+ vi.useFakeTimers();const storage=await openStorage(':memory:'),scope=scopeFor(storage,'vk:a');await storage.chats.create(scope,{responseMode:'normal',enabled:true,createdAt:0});
+ let signal:AbortSignal|undefined;
+ const q=createChatQueue({storage,handler:async()=> 'completed',onSettled:async work=>{signal=work.signal;await new Promise(()=>{});}});
+ try{await q.start();await q.admitRouted(scope,queueMessage('vk:a','1'),()=>({reason:'name',route}));await flushQueue();expect(signal?.aborted).toBe(false);await storage.chats.update(scope,{enabled:false});await vi.advanceTimersByTimeAsync(1000);expect(signal?.aborted).toBe(true);expect(q.isRunning()).toBe(true);}finally{await q.stop();await storage.close();vi.useRealTimers();}
+});

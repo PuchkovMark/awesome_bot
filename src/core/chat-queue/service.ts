@@ -103,7 +103,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
     try {
       backend.check(token);
       if(performance.now()>=renewAt){ backend.renew(token,config.leaseMs);renewAt=performance.now()+config.renewIntervalMs; }
-      for(const task of [...tasks.values()])if(!task.publishing&&!backend.valid(token,task.work))finish(task,'interrupted');
+      for(const task of [...tasks.values()])if(!(task.publishing?backend.publicationValid(token,task.work):backend.valid(token,task.work)))finish(task,'interrupted');
       if(phase==='running') {
         const expired=backend.expire(token);counters.expired=add(counters.expired,expired.length);expired.forEach(wait);
         while(tasks.size<config.maxConcurrentChats) {

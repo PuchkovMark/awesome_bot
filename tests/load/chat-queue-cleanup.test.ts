@@ -39,6 +39,6 @@ test('300000 сообщений с FTS, профилями и заданиями
  expect(db.prepare("SELECT rowid FROM messages_fts WHERE messages_fts MATCH 'удаляемыйкот'").all()).toEqual([]);
  expect(db.prepare("SELECT rowid FROM messages_fts WHERE messages_fts MATCH 'служебныйслед'").all()).toEqual([]);
  expect(await storage.messages.list(other,{limit:1})).toHaveLength(1);expect(db.pragma('foreign_key_check')).toEqual([]);
- backend.release('owner');await recordQueueLoad({fixtureMessages:300000,fixtureJobs:300000,fixtureProfiles:2000,cleanupMs,leaseMs:30000,marginMs:10000});
+ backend.release('owner');await recordQueueLoad({fixtureMessages:300000,fixtureNotices:1000,fixtureJobs:300000,fixtureProfiles:2000,cleanupMs,leaseMs:30000,marginMs:10000});
  }finally{child?.kill();db.close();await storage.close();f.cleanup();}
 });
