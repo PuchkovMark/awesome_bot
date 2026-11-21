@@ -6,6 +6,8 @@ export function directlyAddressesName(text:string):boolean {
  const visible=normalized.replace(/«[^»]*»|“[^”]*”|"[^"\n]*"|`[^`]*`/gu,' ');
  const words:string[]=visible.match(/[\p{L}\p{N}_]+/gu)??[];
  if(!words.includes(name))return false;
+ const nameIndex=words.indexOf(name);
+ if(['молчит','работает','пишет','ответил','помог','сказал'].includes(words[nameIndex+1]??'')||['о','про','бот','бота','боту','настроить'].includes(words[nameIndex-1]??''))return false;
  const rest=words.filter(w=>w!==name);
  if(!rest.length)return true;
  // Явная передача слов, третье лицо и другой адресат имеют приоритет.

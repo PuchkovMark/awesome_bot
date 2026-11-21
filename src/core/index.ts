@@ -21,4 +21,5 @@ export { createMessageRouter } from './message-router/service.js';
 export type { RouterOptions } from './message-router/service.js';
 export { createPublicationService } from './message-router/publication-service.js';
 export type { PublicationPort, PublicationRequest, PublicationResult } from './message-router/publication-service.js';
+export { createRouterMetrics } from './message-router/metrics.js';
 export type { QueueCompletion, QueueSettlement } from './chat-queue/types.js';

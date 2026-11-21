@@ -1,3 +1,5 @@
+import { createRouterMetrics } from './metrics.js';
+import type {SafeLogger} from '../../logger/types.js';
 import type {ConnectionScope,IncomingMessage,AuthorizationContext} from '../../contracts/index.js';
 import type {Storage} from '../../storage/index.js';
 import type {ChatQueue} from '../chat-queue/types.js';
@@ -12,13 +14,14 @@ function fromDecision(value:RoutedQueueDecision):RoutingDecision {
  return {kind:'silence',reason:value.reason as Extract<RoutingDecision,{kind:'silence'}>['reason']};
 }
 export interface RouterOptions {
- readonly storage:Storage;readonly queue:ChatQueue;readonly authorization?:RouterAuthorization;
+ readonly logger?:SafeLogger;readonly storage:Storage;readonly queue:ChatQueue;readonly authorization?:RouterAuthorization;
  readonly recognizeCommand?:(message:IncomingMessage)=>ServiceCommand|null;
  readonly onDecision?:(decision:RoutingDecision)=>void;
  readonly onQueueFull?:(scope:ConnectionScope,messageId:number,route:RouteMetadata,guard:{readonly signal:AbortSignal;readonly isCurrent:()=>boolean})=>Promise<void>;
 }
 export function createMessageRouter(options:RouterOptions){
- return Object.freeze({async receive(scope:ConnectionScope,input:IncomingMessage,context?:AuthorizationContext){
+ const metrics=createRouterMetrics(options.logger);
+ return Object.freeze({stats:metrics.snapshot,async receive(scope:ConnectionScope,input:IncomingMessage,context?:AuthorizationContext){
   const message=Object.freeze({...input});
   if(!validIncoming(message)||message.chatId!==scope.chatId)return {decision:{kind:'silence',reason:'invalid_input'} as RoutingDecision,admission:null};
   const settings=(await options.storage.chats.create(scope,{responseMode:'normal',enabled:true,createdAt:message.timestamp})).settings;
@@ -33,7 +36,7 @@ export function createMessageRouter(options:RouterOptions){
    return {reason:decision.reason,route:decision.kind==='ordinary'?decision.route:null};
   });
   const decision=result.decision?fromDecision(result.decision):null;
-  if(decision){try{options.onDecision?.(decision);}catch{/* Диагностика не меняет решение. */}}
+  if(decision){metrics?.record(decision);try{options.onDecision?.(decision);}catch{/* Диагностика не меняет решение. */}}
   if(result.admission.status==='queue_full'&&decision?.kind==='ordinary')await options.onQueueFull?.(scope,result.admission.messageId,decision.route,{signal:options.queue.signal,isCurrent:options.queue.isRunning});
   return {decision,admission:result.admission};
  }});

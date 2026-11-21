@@ -4,6 +4,7 @@ import type { ConfigParameter } from '../config/types.js';
 export type ErrorCategory = 'configuration' | 'type' | 'range' | 'unknown';
 export type EventLevel = 'debug' | 'info' | 'warn' | 'error' | 'fatal';
 export type LogEvent =
+  | {event:'router_stats';window:'run';senderUnknown:number}
   | ({ event: 'queue_stats'; window: 'run' } & import('../storage/queue-types.js').QueueStats)
   | { event: 'config_loaded' }
   | { event: 'config_invalid'; code: ConfigErrorCode; parameters: readonly ConfigParameter[] }

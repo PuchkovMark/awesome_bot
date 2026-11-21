@@ -15,7 +15,7 @@ test('личка active→normal; выключенный обычный путь
  expect(routeMessage({message:{...incoming,isBot:undefined} as unknown as IncomingMessage,settings:{enabled:true,responseMode:'normal'}})).toMatchObject({reason:'invalid_input'});
 });
 for(const text of ['Пенек помоги с задачей','Помоги с задачей Пенёк','Подскажи пожалуйста Пенёк как это сделать','Как ты думаешь Пенек','Как дела Пенёк','ПЕНЁК!','Пенек, помоги!','Помоги! Пенек?'])test(text,()=>expect(directlyAddressesName(text)).toBe(true));
-for(const text of ['Пенёк сегодня молчит','Мы обсуждали бота Пенек','Он сказал: “Пенёк помоги”','Иван помоги настроить Пенек','Пенёчек','суперпенек','Почему Пенёк молчит'])test(text,()=>expect(directlyAddressesName(text)).toBe(false));
+for(const text of ['Пенёк сегодня молчит','Мы обсуждали бота Пенек','Он сказал: “Пенёк помоги”','Иван помоги настроить Пенек','Пенёчек','суперпенек','Почему Пенёк молчит','Как ты думаешь почему Пенёк молчит'])test(text,()=>expect(directlyAddressesName(text)).toBe(false));
 for(const kind of ['incomplete','refused','empty','rate_limit','tools_not_supported','deadline_exceeded','attempt_limit','error','failed','queue_full'])test('публикация '+kind,()=>{
  const route={kind:'name',mode:'normal',isGroupChat:true} as const;
  expect(publicationDecision(route,{enabled:true,responseMode:'normal'},{kind,partialText:'SECRET',message:'SECRET'})).toEqual({kind:'notice'});

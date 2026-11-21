@@ -2,6 +2,7 @@ import type {RoutingInput,RoutingDecision} from './types.js';
 import {directlyAddressesName} from './name-address.js';
 import {validIncoming} from './validation.js';
 export function routeMessage(input:RoutingInput):RoutingDecision {
+ if(!input||typeof input!=='object')return {kind:'silence',reason:'invalid_input'};
  const {message,settings,service}=input;
  const silent=(reason:Extract<RoutingDecision,{kind:'silence'}>['reason']):RoutingDecision=>({kind:'silence',reason});
  if(!validIncoming(message)||!settings||!['silent','normal','active'].includes(settings.responseMode)||typeof settings.enabled!=='boolean')return silent('invalid_input');
