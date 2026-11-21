@@ -9,6 +9,7 @@ test('Node.js загружает собранные ESM-модули без за
   const modules = ['core', 'channels', 'tools', 'storage', 'llm', 'config', 'logger', 'contracts'].map(
     (layer) => pathToFileURL(resolve('dist', layer, 'index.js')).href,
   );
+  modules.push(pathToFileURL(resolve('dist/storage/catalog-admin.js')).href);
   const directory = mkdtempSync(join(tmpdir(), 'awesome-import-'));
   try {
     const script = `

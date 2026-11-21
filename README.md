@@ -1,6 +1,6 @@
 # Awesome Bot
 
-Новый собеседник и помощник VK. Реализованы скелет, конфигурация и логгер, общие контракты, SQLite-хранилище, модель участников и авторизация F1.6a и жизненный цикл подключения F1.6b. Живой запуск, адаптер VK и LLM ещё не подключены.
+Новый собеседник и помощник VK. Реализованы скелет, конфигурация и логгер, общие контракты, SQLite-хранилище, модель участников и авторизация F1.6a и жизненный цикл подключения F1.6b, каркас версий F1.7. Живой запуск, адаптер VK и LLM ещё не подключены.
 
 ## Согласованные режимы — ещё не реализованы
 
@@ -182,4 +182,49 @@ try {
 
 Гарантии относятся к рабочей БД и одному процессу. Это не доказательство доставки событий VK, атомарности с внешним API, остановки уже начатой отправки или готовности бэкапов F9.3. Все будущие миграции с чатовыми данными должны расширять тест охвата очистки.
 
-Пределы каркаса версий: `VERSION_TEXT_MAX_LENGTH=32000` Unicode code points и `VERSION_MAX_PER_ENTITY=100`. Параметры проверяются при загрузке конфигурации; хранение версий добавляется в F1.7.
+
+## Версии промптов, персонажей и приветствий F1.7
+
+Версии — буквальный неизменяемый текст с номером и UTC-временем. Общий каталог допускает `system_prompt`, `persona`, `greeting_template`; локальные версии и выбор беседы — только `persona` и `greeting_template`. Системный промпт и его выбор общие для приложения. Существующий `chats.systemPrompt` сохраняется без автоматического переноса и применения новых версий к ответам.
+
+Настройки `VERSION_TEXT_MAX_LENGTH=32000` (Unicode code points) и `VERSION_MAX_PER_ENTITY=100` загружаются в `config.versioning`. Передайте их явно в `openStorage(path, { versioning: config.versioning })`; без options используются те же defaults. Хранилище не читает env. Превышение длины или числа версий даёт `StorageError` с кодом `limit_exceeded`, без обрезания или удаления истории. Пониженные лимиты не лишают чтения, выбора и отката прежних данных.
+
+Пример для доверенной композиции приложения (синтетические тексты):
+
+```ts
+import { openStorage } from '../storage/index.js';
+import { catalogAdministration } from '../storage/catalog-admin.js';
+// config и lifecycle source передаёт приложение; источник не задаёт модель.
+const storage = await openStorage('/absolute/path/to/new.sqlite', { versioning: config.versioning });
+try {
+  const catalog = catalogAdministration(storage);
+  const system = await catalog.append({
+    kind: 'system_prompt', key: 'synthetic-base', text: 'Синтетический текст',
+    expectedHead: null, createdAt: Date.now(),
+  });
+  if (system.status === 'created' && system.value.ref.area === 'global') {
+    await catalog.selectSystemPrompt(system.value.ref, null);
+  }
+  // scope выдан сервисом жизненного цикла для действующего подключения.
+  const persona = await storage.versions.append(scope, {
+    kind: 'persona', key: 'synthetic-persona', text: 'Синтетическое описание',
+    expectedHead: null, createdAt: Date.now(),
+  });
+  if (persona.status === 'created') {
+    await storage.versions.select(scope, 'persona', persona.value.ref, null);
+  }
+  const selected = await storage.versions.selected(scope, 'persona');
+  const prompt = await storage.versions.systemPrompt(scope);
+  void selected; void prompt;
+} finally { await storage.close(); }
+```
+
+`append` создаёт версию, сохраняя прежний выбор. `expectedHead` — ожидаемый последний номер либо `null` для новой сущности; устаревшее ожидание возвращает `conflict`. `get(scope, ref)` читает точную доступную версию либо `null`. `selected` и `systemPrompt` возвращают согласованный снимок ссылки, текста и времени либо `null`, без выбора последней версии по умолчанию. Результат чтения не меняется после смены выбора.
+
+`select(scope, kind, ref, expected)` проверяет ожидаемую прежнюю ссылку и существование цели; возвращает `selected`, `conflict` или `not_found`. Откат — выбор точной старой версии, сброс — `reset(scope, kind, expected)`. Системный выбор меняют только методы отдельного каталога `selectSystemPrompt`/`resetSystemPrompt`; у Storage таких полномочий нет. История не перезаписывается. Пользовательские тексты остаются недоверенными независимо от номера версии.
+
+Инфраструктурный фасад не реэкспортируется из `storage/index`, не доступен модели и не аутентифицирует человека. Команды, инструменты и контекст не импортируют его; сборка проверяет граф, включая посредников, реэкспорты и динамические загрузки. Корни: `src/tools`, `src/commands`, `src/core/commands`, `src/context`, `src/core/context`, `src/core/context.ts`; при ином размещении новых компонентов список обязательно расширяется. Проверку отдельно запускает `npm run check:catalog`.
+
+Все запросные операции требуют действующую `ConnectionScope`. Локальная ссылка содержит поколение; старое подключение не получает новые данные. Очистка беседы удаляет локальную историю и выборы, сохраняя общие версии, общий системный выбор и другие чаты; ошибка откатывает весь набор. Удаления отдельной версии и автоматического освобождения квоты нет: безвозвратное удаление локальной версии остаётся вопросом вехи 7.
+
+Каркас проверен без VK/LLM и не подключает тексты к ответам. Продуктовые права публикации, команды, библиотека, конструктор, связь персонажа с индивидуальным промптом, сроки хранения и удаление персональных данных остаются соответствующим будущим фичам.
