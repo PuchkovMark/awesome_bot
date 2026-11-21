@@ -5,7 +5,7 @@ import type { Database } from 'better-sqlite3';
 import type { ConnectionScope } from '../contracts/index.js';
 import type { Connection } from './connection.js';
 import type { LifecycleBackend } from './lifecycle-store.js';
-import type { QueueRecord } from './queue-types.js';
+import type { QueueWork, QueueOutcome, QueueRecord } from './queue-types.js';
 import { StorageError } from './errors.js';
 import { requireInput, timestamp } from './validation.js';
 export function createQueueBackend(connection: Connection, lifecycle: LifecycleBackend) {
@@ -48,7 +48,7 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
         if (row.token !== null && row.expires > now) throw new StorageError('queue_owned');
         db.prepare('UPDATE queue_lease SET token=?,expires_at=?,safety_ms=? WHERE singleton=1').run(token, now + leaseMs, safetyMs);
         const recovered = db.prepare("UPDATE queue_jobs SET state='terminal',outcome='interrupted',owner=NULL WHERE state='running'").run().changes;
-        return recovered;
+        owned(db,token); return recovered;
       }).immediate());
     },
     renew(token: string, leaseMs: number) {
@@ -56,6 +56,51 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
     },
     release(token: string) { return connection.run(db => db.transaction(() => { owned(db, token); db.prepare('UPDATE queue_lease SET token=NULL,expires_at=0,safety_ms=0 WHERE singleton=1').run(); }).immediate()); },
     check(token: string) { connection.run(db => owned(db, token)); },
+    depth(token: string) {
+      return transaction(token, db => ({
+        depthQueued:(db.prepare("SELECT count(*) AS n FROM queue_jobs WHERE state='queued'").get() as {n:number}).n,
+        depthRunning:(db.prepare("SELECT count(*) AS n FROM queue_jobs WHERE state='running'").get() as {n:number}).n,
+      }));
+    },
+    expire(token: string) {
+      return transaction(token, db => {
+        const now=Date.now();
+        const rows=db.prepare("UPDATE queue_jobs SET state='terminal',outcome='expired' WHERE state='queued' AND expires_at<=? RETURNING received_at AS receivedAt").all(now) as {receivedAt:number}[];
+        return rows.map(row=>Math.max(0,now-row.receivedAt));
+      });
+    },
+    take(token: string): QueueWork|null {
+      return transaction(token, db => {
+        const row=db.prepare(`SELECT j.id,j.chat_id AS chatId,j.generation,j.message_id AS messageId,j.received_at AS receivedAt
+          FROM queue_jobs j JOIN chat_connections c ON c.chat_id=j.chat_id AND c.generation=j.generation
+          LEFT JOIN chats s ON s.chat_id=j.chat_id LEFT JOIN queue_turns t ON t.chat_id=j.chat_id
+          WHERE j.state='queued' AND j.expires_at>? AND c.state='active' AND coalesce(s.enabled,1)=1
+          AND NOT EXISTS(SELECT 1 FROM queue_jobs r WHERE r.chat_id=j.chat_id AND r.state='running')
+          ORDER BY coalesce(t.served,0),j.id LIMIT 1`).get(Date.now()) as {id:number;chatId:ConnectionScope['chatId'];generation:number;messageId:number;receivedAt:number}|undefined;
+        if(!row)return null;
+        const scope=lifecycle.restore(row);
+        const sequence=db.prepare('UPDATE queue_lease SET sequence=sequence+1 WHERE singleton=1 AND sequence<9007199254740991 RETURNING sequence').get() as {sequence:number}|undefined;
+        if(!sequence)throw new StorageError('operation_failed');
+        db.prepare('INSERT INTO queue_turns(chat_id,generation,served) VALUES(?,?,?) ON CONFLICT(chat_id) DO UPDATE SET served=excluded.served').run(row.chatId,row.generation,sequence.sequence);
+        db.prepare("UPDATE queue_jobs SET state='running',owner=? WHERE id=?").run(token,row.id);
+        return Object.freeze({id:row.id,scope,messageId:row.messageId,receivedAt:row.receivedAt});
+      });
+    },
+    valid(token: string, work: QueueWork): boolean {
+      return transaction(token, db => {
+        const row=db.prepare("SELECT j.id FROM queue_jobs j JOIN chat_connections c ON c.chat_id=j.chat_id AND c.generation=j.generation LEFT JOIN chats s ON s.chat_id=j.chat_id WHERE j.id=? AND j.owner=? AND j.state='running' AND c.state='active' AND coalesce(s.enabled,1)=1").get(work.id,token);
+        return !!row;
+      });
+    },
+    finish(token: string, work: QueueWork, outcome: QueueOutcome): QueueOutcome|null {
+      return transaction(token, db => {
+        requireInput(['completed','failed','rate_limit','interrupted','expired','message_missing','deadline_exceeded'].includes(outcome));
+        const state=db.prepare('SELECT state FROM chat_connections WHERE chat_id=? AND generation=?').get(work.scope.chatId,work.scope.generation) as {state:string}|undefined;
+        const final=state?.state==='active'?outcome:'interrupted';
+        const result=db.prepare("UPDATE queue_jobs SET state='terminal',outcome=?,owner=NULL WHERE id=? AND owner=? AND state='running'").run(final,work.id,token);
+        return result.changes===1?final:null;
+      });
+    },
     get(scope: ConnectionScope, id: number): QueueRecord | null {
       requireInput(Number.isSafeInteger(id) && id > 0);
       return lifecycle.transaction(scope, db => db.prepare(`SELECT id,message_id AS messageId,received_at AS receivedAt,expires_at AS expiresAt,state,outcome

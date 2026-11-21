@@ -59,6 +59,11 @@ export function createLifecycleBackend(connection: Connection) {
   }
   return {
     assertScope,
+    restore(expected: {readonly chatId:ChatId;readonly generation:number}):ConnectionScope {
+      return connection.run(db => { compositeId(expected.chatId); const state=read(db,expected.chatId);
+        if(!state || state.generation!==expected.generation) throw new StorageError('stale_scope');
+        if(state.state!=='active') throw new StorageError('uncertain_connection'); return issue(state); });
+    },
     transaction<T>(scope:ConnectionScope,fn:(db:Database)=>T):T {
       return connection.run(db=>db.transaction(()=>{assertScope(db,scope);const result=fn(db);assertScope(db,scope);return result;}).immediate());
     },
