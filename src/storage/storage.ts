@@ -1,3 +1,4 @@
+import { createNoticeBackend, registerNotices } from './notice-store.js';
 import { createQueueBackend } from './queue-store.js';
 import { registerQueue } from './queue-registry.js';
 import {object} from './validation.js';
@@ -21,6 +22,6 @@ export async function openStorage(path:string,options:{readonly versioning?:Vers
   const versions=createVersionBackend(connection,backend,limits);
   const queue=createQueueBackend(connection,backend);
   const storage:Storage={...createScopedStorage(connection,backend,versions,queue),async close(){connection.close();}};
-  registerQueue(storage,queue);registerLifecycle(storage,backend);registerVersions(storage,versions);return storage;
+  registerNotices(storage,createNoticeBackend(connection,backend));registerQueue(storage,queue);registerLifecycle(storage,backend);registerVersions(storage,versions);return storage;
  }catch(error){connection.close();throw error;}
 }

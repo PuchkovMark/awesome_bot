@@ -33,11 +33,11 @@ export function checkCatalogBoundary(root=process.cwd()) {
      const allowed=file===resolve(root,'src/storage/storage.ts')&&registration&&ts.isNamedImports(registration)&&registration.elements.every(e=>(e.propertyName??e.name).text==='registerVersions');
      if(!allowed)result.privileged=true;
     }
-    for(const [moduleName, factory] of [['queue-registry.ts','registerQueue'],['queue-store.ts','createQueueBackend']]) {
+    for(const [moduleName, factory] of [['queue-registry.ts','registerQueue'],['queue-store.ts','createQueueBackend'],['notice-store.ts','registerNotices']]) {
      if(p===resolve(root,'src/storage/'+moduleName)) {
       const parent=node.parent;
       const bindings=ts.isImportDeclaration(parent)&&!parent.importClause?.name&&parent.importClause?.namedBindings;
-      const storageFactory=file===resolve(root,'src/storage/storage.ts')&&bindings&&ts.isNamedImports(bindings)&&bindings.elements.every(e=>(e.propertyName??e.name).text===factory);
+      const storageFactory=file===resolve(root,'src/storage/storage.ts')&&bindings&&ts.isNamedImports(bindings)&&bindings.elements.every(e=>((e.propertyName??e.name).text===factory||(moduleName==='notice-store.ts'&&(e.propertyName??e.name).text==='createNoticeBackend')));
       const registryType=moduleName==='queue-store.ts'&&file===resolve(root,'src/storage/queue-registry.ts')&&ts.isImportDeclaration(parent)&&parent.importClause?.isTypeOnly;
       if(!storageFactory&&!registryType)result.privileged=true;
      }

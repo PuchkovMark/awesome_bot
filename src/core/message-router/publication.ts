@@ -1,7 +1,7 @@
 import type {PublicationDecision} from './types.js';
 import type {RouteMetadata} from '../../storage/queue-types.js';
 import type {ResponseMode} from '../../storage/index.js';
-export const noticeText='Сейчас не получилось ответить. Попробуйте позже.';
+export {noticeText} from '../../storage/notice-types.js';
 export function publicationDecision(route:RouteMetadata|null,current:{readonly enabled:boolean;readonly responseMode:ResponseMode},outcome:unknown):PublicationDecision {
  const silence={kind:'silence'} as const;
  if(!route||!current.enabled||current.responseMode==='silent'||!outcome||typeof outcome!=='object')return silence;
