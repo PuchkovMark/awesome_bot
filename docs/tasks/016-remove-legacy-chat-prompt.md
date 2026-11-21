@@ -7,7 +7,7 @@
 - Дата завершения: —
 - Связанные документы: [F2.10](../roadmap.md#веха-2-ядро-без-платформы), [проект](../project.md), [решения](../decisions.md), [хранилище](../specs/storage.md), [контекст](../specs/context.md), [команды](../specs/commands-and-limits.md), [безопасность](../specs/security.md), [персонажи](../specs/personas.md), [README](../../README.md), [завершённая F2.5](completed/015-context-builder.md), [версии F1.7](completed/009-prompt-and-persona-versioning.md).
 
-Утверждено человеком 2026-11-22 сообщением «подтверждаю, продолжай». [План фичи](../plans/016-remove-legacy-chat-prompt.md) — черновик, ожидает утверждения.
+Утверждено человеком 2026-11-22 сообщением «подтверждаю, продолжай». [План фичи](../plans/016-remove-legacy-chat-prompt.md) утверждён; [план реализации](../impl-plans/016-remove-legacy-chat-prompt.md) — черновик, ожидает утверждения.
 
 ## Проблема или цель
 
