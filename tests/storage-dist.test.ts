@@ -45,7 +45,7 @@ test('ESM-выпуск открывает БД вне проекта без ис
       expect(inspection.prepare("SELECT name FROM sqlite_schema WHERE name IN ('chat_participants','participant_profiles','profile_facts') ORDER BY name").all())
         .toEqual([{ name: 'chat_participants' }, { name: 'participant_profiles' }, { name: 'profile_facts' }]);
       expect(inspection.prepare('SELECT version FROM schema_migrations ORDER BY version').all())
-        .toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }]);
+        .toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }]);
       expect(inspection.pragma('foreign_key_check')).toEqual([]);
     } finally { inspection.close(); }
   } finally { fixture.cleanup(); }

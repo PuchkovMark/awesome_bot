@@ -49,7 +49,7 @@ export function createLifecycleBackend(connection: Connection) {
     return state;
   }
   function remove(db:Database,chatId:ChatId):void {
-    for(const table of ['profile_facts','participant_profiles','chat_participants','bot_admin_revocation_audit','bot_admin_revocations','bot_admin_grants','bot_admin_controls','messages','chats','chat_connections']) {
+    for(const table of ['chat_content_selections','local_content_versions','profile_facts','participant_profiles','chat_participants','bot_admin_revocation_audit','bot_admin_revocations','bot_admin_grants','bot_admin_controls','messages','chats','chat_connections']) {
       db.prepare(`DELETE FROM ${table} WHERE chat_id=?`).run(chatId);
     }
     advanceClock(db);
