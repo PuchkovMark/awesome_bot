@@ -26,6 +26,11 @@ export function createAuthorizationStore(connection: Connection): AuthorizationS
               const row = db.prepare('SELECT enabled FROM chats WHERE chat_id=?').get(chatId) as { enabled: number } | undefined;
               return row ? { enabled: row.enabled === 1 } : null;
             },
+            holder(basis: GrantBasis) {
+              check(); requireInput(basis === 'creator' || basis === 'inviter');
+              const row = db.prepare('SELECT user_id AS userId FROM bot_admin_grants WHERE chat_id=? AND basis=?').get(chatId, basis) as { userId: UserId } | undefined;
+              return row?.userId ?? null;
+            },
             bases(userId: UserId) {
               check(userId);
               return (db.prepare('SELECT basis FROM bot_admin_grants WHERE chat_id=? AND user_id=? ORDER BY basis').all(chatId, userId) as { basis: GrantBasis }[]).map(row => row.basis);

@@ -17,6 +17,7 @@ export interface RevocationAudit {
 /** Доверенная инфраструктура. Представление ограничено чатом и временем callback. */
 export interface AuthorizationTransaction {
   settings(): { readonly enabled: boolean } | null;
+  holder(basis: GrantBasis): UserId | null;
   bases(userId: UserId): readonly GrantBasis[];
   isRevoked(userId: UserId): boolean;
   grant(grant: AdminGrant): void;
