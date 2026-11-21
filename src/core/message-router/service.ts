@@ -15,7 +15,7 @@ export interface RouterOptions {
  readonly storage:Storage;readonly queue:ChatQueue;readonly authorization?:RouterAuthorization;
  readonly recognizeCommand?:(message:IncomingMessage)=>ServiceCommand|null;
  readonly onDecision?:(decision:RoutingDecision)=>void;
- readonly onQueueFull?:(scope:ConnectionScope,messageId:number,route:RouteMetadata)=>Promise<void>;
+ readonly onQueueFull?:(scope:ConnectionScope,messageId:number,route:RouteMetadata,guard:{readonly signal:AbortSignal;readonly isCurrent:()=>boolean})=>Promise<void>;
 }
 export function createMessageRouter(options:RouterOptions){
  return Object.freeze({async receive(scope:ConnectionScope,input:IncomingMessage,context?:AuthorizationContext){
@@ -34,7 +34,7 @@ export function createMessageRouter(options:RouterOptions){
   });
   const decision=result.decision?fromDecision(result.decision):null;
   if(decision){try{options.onDecision?.(decision);}catch{/* Диагностика не меняет решение. */}}
-  if(result.admission.status==='queue_full'&&decision?.kind==='ordinary')await options.onQueueFull?.(scope,result.admission.messageId,decision.route);
+  if(result.admission.status==='queue_full'&&decision?.kind==='ordinary')await options.onQueueFull?.(scope,result.admission.messageId,decision.route,{signal:options.queue.signal,isCurrent:options.queue.isRunning});
   return {decision,admission:result.admission};
  }});
 }

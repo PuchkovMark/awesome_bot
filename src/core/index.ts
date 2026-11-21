@@ -17,3 +17,8 @@ export type { AgentLoopQueueOptions } from './chat-queue/agent-loop-adapter.js';
 export { routeMessage } from './message-router/routing.js';
 export { publicationDecision } from './message-router/publication.js';
 export type { RoutingInput, RoutingDecision, ServiceCommand, PublicationDecision } from './message-router/types.js';
+export { createMessageRouter } from './message-router/service.js';
+export type { RouterOptions } from './message-router/service.js';
+export { createPublicationService } from './message-router/publication-service.js';
+export type { PublicationPort, PublicationRequest, PublicationResult } from './message-router/publication-service.js';
+export type { QueueCompletion, QueueSettlement } from './chat-queue/types.js';

@@ -24,6 +24,7 @@ export function createNoticeBackend(connection:Connection,lifecycle:LifecycleBac
   confirm(scope,permit,receipt){
    lifecycle.transaction(scope,db=>{
     const data=permits.get(permit);requireInput(data?.scope===scope);
+    requireInput((db.prepare('SELECT enabled FROM chats WHERE chat_id=?').get(scope.chatId) as {enabled:number}|undefined)?.enabled===1);
     string(receipt.messageId,true);string(receipt.authorName);timestamp(receipt.timestamp);
     requireInput(data.confirmed===null||data.confirmed===receipt.messageId);
     const input={chatId:scope.chatId,messageId:receipt.messageId,userId:receipt.userId,authorName:receipt.authorName,role:'assistant' as const,text:noticeText,replyToMessageId:data.source,timestamp:receipt.timestamp};
@@ -31,6 +32,13 @@ export function createNoticeBackend(connection:Connection,lifecycle:LifecycleBac
     if(appended.status==='inserted')db.prepare("UPDATE messages SET purpose='service_notice' WHERE id=?").run(appended.id);
     else{const old=readMessage(db,scope.chatId,appended.id);requireInput(old?.purpose==='service_notice'&&old.text===noticeText&&old.replyToMessageId===data.source&&old.role==='assistant'&&old.userId===receipt.userId);}
     data.confirmed=receipt.messageId;
+   });
+  },
+  recordAnswer(scope,receipt,text,replyToMessageId){
+   lifecycle.transaction(scope,db=>{
+    requireInput((db.prepare('SELECT enabled FROM chats WHERE chat_id=?').get(scope.chatId) as {enabled:number}|undefined)?.enabled===1);
+    const appended=messages.append({chatId:scope.chatId,...receipt,role:'assistant',text,...(replyToMessageId?{replyToMessageId}:{})});
+    if(appended.status==='duplicate'){const old=readMessage(db,scope.chatId,appended.id);requireInput(old?.purpose==='conversation'&&old.role==='assistant'&&old.text===text&&old.userId===receipt.userId&&old.replyToMessageId===replyToMessageId);}
    });
   },
   discard(permit){permits.delete(permit);},

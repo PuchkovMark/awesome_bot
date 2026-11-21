@@ -117,6 +117,9 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
         return !!row;
       });
     },
+    publicationValid(token:string,work:QueueWork):boolean {
+     return transaction(token,db=>!!db.prepare("SELECT j.id FROM queue_jobs j JOIN chat_connections c ON c.chat_id=j.chat_id AND c.generation=j.generation JOIN chats s ON s.chat_id=j.chat_id WHERE j.id=? AND j.chat_id=? AND j.generation=? AND j.state='terminal' AND c.state='active' AND s.enabled=1").get(work.id,work.scope.chatId,work.scope.generation));
+    },
     finish(token: string, work: QueueWork, outcome: QueueOutcome): QueueOutcome|null {
       return transaction(token, db => {
         requireInput(['completed','failed','rate_limit','interrupted','expired','message_missing','deadline_exceeded'].includes(outcome));

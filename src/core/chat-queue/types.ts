@@ -5,12 +5,17 @@ import type { Storage, MessageInput } from '../../storage/index.js';
 import type { QueueAdmission, QueueConfig, QueueDecision, QueueOutcome, QueueStats } from '../../storage/queue-types.js';
 export type { QueueAdmission, QueueConfig, QueueDecision, QueueOutcome, QueueStats } from '../../storage/queue-types.js';
 export interface QueueHandlerInput { readonly scope: ConnectionScope; readonly messageId: number; readonly signal: AbortSignal }
-export type QueueHandler = (input: QueueHandlerInput) => Promise<QueueOutcome>;
+export type QueueHandler = (input: QueueHandlerInput) => Promise<QueueOutcome|QueueCompletion>;
+export interface QueueCompletion {readonly outcome:QueueOutcome;readonly result?:import('../agent-loop/types.js').AgentLoopResult}
+export interface QueueSettlement extends QueueHandlerInput {readonly route:import('../../storage/queue-types.js').RouteMetadata|null;readonly isCurrent:()=>boolean}
 export interface ChatQueueOptions {
+  readonly onSettled?:(work:QueueSettlement,completion:QueueCompletion)=>Promise<void>;
   readonly storage: Storage; readonly handler: QueueHandler;
   readonly config?: Partial<QueueConfig>; readonly logger?: SafeLogger;
 }
 export interface ChatQueue {
+  readonly signal:AbortSignal;
+  isRunning():boolean;
   start(): Promise<void>;
   admit(scope: ConnectionScope, message: MessageInput, decision: QueueDecision): Promise<QueueAdmission>;
   admitRouted(scope:ConnectionScope,message:MessageInput,decision:RoutedQueueCallback):Promise<RoutedAdmission>;

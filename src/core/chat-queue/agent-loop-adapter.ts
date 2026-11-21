@@ -16,14 +16,12 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
   const loop=createAgentLoop(options.client,settings);
   const prepare=options.prepare;
   return createChatQueue({storage:options.storage,...(options.logger?{logger:options.logger}:{}),
+    ...(options.onSettled?{onSettled:options.onSettled}:{}),
     config:{...options.config,loopTimeoutMs:settings.timeoutMs},
     handler:async work=>{
       const input=await prepare(work);
       const result=await loop.run({...input,signal:work.signal});
-      if(result.kind==='complete')return 'completed';
-      if(result.kind==='rate_limit')return 'rate_limit';
-      if(result.kind==='deadline_exceeded')return 'deadline_exceeded';
-      if(result.kind==='cancelled')return 'interrupted';
-      return 'failed';
+      const outcome=result.kind==='complete'?'completed':result.kind==='rate_limit'?'rate_limit':result.kind==='deadline_exceeded'?'deadline_exceeded':result.kind==='cancelled'?'interrupted':'failed';
+      return {outcome,result};
     }});
 }

@@ -7,5 +7,6 @@ export interface NoticeReceipt {readonly messageId:string;readonly userId:UserId
 export interface NoticeBackend {
  reserve(scope:ConnectionScope,messageId:number,route:RouteMetadata,interval:number,now:number):NoticePermit|null;
  confirm(scope:ConnectionScope,permit:NoticePermit,receipt:NoticeReceipt):void;
+ recordAnswer(scope:ConnectionScope,receipt:NoticeReceipt,text:string,replyToMessageId?:string):void;
  discard(permit:NoticePermit):void;
 }

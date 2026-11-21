@@ -4,9 +4,9 @@ import { queueBackend } from '../../storage/queue-registry.js';
 import type { QueueWork } from '../../storage/queue-types.js';
 import { QueueError } from './errors.js';
 import { queueConfig } from './validation.js';
-import type { ChatQueue, ChatQueueOptions, QueueOutcome, QueueStats } from './types.js';
+import type { ChatQueue, ChatQueueOptions, QueueOutcome, QueueStats, QueueCompletion } from './types.js';
 const outcomes = new Set<unknown>(['completed','failed','rate_limit','interrupted','expired','message_missing','deadline_exceeded']);
-interface Task { deadline: number; work: QueueWork; controller: AbortController; timer: ReturnType<typeof setTimeout>; done: boolean }
+interface Task { deadline: number; work: QueueWork; controller: AbortController; timer: ReturnType<typeof setTimeout>; done: boolean; publishing:boolean }
 function safeFailure(error: unknown): QueueError {
   // Не читать произвольные свойства ошибок внедрённого обработчика.
   if (error instanceof QueueError) return error;
@@ -29,6 +29,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
   let tick: ReturnType<typeof setTimeout>|undefined, stopTimer: ReturnType<typeof setTimeout>|undefined;
   let stopPromise: Promise<void>|undefined, resolveStop: (()=>void)|undefined, rejectStop: ((error:QueueError)=>void)|undefined;
   let failure: QueueError|undefined;
+  const lifetime=new AbortController();
   const tasks = new Map<number,Task>();
   const counters = {depthQueued:0,depthRunning:0,waitCount:0,waitTotalMs:0,waitMaxMs:0,rejected:0,expired:0,interrupted:0};
   const add = (a:number,b:number) => Math.min(Number.MAX_SAFE_INTEGER,a+b);
@@ -40,7 +41,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
   function clearTimers() { clearTimeout(tick); tick=undefined; clearTimeout(stopTimer); stopTimer=undefined; }
   function fault(error:unknown) {
     if (phase==='failed' || phase==='stopped') return;
-    failure=safeFailure(error); phase='failed'; clearTimers();
+    failure=safeFailure(error); phase='failed'; lifetime.abort();clearTimers();
     for(const task of tasks.values()) { task.done=true;clearTimeout(task.timer);task.controller.abort(); }
     tasks.clear(); rejectStop?.(failure);
   }
@@ -54,27 +55,36 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
     scheduled=true;
     queueMicrotask(()=>{scheduled=false;if(phase==='running')pump();});
   }
-  function finish(task:Task, outcome:QueueOutcome) {
+  function releaseTask(task:Task) {
+    task.done=true;clearTimeout(task.timer);task.controller.abort();tasks.delete(task.work.id);
+    if(phase==='stopping')completeStop();else schedule();
+  }
+  function finish(task:Task, outcome:QueueOutcome, completion?:QueueCompletion) {
     if(task.done)return;
+    if(task.publishing){releaseTask(task);return;}
     const now=performance.now();
     if(outcome!=='interrupted') {
       if(phase==='stopping' && now>=stopDeadline && stopDeadline<=task.deadline)outcome='interrupted';
       else if(now>=task.deadline)outcome='deadline_exceeded';
     }
-    task.done=true;clearTimeout(task.timer);tasks.delete(task.work.id);
-    if(outcome==='interrupted'||outcome==='deadline_exceeded')task.controller.abort();
+    if(outcome==='interrupted'||now>=task.deadline)task.controller.abort();
     try {
       const actual = backend.valid(token,task.work)?outcome:'interrupted';
       const committed=backend.finish(token,task.work,actual);
       if(committed==='interrupted')counters.interrupted=add(counters.interrupted,1);
       emit();
-      if(phase==='stopping')completeStop();else schedule();
+      if(options.onSettled&&committed&&committed!=='interrupted'&&committed!=='expired'&&committed!=='message_missing'&&phase==='running'&&performance.now()<task.deadline){
+        task.publishing=true;
+        const isCurrent=()=>{if(task.done||phase!=='running'||performance.now()>=task.deadline)return false;try{return backend.publicationValid(token,task.work);}catch{return false;}};
+        const accepted=completion&&committed===completion.outcome?completion:{outcome:committed};
+        void Promise.resolve().then(()=>{if(isCurrent())return options.onSettled!({scope:task.work.scope,messageId:task.work.messageId,route:task.work.route,signal:task.controller.signal,isCurrent},accepted);}).catch(()=>{}).finally(()=>{if(!task.done)releaseTask(task);});
+      }else releaseTask(task);
     }catch(error){task.controller.abort();fault(error);}
   }
   function launch(work:QueueWork) {
     wait(Math.max(0,Date.now()-work.receivedAt));
     const controller=new AbortController();
-    const task:Task={deadline:performance.now()+config.handlerTimeoutMs,work,controller,done:false,timer:setTimeout(()=>finish(task,'deadline_exceeded'),config.handlerTimeoutMs)};
+    const task:Task={deadline:performance.now()+config.handlerTimeoutMs,work,controller,done:false,publishing:false,timer:setTimeout(()=>finish(task,'deadline_exceeded'),config.handlerTimeoutMs)};
     tasks.set(work.id,task);
     void Promise.resolve().then(async()=>{
       if(task.done)return;
@@ -82,8 +92,10 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
       if(task.done)return;
       if(!message){finish(task,'message_missing');return;}
       if(!backend.valid(token,work)){finish(task,'interrupted');return;}
+      if(work.route){const settings=await options.storage.chats.get(work.scope);if(task.done)return;if(!settings?.enabled||settings.responseMode==='silent'||!backend.valid(token,work)){finish(task,'interrupted');return;}}
       const outcome:unknown=await handler(Object.freeze({scope:work.scope,messageId:work.messageId,signal:controller.signal}));
-      finish(task,outcomes.has(outcome)?outcome as QueueOutcome:'failed');
+      const completion:QueueCompletion=typeof outcome==='object'&&outcome!==null&&outcomes.has((outcome as QueueCompletion).outcome)?outcome as QueueCompletion:{outcome:outcomes.has(outcome)?outcome as QueueOutcome:'failed'};
+      finish(task,completion.outcome,completion);
     }).catch(()=>finish(task,'failed'));
   }
   function pump() {
@@ -91,11 +103,11 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
     try {
       backend.check(token);
       if(performance.now()>=renewAt){ backend.renew(token,config.leaseMs);renewAt=performance.now()+config.renewIntervalMs; }
-      for(const task of [...tasks.values()])if(!backend.valid(token,task.work))finish(task,'interrupted');
+      for(const task of [...tasks.values()])if(!task.publishing&&!backend.valid(token,task.work))finish(task,'interrupted');
       if(phase==='running') {
         const expired=backend.expire(token);counters.expired=add(counters.expired,expired.length);expired.forEach(wait);
         while(tasks.size<config.maxConcurrentChats) {
-          const work=backend.take(token);if(!work)break;launch(work);
+          const work=backend.take(token,[...tasks.values()].map(t=>t.work.scope.chatId));if(!work)break;launch(work);
         }
         emit();
       }
@@ -107,6 +119,8 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
     tick.unref();
   }
   const service: ChatQueue = {
+    signal:lifetime.signal,
+    isRunning(){if(phase!=='running')return false;try{backend.check(token);return true;}catch{return false;}},
     async start() {
       if(phase!=='idle')throw new QueueError('stopped');
       token=randomUUID();
@@ -137,12 +151,14 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
       }
     },
     stop() {
+      lifetime.abort();
       if(stopPromise)return stopPromise;
       if(phase==='failed')return Promise.reject(failure);
       if(phase==='idle'||phase==='stopped'){phase='stopped';return Promise.resolve();}
       stopPromise=new Promise<void>((resolve,reject)=>{resolveStop=resolve;rejectStop=reject;});
       phase='stopping';stopDeadline=performance.now()+config.stopTimeoutMs;
       stopTimer=setTimeout(()=>{for(const task of [...tasks.values()])finish(task,'interrupted');completeStop();},config.stopTimeoutMs);
+      for(const task of [...tasks.values()])if(task.publishing)releaseTask(task);
       completeStop();return stopPromise;
     },
     stats():QueueStats { if(phase==='running'||phase==='stopping')emit();return Object.freeze({...counters}); },
