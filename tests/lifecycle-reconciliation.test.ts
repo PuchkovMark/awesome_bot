@@ -66,3 +66,14 @@ test('неверный ответ источника не оставляет о�
  try{expect(await life.verify('vk:1')).toEqual({status:'uncertain'});expect(()=>life.current('vk:1')).toThrow('uncertain_connection');}
  finally{await storage.close();}
 });
+
+test('подтверждённый отдельный выход снимает только explicit при неполном составе',async()=>{
+ const storage=await openStorage(':memory:');let observation:LifecycleObservation={confidence:'confirmed',bot:'present',creatorId:'vk:a'};
+ const life=createLifecycleService({storage,ownerId:'vk:owner',source:{async observe(){return observation;}}});
+ try{
+  const scope=(await life.verify('vk:1')).scope!;await storage.chats.create(scope,{responseMode:'mention',enabled:true,createdAt:0});
+  await storage.authorization.transaction(scope,tx=>tx.grant({userId:'vk:a',basis:'explicit',grantedAt:0,grantedBy:'vk:owner'}));
+  observation={confidence:'confirmed',bot:'present',members:{complete:false,ids:[]},departedIds:['vk:a']};await life.verify('vk:1');
+  expect(await storage.authorization.transaction(scope,tx=>tx.bases('vk:a'))).toEqual(['creator']);
+ }finally{await storage.close();}
+});

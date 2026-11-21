@@ -3,18 +3,19 @@ import type { ChatId, ConnectionScope, LifecycleObservation } from '../contracts
 import type { Connection } from './connection.js';
 import { advanceClock } from './lifecycle-clock.js';
 import { StorageError } from './errors.js';
-import { compositeId, requireInput } from './validation.js';
+import { compositeId, requireInput, timestamp } from './validation.js';
 
 interface State { chatId: ChatId; generation: number; revision: number; state: 'active' | 'uncertain'; creatorId:string|null; inviterId:string|null }
 interface Expected { chatId: ChatId; generation: number | null; revision: number | null; clock: number }
 export interface Verification { readonly expected: Expected }
-export function installAuthorities(db:Database,chatId:ChatId) {
+export function installAuthorities(db:Database,chatId:ChatId,grantedAt=Date.now()) {
+  timestamp(grantedAt);
   for(const [basis,column]of [['creator','creator_id'],['inviter','inviter_id']]as const) {
     db.prepare(`INSERT INTO bot_admin_grants(chat_id,user_id,basis,granted_at,granted_by)
-      SELECT c.chat_id,c.${column},?,s.created_at,NULL FROM chat_connections c JOIN chats s USING(chat_id)
+      SELECT c.chat_id,c.${column},?,?,NULL FROM chat_connections c JOIN chats s USING(chat_id)
       WHERE c.chat_id=? AND c.state='active' AND c.${basis}_applied=0 AND c.${column} IS NOT NULL
         AND NOT EXISTS(SELECT 1 FROM bot_admin_revocations r WHERE r.chat_id=c.chat_id AND r.user_id=c.${column})
-      ON CONFLICT DO NOTHING`).run(basis,chatId);
+      ON CONFLICT DO NOTHING`).run(basis,grantedAt,chatId);
     db.prepare(`UPDATE chat_connections SET ${basis}_applied=1 WHERE chat_id=? AND state='active' AND EXISTS(SELECT 1 FROM chats WHERE chat_id=?)`).run(chatId,chatId);
   }
 }
@@ -80,7 +81,7 @@ export function createLifecycleBackend(connection: Connection) {
         const {chatId}=proof.expected;
         requireInput(['confirmed','uncertain','unavailable'].includes(observation.confidence));
         requireInput(['present','absent','unknown'].includes(observation.bot));
-        for(const userId of [observation.creatorId,observation.inviterId,...(observation.members?.ids??[])]) {
+        for(const userId of [observation.creatorId,observation.inviterId,...(observation.members?.ids??[]),...(observation.departedIds??[])]) {
           if(userId==null)continue;compositeId(userId);requireInput(userId.split(':')[0]===chatId.split(':')[0]);
         }
         if(observation.creatorChanged!==undefined)requireInput(typeof observation.creatorChanged==='boolean');
@@ -96,6 +97,7 @@ export function createLifecycleBackend(connection: Connection) {
         if(!state)create(db,chatId,'active');
         else bump(db,chatId);
         state=read(db,chatId)!;
+        for(const userId of observation.departedIds??[])db.prepare("DELETE FROM bot_admin_grants WHERE chat_id=? AND user_id=? AND basis='explicit'").run(chatId,userId);
         if(observation.members?.complete) {
           const present=new Set(observation.members.ids);
           const explicit=db.prepare("SELECT user_id AS userId FROM bot_admin_grants WHERE chat_id=? AND basis='explicit'").all(chatId) as {userId:import('../contracts/index.js').UserId}[];

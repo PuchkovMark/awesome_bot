@@ -7,9 +7,9 @@ export function observationOf(value:unknown,platform:string):LifecycleObservatio
   if(!value||typeof value!=='object')return unavailable;
   const row=value as Record<string,unknown>;
   if(
-   Object.keys(row).some(k=>!['confidence','bot','creatorId','inviterId','creatorChanged','members'].includes(k)))return unavailable;
+   Object.keys(row).some(k=>!['confidence','bot','creatorId','inviterId','creatorChanged','members','departedIds'].includes(k)))return unavailable;
   if(!['confirmed','uncertain','unavailable'].includes(row.confidence as string)||!['present','absent','unknown'].includes(row.bot as string))return unavailable;
-  const result: {confidence:LifecycleObservation['confidence'];bot:LifecycleObservation['bot'];creatorId?:Exclude<LifecycleObservation['creatorId'],undefined>;inviterId?:Exclude<LifecycleObservation['inviterId'],undefined>;creatorChanged?:boolean;members?:{complete:boolean;ids:NonNullable<LifecycleObservation['members']>['ids']}}={confidence:row.confidence as LifecycleObservation['confidence'],bot:row.bot as LifecycleObservation['bot']};
+  const result: {confidence:LifecycleObservation['confidence'];bot:LifecycleObservation['bot'];creatorId?:Exclude<LifecycleObservation['creatorId'],undefined>;inviterId?:Exclude<LifecycleObservation['inviterId'],undefined>;creatorChanged?:boolean;departedIds?:readonly import('../../contracts/index.js').UserId[];members?:{complete:boolean;ids:NonNullable<LifecycleObservation['members']>['ids']}}={confidence:row.confidence as LifecycleObservation['confidence'],bot:row.bot as LifecycleObservation['bot']};
   for(const key of ['creatorId','inviterId'] as const)if(Object.hasOwn(row,key)) {
    const id=row[key];if(id!==null&&(!validId(id)||platformOf(id)!==platform))return unavailable;
    result[key]=id as NonNullable<LifecycleObservation['creatorId']>|null;
@@ -21,6 +21,11 @@ export function observationOf(value:unknown,platform:string):LifecycleObservatio
    if(Object.keys(members).some(k=>!['ids','complete'].includes(k))||typeof members.complete!=='boolean'||!Array.isArray(members.ids))return unavailable;
    if(members.ids.some(id=>!validId(id)||platformOf(id)!==platform))return unavailable;
    result.members={complete:members.complete,ids:Object.freeze([...members.ids])};
+  }
+  if(Object.hasOwn(row,'departedIds')) {
+   if(!Array.isArray(row.departedIds)||row.departedIds.some(id=>!validId(id)||platformOf(id)!==platform))return unavailable;
+   if(result.members?.ids.some(id=>(row.departedIds as unknown[]).includes(id)))return unavailable;
+   result.departedIds=Object.freeze([...row.departedIds]);
   }
   return Object.freeze(result);
  }catch{return unavailable;}

@@ -6,6 +6,8 @@ import { validId } from '../authorization/validation.js';
 
 export function createLifecycleService(options:{readonly storage:Storage;readonly ownerId:UserId;readonly source:LifecycleSource}) {
   if(!validId(options.ownerId))throw new TypeError('Lifecycle: invalid_owner');
+  const ownerId=options.ownerId;
+  const source=options.source;
   const backend=lifecycleBackend(options.storage);
   const owners=new WeakSet<object>();
   return Object.freeze({
@@ -15,13 +17,13 @@ export function createLifecycleService(options:{readonly storage:Storage;readonl
       if(!validId(chatId))throw new TypeError('Lifecycle: invalid_chat');
       const proof=backend.begin(chatId);
       let observation;
-      try {observation=await options.source.observe(Object.freeze({chatId}));}
+      try {observation=await source.observe(Object.freeze({chatId}));}
       catch {observation={confidence:'unavailable' as const,bot:'unknown' as const};}
       return backend.apply(proof,observationOf(observation,chatId.split(':')[0]!));
     },
     /** Личность до вызова подтверждает приложение; функция не аутентифицирует VK. */
     owner(chatId:ChatId,userId:UserId) {
-      if(!validId(chatId)||userId!==options.ownerId)throw new TypeError('Lifecycle: forbidden');
+      if(!validId(chatId)||userId!==ownerId)throw new TypeError('Lifecycle: forbidden');
       const proof=backend.begin(chatId);owners.add(proof);return proof;
     },
     decide(proof:ReturnType<typeof backend.begin>,decision:'continue'|'new') {

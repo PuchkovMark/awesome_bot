@@ -25,6 +25,10 @@ test('ESM-выпуск открывает БД вне проекта без ис
         await storage.messages.append(scope,{chatId:'vk:1',userId:'vk:2',messageId:'1',authorName:'',role:'user',text:'кот',timestamp:0});
         const rows = await storage.messages.list(scope, {limit:1});
         if (rows.length !== 1 || rows[0].text !== 'кот') throw new Error('Incorrect journal');
+        const next=life.decide(life.owner('vk:1','vk:owner'),'new');
+        if(next.generation===scope.generation || (await storage.messages.list(next,{limit:1})).length)throw new Error('Incorrect reset');
+        let rejected=false;try{await storage.messages.list(scope,{limit:1});}catch(e){rejected=e.code==='stale_scope';}
+        if(!rejected)throw new Error('Old scope accepted');
       } finally { await storage.close(); }
       process.stdout.write('STORAGE_COMPLETED');
     `;

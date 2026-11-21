@@ -12,6 +12,7 @@ export interface LifecycleObservation {
   readonly creatorId?: UserId | null;
   readonly inviterId?: UserId | null;
   readonly creatorChanged?: boolean;
+  readonly departedIds?: readonly UserId[];
   readonly members?: { readonly complete: boolean; readonly ids: readonly UserId[] };
 }
 /** Внедряется приложением; SDK-ответ не превращается в confirmed автоматически. */
