@@ -13,7 +13,10 @@ export interface QueueConfig {
   readonly stopTimeoutMs: number;
 }
 export type QueueOutcome = 'completed' | 'failed' | 'rate_limit' | 'interrupted' | 'expired' | 'message_missing' | 'deadline_exceeded';
-export type QueueAdmission = { readonly status: 'queued' | 'not_needed' | 'duplicate' | 'queue_full'; readonly messageId: number } | { readonly status: 'stopped' };
+export type QueueAdmission =
+  | { readonly status: 'queued'; readonly messageId: number; readonly jobId: number }
+  | { readonly status: 'not_needed' | 'duplicate' | 'queue_full'; readonly messageId: number }
+  | { readonly status: 'stopped' };
 export interface QueueRoutingSnapshot { readonly message: StoredMessage; readonly receivedAt: number }
 /** Доверенная чистая функция: без I/O, случайности, часов и изменения состояния. */
 export type QueueDecision = (input: QueueRoutingSnapshot) => boolean;

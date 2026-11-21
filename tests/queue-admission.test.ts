@@ -40,3 +40,16 @@ test('решение видит вставленный неизменяемый 
  q.release('o');
  }finally{await storage.close();}
 });
+
+test('принятая постановка выдаёт jobId для scoped-чтения, отдельно от ссылки журнала',async()=>{
+ const storage=await openStorage(':memory:');try{
+ const scope=scopeFor(storage,'vk:a'),q=queueBackend(storage);q.acquire('o',30000,10000);
+ q.admit('o',scope,message('journal-only'),()=>false,queueConfig());
+ const admitted=q.admit('o',scope,message('queued'),()=>true,queueConfig());expect(admitted.status).toBe('queued');
+ if(admitted.status==='queued'){
+  expect(admitted.messageId).not.toBe(admitted.jobId);
+  expect(await storage.queue.get(scope,admitted.jobId)).toMatchObject({id:admitted.jobId,messageId:admitted.messageId,state:'queued'});
+ }
+ q.release('o');
+ }finally{await storage.close();}
+});

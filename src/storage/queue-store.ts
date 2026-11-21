@@ -43,8 +43,8 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
         if (count(null) >= config.maxQueuedTotal || count(scope.chatId) >= config.maxQueuedPerChat) return {status:'queue_full', messageId:appended.id};
         const pending=db.prepare("SELECT id FROM queue_jobs WHERE chat_id=? AND state IN ('queued','running') LIMIT 1").get(scope.chatId);
         if(!pending)turn(db,scope);
-        db.prepare("INSERT INTO queue_jobs(chat_id,generation,message_id,received_at,expires_at,state) VALUES(?,?,?,?,?,'queued')").run(scope.chatId,scope.generation,appended.id,now,expires);
-        return {status:'queued',messageId:appended.id};
+        const inserted=db.prepare("INSERT INTO queue_jobs(chat_id,generation,message_id,received_at,expires_at,state) VALUES(?,?,?,?,?,'queued') RETURNING id").get(scope.chatId,scope.generation,appended.id,now,expires) as {id:number};
+        return {status:'queued',messageId:appended.id,jobId:inserted.id};
       }));
     },
     acquire(token: string, leaseMs: number, safetyMs: number) {
