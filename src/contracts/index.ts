@@ -12,3 +12,4 @@ export type { JsonPrimitive, JsonValue, JsonObject, ObjectParameterSchema } from
 export type { ToolContext, ToolAccess, PlatformAvailability, ToolDefinition } from './tool.js';
 export type { BotRole, GrantBasis, AuthorizationAction, AuthorizationDecision, AuthorizationDenial, AuthorizationContext } from './authorization.js';
 export type { ConnectionScope, LifecycleObservation, LifecycleSource } from './lifecycle.js';
+export type { ContentKind, LocalContentKind, GlobalVersionRef, LocalVersionRef, VersionRef, ContentVersion, VersionLimits, VersionInput, AppendVersionResult, SelectionResult } from './versioning.js';

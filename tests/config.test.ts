@@ -12,6 +12,7 @@ test('валидный неизменяемый конфиг и info по умо
   const env = { ...valid, PRIVATE_EXTRA: 'not copied' };
   const { config } = loadConfig({ env, readFile: absent });
   expect(config).toEqual({
+    versioning: {textMaxLength:32000,maxPerEntity:100},
     authorization: { ownerId: valid.BOT_OWNER_ID, reasonMaxLength: 500, reasonRetentionDays: 90 },
     vk: { token: valid.VK_TOKEN },
     llm: { provider: 'opencode', apiKey: valid.OPENCODE_API_KEY, model: valid.LLM_MODEL },

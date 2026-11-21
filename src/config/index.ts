@@ -1,3 +1,4 @@
+import { defaultVersionLimits } from '../storage/version-limits.js';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseEnv } from 'node:util';
@@ -50,6 +51,7 @@ export function loadConfig(options: ConfigOptions = {}): LoadedConfig {
     return number;
   }
   const config = Object.freeze({
+    versioning: Object.freeze({textMaxLength:positive('VERSION_TEXT_MAX_LENGTH',defaultVersionLimits.textMaxLength),maxPerEntity:positive('VERSION_MAX_PER_ENTITY',defaultVersionLimits.maxPerEntity)}),
     authorization: Object.freeze({
       ownerId: values.BOT_OWNER_ID as UserId,
       reasonMaxLength: positive('ADMIN_REVOCATION_REASON_MAX_LENGTH', 500),
