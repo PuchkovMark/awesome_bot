@@ -3,7 +3,7 @@ import type { Connection } from './connection.js';
 import type { MessageInput, MessageStore, StoredMessage } from './legacy-types.js';
 import { compositeId, object, requireInput, string, timestamp } from './validation.js';
 
-const fields = ['chatId', 'messageId', 'userId', 'authorName', 'role', 'text', 'replyToMessageId', 'timestamp'];
+const fields = ['chatId', 'messageId', 'userId', 'authorName', 'role', 'text', 'replyToMessageId', 'timestamp', 'attachmentCount'];
 function validateMessage(message: MessageInput): void {
   object(message, fields);
   compositeId(message.chatId); compositeId(message.userId);
@@ -11,11 +11,12 @@ function validateMessage(message: MessageInput): void {
   string(message.messageId, true); string(message.authorName); string(message.text);
   requireInput(message.role === 'user' || message.role === 'assistant');
   timestamp(message.timestamp);
+  if(message.attachmentCount!==undefined&&message.attachmentCount!==null)requireInput(Number.isSafeInteger(message.attachmentCount)&&message.attachmentCount>=0);
   if ('replyToMessageId' in message) string(message.replyToMessageId, true);
 }
 const columns = `id, chat_id AS chatId, platform_message_id AS messageId,
   user_id AS userId, author_name AS authorName, role, text,
-  reply_to_message_id AS replyToMessageId, timestamp, purpose`;
+  reply_to_message_id AS replyToMessageId, timestamp, purpose, attachment_count AS attachmentCount`;
 type MessageRow = Omit<StoredMessage, 'replyToMessageId'> & { replyToMessageId: string | null };
 function fromRow(row: MessageRow): StoredMessage {
   const { replyToMessageId, ...message } = row;
@@ -27,11 +28,11 @@ export function createMessageStore(connection: Connection, contextOnly=false): S
       return connection.run((db) => {
         validateMessage(message);
         const inserted = db.prepare(`INSERT INTO messages
-          (chat_id, platform_message_id, user_id, author_name, role, text, reply_to_message_id, timestamp)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          (chat_id, platform_message_id, user_id, author_name, role, text, reply_to_message_id, timestamp, attachment_count)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(chat_id, platform_message_id) DO NOTHING RETURNING id`).get(
           message.chatId, message.messageId, message.userId, message.authorName, message.role,
-          message.text, message.replyToMessageId ?? null, message.timestamp,
+          message.text, message.replyToMessageId ?? null, message.timestamp, message.attachmentCount ?? null,
         ) as { id: number } | undefined;
         if (inserted) return { status: 'inserted', id: inserted.id };
         const existing = db.prepare('SELECT id FROM messages WHERE chat_id = ? AND platform_message_id = ?')

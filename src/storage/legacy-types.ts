@@ -8,6 +8,7 @@ export interface MessageInput {
   readonly authorName: string;
   readonly role: 'user' | 'assistant';
   readonly text: string;
+  readonly attachmentCount?: number | null;
   readonly replyToMessageId?: PlatformMessageId;
   readonly timestamp: Timestamp;
 }

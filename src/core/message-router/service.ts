@@ -30,7 +30,7 @@ export function createMessageRouter(options:RouterOptions){
   if(!settings.enabled){
    const decision=routeMessage({message,settings,...(service?{service}:{})});return {decision,admission:null};
   }
-  const record={chatId:message.chatId,messageId:message.messageId,userId:message.userId,authorName:message.authorName,role:'user' as const,text:message.text,timestamp:message.timestamp,...(message.replyToMessageId?{replyToMessageId:message.replyToMessageId}:{})};
+  const record={chatId:message.chatId,messageId:message.messageId,userId:message.userId,authorName:message.authorName,role:'user' as const,attachmentCount:message.attachments.length,text:message.text,timestamp:message.timestamp,...(message.replyToMessageId?{replyToMessageId:message.replyToMessageId}:{})};
   const result=await options.queue.admitRouted(scope,record,snapshot=>{
    const decision=routeMessage({message,settings:snapshot.settings,...(service?{service}:{})});
    return {reason:decision.reason,route:decision.kind==='ordinary'?decision.route:null};
