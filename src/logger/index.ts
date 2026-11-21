@@ -25,7 +25,7 @@ export function createLogger(options: LoggerOptions = {}): SafeLogger {
   const event: SafeLogger['event'] = (input, selectedLevel) => {
     const clean = safeEvent(input);
     if (!clean) return;
-    const target = selectedLevel ?? (clean.event === 'config_loaded' ? 'info' : 'error');
+    const target = selectedLevel ?? ((clean.event === 'config_loaded' || clean.event === 'queue_stats') ? 'info' : 'error');
     if (!eventLevels.includes(target)) return;
     sink[target](clean);
   };
