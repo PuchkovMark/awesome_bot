@@ -7,3 +7,4 @@ export type { AuthorizationScheduler } from './authorization/maintenance.js';
 export { createLifecycleService } from './lifecycle/service.js';
 export type { AgentLoop, AgentLoopInput, AgentLoopMessage, AgentLoopOptions, AgentLoopOutcome,
   AgentLoopResult, AgentLoopSummary, AgentLoopErrorCode, TokenCounter } from './agent-loop/types.js';
+export { createAgentLoop } from './agent-loop/service.js';
