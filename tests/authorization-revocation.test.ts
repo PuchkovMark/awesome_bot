@@ -25,7 +25,7 @@ test('отзыв снимает все основания, сохраняет з
     expect(await s.restore(owner, 'vk:user')).toMatchObject({ allowed: true });
     expect(await s.audit(owner, 'vk:user')).toEqual({ allowed: true, value: null });
     expect(await storage.authorization.transaction(scopeFor(storage, 'vk:one'), tx => ({ blocked: tx.recoveryBlocked(), revoked: tx.isRevoked('vk:user'), bases: tx.bases('vk:user') }))).toEqual({ blocked: true, revoked: false, bases: [] });
-    expect(await s.grant(owner, 'vk:user', proof)).toMatchObject({ allowed: true });
+    expect(await s.grant(owner, 'vk:user', await s.confirmMembership(scopeForService(s,'vk:one'),'vk:user'))).toMatchObject({ allowed: true });
     expect(await s.revoke(owner, 'vk:user', 'reason')).toEqual({ allowed: false, code: 'conflict' });
     expect(JSON.stringify(member)).not.toContain('private');
   } finally { await f.close(); }

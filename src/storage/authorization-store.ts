@@ -13,6 +13,13 @@ export function createAuthorizationStore(connection: Connection): SyncAuthorizat
         const scope = chatId.slice(0, chatId.indexOf(':'));
         return db.transaction(() => {
           let active = true;
+          function touch(changes:number) {
+            if(!changes)return;
+            const state=db.prepare('SELECT revision FROM chat_connections WHERE chat_id=?').get(chatId) as {revision:number}|undefined;
+            if(!state)return;
+            requireInput(state.revision<Number.MAX_SAFE_INTEGER);
+            db.prepare('UPDATE chat_connections SET revision=revision+1 WHERE chat_id=?').run(chatId);
+          }
           function check(userId?: UserId) {
             requireInput(active);
             if (userId !== undefined) {
@@ -44,12 +51,14 @@ export function createAuthorizationStore(connection: Connection): SyncAuthorizat
               check(grant.userId); timestamp(grant.grantedAt);
               requireInput(allBases.includes(grant.basis));
               if (grant.grantedBy !== null) compositeId(grant.grantedBy);
-              db.prepare('INSERT INTO bot_admin_grants(chat_id,user_id,basis,granted_at,granted_by) VALUES (?,?,?,?,?) ON CONFLICT(chat_id,user_id,basis) DO NOTHING')
-                .run(chatId, grant.userId, grant.basis, grant.grantedAt, grant.grantedBy);
+              const changed=db.prepare('INSERT INTO bot_admin_grants(chat_id,user_id,basis,granted_at,granted_by) VALUES (?,?,?,?,?) ON CONFLICT(chat_id,user_id,basis) DO NOTHING')
+                .run(chatId, grant.userId, grant.basis, grant.grantedAt, grant.grantedBy).changes;
+              touch(changed);
             },
             remove(userId: UserId, all: boolean) {
               check(userId); requireInput(typeof all === 'boolean');
-              db.prepare("DELETE FROM bot_admin_grants WHERE chat_id=? AND user_id=? AND (?=1 OR basis='explicit')").run(chatId, userId, all ? 1 : 0);
+              const changed=db.prepare("DELETE FROM bot_admin_grants WHERE chat_id=? AND user_id=? AND (?=1 OR basis='explicit')").run(chatId, userId, all ? 1 : 0).changes;
+              touch(changed);
             },
             revoke(audit: Omit<RevocationAudit, 'chatId'>) {
               check(audit.userId); compositeId(audit.revokedBy); timestamp(audit.revokedAt);
@@ -63,7 +72,7 @@ export function createAuthorizationStore(connection: Connection): SyncAuthorizat
             restore(userId: UserId) {
               check(userId);
               db.prepare('DELETE FROM bot_admin_revocation_audit WHERE chat_id=? AND user_id=?').run(chatId, userId);
-              db.prepare('DELETE FROM bot_admin_revocations WHERE chat_id=? AND user_id=?').run(chatId, userId);
+              touch(db.prepare('DELETE FROM bot_admin_revocations WHERE chat_id=? AND user_id=?').run(chatId, userId).changes);
             },
             audit(userId: UserId): RevocationAudit | null {
               check(userId);

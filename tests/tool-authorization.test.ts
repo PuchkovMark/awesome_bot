@@ -12,10 +12,10 @@ async function fixture() {
   const owner = s.context({ scope: scopeForService(s, 'test-a:one'), userId: 'vk:owner', kind: 'owner' });
   const authorization = s.context({ scope: scopeForService(s, 'test-a:one'), userId: 'test-a:admin' });
   const context: ToolContext = { chatId: 'test-a:one', platform: 'test-a', userId: 'test-a:admin', isAdmin: true, adapter: new FakeAdapter('test-a'), authorization };
-  const membership = await s.confirmMembership(scopeForService(s, 'test-a:one'), 'test-a:new');
+  const membership = () => s.confirmMembership(scopeForService(s, 'test-a:one'), 'test-a:new');
   const execute = async (parameters: { userId: UserId }, ctx: ToolContext) => {
     const validated = toolAuthorization(ctx);
-    return validated.allowed ? s.grant(validated.value, parameters.userId, membership) : validated;
+    return validated.allowed ? s.grant(validated.value, parameters.userId, await membership()) : validated;
   };
   const bases = () => f.storage.authorization.transaction(scopeFor(f.storage, 'test-a:one'), tx => tx.bases('test-a:new'));
   return { ...f, s, owner, context, authorization, execute, bases };

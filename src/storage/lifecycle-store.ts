@@ -5,13 +5,23 @@ import { advanceClock } from './lifecycle-clock.js';
 import { StorageError } from './errors.js';
 import { compositeId, requireInput } from './validation.js';
 
-interface State { chatId: ChatId; generation: number; revision: number; state: 'active' | 'uncertain' }
+interface State { chatId: ChatId; generation: number; revision: number; state: 'active' | 'uncertain'; creatorId:string|null; inviterId:string|null }
 interface Expected { chatId: ChatId; generation: number | null; revision: number | null; clock: number }
 export interface Verification { readonly expected: Expected }
+export function installAuthorities(db:Database,chatId:ChatId) {
+  for(const [basis,column]of [['creator','creator_id'],['inviter','inviter_id']]as const) {
+    db.prepare(`INSERT INTO bot_admin_grants(chat_id,user_id,basis,granted_at,granted_by)
+      SELECT c.chat_id,c.${column},?,s.created_at,NULL FROM chat_connections c JOIN chats s USING(chat_id)
+      WHERE c.chat_id=? AND c.state='active' AND c.${basis}_applied=0 AND c.${column} IS NOT NULL
+        AND NOT EXISTS(SELECT 1 FROM bot_admin_revocations r WHERE r.chat_id=c.chat_id AND r.user_id=c.${column})
+      ON CONFLICT DO NOTHING`).run(basis,chatId);
+    db.prepare(`UPDATE chat_connections SET ${basis}_applied=1 WHERE chat_id=? AND state='active' AND EXISTS(SELECT 1 FROM chats WHERE chat_id=?)`).run(chatId,chatId);
+  }
+}
 export function createLifecycleBackend(connection: Connection) {
   const scopes = new WeakSet<object>(); const checks = new WeakSet<object>();
   function read(db: Database, chatId: ChatId): State | null {
-    return db.prepare('SELECT chat_id AS chatId,generation,revision,state FROM chat_connections WHERE chat_id=?').get(chatId) as State | undefined ?? null;
+    return db.prepare('SELECT chat_id AS chatId,generation,revision,state,creator_id AS creatorId,inviter_id AS inviterId FROM chat_connections WHERE chat_id=?').get(chatId) as State | undefined ?? null;
   }
   function clock(db: Database) {return (db.prepare('SELECT value FROM lifecycle_clock WHERE singleton=1').get() as {value:number}).value;}
   function matches(db: Database, expected: Expected) {
@@ -28,7 +38,7 @@ export function createLifecycleBackend(connection: Connection) {
   }
   function create(db:Database,chatId:ChatId,state:State['state']) {
     const generation=advanceClock(db);
-    db.prepare('INSERT INTO chat_connections VALUES (?,?,0,?)').run(chatId,generation,state);
+    db.prepare('INSERT INTO chat_connections(chat_id,generation,revision,state) VALUES (?,?,0,?)').run(chatId,generation,state);
   }
   function assertScope(db:Database,scope:ConnectionScope) {
     requireInput(typeof scope==='object' && scope!==null && scopes.has(scope));
@@ -84,6 +94,18 @@ export function createLifecycleBackend(connection: Connection) {
         if(!state)create(db,chatId,'active');
         else bump(db,chatId);
         state=read(db,chatId)!;
+        if(observation.members?.complete) {
+          const present=new Set(observation.members.ids);
+          const explicit=db.prepare("SELECT user_id AS userId FROM bot_admin_grants WHERE chat_id=? AND basis='explicit'").all(chatId) as {userId:import('../contracts/index.js').UserId}[];
+          for(const member of explicit)if(!present.has(member.userId))db.prepare("DELETE FROM bot_admin_grants WHERE chat_id=? AND user_id=? AND basis='explicit'").run(chatId,member.userId);
+        }
+        if(observation.creatorId!=null||observation.creatorChanged) {
+          const next=observation.creatorId??null;
+          db.prepare("DELETE FROM bot_admin_grants WHERE chat_id=? AND basis='creator' AND (? IS NULL OR user_id<>?)").run(chatId,next,next);
+          if(state.creatorId!==next)db.prepare('UPDATE chat_connections SET creator_id=?,creator_applied=0 WHERE chat_id=?').run(next,chatId);
+        }
+        if(state.inviterId===null && observation.inviterId!=null)db.prepare('UPDATE chat_connections SET inviter_id=? WHERE chat_id=?').run(observation.inviterId,chatId);
+        installAuthorities(db,chatId);
         return {status:'applied' as const,scope:issue(state)};
       }).immediate());
     },

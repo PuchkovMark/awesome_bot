@@ -1,3 +1,4 @@
+import { observationOf } from './source.js';
 import type { ChatId, UserId, LifecycleSource } from '../../contracts/index.js';
 import type { Storage } from '../../storage/index.js';
 import { lifecycleBackend } from '../../storage/lifecycle-store.js';
@@ -16,7 +17,7 @@ export function createLifecycleService(options:{readonly storage:Storage;readonl
       let observation;
       try {observation=await options.source.observe(Object.freeze({chatId}));}
       catch {observation={confidence:'unavailable' as const,bot:'unknown' as const};}
-      return backend.apply(proof,observation);
+      return backend.apply(proof,observationOf(observation,chatId.split(':')[0]!));
     },
     /** Личность до вызова подтверждает приложение; функция не аутентифицирует VK. */
     owner(chatId:ChatId,userId:UserId) {

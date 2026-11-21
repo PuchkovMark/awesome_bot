@@ -27,12 +27,12 @@ test('снятие прав и выключение после предвари�
   try {
     const proof = await s.confirmMembership(scopeForService(s, 'vk:one'), 'vk:user');
     expect(await s.grant(member, 'vk:user', proof)).toMatchObject({ allowed: false });
-    await s.grant(owner, 'vk:user', proof);
+    await s.grant(owner, 'vk:user', await s.confirmMembership(scopeForService(s,'vk:one'),'vk:user'));
     expect((await s.check(member, 'admin.grant')).allowed).toBe(true);
     await s.remove(owner, 'vk:user');
     expect((await s.grant(member, 'vk:other', await s.confirmMembership(scopeForService(s, 'vk:one'), 'vk:other'))).allowed).toBe(false);
     expect(await storage.authorization.transaction(scopeFor(storage, 'vk:one'), tx => tx.bases('vk:other'))).toEqual([]);
-    await s.grant(owner, 'vk:user', proof);
+    await s.grant(owner, 'vk:user', await s.confirmMembership(scopeForService(s,'vk:one'),'vk:user'));
     expect((await s.check(member, 'admin.grant')).allowed).toBe(true);
     await storage.chats.update(scopeFor(storage, 'vk:one'), { enabled: false });
     expect(await s.grant(member, 'vk:other', await s.confirmMembership(scopeForService(s, 'vk:one'), 'vk:other'))).toEqual({ allowed: false, code: 'disabled' });

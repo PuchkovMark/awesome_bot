@@ -1,3 +1,4 @@
+import { installAuthorities } from './lifecycle-store.js';
 import type { SyncStore } from './legacy-types.js';
 import type { ChatId } from '../contracts/index.js';
 import type { Connection } from './connection.js';
@@ -43,6 +44,7 @@ export function createChatStore(connection: Connection): SyncStore<ChatStore> {
           chatId, input.title ?? null, input.systemPrompt ?? null, input.responseMode,
           input.timezone ?? 'Europe/Moscow', input.enabled ? 1 : 0, input.createdAt,
         );
+        installAuthorities(db,chatId);
         const settings = read(chatId);
         if (!settings) throw new Error('Missing stored settings');
         return { status: result.changes === 1 ? 'created' : 'existing', settings };
