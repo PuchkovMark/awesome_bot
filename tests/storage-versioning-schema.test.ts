@@ -1,3 +1,4 @@
+import {participantFixture} from './helpers/participant-fixture.js';
 import Database from 'better-sqlite3';
 import {expect,test} from 'vitest';
 import {migrate} from '../src/storage/migrate.js';
@@ -10,7 +11,12 @@ test('миграция 6 сохраняет данные версии 5 и пр�
  const db=new Database(':memory:');db.pragma('foreign_keys=ON');try{
   migrate(db,migrations.slice(0,5));
   db.exec("INSERT INTO chat_connections(chat_id,generation,revision,state) VALUES ('vk:1',1,0,'active'),('vk:2',2,0,'active')");
+  const pf=participantFixture(db);pf.chat('vk:1');pf.participant('vk:1','vk:u');pf.profile('vk:1','vk:u');pf.fact('vk:1','vk:u');
+  db.exec("INSERT INTO messages(chat_id,platform_message_id,user_id,author_name,role,text,timestamp) VALUES ('vk:1','1','vk:u','','user','сохранённыйкот',0); INSERT INTO bot_admin_grants VALUES ('vk:1','vk:u','creator',0,NULL); INSERT INTO bot_admin_revocations VALUES ('vk:1','vk:r','vk:owner',1); INSERT INTO bot_admin_revocation_audit VALUES ('vk:1','vk:r',1,0,0,'private'); INSERT INTO bot_admin_controls VALUES ('vk:1',1)");
+  const oldTables=['messages','chats','chat_participants','participant_profiles','profile_facts','bot_admin_grants','bot_admin_revocations','bot_admin_revocation_audit','bot_admin_controls','lifecycle_clock'];
+  const saved=oldTables.map(t=>db.prepare('SELECT * FROM '+t).all());
   const before=db.prepare('SELECT * FROM schema_migrations').all(),connections=db.prepare('SELECT * FROM chat_connections').all();migrate(db);migrate(db);
+  oldTables.forEach((t,i)=>expect(db.prepare('SELECT * FROM '+t).all()).toEqual(saved[i]));expect(db.prepare("SELECT rowid FROM messages_fts WHERE messages_fts MATCH 'сохранённыйкот'").all()).toHaveLength(1);
   expect(db.prepare('SELECT * FROM schema_migrations WHERE version<=5').all()).toEqual(before);expect(db.prepare('SELECT * FROM chat_connections').all()).toEqual(connections);
   db.exec("INSERT INTO global_content_versions VALUES ('system_prompt','base',1,'literal',0),('persona','p',1,'global',0)");
   expect(()=>db.exec("INSERT INTO local_content_versions VALUES ('vk:1',1,'system_prompt','p',1,'bad',0)")).toThrow();
