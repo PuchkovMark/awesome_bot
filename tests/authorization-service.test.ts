@@ -18,7 +18,7 @@ test('назначения, совмещение оснований и защи�
     expect(await s.applyTrustedInitialAuthorities('vk:two', { creatorId: null, inviterId: null })).toMatchObject({ allowed: true });
     const other = s.context({ chatId: 'vk:two', userId: 'vk:user' });
     expect(await s.role(other)).toEqual({ allowed: true, value: 'member' });
-  } finally { await storage.close(); }
+  } finally { s.dispose(); await storage.close(); }
 });
 
 test('снятие прав и выключение после предварительной проверки блокируют запись', async () => {
@@ -36,7 +36,7 @@ test('снятие прав и выключение после предвари�
     await storage.chats.update('vk:one', { enabled: false });
     expect(await s.grant(member, 'vk:other', s.confirmMembership('vk:one', 'vk:other'))).toEqual({ allowed: false, code: 'disabled' });
     expect((await s.grant(owner, 'vk:other', s.confirmMembership('vk:one', 'vk:other'))).allowed).toBe(true);
-  } finally { await storage.close(); }
+  } finally { s.dispose(); await storage.close(); }
 });
 
 test('личность и принадлежность участника не подменяются данными модели или другого сервиса', async () => {
@@ -45,7 +45,7 @@ test('личность и принадлежность участника не �
     const fake = { ...owner } as AuthorizationContext;
     expect(await s.check(fake, 'admin.grant')).toEqual({ allowed: false, code: 'invalid_context' });
     expect(Object.isFrozen(owner)).toBe(true);
-    const other = createAuthorizationService({ config: authConfig, store: storage.authorization });
+    const other = await createAuthorizationService({ config: authConfig, store: storage.authorization });
     expect(await s.check(other.context({ chatId: 'vk:one', userId: 'vk:owner', kind: 'owner' }), 'admin.grant')).toEqual({ allowed: false, code: 'invalid_context' });
     for (const proof of [{}, null, s.confirmMembership('vk:two', 'vk:user'), s.confirmMembership('vk:one', 'vk:other'), other.confirmMembership('vk:one', 'vk:user')]) {
       expect(await s.grant(owner, 'vk:user', proof)).toEqual({ allowed: false, code: 'unconfirmed_member' });
@@ -55,5 +55,6 @@ test('личность и принадлежность участника не �
     expect(() => s.context({ chatId: 'test:one', userId: 'vk:user' })).toThrow('invalid_context');
     expect((await s.check(s.context({ chatId: 'test:one', userId: 'vk:owner', kind: 'owner' }), 'diagnostics.read')).allowed).toBe(true);
     expect(await s.applyTrustedInitialAuthorities('vk:one', { creatorId: 'test:user' })).toEqual({ allowed: false, code: 'wrong_scope' });
-  } finally { await storage.close(); }
+    other.dispose();
+  } finally { s.dispose(); await storage.close(); }
 });

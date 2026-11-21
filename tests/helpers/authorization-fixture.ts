@@ -8,8 +8,8 @@ export async function authorizationFixture(options: Partial<AuthorizationOptions
   for (const chatId of ['vk:one', 'vk:two', 'test:one'] as const) {
     await storage.chats.create(chatId, { responseMode: 'mention', enabled: true, createdAt: 0 });
   }
-  const service = createAuthorizationService({ config: authConfig, store: storage.authorization, now: () => 100, ...options });
+  const service = await createAuthorizationService({ config: authConfig, store: storage.authorization, now: () => 100, ...options });
   const owner = service.context({ chatId: 'vk:one', userId: 'vk:owner', kind: 'owner' });
   const member = service.context({ chatId: 'vk:one', userId: 'vk:user' });
-  return { storage, service, owner, member };
+  return { storage, service, owner, member, async close() { service.dispose(); await storage.close(); } };
 }
