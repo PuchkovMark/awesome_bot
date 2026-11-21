@@ -14,3 +14,4 @@ export interface ContextStateReader {
  settings(scope:ConnectionScope):Promise<{readonly enabled:boolean;readonly responseMode:'silent'|'normal'|'active';readonly timezone:string}|null>;
  systemPrompt(scope:ConnectionScope):Promise<ContentVersion|null>;
 }
+export type {StoredMessage} from './types.js';
