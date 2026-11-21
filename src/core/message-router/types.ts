@@ -10,4 +10,4 @@ export type RoutingDecision =
  | { readonly kind:'ordinary'; readonly reason: RouteMetadata['kind']; readonly route:RouteMetadata }
  | { readonly kind:'service'; readonly reason:'service' }
  | { readonly kind:'silence'; readonly reason:'disabled'|'silent'|'sender_bot'|'sender_unknown'|'invalid_input'|'not_addressed'|'forbidden' };
-export type PublicationDecision = {readonly kind:'answer';readonly text:string}|{readonly kind:'notice'}|{readonly kind:'silence'};
+export type PublicationDecision = {readonly kind:'answer';readonly text:string}|{readonly kind:'notice';readonly template?:'current_message_too_large'}|{readonly kind:'silence'};

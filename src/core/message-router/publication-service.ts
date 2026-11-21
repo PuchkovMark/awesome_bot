@@ -5,7 +5,7 @@ import type {QueueCompletion,QueueSettlement} from '../chat-queue/types.js';
 import type {NoticeReceipt} from '../../storage/notice-types.js';
 import {noticeBackend} from '../../storage/notice-store.js';
 import {noticeInterval} from './notice-config.js';
-import {publicationDecision,noticeText} from './publication.js';
+import {publicationDecision,noticeTemplate} from './publication.js';
 export interface PublicationRequest {readonly scope:ConnectionScope;readonly kind:'answer'|'notice';readonly text:string;readonly replyToMessageId?:string;readonly signal:AbortSignal}
 export type PublicationResult={readonly kind:'delivered';readonly receipt:NoticeReceipt}|{readonly kind:'failed'|'unknown'};
 export interface PublicationPort {
@@ -35,10 +35,10 @@ export function createPublicationService(options:{readonly storage:Storage;reado
    const current=await options.storage.chats.get(work.scope);if(!current||publicationDecision(work.route,current,outcome).kind!==decision.kind||!work.isCurrent()||work.signal.aborted)return 'silence';
    if(decision.kind==='notice'){
     if(reply!==true)return 'silence';
-    permit=notices.reserve(work.scope,work.messageId,work.route,interval,Date.now())??undefined;if(!permit)return 'silence';
+    permit=notices.reserve(work.scope,work.messageId,work.route,interval,Date.now(),decision.template??'generic')??undefined;if(!permit)return 'silence';
    }
    if(!work.isCurrent()||work.signal.aborted)return 'silence';
-   const text=decision.kind==='notice'?noticeText:decision.text;
+   const text=decision.kind==='notice'?noticeTemplate(decision.template??'generic'):decision.text;
    const result=await bounded(work.signal,options.port.publish({scope:work.scope,kind:decision.kind,text,...(reply===true?{replyToMessageId:source.messageId}:{}),signal:work.signal}));
    if(!result||result.kind!=='delivered'){report('publication_failed');return result?.kind??'unknown';}
    if(!work.isCurrent()||work.signal.aborted){report('journal_failed');return 'unknown';}
@@ -51,7 +51,7 @@ export function createPublicationService(options:{readonly storage:Storage;reado
  }
  return Object.freeze({
   stats(){return Object.freeze({...counters});},
-  async onSettled(work:QueueSettlement,completion:QueueCompletion){await publish(work,completion.result??{kind:completion.outcome});},
+  async onSettled(work:QueueSettlement,completion:QueueCompletion){await publish(work,completion.preparationFailure?{kind:completion.preparationFailure}:completion.result??{kind:completion.outcome});},
   async queueFull(scope:ConnectionScope,messageId:number,route:RouteMetadata,guard:{readonly signal:AbortSignal;readonly isCurrent:()=>boolean}){
    const signal=AbortSignal.any([guard.signal,AbortSignal.timeout(fullTimeout)]);
    await publish({scope,messageId,route,signal,isCurrent:()=>!signal.aborted&&guard.isCurrent()},{kind:'queue_full'});
