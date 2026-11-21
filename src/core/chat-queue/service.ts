@@ -115,6 +115,14 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
       phase='running';renewAt=performance.now()+config.renewIntervalMs;pump();armTick();
       if(failure)throw failure;
     },
+    async admitRouted(scope,message,decision){
+      if(phase!=='running')return {admission:{status:'stopped'},decision:null};
+      try{
+       const result=backend.admitRouted(token,scope,message,decision,config);
+       if(result.admission.status==='queue_full')counters.rejected=add(counters.rejected,1);
+       emit();schedule();return result;
+      }catch(error){try{backend.check(token);}catch(fatal){fault(fatal);}throw safeFailure(error);}
+    },
     async admit(scope,message,decision) {
       if(phase!=='running')return {status:'stopped' as const};
       try {

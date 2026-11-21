@@ -1,3 +1,4 @@
+import type { RoutedQueueCallback, RoutedAdmission } from '../../storage/queue-types.js';
 import type { ConnectionScope } from '../../contracts/index.js';
 import type { SafeLogger } from '../../logger/types.js';
 import type { Storage, MessageInput } from '../../storage/index.js';
@@ -12,6 +13,7 @@ export interface ChatQueueOptions {
 export interface ChatQueue {
   start(): Promise<void>;
   admit(scope: ConnectionScope, message: MessageInput, decision: QueueDecision): Promise<QueueAdmission>;
+  admitRouted(scope:ConnectionScope,message:MessageInput,decision:RoutedQueueCallback):Promise<RoutedAdmission>;
   stop(): Promise<void>;
   stats(): QueueStats;
 }
