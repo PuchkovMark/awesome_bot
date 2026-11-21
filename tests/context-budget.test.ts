@@ -18,3 +18,8 @@ test('нет fallback, начальная проверка различает о
  expect(validateContextStartup(version,exact)).toBe(null);
  expect(validateContextStartup(version,{...exact,inputBudgetTokens:exact.inputBudgetTokens-1})).toBe('static_budget_too_small');
 });
+test('начальная проверка резервирует обрамление текущего сообщения, даже когда его текст пуст',()=>{
+ const version={ref:{area:'global',kind:'system_prompt',key:'base',version:1},text:'x',createdAt:0} as const;
+ const budget=estimateInput(version.text+'\n\nОкружение харнеса:\n',[{role:'user',text:''}])+c.environmentReserveTokens;
+ expect(validateContextStartup(version,{...c,inputBudgetTokens:budget})).toBe('static_budget_too_small');
+});

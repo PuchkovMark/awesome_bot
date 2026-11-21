@@ -57,7 +57,7 @@ export function createContextBuilder(options:ContextBuilderOptions){
     }
    }
   }
-  let before=current.id,scanned=0,truncated=false,done=false;
+  let before=current.id,scanned=0,truncated=!!reply&&c.maxHistoryMessages===1,done=false;
   while(!done&&scanned<c.maxScannedMessages&&history.length+(reply?1:0)<c.maxHistoryMessages){
    const limit=Math.min(c.historyPageSize,c.maxScannedMessages-scanned);
    const page=await options.messages.page(w.scope,{cutoffId:current.id,beforeId:before,limit,textLimit:c.historyTextCodePoints});if(!valid())return {kind:'cancelled'};

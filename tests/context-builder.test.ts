@@ -38,3 +38,24 @@ test('неактуальность после чтения и зависшая �
  const foreign=createContextBuilder({...f.options,capabilities:async()=>({...await f.options.capabilities(),context:{chatId:'vk:other'}})});expect(await foreign.prepare(f.work(a.id))).toEqual({kind:'failed',reason:'internal_error'});
  }finally{await f.storage.close();}
 });
+test('лимит одной цитаты отмечает недоступное окно истории как сокращённое',async()=>{
+ const f=await contextFixture();try{
+ await f.put('old','более ранняя история');await f.put('parent','цитата');const a=await f.put('a','вопрос',{replyToMessageId:'parent'});
+ const builder=createContextBuilder({...f.options,config:{modelContextTokens:16000,maxHistoryMessages:1}});const r=await builder.prepare(f.work(a.id));if(r.kind!=='ready')throw Error();expect(r.metadata.historyTruncated).toBe(true);
+ }finally{await f.storage.close();}
+});
+test('утрата актуальности и поддельная область не дают готового контекста',async()=>{
+ const f=await contextFixture();try{
+ const a=await f.put('a','вопрос');let valid=true;
+ const b=createContextBuilder({...f.options,capabilities:async()=>{valid=false;return f.options.capabilities();}});
+ expect(await b.prepare({...f.work(a.id),isCurrent:()=>valid})).toEqual({kind:'cancelled'});
+ expect((await f.builder.prepare({...f.work(a.id),scope:{...f.scope} as never})).kind).not.toBe('ready');
+ }finally{await f.storage.close();}
+});
+test('смена общей версии после её чтения сохраняет согласованный старый снимок',async()=>{
+ const f=await contextFixture();try{
+ const a=await f.put('a','вопрос');const next=await f.admin.append({kind:'system_prompt',key:'base',text:'Другая версия',createdAt:1,expectedHead:1});if(next.status!=='created'||next.value.ref.area!=='global')throw Error();
+ const b=createContextBuilder({...f.options,capabilities:async()=>{await f.admin.selectSystemPrompt(next.value.ref as never,f.version.ref as never);return f.options.capabilities();}});
+ const result=await b.prepare(f.work(a.id));if(result.kind!=='ready')throw Error(result.kind);expect(result.metadata.version).toEqual(f.version.ref);expect(result.input.system.startsWith(f.version.text)).toBe(true);expect(result.input.system).not.toContain('Другая версия');
+ }finally{await f.storage.close();}
+});

@@ -28,8 +28,12 @@ export function checkContextBoundary(root=process.cwd()) {
      if(local==='src/storage/context-types.ts'){
       const facade=ts.sys.readFile(next);if(facade===undefined){invalid=true;return;}
       const body=ts.createSourceFile(next,facade,ts.ScriptTarget.Latest,true);
+      let hiddenImport=false;
+      /** @param {ts.Node} node */
+      function scanFacade(node){if(ts.isImportTypeNode(node))hiddenImport=true;ts.forEachChild(node,scanFacade);}
+      scanFacade(body);if(hiddenImport){invalid=true;return;}
       for(const statement of body.statements){
-       if(ts.isExportDeclaration(statement)&&statement.isTypeOnly&&statement.exportClause&&ts.isNamedExports(statement.exportClause)&&statement.exportClause.elements.every(e=>e.name.text==='StoredMessage')&&statement.moduleSpecifier&&ts.isStringLiteral(statement.moduleSpecifier)&&statement.moduleSpecifier.text==='./types.js')continue;
+       if(ts.isExportDeclaration(statement)&&statement.isTypeOnly&&statement.exportClause&&ts.isNamedExports(statement.exportClause)&&statement.exportClause.elements.every(e=>(e.propertyName??e.name).text==='StoredMessage'&&e.name.text==='StoredMessage')&&statement.moduleSpecifier&&ts.isStringLiteral(statement.moduleSpecifier)&&statement.moduleSpecifier.text==='./types.js')continue;
        if(ts.isInterfaceDeclaration(statement)&&['ContextMessageReader','ContextStateReader','ContextRecord','ContextPageQuery'].includes(statement.name.text)&&statement.members.every(m=>!m.name||['get','list','page','reply','settings','systemPrompt','truncated','cutoffId','beforeId','limit','textLimit'].includes(m.name.getText(body))))continue;
        if(ts.isImportDeclaration(statement)&&statement.importClause?.isTypeOnly&&statement.importClause.namedBindings&&ts.isNamedImports(statement.importClause.namedBindings)&&statement.importClause.namedBindings.elements.every(e=>['ConnectionScope','StoredMessage','HistoryQuery','ContentVersion'].includes((e.propertyName??e.name).text)))continue;
        invalid=true;

@@ -5,7 +5,7 @@ import {readMessage,createMessageStore} from './messages.js';
 import {requireInput} from './validation.js';
 function positive(n:number,max=Number.MAX_SAFE_INTEGER){requireInput(Number.isSafeInteger(n)&&n>0&&n<=max);}
 const projection=`id,chat_id AS chatId,platform_message_id AS messageId,user_id AS userId,role,
- CAST(substr(CAST(text AS BLOB),1,?) AS TEXT) AS text,CAST(substr(CAST(author_name AS BLOB),1,?) AS TEXT) AS authorName,
+ coalesce(CAST(substr(CAST(text AS BLOB),1,?) AS TEXT),'') AS text,coalesce(CAST(substr(CAST(author_name AS BLOB),1,?) AS TEXT),'') AS authorName,
  length(CAST(text AS BLOB)) AS textBytes,length(CAST(author_name AS BLOB)) AS nameBytes,
  reply_to_message_id AS replyToMessageId,timestamp,purpose,attachment_count AS attachmentCount`;
 type Row=Omit<ContextRecord,'truncated'|'replyToMessageId'>&{replyToMessageId:string|null;textBytes:number;nameBytes:number};
