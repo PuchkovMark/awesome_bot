@@ -104,19 +104,24 @@ import type { IncomingEvent, ChannelAdapter, ToolDefinition } from '../contracts
 
 ```ts
 import { openStorage } from '../storage/index.js';
+import { createLifecycleService } from '../core/index.js';
 
 // Только новая отдельная БД; родительский каталог должен существовать.
 const storage = await openStorage('/absolute/path/to/new-bot.sqlite');
 try {
-  const result = await storage.messages.append({
+  // verifiedSource и ownerId передаёт доверенный компонент приложения.
+  const lifecycle = createLifecycleService({ storage, ownerId, source: verifiedSource });
+  await lifecycle.verify('vk:2000000001');
+  const scope = lifecycle.current('vk:2000000001');
+  const result = await storage.messages.append(scope, {
     chatId: 'vk:2000000001', messageId: '100', userId: 'vk:42',
     authorName: 'Имя', role: 'user', text: 'Привет', timestamp: Date.now(),
   });
   // result.status — inserted или duplicate; result.id — id исходной строки.
-  await storage.chats.create('vk:2000000001', {
+  await storage.chats.create(scope, {
     responseMode: 'mention', enabled: false, createdAt: Date.now(),
   });
-  const history = await storage.messages.list('vk:2000000001', { limit: 20 });
+  const history = await storage.messages.list(scope, { limit: 20 });
   void result; void history;
 } finally {
   await storage.close();
@@ -160,3 +165,5 @@ try {
 `ToolContext.authorization` необязателен для совместимости, но защищённый инструмент отказывает при его отсутствии. [toolAuthorization](src/tools/authorization.ts) сверяет пользователя, чат, платформу и адаптер; после этого инструмент обязан вызвать защищённую операцию сервиса. Этот помощник не является самостоятельным разрешением записи и не принимает административный контекст владельца для модели.
 
 Миграция 4 добавляет назначения, отзывы, аудит и запрет восстановления; существующая платформенная роль не преобразуется в права бота. Низкоуровневый `storage.authorization` — внутренний инфраструктурный доступ, его нельзя предоставлять модели. Проверки показывают последовательности одного процесса, без заявления о межпроцессной гонке или атомарности с внешним API. Живые роли VK, подключение сервиса к запуску, команды и восстановление F4.1, поколения/ревизии и полная очистка F1.6b ещё не реализованы. Очередь и прежние технические методы журнала не защищены от устаревшего поколения. Миграция трёх режимов, профильные политики, срок бэкапов и текст согласия этим кодом не реализуются.
+
+Публичные операции хранения F1.6b требуют ConnectionScope: `messages.append(scope, message)`, `messages.list(scope, query)`, `chats.get/create/update(scope, ...)`, `authorization.transaction(scope, callback)`. Прежних перегрузок по одному chatId нет; область создаётся только доверенной границей и проверяется при каждой операции. `uncertain` сохраняет данные и запрещает обычные запросы до явного решения владельца; это не enabled и не режим ответа. Полная очистка и сверка проверяются следующими шагами реализации.

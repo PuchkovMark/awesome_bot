@@ -28,9 +28,4 @@ export interface AuthorizationTransaction {
   audit(userId: UserId): RevocationAudit | null;
   recoveryBlocked(): boolean;
 }
-export interface AuthorizationStore {
-  /** Promise из callback запрещён; исключение откатывает всю транзакцию. */
-  transaction<T>(chatId: ChatId, callback: (transaction: AuthorizationTransaction) => T): Promise<T>;
-  /** Внутреннее обслуживание, не интерфейс инструмента; не возвращает тексты. */
-  pruneReasons(now: Timestamp, retentionMs: number): Promise<{ readonly cleared: number; readonly nextRevokedAt: number | null }>;
-}
+export type AuthorizationStore = import('./scoped-types.js').ScopedStorage['authorization'];

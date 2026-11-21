@@ -1,5 +1,4 @@
 import type { ScopedStorage } from './scoped-types.js';
-import type { AuthorizationStore } from './authorization-types.js';
 import type { ChatId, UserId, PlatformMessageId, Timestamp } from '../contracts/index.js';
 
 export interface MessageInput {
@@ -41,19 +40,6 @@ export interface ChatPatch {
   readonly timezone?: string;
 }
 export interface CreateChatResult { readonly status: 'created' | 'existing'; readonly settings: ChatSettings }
-export interface MessageStore {
-  append(message: MessageInput): Promise<AppendResult>;
-  list(chatId: ChatId, query: HistoryQuery): Promise<readonly StoredMessage[]>;
-}
-export interface ChatStore {
-  get(chatId: ChatId): Promise<ChatSettings | null>;
-  create(chatId: ChatId, input: ChatInput): Promise<CreateChatResult>;
-  update(chatId: ChatId, patch: ChatPatch): Promise<ChatSettings | null>;
-}
-export interface Storage {
-  readonly scoped: ScopedStorage;
-  readonly authorization: AuthorizationStore;
-  readonly messages: MessageStore;
-  readonly chats: ChatStore;
-  close(): Promise<void>;
-}
+export type MessageStore = ScopedStorage['messages'];
+export type ChatStore = ScopedStorage['chats'];
+export interface Storage extends ScopedStorage { close():Promise<void>; }

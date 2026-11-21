@@ -19,7 +19,7 @@ export function scopeFor(storage:Storage,chatId:unknown):ConnectionScope {
  }
 }
 export async function openStorage(path:string):Promise<Storage> {
- const storage=await openRealStorage(path);stores.set(storage.scoped.authorization.transaction,storage);return storage;
+ const storage=await openRealStorage(path);stores.set(storage.authorization.transaction,storage);return storage;
 }
 export async function createAuthorizationService(options:AuthorizationOptions) {
  const service=await createRealAuthorizationService(options);

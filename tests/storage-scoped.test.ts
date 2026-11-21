@@ -7,12 +7,12 @@ test('область проверяется каждым чтением и за�
  const life=createLifecycleService({storage,ownerId:'vk:owner',source:{async observe(){return result;}}});
  try {
   const scope=(await life.verify('vk:1')).scope!;
-  await storage.scoped.messages.append(scope,{chatId:'vk:1',userId:'vk:2',messageId:'1',authorName:'',role:'user',text:'keep',timestamp:0});
-  await expect(storage.scoped.chats.get({...scope} as ConnectionScope)).rejects.toMatchObject({code:'invalid_input'});
-  await expect(storage.scoped.messages.append(scope,{chatId:'vk:other',userId:'vk:2',messageId:'2',authorName:'',role:'user',text:'bad',timestamp:0})).rejects.toMatchObject({code:'invalid_input'});
+  await storage.messages.append(scope,{chatId:'vk:1',userId:'vk:2',messageId:'1',authorName:'',role:'user',text:'keep',timestamp:0});
+  await expect(storage.chats.get({...scope} as ConnectionScope)).rejects.toMatchObject({code:'invalid_input'});
+  await expect(storage.messages.append(scope,{chatId:'vk:other',userId:'vk:2',messageId:'2',authorName:'',role:'user',text:'bad',timestamp:0})).rejects.toMatchObject({code:'invalid_input'});
   result={confidence:'uncertain',bot:'present'};await life.verify('vk:1');
-  await expect(storage.scoped.messages.list(scope,{limit:5})).rejects.toMatchObject({code:'uncertain_connection'});
+  await expect(storage.messages.list(scope,{limit:5})).rejects.toMatchObject({code:'uncertain_connection'});
   life.decide(life.owner('vk:1','vk:owner'),'continue');
-  expect(await storage.scoped.messages.list(scope,{limit:5})).toMatchObject([{text:'keep'}]);
+  expect(await storage.messages.list(scope,{limit:5})).toMatchObject([{text:'keep'}]);
  } finally {await storage.close();}
 });

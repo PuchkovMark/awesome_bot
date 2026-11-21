@@ -10,8 +10,8 @@ import { storageFixture } from './helpers/storage-fixture.js';
 
 async function memory() {
   const s = await openStorage(':memory:');
-  await s.scoped.chats.create(scopeFor(s, 'vk:one'), { responseMode: 'mention', enabled: true, createdAt: 0 });
-  await s.scoped.chats.create(scopeFor(s, 'vk:two'), { responseMode: 'always', enabled: false, createdAt: 0 });
+  await s.chats.create(scopeFor(s, 'vk:one'), { responseMode: 'mention', enabled: true, createdAt: 0 });
+  await s.chats.create(scopeFor(s, 'vk:two'), { responseMode: 'always', enabled: false, createdAt: 0 });
   return s;
 }
 const grant = { userId: 'vk:user', basis: 'creator', grantedAt: 10, grantedBy: null } as const;
@@ -20,55 +20,55 @@ const audit = { userId: 'vk:user', revokedBy: 'vk:owner', revokedAt: 20, bases: 
 test('назначения изолированы, повтор не дублирует, защищённое основание уникально', async () => {
   const s = await memory();
   try {
-    await s.scoped.authorization.transaction(scopeFor(s, 'vk:one'), tx => {
+    await s.authorization.transaction(scopeFor(s, 'vk:one'), tx => {
       tx.grant(grant); tx.grant(grant); tx.grant({ ...grant, basis: 'explicit' });
       expect(tx.bases('vk:user')).toEqual(['creator', 'explicit']);
       expect(tx.settings()).toEqual({ enabled: true });
     });
-    expect(await s.scoped.authorization.transaction(scopeFor(s, 'vk:two'), tx => tx.bases('vk:user'))).toEqual([]);
-    await expect(s.scoped.authorization.transaction(scopeFor(s, 'vk:one'), tx => tx.grant({ ...grant, userId: 'vk:other' }))).rejects.toMatchObject({ code: 'operation_failed' });
-    await expect(s.scoped.authorization.transaction(scopeFor(s, 'vk:one'), tx => tx.grant({ ...grant, userId: 'test:user' }))).rejects.toMatchObject({ code: 'invalid_input' });
-    await expect(s.scoped.authorization.transaction(scopeFor(s, 'vk:absent'), tx => tx.grant(grant))).rejects.toMatchObject({ code: 'operation_failed' });
+    expect(await s.authorization.transaction(scopeFor(s, 'vk:two'), tx => tx.bases('vk:user'))).toEqual([]);
+    await expect(s.authorization.transaction(scopeFor(s, 'vk:one'), tx => tx.grant({ ...grant, userId: 'vk:other' }))).rejects.toMatchObject({ code: 'operation_failed' });
+    await expect(s.authorization.transaction(scopeFor(s, 'vk:one'), tx => tx.grant({ ...grant, userId: 'test:user' }))).rejects.toMatchObject({ code: 'invalid_input' });
+    await expect(s.authorization.transaction(scopeFor(s, 'vk:absent'), tx => tx.grant(grant))).rejects.toMatchObject({ code: 'operation_failed' });
   } finally { await s.close(); }
 });
 
 test('ошибка откатывает все записи, контекст транзакции нельзя использовать после выхода', async () => {
   const s = await memory(); let escaped: AuthorizationTransaction | undefined;
   try {
-    await expect(s.scoped.authorization.transaction(scopeFor(s, 'vk:one'), tx => { tx.grant(grant); throw new Error('секрет SQL'); })).rejects.toMatchObject({ code: 'operation_failed' });
-    expect(await s.scoped.authorization.transaction(scopeFor(s, 'vk:one'), tx => tx.bases('vk:user'))).toEqual([]);
-    await s.scoped.authorization.transaction(scopeFor(s, 'vk:one'), tx => { escaped = tx; });
+    await expect(s.authorization.transaction(scopeFor(s, 'vk:one'), tx => { tx.grant(grant); throw new Error('секрет SQL'); })).rejects.toMatchObject({ code: 'operation_failed' });
+    expect(await s.authorization.transaction(scopeFor(s, 'vk:one'), tx => tx.bases('vk:user'))).toEqual([]);
+    await s.authorization.transaction(scopeFor(s, 'vk:one'), tx => { escaped = tx; });
     expect(() => escaped?.grant(grant)).toThrow('invalid_input');
-    await expect(s.scoped.authorization.transaction(scopeFor(s, 'vk:one'), tx => { tx.grant(grant); return Promise.resolve(1); })).rejects.toMatchObject({ code: 'invalid_input' });
-    expect(await s.scoped.authorization.transaction(scopeFor(s, 'vk:one'), tx => tx.bases('vk:user'))).toEqual([]);
+    await expect(s.authorization.transaction(scopeFor(s, 'vk:one'), tx => { tx.grant(grant); return Promise.resolve(1); })).rejects.toMatchObject({ code: 'invalid_input' });
+    expect(await s.authorization.transaction(scopeFor(s, 'vk:one'), tx => tx.bases('vk:user'))).toEqual([]);
   } finally { await s.close(); }
 });
 
 test('аудит, отзыв и запрет атомарны, истечение убирает только причину, отмена сохраняет запрет', async () => {
   const s = await memory();
   try {
-    await s.scoped.authorization.transaction(scopeFor(s, 'vk:one'), tx => { tx.grant(grant); tx.grant({ ...grant, basis: 'explicit' }); tx.revoke(audit); });
-    await s.scoped.authorization.transaction(scopeFor(s, 'vk:one'), tx => {
+    await s.authorization.transaction(scopeFor(s, 'vk:one'), tx => { tx.grant(grant); tx.grant({ ...grant, basis: 'explicit' }); tx.revoke(audit); });
+    await s.authorization.transaction(scopeFor(s, 'vk:one'), tx => {
       expect(tx.bases('vk:user')).toEqual([]); expect(tx.isRevoked('vk:user')).toBe(true);
       expect(tx.recoveryBlocked()).toBe(true); expect(tx.audit('vk:user')).toEqual({ ...audit, chatId: 'vk:one' });
     });
     expect(await s.authorization.pruneReasons(29, 10)).toEqual({ cleared: 0, nextRevokedAt: 20 });
     expect(await s.authorization.pruneReasons(30, 10)).toEqual({ cleared: 1, nextRevokedAt: null });
-    await s.scoped.authorization.transaction(scopeFor(s, 'vk:one'), tx => {
+    await s.authorization.transaction(scopeFor(s, 'vk:one'), tx => {
       expect(tx.audit('vk:user')).toEqual({ ...audit, chatId: 'vk:one', reason: null });
       tx.restore('vk:user'); expect(tx.audit('vk:user')).toBeNull(); expect(tx.isRevoked('vk:user')).toBe(false);
       expect(tx.recoveryBlocked()).toBe(true); expect(tx.bases('vk:user')).toEqual([]);
     });
-    expect(await s.scoped.authorization.transaction(scopeFor(s, 'vk:two'), tx => tx.recoveryBlocked())).toBe(false);
+    expect(await s.authorization.transaction(scopeFor(s, 'vk:two'), tx => tx.recoveryBlocked())).toBe(false);
   } finally { await s.close(); }
 });
 
 test('ошибка вставки аудита не оставляет отдельного отзыва', async () => {
   const s = await memory();
   try {
-    await s.scoped.authorization.transaction(scopeFor(s, 'vk:one'), tx => tx.grant(grant));
-    await expect(s.scoped.authorization.transaction(scopeFor(s, 'vk:one'), tx => tx.revoke({ ...audit, bases: ['explicit'] }))).rejects.toMatchObject({ code: 'operation_failed' });
-    await s.scoped.authorization.transaction(scopeFor(s, 'vk:one'), tx => {
+    await s.authorization.transaction(scopeFor(s, 'vk:one'), tx => tx.grant(grant));
+    await expect(s.authorization.transaction(scopeFor(s, 'vk:one'), tx => tx.revoke({ ...audit, bases: ['explicit'] }))).rejects.toMatchObject({ code: 'operation_failed' });
+    await s.authorization.transaction(scopeFor(s, 'vk:one'), tx => {
       expect(tx.bases('vk:user')).toEqual(['creator']); expect(tx.isRevoked('vk:user')).toBe(false);
       expect(tx.audit('vk:user')).toBeNull(); expect(tx.recoveryBlocked()).toBe(false);
     });
@@ -86,13 +86,13 @@ test('версия 3 → 4 сохраняет данные и метаданны
   }); seed.close();
   try {
     let s = await openStorage(f.path);
-    expect(await s.scoped.authorization.transaction(scopeFor(s, 'vk:one'), tx => tx.bases('vk:user'))).toEqual([]);
-    expect(await s.scoped.chats.get(scopeFor(s, 'vk:one'))).toMatchObject({ responseMode: 'always', enabled: false, systemPrompt: 'prompt' });
-    await s.scoped.authorization.transaction(scopeFor(s, 'vk:one'), tx => { tx.grant(grant); tx.revoke(audit); });
+    expect(await s.authorization.transaction(scopeFor(s, 'vk:one'), tx => tx.bases('vk:user'))).toEqual([]);
+    expect(await s.chats.get(scopeFor(s, 'vk:one'))).toMatchObject({ responseMode: 'always', enabled: false, systemPrompt: 'prompt' });
+    await s.authorization.transaction(scopeFor(s, 'vk:one'), tx => { tx.grant(grant); tx.revoke(audit); });
     await s.close(); s = await openStorage(f.path);
     try {
-      expect(await s.scoped.authorization.transaction(scopeFor(s, 'vk:one'), tx => tx.audit('vk:user'))).toEqual({ ...audit, chatId: 'vk:one' });
-      expect(await s.scoped.messages.append(scopeFor(s, ({ chatId: 'vk:one', userId: 'vk:user', messageId: '1', authorName: '', role: 'user', text: 'другой', timestamp: 1 }).chatId), { chatId: 'vk:one', userId: 'vk:user', messageId: '1', authorName: '', role: 'user', text: 'другой', timestamp: 1 })).toMatchObject({ status: 'duplicate' });
+      expect(await s.authorization.transaction(scopeFor(s, 'vk:one'), tx => tx.audit('vk:user'))).toEqual({ ...audit, chatId: 'vk:one' });
+      expect(await s.messages.append(scopeFor(s, ({ chatId: 'vk:one', userId: 'vk:user', messageId: '1', authorName: '', role: 'user', text: 'другой', timestamp: 1 }).chatId), { chatId: 'vk:one', userId: 'vk:user', messageId: '1', authorName: '', role: 'user', text: 'другой', timestamp: 1 })).toMatchObject({ status: 'duplicate' });
       const inspect = await openConnection(f.path);
       try { inspect.run(db => {
         expect(db.prepare('SELECT * FROM schema_migrations WHERE version<=3 ORDER BY version').all()).toEqual(before);

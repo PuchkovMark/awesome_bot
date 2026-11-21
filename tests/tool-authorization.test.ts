@@ -8,7 +8,7 @@ import { authorizationFixture } from './helpers/authorization-fixture.js';
 // Только тестовый инструмент. Ни isAdmin, ни параметры модели не являются источником роли/области.
 async function fixture() {
   const f = await authorizationFixture(); const s = f.service;
-  await f.storage.scoped.chats.create(scopeFor(f.storage, 'test-a:one'), { responseMode: 'mention', enabled: true, createdAt: 0 });
+  await f.storage.chats.create(scopeFor(f.storage, 'test-a:one'), { responseMode: 'mention', enabled: true, createdAt: 0 });
   const owner = s.context({ scope: scopeForService(s, 'test-a:one'), userId: 'vk:owner', kind: 'owner' });
   const authorization = s.context({ scope: scopeForService(s, 'test-a:one'), userId: 'test-a:admin' });
   const context: ToolContext = { chatId: 'test-a:one', platform: 'test-a', userId: 'test-a:admin', isAdmin: true, adapter: new FakeAdapter('test-a'), authorization };
@@ -17,7 +17,7 @@ async function fixture() {
     const validated = toolAuthorization(ctx);
     return validated.allowed ? s.grant(validated.value, parameters.userId, membership) : validated;
   };
-  const bases = () => f.storage.scoped.authorization.transaction(scopeFor(f.storage, 'test-a:one'), tx => tx.bases('test-a:new'));
+  const bases = () => f.storage.authorization.transaction(scopeFor(f.storage, 'test-a:one'), tx => tx.bases('test-a:new'));
   return { ...f, s, owner, context, authorization, execute, bases };
 }
 

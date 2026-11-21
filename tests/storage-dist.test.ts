@@ -14,12 +14,16 @@ test('ESM-выпуск открывает БД вне проекта без ис
     symlinkSync(resolve('node_modules'), join(fixture.directory, 'node_modules'), 'dir');
     expect(existsSync(join(fixture.directory, 'src'))).toBe(false);
     const moduleUrl = pathToFileURL(join(fixture.directory, 'dist/storage/index.js')).href;
+    const coreUrl = pathToFileURL(join(fixture.directory, 'dist/core/index.js')).href;
     const code = `
+      import { createLifecycleService } from ${JSON.stringify(coreUrl)};
       import { openStorage } from ${JSON.stringify(moduleUrl)};
       const storage = await openStorage(${JSON.stringify(fixture.path)});
       try {
-        await storage.messages.append({chatId:'vk:1',userId:'vk:2',messageId:'1',authorName:'',role:'user',text:'кот',timestamp:0});
-        const rows = await storage.messages.list('vk:1', {limit:1});
+        const life=createLifecycleService({storage,ownerId:'vk:owner',source:{async observe(){return {confidence:'confirmed',bot:'present'};}}});
+        const scope=(await life.verify('vk:1')).scope;
+        await storage.messages.append(scope,{chatId:'vk:1',userId:'vk:2',messageId:'1',authorName:'',role:'user',text:'кот',timestamp:0});
+        const rows = await storage.messages.list(scope, {limit:1});
         if (rows.length !== 1 || rows[0].text !== 'кот') throw new Error('Incorrect journal');
       } finally { await storage.close(); }
       process.stdout.write('STORAGE_COMPLETED');

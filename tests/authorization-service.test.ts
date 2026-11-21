@@ -14,7 +14,7 @@ test('назначения, совмещение оснований и защи�
     expect(await s.grant(owner, 'vk:user', await s.confirmMembership(scopeForService(s, 'vk:one'), 'vk:user'))).toEqual({ allowed: true, value: 'granted' });
     expect(await s.role(member)).toEqual({ allowed: true, value: 'admin' });
     for (const who of [member, owner]) expect(await s.remove(who, 'vk:user')).toEqual({ allowed: false, code: 'protected' });
-    expect(await storage.scoped.authorization.transaction(scopeFor(storage, 'vk:one'), tx => tx.bases('vk:user'))).toEqual(['creator', 'explicit', 'inviter']);
+    expect(await storage.authorization.transaction(scopeFor(storage, 'vk:one'), tx => tx.bases('vk:user'))).toEqual(['creator', 'explicit', 'inviter']);
     expect(await s.applyTrustedInitialAuthorities(scopeForService(s, 'vk:one'), { creatorId: 'vk:other' })).toEqual({ allowed: false, code: 'conflict' });
     expect(await s.applyTrustedInitialAuthorities(scopeForService(s, 'vk:two'), { creatorId: null, inviterId: null })).toMatchObject({ allowed: true });
     const other = s.context({ scope: scopeForService(s, 'vk:two'), userId: 'vk:user' });
@@ -31,10 +31,10 @@ test('снятие прав и выключение после предвари�
     expect((await s.check(member, 'admin.grant')).allowed).toBe(true);
     await s.remove(owner, 'vk:user');
     expect((await s.grant(member, 'vk:other', await s.confirmMembership(scopeForService(s, 'vk:one'), 'vk:other'))).allowed).toBe(false);
-    expect(await storage.scoped.authorization.transaction(scopeFor(storage, 'vk:one'), tx => tx.bases('vk:other'))).toEqual([]);
+    expect(await storage.authorization.transaction(scopeFor(storage, 'vk:one'), tx => tx.bases('vk:other'))).toEqual([]);
     await s.grant(owner, 'vk:user', proof);
     expect((await s.check(member, 'admin.grant')).allowed).toBe(true);
-    await storage.scoped.chats.update(scopeFor(storage, 'vk:one'), { enabled: false });
+    await storage.chats.update(scopeFor(storage, 'vk:one'), { enabled: false });
     expect(await s.grant(member, 'vk:other', await s.confirmMembership(scopeForService(s, 'vk:one'), 'vk:other'))).toEqual({ allowed: false, code: 'disabled' });
     expect((await s.grant(owner, 'vk:other', await s.confirmMembership(scopeForService(s, 'vk:one'), 'vk:other'))).allowed).toBe(true);
   } finally { s.dispose(); await storage.close(); }
@@ -46,7 +46,7 @@ test('личность и принадлежность участника не �
     const fake = { ...owner } as AuthorizationContext;
     expect(await s.check(fake, 'admin.grant')).toEqual({ allowed: false, code: 'invalid_context' });
     expect(Object.isFrozen(owner)).toBe(true);
-    const other = await createAuthorizationService({ config: authConfig, store: storage.scoped.authorization });
+    const other = await createAuthorizationService({ config: authConfig, store: storage.authorization });
     expect(await s.check(other.context({ scope: scopeForService(other, 'vk:one'), userId: 'vk:owner', kind: 'owner' }), 'admin.grant')).toEqual({ allowed: false, code: 'invalid_context' });
     for (const proof of [{}, null, await s.confirmMembership(scopeForService(s, 'vk:two'), 'vk:user'), await s.confirmMembership(scopeForService(s, 'vk:one'), 'vk:other'), await other.confirmMembership(scopeForService(other, 'vk:one'), 'vk:user')]) {
       expect(await s.grant(owner, 'vk:user', proof)).toEqual({ allowed: false, code: 'unconfirmed_member' });

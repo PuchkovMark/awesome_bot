@@ -16,7 +16,7 @@ test('отзыв снимает все основания, сохраняет з
     expect(await s.role(member)).toEqual({ allowed: true, value: 'member' });
     expect(await s.grant(owner, 'vk:user', proof)).toEqual({ allowed: false, code: 'revoked' });
     await s.applyTrustedInitialAuthorities(scopeForService(s, 'vk:one'), { creatorId: 'vk:user', inviterId: 'vk:user' });
-    expect(await storage.scoped.authorization.transaction(scopeFor(storage, 'vk:one'), tx => tx.bases('vk:user'))).toEqual([]);
+    expect(await storage.authorization.transaction(scopeFor(storage, 'vk:one'), tx => tx.bases('vk:user'))).toEqual([]);
     time++;
     expect(await s.revoke(owner, 'vk:user', 'replacement')).toEqual({ allowed: true, value: 'existing' });
     expect(await s.audit(owner, 'vk:user')).toMatchObject({ allowed: true, value: { reason: 'private', revokedAt: 100, bases: ['creator', 'inviter', 'explicit'] } });
@@ -24,7 +24,7 @@ test('отзыв снимает все основания, сохраняет з
     expect(await s.restore(member, 'vk:user')).toEqual({ allowed: false, code: 'wrong_scope' });
     expect(await s.restore(owner, 'vk:user')).toMatchObject({ allowed: true });
     expect(await s.audit(owner, 'vk:user')).toEqual({ allowed: true, value: null });
-    expect(await storage.scoped.authorization.transaction(scopeFor(storage, 'vk:one'), tx => ({ blocked: tx.recoveryBlocked(), revoked: tx.isRevoked('vk:user'), bases: tx.bases('vk:user') }))).toEqual({ blocked: true, revoked: false, bases: [] });
+    expect(await storage.authorization.transaction(scopeFor(storage, 'vk:one'), tx => ({ blocked: tx.recoveryBlocked(), revoked: tx.isRevoked('vk:user'), bases: tx.bases('vk:user') }))).toEqual({ blocked: true, revoked: false, bases: [] });
     expect(await s.grant(owner, 'vk:user', proof)).toMatchObject({ allowed: true });
     expect(await s.revoke(owner, 'vk:user', 'reason')).toEqual({ allowed: false, code: 'conflict' });
     expect(JSON.stringify(member)).not.toContain('private');
@@ -75,11 +75,11 @@ test('срок очищает только причину на границе, �
     expect(await s.audit(owner, 'vk:user')).toMatchObject({ value: { reason: null, revokedAt: 100, revokedBy: 'vk:owner', bases: ['creator'] } });
     expect(scheduled.size).toBe(0);
     s.dispose();
-    const reopened = await createAuthorizationService({ config: { ...authConfig, reasonRetentionDays: 180 }, store: storage.scoped.authorization, now: () => time, scheduler });
+    const reopened = await createAuthorizationService({ config: { ...authConfig, reasonRetentionDays: 180 }, store: storage.authorization, now: () => time, scheduler });
     try {
       const context = reopened.context({ scope: scopeForService(reopened, 'vk:one'), userId: 'vk:owner', kind: 'owner' });
       expect(await reopened.audit(context, 'vk:user')).toMatchObject({ value: { reason: null } });
-      expect(await storage.scoped.authorization.transaction(scopeFor(storage, 'vk:one'), tx => tx.recoveryBlocked())).toBe(true);
+      expect(await storage.authorization.transaction(scopeFor(storage, 'vk:one'), tx => tx.recoveryBlocked())).toBe(true);
       await reopened.applyTrustedInitialAuthorities(scopeForService(reopened, 'vk:two'), { creatorId: 'vk:other' });
       await reopened.revoke(reopened.context({ scope: scopeForService(reopened, 'vk:two'), userId: 'vk:owner', kind: 'owner' }), 'vk:other', 'new');
       expect(scheduled.size).toBe(1);
@@ -97,9 +97,9 @@ test('уменьшение срока применяется при запуск
     await s.revoke(owner, 'vk:user', 'private'); s.dispose();
     time += 2 * 86_400_000;
     let broken = false;
-    const store = { ...storage.scoped.authorization, async pruneReasons(now: number, retention: number) {
+    const store = { ...storage.authorization, async pruneReasons(now: number, retention: number) {
       if (broken) throw new Error('private driver error');
-      return storage.scoped.authorization.pruneReasons(now, retention);
+      return storage.authorization.pruneReasons(now, retention);
     } };
     const next = await createAuthorizationService({ config: { ...authConfig, reasonRetentionDays: 1 }, store, now: () => time });
     try {

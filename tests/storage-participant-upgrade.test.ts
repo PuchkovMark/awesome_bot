@@ -22,11 +22,11 @@ test('F1.4 → версия 3 сохраняет историю, настрой�
   try {
     const storage = await openStorage(fixture.path);
     try {
-      expect(await storage.scoped.messages.list(scopeFor(storage, oldMessage.chatId), { limit: 10 })).toMatchObject([oldMessage]);
-      expect(await storage.scoped.chats.get(scopeFor(storage, oldMessage.chatId))).toMatchObject({ title: 'Изменённое название', systemPrompt: 'Сохранённый промпт', responseMode: 'always', timezone: 'UTC', enabled: true, createdAt: 0 });
-      expect(await storage.scoped.messages.append(scopeFor(storage, ({ ...oldMessage, text: 'неподменять' }).chatId), { ...oldMessage, text: 'неподменять' })).toMatchObject({ status: 'duplicate' });
-      await storage.scoped.messages.append(scopeFor(storage, ({ ...oldMessage, chatId: 'a:before-settings', messageId: 'new' }).chatId), { ...oldMessage, chatId: 'a:before-settings', messageId: 'new' });
-      expect(await storage.scoped.chats.get(scopeFor(storage, 'a:before-settings'))).toBeNull();
+      expect(await storage.messages.list(scopeFor(storage, oldMessage.chatId), { limit: 10 })).toMatchObject([oldMessage]);
+      expect(await storage.chats.get(scopeFor(storage, oldMessage.chatId))).toMatchObject({ title: 'Изменённое название', systemPrompt: 'Сохранённый промпт', responseMode: 'always', timezone: 'UTC', enabled: true, createdAt: 0 });
+      expect(await storage.messages.append(scopeFor(storage, ({ ...oldMessage, text: 'неподменять' }).chatId), { ...oldMessage, text: 'неподменять' })).toMatchObject({ status: 'duplicate' });
+      await storage.messages.append(scopeFor(storage, ({ ...oldMessage, chatId: 'a:before-settings', messageId: 'new' }).chatId), { ...oldMessage, chatId: 'a:before-settings', messageId: 'new' });
+      expect(await storage.chats.get(scopeFor(storage, 'a:before-settings'))).toBeNull();
       const inspection = await openConnection(fixture.path);
       try {
         inspection.run((db) => {
@@ -59,7 +59,7 @@ test('F1.4 → версия 3 сохраняет историю, настрой�
           expect(db.pragma('foreign_key_check')).toEqual([]);
         });
       } finally { inspection.close(); }
-      expect(await reopened.scoped.messages.append(scopeFor(reopened, (oldMessage).chatId), oldMessage)).toMatchObject({ status: 'duplicate' });
+      expect(await reopened.messages.append(scopeFor(reopened, (oldMessage).chatId), oldMessage)).toMatchObject({ status: 'duplicate' });
     } finally { await reopened.close(); }
   } finally { fixture.cleanup(); }
 });
