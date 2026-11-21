@@ -13,7 +13,8 @@
     "typecheck": "tsc --noEmit",
     "build": "npm run lint && npm run check:catalog && npm run typecheck && tsc -p tsconfig.build.json",
     "test": "vitest run",
-    "check:catalog": "node scripts/check-catalog-boundary.mjs"
+    "check:catalog": "node scripts/check-catalog-boundary.mjs",
+    "test:queue-load": "vitest run --config vitest.queue-load.config.ts"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

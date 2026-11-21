@@ -15,3 +15,12 @@ test('отдельные соединения: второй владелец, п
     qb.release('b'); qa.acquire('c',100,10); qa.release('c');
   } finally { vi.useRealTimers(); await a.close(); await b.close(); f.cleanup(); }
 });
+
+test('истечение внутри транзакции откатывает её изменения',async()=>{
+ const storage=await openStorage(':memory:');vi.useFakeTimers();vi.setSystemTime(1000);
+ try{
+ const q=queueBackend(storage);q.acquire('owner',100,10);
+ expect(()=>q.transaction('owner',db=>{db.prepare('UPDATE queue_lease SET sequence=99').run();vi.setSystemTime(1100);})).toThrow('queue_lost_ownership');
+ q.acquire('next',100,10);expect(q.transaction('next',db=>db.prepare('SELECT sequence FROM queue_lease').get())).toEqual({sequence:0});q.release('next');
+ }finally{vi.useRealTimers();await storage.close();}
+});

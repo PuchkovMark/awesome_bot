@@ -16,3 +16,17 @@ test('uncertain отменяет текущий результат, queued пр�
  release.forEach(r=>r());await flushQueue();expect(q.stats().depthRunning).toBe(0);
  }finally{const p=q.stop();await vi.advanceTimersByTimeAsync(10000);await p;await storage.close();vi.useRealTimers();}
 });
+
+test('удаление текущего поколения отменяет локальную работу, поздний результат не попадает в новое',async()=>{
+ const storage=await openStorage(':memory:'),life=lifecycleBackend(storage),old=scopeFor(storage,'vk:a');
+ const release:(()=>void)[]=[],signals:AbortSignal[]=[];
+ const q=createChatQueue({storage,config:{maxConcurrentChats:1},handler:async w=>{signals.push(w.signal);await new Promise<void>(r=>release.push(r));return 'completed';}});
+ try{
+ await q.start();await q.admit(old,queueMessage('vk:a','1'),()=>true);await flushQueue();await q.admit(old,queueMessage('vk:a','2'),()=>true);
+ life.apply(life.begin('vk:a'),{confidence:'confirmed',bot:'absent'});
+ const fresh=scopeFor(storage,'vk:a');expect(fresh.generation).not.toBe(old.generation);
+ await q.admit(fresh,queueMessage('vk:a','new'),()=>true);await flushQueue();expect(signals[0]!.aborted).toBe(true);expect(signals).toHaveLength(2);
+ release[0]!();await flushQueue();expect(q.stats().depthRunning).toBe(1);expect(await storage.queue.get(fresh,1)).toBeNull();
+ release[1]!();await flushQueue();expect((await storage.messages.list(fresh,{limit:10})).map(m=>m.text)).toEqual(['new']);
+ }finally{await q.stop();await storage.close();}
+});
