@@ -24,3 +24,15 @@ test('потеря владения прекращает запуск, позд�
  expect(backend.depth('next')).toMatchObject({depthRunning:0});backend.release('next');expect(vi.getTimerCount()).toBe(0);
  }finally{await storage.close();vi.useRealTimers();}
 });
+
+test.each([false,true])('задержанный таймер не пропускает просроченный результат, stop=%s',async stopping=>{
+ vi.useFakeTimers();let mono=0;const clock=vi.spyOn(performance,'now').mockImplementation(()=>mono);
+ const storage=await openStorage(':memory:'),scope=scopeFor(storage,'vk:a');let resolve!:(x:'completed')=>void;
+ const q=createChatQueue({storage,handler:()=>new Promise(r=>{resolve=r;})});
+ try{
+ await q.start();await q.admit(scope,queueMessage('vk:a','1'),()=>true);await flushQueue();
+ const stopped=stopping?q.stop():undefined;mono=stopping?10001:130001;
+ resolve('completed');await flushQueue();expect(await storage.queue.get(scope,1)).toMatchObject({outcome:stopping?'interrupted':'deadline_exceeded'});
+ await (stopped??q.stop());expect(vi.getTimerCount()).toBe(0);
+ }finally{clock.mockRestore();await q.stop();await storage.close();vi.useRealTimers();}
+});

@@ -30,3 +30,13 @@ test('удаление текущего поколения отменяет ло
  release[1]!();await flushQueue();expect((await storage.messages.list(fresh,{limit:10})).map(m=>m.text)).toEqual(['new']);
  }finally{await q.stop();await storage.close();}
 });
+
+test('просроченный маркер не блокирует очистку без нового запуска очереди',async()=>{
+ vi.useFakeTimers();vi.setSystemTime(1000);const storage=await openStorage(':memory:'),scope=scopeFor(storage,'vk:a');
+ const {queueBackend}=await import('../src/storage/queue-registry.js');
+ try{
+ await storage.messages.append(scope,queueMessage('vk:a','1'));queueBackend(storage).acquire('crashed',100,10);vi.setSystemTime(1100);
+ const life=lifecycleBackend(storage);expect(life.apply(life.begin('vk:a'),{confidence:'confirmed',bot:'absent'})).toMatchObject({status:'applied'});
+ expect(()=>life.current('vk:a')).toThrow('stale_scope');
+ }finally{await storage.close();vi.useRealTimers();}
+});

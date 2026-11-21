@@ -6,7 +6,7 @@ import { QueueError } from './errors.js';
 import { queueConfig } from './validation.js';
 import type { ChatQueue, ChatQueueOptions, QueueOutcome, QueueStats } from './types.js';
 const outcomes = new Set<unknown>(['completed','failed','rate_limit','interrupted','expired','message_missing','deadline_exceeded']);
-interface Task { work: QueueWork; controller: AbortController; timer: ReturnType<typeof setTimeout>; done: boolean }
+interface Task { deadline: number; work: QueueWork; controller: AbortController; timer: ReturnType<typeof setTimeout>; done: boolean }
 function safeFailure(error: unknown): QueueError {
   // Не читать произвольные свойства ошибок внедрённого обработчика.
   if (error instanceof QueueError) return error;
@@ -25,7 +25,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
   const handler = options.handler;
   const log = options.logger?.event.bind(options.logger);
   let phase: 'idle'|'running'|'stopping'|'stopped'|'failed' = 'idle';
-  let token = '', renewAt = 0, scheduled = false;
+  let token = '', renewAt = 0, scheduled = false, stopDeadline = Infinity;
   let tick: ReturnType<typeof setTimeout>|undefined, stopTimer: ReturnType<typeof setTimeout>|undefined;
   let stopPromise: Promise<void>|undefined, resolveStop: (()=>void)|undefined, rejectStop: ((error:QueueError)=>void)|undefined;
   let failure: QueueError|undefined;
@@ -56,6 +56,11 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
   }
   function finish(task:Task, outcome:QueueOutcome) {
     if(task.done)return;
+    const now=performance.now();
+    if(outcome!=='interrupted') {
+      if(phase==='stopping' && now>=stopDeadline && stopDeadline<=task.deadline)outcome='interrupted';
+      else if(now>=task.deadline)outcome='deadline_exceeded';
+    }
     task.done=true;clearTimeout(task.timer);tasks.delete(task.work.id);
     if(outcome==='interrupted'||outcome==='deadline_exceeded')task.controller.abort();
     try {
@@ -69,7 +74,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
   function launch(work:QueueWork) {
     wait(Math.max(0,Date.now()-work.receivedAt));
     const controller=new AbortController();
-    const task:Task={work,controller,done:false,timer:setTimeout(()=>finish(task,'deadline_exceeded'),config.handlerTimeoutMs)};
+    const task:Task={deadline:performance.now()+config.handlerTimeoutMs,work,controller,done:false,timer:setTimeout(()=>finish(task,'deadline_exceeded'),config.handlerTimeoutMs)};
     tasks.set(work.id,task);
     void Promise.resolve().then(async()=>{
       if(task.done)return;
@@ -128,7 +133,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
       if(phase==='failed')return Promise.reject(failure);
       if(phase==='idle'||phase==='stopped'){phase='stopped';return Promise.resolve();}
       stopPromise=new Promise<void>((resolve,reject)=>{resolveStop=resolve;rejectStop=reject;});
-      phase='stopping';
+      phase='stopping';stopDeadline=performance.now()+config.stopTimeoutMs;
       stopTimer=setTimeout(()=>{for(const task of [...tasks.values()])finish(task,'interrupted');completeStop();},config.stopTimeoutMs);
       completeStop();return stopPromise;
     },

@@ -16,6 +16,11 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
   function transaction<T>(token: string, operation: (db: Database) => T): T {
     return connection.run(db => db.transaction(() => { owned(db, token); const result = operation(db); owned(db, token); return result; }).immediate());
   }
+  function turn(db:Database, scope:{readonly chatId:string;readonly generation:number}) {
+    const row=db.prepare('UPDATE queue_lease SET sequence=sequence+1 WHERE singleton=1 AND sequence<9007199254740991 RETURNING sequence').get() as {sequence:number}|undefined;
+    if(!row)throw new StorageError('operation_failed');
+    db.prepare('INSERT INTO queue_turns(chat_id,generation,served) VALUES(?,?,?) ON CONFLICT(chat_id) DO UPDATE SET served=excluded.served').run(scope.chatId,scope.generation,row.sequence);
+  }
   const messages = createMessageStore(connection);
   return {
     transaction,
@@ -36,6 +41,8 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
         if (!result) return {status:'not_needed',messageId:appended.id};
         const count = (chat: string | null) => (db.prepare("SELECT count(*) AS n FROM queue_jobs WHERE state='queued' AND expires_at>? AND (? IS NULL OR chat_id=?)").get(now,chat,chat) as {n:number}).n;
         if (count(null) >= config.maxQueuedTotal || count(scope.chatId) >= config.maxQueuedPerChat) return {status:'queue_full', messageId:appended.id};
+        const pending=db.prepare("SELECT id FROM queue_jobs WHERE chat_id=? AND state IN ('queued','running') LIMIT 1").get(scope.chatId);
+        if(!pending)turn(db,scope);
         db.prepare("INSERT INTO queue_jobs(chat_id,generation,message_id,received_at,expires_at,state) VALUES(?,?,?,?,?,'queued')").run(scope.chatId,scope.generation,appended.id,now,expires);
         return {status:'queued',messageId:appended.id};
       }));
@@ -79,9 +86,6 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
           ORDER BY coalesce(t.served,0),j.id LIMIT 1`).get(Date.now()) as {id:number;chatId:ConnectionScope['chatId'];generation:number;messageId:number;receivedAt:number}|undefined;
         if(!row)return null;
         const scope=lifecycle.restore(row);
-        const sequence=db.prepare('UPDATE queue_lease SET sequence=sequence+1 WHERE singleton=1 AND sequence<9007199254740991 RETURNING sequence').get() as {sequence:number}|undefined;
-        if(!sequence)throw new StorageError('operation_failed');
-        db.prepare('INSERT INTO queue_turns(chat_id,generation,served) VALUES(?,?,?) ON CONFLICT(chat_id) DO UPDATE SET served=excluded.served').run(row.chatId,row.generation,sequence.sequence);
         db.prepare("UPDATE queue_jobs SET state='running',owner=? WHERE id=?").run(token,row.id);
         return Object.freeze({id:row.id,scope,messageId:row.messageId,receivedAt:row.receivedAt});
       });
@@ -98,6 +102,7 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
         const state=db.prepare('SELECT state FROM chat_connections WHERE chat_id=? AND generation=?').get(work.scope.chatId,work.scope.generation) as {state:string}|undefined;
         const final=state?.state==='active'?outcome:'interrupted';
         const result=db.prepare("UPDATE queue_jobs SET state='terminal',outcome=?,owner=NULL WHERE id=? AND owner=? AND state='running'").run(final,work.id,token);
+        if(result.changes===1 && db.prepare("SELECT id FROM queue_jobs WHERE chat_id=? AND state='queued' LIMIT 1").get(work.scope.chatId))turn(db,work.scope);
         return result.changes===1?final:null;
       });
     },

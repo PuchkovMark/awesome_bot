@@ -23,3 +23,16 @@ test('пятый чат ждёт освобождения одного из че
  releases[0]!();await flushQueue();expect(releases).toHaveLength(5);for(const r of releases)r();await flushQueue();
  }finally{await q.stop();await storage.close();}
 });
+
+test('новый чат не обгоняет уже готовый чат, который обслуживался раньше',async()=>{
+ const storage=await openStorage(':memory:');const calls:string[]=[],release:(()=>void)[]=[];
+ const q=createChatQueue({storage,config:{maxConcurrentChats:1},handler:async w=>{calls.push(w.scope.chatId);await new Promise<void>(r=>release.push(r));return 'completed';}});
+ try{
+ await q.start();const b=scopeFor(storage,'vk:b'),a=scopeFor(storage,'vk:a'),c=scopeFor(storage,'vk:c');
+ await q.admit(b,queueMessage('vk:b','old'),()=>true);await flushQueue();release[0]!();await flushQueue();
+ await q.admit(a,queueMessage('vk:a','busy'),()=>true);await flushQueue();
+ await q.admit(b,queueMessage('vk:b','waiting'),()=>true);await q.admit(c,queueMessage('vk:c','new'),()=>true);
+ release[1]!();await flushQueue();expect(calls).toEqual(['vk:b','vk:a','vk:b']);
+ release[2]!();await flushQueue();expect(calls.at(-1)).toBe('vk:c');release[3]!();await flushQueue();
+ }finally{await q.stop();await storage.close();}
+});
