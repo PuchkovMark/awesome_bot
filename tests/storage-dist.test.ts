@@ -3,6 +3,7 @@ import { cpSync, existsSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { expect, test } from 'vitest';
+import Database from 'better-sqlite3';
 import { storageFixture } from './helpers/storage-fixture.js';
 
 test('ESM-выпуск открывает БД вне проекта без исходников', () => {
@@ -31,5 +32,13 @@ test('ESM-выпуск открывает БД вне проекта без ис
     expect(result.stdout).toBe('STORAGE_COMPLETED');
     expect(result.stderr).toBe('');
     expect(existsSync(fixture.path)).toBe(true);
+    const inspection = new Database(fixture.path);
+    try {
+      expect(inspection.prepare("SELECT name FROM sqlite_schema WHERE name IN ('chat_participants','participant_profiles','profile_facts') ORDER BY name").all())
+        .toEqual([{ name: 'chat_participants' }, { name: 'participant_profiles' }, { name: 'profile_facts' }]);
+      expect(inspection.prepare('SELECT version FROM schema_migrations ORDER BY version').all())
+        .toEqual([{ version: 1 }, { version: 2 }, { version: 3 }]);
+      expect(inspection.pragma('foreign_key_check')).toEqual([]);
+    } finally { inspection.close(); }
   } finally { fixture.cleanup(); }
 });
