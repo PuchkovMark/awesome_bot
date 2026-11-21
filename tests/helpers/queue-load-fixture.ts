@@ -10,6 +10,10 @@ export function seedLargeQueueChat(db:Database, generation:number, count:number)
   db.prepare("INSERT INTO local_content_versions VALUES ('vk:large',?,'persona','test',1,'local',0)").run(generation);
   db.prepare("INSERT INTO chat_content_selections VALUES ('vk:large',?,'persona',NULL,NULL,'test',1)").run(generation);
   db.prepare("INSERT INTO queue_jobs(chat_id,generation,message_id,received_at,expires_at,state) SELECT chat_id,?,id,0,9007199254740991,'queued' FROM messages WHERE chat_id='vk:large'").run(generation);
+  db.exec("UPDATE queue_jobs SET route_kind='name',route_mode='normal',route_group=1 WHERE chat_id='vk:large'");
+  db.prepare("INSERT INTO notice_periods VALUES ('vk:large',?,300000)").run(generation);
+  const notice=db.prepare("INSERT INTO messages(chat_id,platform_message_id,user_id,author_name,role,text,timestamp,purpose) VALUES('vk:large',?,'vk:bot','','assistant','служебныйслед',0,'service_notice')");
+  for(let i=0;i<1000;i++)notice.run('notice-'+i);
   db.prepare("INSERT INTO queue_turns VALUES ('vk:large',?,0)").run(generation);
  })();
 }

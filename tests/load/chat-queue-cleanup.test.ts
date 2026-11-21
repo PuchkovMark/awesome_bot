@@ -35,8 +35,9 @@ test('300000 сообщений с FTS, профилями и заданиями
  const life=lifecycleBackend(storage);life.apply(life.begin('vk:large'),{confidence:'confirmed',bot:'absent'});
  const cleanupMs=performance.now()-started;expect(cleanupMs+10000).toBeLessThan(30000);backend.check('owner');
  const [exit]=await once(child,'exit');expect(exit,errors).toBe(0);expect(output).toContain('checked');
- for(const table of ['queue_jobs','queue_turns','messages','chat_participants','participant_profiles','profile_facts','local_content_versions','chat_content_selections','bot_admin_grants','bot_admin_revocations','bot_admin_revocation_audit','bot_admin_controls','chats','chat_connections'])expect(db.prepare(`SELECT count(*) AS n FROM ${table} WHERE chat_id='vk:large'`).get()).toEqual({n:0});
+ for(const table of ['notice_periods','queue_jobs','queue_turns','messages','chat_participants','participant_profiles','profile_facts','local_content_versions','chat_content_selections','bot_admin_grants','bot_admin_revocations','bot_admin_revocation_audit','bot_admin_controls','chats','chat_connections'])expect(db.prepare(`SELECT count(*) AS n FROM ${table} WHERE chat_id='vk:large'`).get()).toEqual({n:0});
  expect(db.prepare("SELECT rowid FROM messages_fts WHERE messages_fts MATCH 'удаляемыйкот'").all()).toEqual([]);
+ expect(db.prepare("SELECT rowid FROM messages_fts WHERE messages_fts MATCH 'служебныйслед'").all()).toEqual([]);
  expect(await storage.messages.list(other,{limit:1})).toHaveLength(1);expect(db.pragma('foreign_key_check')).toEqual([]);
  backend.release('owner');await recordQueueLoad({fixtureMessages:300000,fixtureJobs:300000,fixtureProfiles:2000,cleanupMs,leaseMs:30000,marginMs:10000});
  }finally{child?.kill();db.close();await storage.close();f.cleanup();}

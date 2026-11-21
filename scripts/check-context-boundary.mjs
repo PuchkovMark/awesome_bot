@@ -9,6 +9,7 @@ export function checkContextBoundary(root=process.cwd()) {
  const config=ts.readConfigFile(resolve(root,'tsconfig.json'),ts.sys.readFile);
  if(config.error)throw Error('context_boundary: invalid_config');
  const parsed=ts.parseJsonConfigFileContent(config.config,ts.sys,root);
+ if(parsed.errors.length)throw Error('context_boundary: invalid_config');
  const roots=parsed.fileNames.filter(f=>/^src\/(context|core\/context)(\/|\.)|^src\/tools\/(context|search)(\/|\.)/.test(relative(root,f).split(sep).join('/')));
  const errors=[];
  for(const start of roots){const seen=new Set(),pending=[start];let invalid=false;
@@ -24,7 +25,16 @@ export function checkContextBoundary(root=process.cwd()) {
      const resolved=ts.resolveModuleName(spec.text,file??start,parsed.options,ts.sys).resolvedModule;
      if(!resolved){if(spec.text.startsWith('.'))invalid=true;return;}
      const next=resolve(resolved.resolvedFileName),local=relative(root,next).split(sep).join('/');
-     if(local==='src/storage/context-types.ts')return;
+     if(local==='src/storage/context-types.ts'){
+      const facade=ts.sys.readFile(next);if(facade===undefined){invalid=true;return;}
+      const body=ts.createSourceFile(next,facade,ts.ScriptTarget.Latest,true);
+      for(const statement of body.statements){
+       if(ts.isInterfaceDeclaration(statement)&&statement.name.text==='ContextMessageReader')continue;
+       if(ts.isImportDeclaration(statement)&&statement.importClause?.isTypeOnly&&statement.importClause.namedBindings&&ts.isNamedImports(statement.importClause.namedBindings)&&statement.importClause.namedBindings.elements.every(e=>['ConnectionScope','StoredMessage','HistoryQuery'].includes((e.propertyName??e.name).text)))continue;
+       invalid=true;
+      }
+      return;
+     }
      if(/^src\/storage\//.test(local)){invalid=true;return;}
      if(!next.split(sep).includes('node_modules'))pending.push(next);
     }
