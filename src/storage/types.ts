@@ -1,3 +1,4 @@
+import type { AuthorizationStore } from './authorization-types.js';
 import type { ChatId, UserId, PlatformMessageId, Timestamp } from '../contracts/index.js';
 
 export interface MessageInput {
@@ -49,6 +50,7 @@ export interface ChatStore {
   update(chatId: ChatId, patch: ChatPatch): Promise<ChatSettings | null>;
 }
 export interface Storage {
+  readonly authorization: AuthorizationStore;
   readonly messages: MessageStore;
   readonly chats: ChatStore;
   close(): Promise<void>;

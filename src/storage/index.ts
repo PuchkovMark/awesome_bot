@@ -9,3 +9,4 @@ export type {
   ParticipantRole, ParticipantStatus, FactSourceKind, FactReliability, FactVisibility,
   ParticipantRecord, ParticipantProfileRecord, ProfileFactRecord,
 } from './participant-types.js';
+export type { AuthorizationStore, AuthorizationTransaction, RevocationAudit, AdminGrant } from './authorization-types.js';
