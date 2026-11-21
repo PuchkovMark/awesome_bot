@@ -1,3 +1,5 @@
+import { createQueueBackend } from './queue-store.js';
+import { registerQueue } from './queue-registry.js';
 import {object} from './validation.js';
 import {safeError} from './errors.js';
 import { createVersionBackend } from './version-store.js';
@@ -18,6 +20,6 @@ export async function openStorage(path:string,options:{readonly versioning?:Vers
   const backend=createLifecycleBackend(connection);
   const versions=createVersionBackend(connection,backend,limits);
   const storage:Storage={...createScopedStorage(connection,backend,versions),async close(){connection.close();}};
-  registerLifecycle(storage,backend);registerVersions(storage,versions);return storage;
+  registerQueue(storage,createQueueBackend(connection,backend));registerLifecycle(storage,backend);registerVersions(storage,versions);return storage;
  }catch(error){connection.close();throw error;}
 }

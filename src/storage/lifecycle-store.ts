@@ -49,9 +49,12 @@ export function createLifecycleBackend(connection: Connection) {
     return state;
   }
   function remove(db:Database,chatId:ChatId):void {
-    for(const table of ['chat_content_selections','local_content_versions','profile_facts','participant_profiles','chat_participants','bot_admin_revocation_audit','bot_admin_revocations','bot_admin_grants','bot_admin_controls','messages','chats','chat_connections']) {
+    const lease = db.prepare('SELECT token,expires_at AS expires,safety_ms AS safety FROM queue_lease WHERE singleton=1').get() as {token:string|null;expires:number;safety:number};
+    if (lease.token !== null && lease.expires - Date.now() <= lease.safety) throw new StorageError('queue_lost_ownership');
+    for(const table of ['queue_jobs','queue_turns','chat_content_selections','local_content_versions','profile_facts','participant_profiles','chat_participants','bot_admin_revocation_audit','bot_admin_revocations','bot_admin_grants','bot_admin_controls','messages','chats','chat_connections']) {
       db.prepare(`DELETE FROM ${table} WHERE chat_id=?`).run(chatId);
     }
+    if (lease.token !== null && lease.expires <= Date.now()) throw new StorageError('queue_lost_ownership');
     advanceClock(db);
   }
   return {
