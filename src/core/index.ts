@@ -13,3 +13,7 @@ export { QueueError } from './chat-queue/errors.js';
 export type { ChatQueue, ChatQueueOptions, QueueHandler, QueueHandlerInput, QueueAdmission, QueueConfig, QueueDecision, QueueOutcome, QueueStats } from './chat-queue/types.js';
 export { createAgentLoopQueue } from './chat-queue/agent-loop-adapter.js';
 export type { AgentLoopQueueOptions } from './chat-queue/agent-loop-adapter.js';
+
+export { routeMessage } from './message-router/routing.js';
+export { publicationDecision } from './message-router/publication.js';
+export type { RoutingInput, RoutingDecision, ServiceCommand, PublicationDecision } from './message-router/types.js';

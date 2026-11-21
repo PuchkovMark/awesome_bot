@@ -34,3 +34,5 @@ export interface QueueStats {
 }
 export interface QueueWork { readonly id: number; readonly scope: ConnectionScope; readonly messageId: number; readonly receivedAt: number }
 export type QueueMessage = MessageInput;
+
+export interface RouteMetadata { readonly kind:'direct_message'|'mention'|'reply'|'name'; readonly mode:'normal'|'active'; readonly isGroupChat:boolean }
