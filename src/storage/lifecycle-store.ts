@@ -47,9 +47,11 @@ export function createLifecycleBackend(connection: Connection) {
     if(state.state!=='active')throw new StorageError('uncertain_connection');
     return state;
   }
-  function remove(_db:Database,_chatId:ChatId):never {
-    void _db; void _chatId;
-    throw new StorageError('unavailable'); // Атомарная очистка подключается отдельным шагом.
+  function remove(db:Database,chatId:ChatId):void {
+    for(const table of ['profile_facts','participant_profiles','chat_participants','bot_admin_revocation_audit','bot_admin_revocations','bot_admin_grants','bot_admin_controls','messages','chats','chat_connections']) {
+      db.prepare(`DELETE FROM ${table} WHERE chat_id=?`).run(chatId);
+    }
+    advanceClock(db);
   }
   return {
     assertScope,
@@ -89,8 +91,8 @@ export function createLifecycleBackend(connection: Connection) {
           else {bump(db,chatId);db.prepare("UPDATE chat_connections SET state='uncertain' WHERE chat_id=?").run(chatId);}
           return {status:'uncertain' as const};
         }
-        if(observation.bot==='absent') {if(state)remove(db,chatId);return {status:'applied' as const};}
         if(state?.state==='uncertain')return {status:'uncertain' as const};
+        if(observation.bot==='absent') {if(state)remove(db,chatId);return {status:'applied' as const};}
         if(!state)create(db,chatId,'active');
         else bump(db,chatId);
         state=read(db,chatId)!;
