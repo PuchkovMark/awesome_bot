@@ -22,3 +22,5 @@ for(const mode of ['normal','active'] as const)for(const failure of ['none','ful
  expect(JSON.stringify(await s.traces.get(scope,1))).not.toContain('SECRET');
  }finally{await q.stop();db.close();await s.close();f.cleanup();}
 });
+
+test('разные строки таблицы имеют разные устойчивые идентификаторы',async()=>{const {publicationRow}=await import('../src/core/message-router/publication.js');const route={kind:'name',mode:'normal',isGroupChat:true} as const;expect(publicationRow(route,{kind:'empty'})).toBe('unusable_response');expect(publicationRow(route,{kind:'rate_limit'})).toBe('unsuccessful');});

@@ -19,6 +19,7 @@ export function publicationRow(route:RouteMetadata|null,outcome:unknown):import(
  if(!route)return 'invalid_route';
  const kind=outcome&&typeof outcome==='object'?Object.getOwnPropertyDescriptor(outcome,'kind')?.value as unknown:undefined;
  if(typeof kind!=='string')return 'silent_outcome';
+ if(['incomplete','refused','empty'].includes(kind))return 'unusable_response';
  if(['complete','queue_full','current_message_too_large','static_budget_too_small','trace_write_failed'].includes(kind))return kind;
  return ['incomplete','refused','empty','rate_limit','tools_not_supported','deadline_exceeded','attempt_limit','error','failed','missing_system_prompt','internal_error'].includes(kind)?'unsuccessful':'silent_outcome';
 }

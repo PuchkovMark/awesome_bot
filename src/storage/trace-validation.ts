@@ -1,7 +1,7 @@
 import {requireInput} from './validation.js';
 import {StorageError} from './errors.js';
 import type {TracePayload} from './trace-types.js';
-export const traceRows=['complete','unsuccessful','queue_full','current_message_too_large','static_budget_too_small','trace_write_failed','silent_outcome','invalid_route'] as const;
+export const traceRows=['complete','unusable_response','unsuccessful','queue_full','current_message_too_large','static_budget_too_small','trace_write_failed','silent_outcome','invalid_route'] as const;
 function plain(value:unknown,keys:readonly string[]):Record<string,unknown>{
  requireInput(value!==null&&typeof value==='object'&&!Array.isArray(value)&&Object.getPrototypeOf(value)===Object.prototype);
  const descriptors=Object.getOwnPropertyDescriptors(value);requireInput(Reflect.ownKeys(descriptors).every(k=>typeof k==='string'&&keys.includes(k)&&'value'in descriptors[k]!));
