@@ -29,7 +29,7 @@ export interface AgentLoopSummary {
   readonly usage: { readonly input: TokenCounter; readonly output: TokenCounter };
 }
 export type AgentLoopErrorCode = Exclude<LlmErrorCode, 'rate_limit' | 'cancelled'> | 'invalid_input' | 'client_failure';
-export type AttemptAdmission = boolean | 'quota_exhausted';
+export type AttemptAdmission = boolean | 'quota_exhausted' | 'context_stale';
 export type AgentLoopOutcome =
   | { readonly kind: 'complete'; readonly text: string }
   | { readonly kind: 'incomplete'; readonly partialText: string }

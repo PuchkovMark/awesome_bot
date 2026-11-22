@@ -66,6 +66,7 @@ function vkFixture(beforeSend?: (peer:number) => Promise<void>, startId = 100, r
   readonly owner: () => boolean;
 }) {
   const rows = new Map<string, Record<string, unknown>>();
+  const eventStart = Math.floor(Date.now() / 1000) - 60;
   let at = 0;
   let counter = startId;
   const attempt = vi.fn<Parameters<typeof createVkApiCall>[0]>(async (method, params) => {
@@ -87,7 +88,7 @@ function vkFixture(beforeSend?: (peer:number) => Promise<void>, startId = 100, r
       const forward = params.forward === undefined ? null : JSON.parse(String(params.forward)) as { conversation_message_ids: number[] };
       rows.set(`${peer}:${id}`, {
         peer_id: peer, from_id: -groupId, conversation_message_id: id, text: params.message,
-        date: 1_700_000_100, ...(forward ? { reply_message: rows.get(`${peer}:${forward.conversation_message_ids[0]}`) } : {}),
+        date: Math.floor(Date.now() / 1000), ...(forward ? { reply_message: rows.get(`${peer}:${forward.conversation_message_ids[0]}`) } : {}),
       });
       return { response: [{ peer_id: peer, conversation_message_id: id }] };
     }
@@ -100,7 +101,7 @@ function vkFixture(beforeSend?: (peer:number) => Promise<void>, startId = 100, r
     api, attempt,
     event(id: number, peer = 73, action?: object, text = '[club314|Пенек] Вопрос') {
       const message = { peer_id: peer, from_id: 73, conversation_message_id: id,
-        text, date: 1_700_000_000 + id, out: 0, ...(action ? { action } : {}),
+        text, date: eventStart + id, out: 0, ...(action ? { action } : {}),
       };
       rows.set(`${peer}:${id}`, message);
       return { type: 'message_new', group_id: groupId, object: { message } };

@@ -1,10 +1,11 @@
+import { acceptsHistoryInput, applyHistoryRetention, historySourcesVisible, pruneHistoryMessages } from './history-retention-store.js';
 import {initialTrace,startTrace,minimalTrace} from './trace-store.js';
 import type {TraceBackend} from './trace-store.js';
 import type {TracePayload} from './trace-types.js';
 import {encodeTrace} from './trace-validation.js';
 import { createChatStore } from './chats.js';
 import type { RoutedQueueCallback, RoutedAdmission, RouteMetadata } from './queue-types.js';
-import { createMessageStore, readMessage } from './messages.js';
+import { createMessageStore, readMessage, validateMessage } from './messages.js';
 import type { MessageInput } from './types.js';
 import type { QueueConfig, QueueDecision, QueueAdmission } from './queue-types.js';
 import type { Database } from 'better-sqlite3';
@@ -18,7 +19,9 @@ import { readChatControl } from './chat-control-store.js';
 import { admitRequestQuota, pruneRequestQuota } from './request-quota-store.js';
 import { createAutonomousQuotaStore, pruneAutonomousQuota, restoreAutonomousQuota } from './autonomous-quota-store.js';
 import type { ChatLimits } from '../core/chat-limits/config.js';
-export function createQueueBackend(connection: Connection, lifecycle: LifecycleBackend,traces:TraceBackend) {
+export function createQueueBackend(connection: Connection, lifecycle: LifecycleBackend,traces:TraceBackend,messageRetentionDays?:number) {
+  const retentionMs=messageRetentionDays===undefined?undefined:messageRetentionDays*86_400_000;
+  const sources = new WeakMap<QueueWork, readonly number[]>();
   const runningRevisions = new WeakMap<QueueWork, number>();
   function owned(db: Database, token: string) {
     const row = db.prepare('SELECT token,expires_at AS expires FROM queue_lease WHERE singleton=1').get() as {token:string|null;expires:number};
@@ -46,7 +49,7 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
     db.prepare('INSERT INTO queue_turns(chat_id,generation,served) VALUES(?,?,?) ON CONFLICT(chat_id) DO UPDATE SET served=excluded.served').run(scope.chatId,scope.generation,row.sequence);
   }
   function running(db: Database, token: string, work: QueueWork): boolean {
-    return currentWork(db, work) && !!db.prepare(`SELECT j.id FROM queue_jobs j
+    return currentWork(db, work) && historySourcesVisible(db,work.scope.chatId,sources.get(work)??[work.messageId]) && !!db.prepare(`SELECT j.id FROM queue_jobs j
       JOIN chat_connections c ON c.chat_id=j.chat_id AND c.generation=j.generation
       LEFT JOIN chats s ON s.chat_id=j.chat_id
       WHERE j.id=? AND j.owner=? AND j.state='running' AND c.state='active'
@@ -55,6 +58,7 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
   const messages = createMessageStore(connection);
   return {
     transaction,
+    historyConfigured:retentionMs!==undefined,
     admitRouted(token:string,scope:ConnectionScope,message:MessageInput,decision:RoutedQueueCallback,config:QueueConfig,
       guard?: import('./queue-types.js').RoutedAdmissionGuard):RoutedAdmission {
      return transaction(token,()=>lifecycle.transaction(scope,db=>{
@@ -89,6 +93,8 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
         requireInput(snapshotMessage.chatId === scope.chatId);
         const enabled = db.prepare('SELECT enabled FROM chats WHERE chat_id=?').get(scope.chatId) as {enabled:number}|undefined;
         requireInput(enabled?.enabled !== 0);
+        validateMessage(snapshotMessage);
+        if (!acceptsHistoryInput(db,scope,snapshotMessage)) return {status:'history_unavailable'};
         const appended = messages.append(snapshotMessage);
         if (appended.status === 'duplicate') return {status:'duplicate', messageId:appended.id};
         const now = Date.now(); const expires = now + config.maxQueueAgeMs; timestamp(expires);
@@ -113,6 +119,7 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
         if (row.token !== null && row.expires > now) throw new StorageError('queue_owned');
         if(config)traces.configure(config);if(report)traces.observe(report);
         db.prepare('UPDATE queue_lease SET token=?,expires_at=?,safety_ms=? WHERE singleton=1').run(token, now + leaseMs, safetyMs);
+        if (retentionMs!==undefined) applyHistoryRetention(db,retentionMs,now);
         restoreAutonomousQuota(db, pausePlatform === undefined ? null : `${pausePlatform}:`);
         if (pausePlatform !== undefined) lifecycle.pauseActivePlatform(db, pausePlatform);
         const running=db.prepare("SELECT j.id,j.chat_id AS chatId,j.generation,j.message_id AS messageId,j.received_at AS receivedAt FROM queue_jobs j WHERE j.state='running'").all() as {id:number;chatId:ConnectionScope['chatId'];generation:number;messageId:number;receivedAt:number}[];
@@ -122,10 +129,17 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
         }
         const open=db.prepare('SELECT job_id,payload FROM response_traces WHERE finished_at IS NULL').all() as {job_id:number;payload:string}[];
         for(const row of open){const payload=JSON.parse(row.payload) as TracePayload;db.prepare("UPDATE response_traces SET finished_at=max(started_at,?),outcome='interrupted',payload=? WHERE job_id=?").run(now,encodeTrace({...payload,resultKind:'interrupted',publication:{rowId:'silent_outcome',tableVersion:1,reaction:'silence',status:'suppressed',reason:'guard'}},traces.config().maxRecordBytes),row.job_id);}
-        db.prepare('DELETE FROM response_traces WHERE job_id IN (SELECT job_id FROM response_traces WHERE expires_at<=? AND finished_at IS NOT NULL LIMIT 100)').run(now);
+        if (retentionMs===undefined) db.prepare('DELETE FROM response_traces WHERE job_id IN (SELECT job_id FROM response_traces WHERE expires_at<=? AND finished_at IS NOT NULL LIMIT 100)').run(now);
         const recovered = db.prepare("UPDATE queue_jobs SET state='terminal',outcome='interrupted',owner=NULL WHERE state='running'").run().changes;
         owned(db,token); return recovered;
       }).immediate());
+    },
+    pruneHistory(token: string) {
+      if (retentionMs===undefined) return false;
+      const now=Date.now();
+      const tracesDeleted=transaction(token, db => db.prepare(`DELETE FROM response_traces WHERE job_id IN (
+        SELECT job_id FROM response_traces WHERE expires_at<=? AND finished_at IS NOT NULL LIMIT 100)`).run(now).changes);
+      return transaction(token, db => pruneHistoryMessages(db,retentionMs,now)) || tracesDeleted===100;
     },
     renew(token: string, leaseMs: number) {
       return transaction(token, db => { const expires = Date.now() + leaseMs; timestamp(expires); db.prepare('UPDATE queue_lease SET expires_at=? WHERE singleton=1').run(expires); });
@@ -168,10 +182,14 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
     valid(token: string, work: QueueWork): boolean {
       return transaction(token, db => running(db, token, work));
     },
-    admitModelAttempt(token: string, work: QueueWork, limits: ChatLimits, allow: () => boolean, now = Date.now) {
+    admitModelAttempt(token: string, work: QueueWork, limits: ChatLimits|undefined, allow: () => boolean, now = Date.now, contextIds:readonly number[] = []) {
       return transaction(token, db => {
-        if (!work.route || !running(db, token, work) || !allow()) return false;
-        return admitRequestQuota(db, work, limits, now());
+        if (!running(db, token, work) || !allow()) return false;
+        const ids=sources.get(work)??[...new Set([work.messageId,...contextIds])];
+        if (!historySourcesVisible(db,work.scope.chatId,ids)) return 'context_stale' as const;
+        const result=limits&&work.route?admitRequestQuota(db,work,limits,now()):true;
+        if (result===true) sources.set(work,ids);
+        return result;
       });
     },
     autonomousQuota(token: string, limits: ChatLimits, platform?: string) {
@@ -190,7 +208,7 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
     },
     publicationValid(token:string,work:QueueWork):boolean {
      return transaction(token,db=>{
-      return currentWork(db,work)&&!!db.prepare("SELECT j.id FROM queue_jobs j JOIN chats s ON s.chat_id=j.chat_id WHERE j.id=? AND j.chat_id=? AND j.generation=? AND j.state='terminal' AND s.enabled=1 AND (j.route_kind IS NULL OR s.response_mode<>'silent')").get(work.id,work.scope.chatId,work.scope.generation);
+      return currentWork(db,work)&&historySourcesVisible(db,work.scope.chatId,sources.get(work)??[work.messageId])&&!!db.prepare("SELECT j.id FROM queue_jobs j JOIN chats s ON s.chat_id=j.chat_id WHERE j.id=? AND j.chat_id=? AND j.generation=? AND j.state='terminal' AND s.enabled=1 AND (j.route_kind IS NULL OR s.response_mode<>'silent')").get(work.id,work.scope.chatId,work.scope.generation);
      });
     },
     progress(token:string,work:QueueWork,payload:TracePayload){

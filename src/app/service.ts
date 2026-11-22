@@ -25,6 +25,7 @@ import { parseAdminRecoveryCommand } from '../core/admin-recovery/commands.js';
 import { adminRecoveryStore } from '../storage/admin-recovery-store.js';
 import { chatControlStore } from '../storage/chat-control-store.js';
 import { createChatControlHandlers } from './chat-control.js';
+import { createHistoryHandlers } from './history-retention.js';
 import type { ChatLimits } from '../core/chat-limits/config.js';
 
 interface ApplicationDependencies {
@@ -71,7 +72,7 @@ export async function runApplication(config: ApplicationConfig, logger: SafeLogg
     let startupFailure: ApplicationFailure = 'storage_failed';
     try {
       if (signal.aborted) return;
-      storage = await openStorage(config.databasePath, { versioning: config.versioning });
+      storage = await openStorage(config.databasePath, { versioning: config.versioning, messageRetentionDays: config.tracing.messageRetentionDays });
       if (signal.aborted) return;
       const lifecycle = createLifecycleService({
         storage, ownerId: config.authorization.ownerId, source: unconfirmedLifecycleSource,
@@ -168,12 +169,15 @@ export async function runApplication(config: ApplicationConfig, logger: SafeLogg
       const administration=createAdminRecoveryService({storage,authorization,lifecycle,ownerId,group,platform:channel.platform,signal,
         delivery:channel.administrationDelivery!,hasMember:channel.administrationEvidence.hasMember});
       const chatControl=createChatControlHandlers({storage,authorization,lifecycle,channel,ownerId,group,signal});
+      const history=createHistoryHandlers({storage,authorization,lifecycle,channel,ownerId,group,signal,
+        isRunning:queue.isRunning,wakeMaintenance:queue.wakeHistoryMaintenance??(()=>{})});
       const router = createMessageRouter({ storage, queue, logger, authorization, onQueueFull: publication.queueFull,
-        recognizeCommand:(message,replyToOther) => chatControl.recognize(message,replyToOther) ??
+        recognizeCommand:(message,replyToOther) => history.recognize(message) ?? chatControl.recognize(message,replyToOther) ??
           (message.isGroupChat&&message.isBot===false&&parseTimezoneCommand(message.text)!==null
             ? {action:'chat.configure',minimumRole:'admin'} : null),
         identity:(scope,message)=>commandAuthorization.context({scope,userId:message.userId}),
-        async executeCommand(context,message,isCurrent) {
+        async executeCommand(context,message,isCurrent,replayOnly) {
+          if (history.recognize(message)) return history.execute(context,message,isCurrent,replayOnly);
           const input = parseTimezoneCommand(message.text);
           if (input===null) return chatControl.execute(context,message,isCurrent);
           const timezone = canonicalTimezone(input);
@@ -185,7 +189,7 @@ export async function runApplication(config: ApplicationConfig, logger: SafeLogg
         membership(scope,userId,present,messageId,at) { lifecycle.observeAdminMembership(scope,userId,present,messageId,at); },
         command(message,isCurrent) {
           const command=parseAdminRecoveryCommand(message.text);
-          if (!command) return chatControl.privateCommand(message,isCurrent);
+          if (!command) return history.privateCommand(message,isCurrent) ?? chatControl.privateCommand(message,isCurrent);
           if (message.peerId!==ownerPeer || message.authorId!==ownerPeer || message.isMentioned || message.reply ||
             ownerPeer===undefined || ownerPeer<=0 || isVkGroupChat(ownerPeer)) return Promise.resolve();
           return administration.handle(ownerId,command,message.cmid,isCurrent);

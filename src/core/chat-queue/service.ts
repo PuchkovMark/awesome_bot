@@ -12,6 +12,7 @@ import { queueConfig } from './validation.js';
 import type { ChatQueue, ChatQueueOptions, QueueOutcome, QueueStats, QueueCompletion } from './types.js';
 import { chatLimits } from '../chat-limits/config.js';
 const outcomes = new Set<unknown>(['completed','failed','rate_limit','interrupted','expired','message_missing','deadline_exceeded']);
+const HISTORY_MAINTENANCE_INTERVAL = 60_000;
 interface Task { trace:TracePayload; deadline: number; work: QueueWork; controller: AbortController; timer: ReturnType<typeof setTimeout>; done: boolean; publishing:boolean }
 function disclosureVersion(work: QueueWork) {
   return work.disclosureVersion === undefined ? {} : {disclosureVersion:work.disclosureVersion};
@@ -41,6 +42,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
   let phase: 'idle'|'running'|'stopping'|'stopped'|'failed' = 'idle';
   let token = '', renewAt = 0, scheduled = false, stopDeadline = Infinity;
   let tick: ReturnType<typeof setTimeout>|undefined, stopTimer: ReturnType<typeof setTimeout>|undefined;
+  let historyCheckAt = 0, historyWake: ReturnType<typeof setImmediate>|undefined;
   let stopPromise: Promise<void>|undefined, resolveStop: (()=>void)|undefined, rejectStop: ((error:QueueError)=>void)|undefined;
   let failure: QueueError|undefined;
   const lifetime=new AbortController();
@@ -52,7 +54,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
     Object.assign(counters,backend.depth(token));
     try { log?.({event:'queue_stats',window:'run',...counters},'info'); } catch { /* Диагностика не меняет обработку. */ }
   }
-  function clearTimers() { clearTimeout(tick); tick=undefined; clearTimeout(stopTimer); stopTimer=undefined; }
+  function clearTimers() { clearImmediate(historyWake);historyWake=undefined;clearTimeout(tick); tick=undefined; clearTimeout(stopTimer); stopTimer=undefined; }
   function fault(error:unknown) {
     if (phase==='failed' || phase==='stopped') return;
     failure=safeFailure(error); phase='failed'; lifetime.abort();clearTimers();
@@ -117,8 +119,8 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
       if(!backend.valid(token,work)){finish(task,'interrupted');return;}
       if(work.route){const settings=await options.storage.chats.get(work.scope);if(task.done)return;if(!settings?.enabled||settings.responseMode==='silent'||!backend.valid(token,work)){finish(task,'interrupted');return;}}
       const outcome:unknown=await handler(Object.freeze({jobId:work.id,recordTrace:(update:Partial<TracePayload>)=>{if(task.done||!backend.valid(token,work))return;const next={...task.trace,...update};if(backend.progress(token,work,next))task.trace=next;},scope:work.scope,messageId:work.messageId,signal:controller.signal,route:work.route,...disclosureVersion(work),isCurrent,
-        ...(limits && work.route ? {admitModelAttempt:(allow:()=>boolean)=>
-          backend.admitModelAttempt(token,work,limits,()=>running()&&allow()&&running())} : {}),
+        ...(limits && work.route || backend.historyConfigured ? {admitModelAttempt:(allow:()=>boolean,contextIds?:readonly number[])=>
+          backend.admitModelAttempt(token,work,limits,()=>running()&&allow()&&running(),Date.now,contextIds)} : {}),
       }));
       const completion:QueueCompletion=typeof outcome==='object'&&outcome!==null&&outcomes.has((outcome as QueueCompletion).outcome)?outcome as QueueCompletion:{outcome:outcomes.has(outcome)?outcome as QueueOutcome:'failed'};
       finish(task,completion.outcome,completion);
@@ -140,8 +142,25 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
           const work=backend.take(token,[...tasks.values()].map(t=>t.work.scope.chatId),platform);if(!work)break;launch(work);
         }
         emit();
+        if (backend.historyConfigured && historyWake===undefined && performance.now()>=historyCheckAt) maintainHistory();
       }
     }catch(error){fault(error);}
+  }
+  function maintainHistory() {
+    historyCheckAt=performance.now()+HISTORY_MAINTENANCE_INTERVAL;
+    try {
+      if (backend.pruneHistory(token)) {
+        historyWake=setImmediate(()=>{
+          historyWake=undefined;
+          historyCheckAt=0;
+          pump();
+        });
+        historyWake.unref();
+      }
+    } catch (error) {
+      // A failed batch leaves the durable boundaries in force. Retry on the next pass.
+      if (error instanceof StorageError && error.code==='queue_lost_ownership') throw error;
+    }
   }
   function armTick() {
     if(phase!=='running' && phase!=='stopping')return;
@@ -150,6 +169,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
   }
   const service: ChatQueue = {
     signal:lifetime.signal,
+    wakeHistoryMaintenance(){historyCheckAt=0;schedule();},
     isRunning(){if(phase!=='running')return false;try{backend.check(token);return true;}catch{return false;}},
     async start() {
       if(phase!=='idle')throw new QueueError('stopped');

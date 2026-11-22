@@ -5,7 +5,7 @@ import type { AuthorizationTransaction } from './authorization-types.js';
 export interface ScopedStorage {
   readonly traces:import('./trace-types.js').TraceReader;
   readonly contextState: import('./context-types.js').ContextStateReader;
-  readonly contextMessages: import('./context-types.js').ContextMessageReader;
+  readonly contextMessages: import('./context-types.js').ContextMessageReader & import('./context-reader.js').ContextSearch;
   readonly queue: import('./queue-types.js').QueueStore;
   readonly versions:VersionStore;
   readonly messages: {

@@ -1,3 +1,4 @@
+import {historySourcesVisible} from './history-retention-store.js';
 import type {Connection} from './connection.js';
 import type {LifecycleBackend} from './lifecycle-store.js';
 import type {ConnectionScope} from '../contracts/index.js';
@@ -9,6 +10,7 @@ export function createNoticeBackend(connection:Connection,lifecycle:LifecycleBac
  const permits=new WeakMap<object,{scope:ConnectionScope;source:string;confirmed:string|null;text:string}>();
  const messages=createMessageStore(connection);
  return {
+  sourceVisible(scope,id){return lifecycle.transaction(scope,db=>historySourcesVisible(db,scope.chatId,[id]));},
   reserve(scope,messageId,route,interval,now,kind='generic'){
    requireInput(kind==='generic'||kind==='current_message_too_large'||kind==='quota_exhausted');
    timestamp(now);requireInput(Number.isSafeInteger(interval)&&interval>0);timestamp(now+interval);
@@ -23,8 +25,9 @@ export function createNoticeBackend(connection:Connection,lifecycle:LifecycleBac
     const permit=Object.freeze({}) as NoticePermit;permits.set(permit,{scope,source:source.messageId,confirmed:null,text:noticeTemplate(kind)});return permit;
    });
   },
-  confirm(scope,permit,receipt,text){
+  confirm(scope,permit,receipt,text,isCurrent){
    lifecycle.transaction(scope,db=>{
+    requireInput(isCurrent?.()!==false);
     const data=permits.get(permit);requireInput(data?.scope===scope);
     requireInput((db.prepare('SELECT enabled FROM chats WHERE chat_id=?').get(scope.chatId) as {enabled:number}|undefined)?.enabled===1);
     string(receipt.messageId,true);string(receipt.authorName);timestamp(receipt.timestamp);
@@ -37,8 +40,9 @@ export function createNoticeBackend(connection:Connection,lifecycle:LifecycleBac
     data.confirmed=receipt.messageId;
    });
   },
-  recordAnswer(scope,receipt,text,replyToMessageId){
+  recordAnswer(scope,receipt,text,replyToMessageId,isCurrent){
    lifecycle.transaction(scope,db=>{
+    requireInput(isCurrent?.()!==false);
     requireInput((db.prepare('SELECT enabled FROM chats WHERE chat_id=?').get(scope.chatId) as {enabled:number}|undefined)?.enabled===1);
     const appended=messages.append({chatId:scope.chatId,...receipt,role:'assistant',text,...(replyToMessageId?{replyToMessageId}:{})});
     if(appended.status==='duplicate'){const old=readMessage(db,scope.chatId,appended.id);requireInput(old?.purpose==='conversation'&&old.role==='assistant'&&old.text===text&&old.userId===receipt.userId&&old.replyToMessageId===replyToMessageId);}

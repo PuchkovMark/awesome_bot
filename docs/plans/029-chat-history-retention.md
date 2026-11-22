@@ -7,7 +7,7 @@
 - Дата завершения: —
 - Утверждение: владелец подтвердил обновлённый план 2026-11-23 после добавления проверок границы и повторной доставки. [Решение](../decisions.md#утверждение-плана-очистки-истории-f44)
 - Связанные документы: [утверждённая задача 029](../tasks/029-chat-history-retention.md), [контрольный сценарий](../tasks/029-chat-history-retention.md#контрольный-сценарий-с-истёкшей-цитатой), [решение владельца](../decisions.md#утверждение-задачи-об-очистке-истории-f44), [F4.4](../roadmap.md#веха-4-управление-и-защита), [очередь F2.3](../tasks/completed/013-chat-queue.md), [контекст F2.5](../tasks/completed/015-context-builder.md), [трассировка F2.6](../tasks/completed/017-response-tracing.md), [команды F4.2](../tasks/completed/027-chat-control-commands.md), [лимиты F4.3](../tasks/completed/028-user-and-chat-limits.md).
-- План реализации: [черновик](../impl-plans/029-chat-history-retention.md).
+- План реализации: [утверждён](../impl-plans/029-chat-history-retention.md).
 
 ## Подход и ключевые решения
 

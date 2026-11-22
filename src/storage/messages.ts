@@ -1,10 +1,11 @@
+import { historyBounds } from './history-retention-store.js';
 import type { SyncStore } from './legacy-types.js';
 import type { Connection } from './connection.js';
 import type { MessageInput, MessageStore, StoredMessage } from './legacy-types.js';
 import { compositeId, object, requireInput, string, timestamp } from './validation.js';
 
 const fields = ['chatId', 'messageId', 'userId', 'authorName', 'role', 'text', 'replyToMessageId', 'timestamp', 'attachmentCount'];
-function validateMessage(message: MessageInput): void {
+export function validateMessage(message: MessageInput): void {
   object(message, fields);
   compositeId(message.chatId); compositeId(message.userId);
   requireInput(message.chatId.slice(0, message.chatId.indexOf(':')) === message.userId.slice(0, message.userId.indexOf(':')));
@@ -48,10 +49,12 @@ export function createMessageStore(connection: Connection, contextOnly=false): S
         if ('from' in query) timestamp(query.from);
         if ('to' in query) timestamp(query.to);
         if (query.from !== undefined && query.to !== undefined) requireInput(query.from < query.to);
+        const bounds = historyBounds(db, chatId);
         const rows = db.prepare(`SELECT ${columns} FROM messages WHERE chat_id = ? ${contextOnly?"AND purpose='conversation'":''}
+          AND id > ? AND timestamp > ?
           AND (? IS NULL OR timestamp >= ?) AND (? IS NULL OR timestamp < ?)
           ORDER BY timestamp DESC, id DESC LIMIT ?`).all(
-          chatId, query.from ?? null, query.from ?? null, query.to ?? null, query.to ?? null, query.limit,
+          chatId, bounds.clearedThrough, bounds.expiredThrough, query.from ?? null, query.from ?? null, query.to ?? null, query.to ?? null, query.limit,
         ) as MessageRow[];
         return rows.reverse().map(fromRow);
       });
@@ -62,6 +65,7 @@ export function createMessageStore(connection: Connection, contextOnly=false): S
 /** Ограниченное чтение по ссылке; проверку подлинной scope выполняет вызывающий backend. */
 export function readMessage(db: import('better-sqlite3').Database, chatId: string, id: number, contextOnly=false): StoredMessage | null {
   requireInput(Number.isSafeInteger(id) && id > 0);
-  const row = db.prepare(`SELECT ${columns} FROM messages WHERE chat_id=? AND id=? ${contextOnly?"AND purpose='conversation'":''}`).get(chatId, id) as MessageRow | undefined;
+  const bounds = historyBounds(db, chatId);
+  const row = db.prepare(`SELECT ${columns} FROM messages WHERE chat_id=? AND id=? AND id>? AND timestamp>? ${contextOnly?"AND purpose='conversation'":''}`).get(chatId, id, bounds.clearedThrough, bounds.expiredThrough) as MessageRow | undefined;
   return row ? fromRow(row) : null;
 }

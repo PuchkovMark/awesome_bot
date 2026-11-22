@@ -88,6 +88,17 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
         return {allowed:true,value:applyChatControl(tx,command,now())};
       }, {allowInitialOwnerSettings:true});
     },
+    async clearHistory<T>(context: AuthorizationContext, isCurrent: () => boolean, operation: () => T): Promise<AuthorizationResult<T>> {
+      return guarded(context,'chat.history.clear',undefined,()=>{
+        if (!isCurrent()) return deny('conflict');
+        const value=operation();
+        if (value instanceof Promise) {
+          void value.catch(()=>{});
+          throw new TypeError('History clear: async operation');
+        }
+        return {allowed:true,value};
+      });
+    },
     async readDiagnostics<T>(context:AuthorizationContext,read:()=>T):Promise<AuthorizationResult<T>> {
       return guarded(context,'diagnostics.read',undefined,()=>{const value=read();if(value instanceof Promise){void value.catch(()=>{});throw new TypeError('Diagnostics: async_reader');}return {allowed:true,value};});
     },

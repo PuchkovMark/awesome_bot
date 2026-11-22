@@ -17,7 +17,7 @@ export interface RouterOptions {
  readonly logger?:SafeLogger;readonly storage:Storage;readonly queue:ChatQueue;readonly authorization?:RouterAuthorization;
  readonly recognizeCommand?:(message:IncomingMessage,replyToOther?:boolean)=>ServiceCommand|null;
  readonly identity?:(scope:ConnectionScope,message:IncomingMessage)=>AuthorizationContext|undefined;
- readonly executeCommand?:(context:AuthorizationContext,message:IncomingMessage,isCurrent:()=>boolean)=>Promise<void>;
+ readonly executeCommand?:(context:AuthorizationContext,message:IncomingMessage,isCurrent:()=>boolean,replayOnly?:boolean)=>Promise<void>;
  readonly onDecision?:(decision:RoutingDecision)=>void;
  readonly onQueueFull?:(scope:ConnectionScope,messageId:number,route:RouteMetadata,guard:{readonly signal:AbortSignal;readonly isCurrent:()=>boolean})=>Promise<void>;
 }
@@ -51,8 +51,10 @@ export function createMessageRouter(options:RouterOptions){
     return !gate||(gate.respond&&gate.ordinary!==false);
    },
   });
-  if(result.admission.status==='not_needed'&&decision?.kind==='service'&&context) {
-   await options.executeCommand?.(context,message,()=> (!isCurrent||isCurrent())&&(!disclosure||disclosure().respond));
+  const replayOnly=!!(command?.replayRequest && service?.allowed &&
+    (result.admission.status==='duplicate'||result.admission.status==='history_unavailable'));
+  if(context && ((result.admission.status==='not_needed'&&decision?.kind==='service') || replayOnly)) {
+   await options.executeCommand?.(context,message,()=> (!isCurrent||isCurrent())&&(!disclosure||disclosure().respond),replayOnly||undefined);
   }
   return {decision,admission:result.admission};
  }});

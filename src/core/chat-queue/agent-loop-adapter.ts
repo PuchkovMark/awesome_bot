@@ -31,36 +31,49 @@ export function createAgentLoopQueue(options:AgentLoopQueueOptions){
   const initialDisclosure=options.disclosure?.(work);
   if(initialDisclosure&&!initialDisclosure.allowed){work.recordTrace({disclosure:initialDisclosure});return 'interrupted';}
   const lifetime=options.signal?AbortSignal.any([work.signal,options.signal]):work.signal;
-  const controller=new AbortController(),signal=AbortSignal.any([lifetime,controller.signal]);
-  let abort:()=>void=()=>{};
-  const interrupted=new Promise<QueuePreparation>(resolve=>{abort=()=>resolve({kind:lifetime.aborted?'cancelled':'deadline_exceeded'});signal.addEventListener('abort',abort,{once:true});if(signal.aborted)abort();});
-  const timer=setTimeout(()=>controller.abort(),prep);
-  let prepared:QueuePreparation;
-  try{prepared=await Promise.race([Promise.resolve().then(()=>signal.aborted?{kind:'cancelled' as const}:options.prepare({...work,signal})),interrupted]);}
-  finally{clearTimeout(timer);signal.removeEventListener('abort',abort);}
-  if(lifetime.aborted||!work.isCurrent())return 'interrupted';
-  if(prepared.kind==='cancelled')return 'interrupted';
-  if(prepared.kind==='deadline_exceeded')return 'deadline_exceeded';
-  if(prepared.kind==='unavailable')return 'message_missing';
-  if(prepared.kind==='failed'){
-   const allowed=['missing_system_prompt','static_budget_too_small','current_message_too_large','internal_error'];
-   return {outcome:'failed',...(allowed.includes(prepared.reason)?{preparationFailure:prepared.reason}:{})} satisfies QueueCompletion;
+  const preparationDeadline=performance.now()+prep;
+  async function prepare(): Promise<QueuePreparation> {
+    const remaining=preparationDeadline-performance.now();
+    if(remaining<=0)return {kind:'deadline_exceeded'};
+    const controller=new AbortController(),signal=AbortSignal.any([lifetime,controller.signal]);
+    let abort:()=>void=()=>{};
+    const interrupted=new Promise<QueuePreparation>(resolve=>{abort=()=>resolve({kind:lifetime.aborted?'cancelled':'deadline_exceeded'});signal.addEventListener('abort',abort,{once:true});if(signal.aborted)abort();});
+    const timer=setTimeout(()=>controller.abort(),Math.ceil(remaining));
+    try{return await Promise.race([Promise.resolve().then(()=>signal.aborted?{kind:'cancelled' as const}:options.prepare({...work,signal})),interrupted]);}
+    finally{clearTimeout(timer);signal.removeEventListener('abort',abort);}
   }
-  if(prepared.kind!=='ready')return 'failed';
-  // Финальная синхронная проверка выполняется непосредственно перед запуском цикла.
-  if(!work.isCurrent()||lifetime.aborted)return 'interrupted';
-  work.recordTrace({prompt:prepared.metadata?.version??null,context:prepared.metadata??null});
-  const allowed=()=>{
-   if (lifetime.aborted) return false;
-   const checked=options.disclosure?.(work);
-   if(checked)work.recordTrace({disclosure:checked});
-   return checked?.allowed??true;
-  };
-  const loop=createAgentLoop(client,settings,summary=>work.recordTrace({model:{name:modelName,invoked:'possible'},summary}),
-    ()=>work.admitModelAttempt?work.admitModelAttempt(allowed):work.isCurrent()&&allowed());
-  const result=await loop.run({...prepared.input,signal:lifetime});
-  work.recordTrace({model:{name:result.summary.attempts?modelName:null,invoked:result.summary.attempts?'yes':'no'},summary:result.summary,resultKind:result.kind});
-  const outcome=result.kind==='complete'?'completed':result.kind==='rate_limit'?'rate_limit':result.kind==='deadline_exceeded'?'deadline_exceeded':result.kind==='cancelled'?'interrupted':'failed';
-  return {outcome,result};
+  for (;;) {
+    const prepared=await prepare();
+    if(lifetime.aborted||!work.isCurrent())return 'interrupted';
+    if(prepared.kind==='cancelled')return 'interrupted';
+    if(prepared.kind==='deadline_exceeded')return 'deadline_exceeded';
+    if(prepared.kind==='unavailable')return 'message_missing';
+    if(prepared.kind==='failed'){
+      const allowed=['missing_system_prompt','static_budget_too_small','current_message_too_large','internal_error'];
+      return {outcome:'failed',...(allowed.includes(prepared.reason)?{preparationFailure:prepared.reason}:{})} satisfies QueueCompletion;
+    }
+    if(prepared.kind!=='ready')return 'failed';
+    // Финальная синхронная проверка выполняется непосредственно перед запуском цикла.
+    if(!work.isCurrent()||lifetime.aborted)return 'interrupted';
+    work.recordTrace({prompt:prepared.metadata?.version??null,context:prepared.metadata??null});
+    const allowed=()=>{
+     if (lifetime.aborted) return false;
+     const checked=options.disclosure?.(work);
+     if(checked)work.recordTrace({disclosure:checked});
+     return checked?.allowed??true;
+    };
+    let staleContext=false;
+    const loop=createAgentLoop(client,settings,summary=>work.recordTrace({model:{name:modelName,invoked:'possible'},summary}),
+      ()=>{
+        const admission=work.admitModelAttempt?work.admitModelAttempt(allowed,prepared.metadata?.messageIds):work.isCurrent()&&allowed();
+        staleContext=admission==='context_stale';
+        return admission;
+      });
+    const result=await loop.run({...prepared.input,signal:lifetime});
+    if(staleContext&&result.summary.attempts===0)continue;
+    work.recordTrace({model:{name:result.summary.attempts?modelName:null,invoked:result.summary.attempts?'yes':'no'},summary:result.summary,resultKind:result.kind});
+    const outcome=result.kind==='complete'?'completed':result.kind==='rate_limit'?'rate_limit':result.kind==='deadline_exceeded'?'deadline_exceeded':result.kind==='cancelled'?'interrupted':'failed';
+    return {outcome,result};
+  }
  }});
 }

@@ -1,3 +1,5 @@
+import { createHistoryClearStore, registerHistoryClear } from './history-retention-store.js';
+import { requireInput } from './validation.js';
 import {createTraceBackend,registerTraces} from './trace-store.js';
 import { createNoticeBackend, registerNotices } from './notice-store.js';
 import { createQueueBackend } from './queue-store.js';
@@ -17,16 +19,18 @@ import { openConnection } from './connection.js';
 import { migrate } from './migrate.js';
 import type { Storage } from './types.js';
 
-export async function openStorage(path:string,options:{readonly versioning?:VersionLimits}={}):Promise<Storage> {
+export async function openStorage(path:string,options:{readonly versioning?:VersionLimits;readonly messageRetentionDays?:number}={}):Promise<Storage> {
  let limits:VersionLimits;
- try{object(options,['versioning']);const snapshot={...options};limits=versionLimits(snapshot.versioning as VersionLimits|undefined);}catch(error){throw safeError(error,'invalid_input');}
+ try{object(options,['versioning','messageRetentionDays']);const snapshot={...options};limits=versionLimits(snapshot.versioning as VersionLimits|undefined);
+  requireInput(snapshot.messageRetentionDays===undefined || (Number.isSafeInteger(snapshot.messageRetentionDays) && snapshot.messageRetentionDays>0 && Number.isSafeInteger(snapshot.messageRetentionDays*86_400_000)));}catch(error){throw safeError(error,'invalid_input');}
  const connection=await openConnection(path,migrate);
  try {
   const backend=createLifecycleBackend(connection);
   const versions=createVersionBackend(connection,backend,limits);
   const traces=createTraceBackend(connection,backend);
-  const queue=createQueueBackend(connection,backend,traces);
+  const queue=createQueueBackend(connection,backend,traces,options.messageRetentionDays);
   const storage:Storage={...createScopedStorage(connection,backend,versions,queue),traces:{async get(scope,id){return traces.get(scope,id);},async last(scope){return traces.get(scope);}},async close(){connection.close();}};
+  registerHistoryClear(storage,createHistoryClearStore(connection,backend));
   registerDisclosureStore(storage,createDisclosureStore(connection,backend));
   registerAdminRecovery(storage,createAdminRecoveryStore(connection,backend));
   registerChatControl(storage,createChatControlStore(connection,backend));

@@ -26,7 +26,7 @@ test('атомарность, дубль после переполнения, н
     expect(()=>q.admit('owner',scope,message('4'),async()=>{throw Error('private');},config)).toThrow('invalid_input');
     expect(await storage.messages.list(scope,{limit:10})).toHaveLength(2);
     const b=scopeFor(storage,'vk:b');
-    if(first.status!=='stopped')expect(await storage.messages.get(b,first.messageId)).toBeNull();
+    if(first.status==='queued')expect(await storage.messages.get(b,first.messageId)).toBeNull();
     q.release('owner');
   } finally {db.close();await storage.close();f.cleanup();}
 });

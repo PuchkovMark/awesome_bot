@@ -16,7 +16,7 @@ export type QueueOutcome = 'completed' | 'failed' | 'rate_limit' | 'interrupted'
 export type QueueAdmission =
   | { readonly status: 'queued'; readonly messageId: number; readonly jobId: number }
   | { readonly status: 'not_needed' | 'duplicate' | 'queue_full'; readonly messageId: number }
-  | { readonly status: 'stopped' };
+  | { readonly status: 'stopped' | 'history_unavailable' };
 export interface QueueRoutingSnapshot { readonly message: StoredMessage; readonly receivedAt: number }
 /** Доверенная чистая функция: без I/O, случайности, часов и изменения состояния. */
 export type QueueDecision = (input: QueueRoutingSnapshot) => boolean;

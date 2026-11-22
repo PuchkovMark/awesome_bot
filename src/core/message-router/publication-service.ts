@@ -66,7 +66,10 @@ export function createPublicationService(options:{readonly storage:Storage;reado
    scope=lifecycle.transaction(work.scope,()=>lifecycle.current(work.scope.chatId,true));
    function isCurrent():boolean {
     if (closed || work.signal.aborted || !work.isCurrent()) return false;
-    try {lifecycle.revision(scope);return options.disclosureCurrent?.(work)??true;}
+    try {
+     lifecycle.revision(scope);
+     return (!queueFull || notices.sourceVisible(scope,work.messageId)) && (options.disclosureCurrent?.(work)??true);
+    }
     catch {return false;}
    }
    const settings=await options.storage.chats.get(scope);if(!settings||!isCurrent())return suppressed('guard');
@@ -109,9 +112,9 @@ export function createPublicationService(options:{readonly storage:Storage;reado
      if(part.replyToMessageId!==undefined&&(part.replyToMessageId!==replyToMessageId||(!samePart&&parts.size>0)))throw new Error('Publication: invalid reply');
      if(permit){
       if(part.replyToMessageId!==replyToMessageId||replyToMessageId===undefined||(!samePart&&parts.size>0))throw new Error('Publication: invalid notice');
-      notices.confirm(scope,permit,receipt,part.text);
+      notices.confirm(scope,permit,receipt,part.text,isCurrent);
      }else{
-      notices.recordAnswer(scope,receipt,part.text,part.replyToMessageId);
+      notices.recordAnswer(scope,receipt,part.text,part.replyToMessageId,isCurrent);
      }
      parts.add(messageId);
     }catch{
