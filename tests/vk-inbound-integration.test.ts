@@ -3,7 +3,7 @@ import { createVkInbound } from '../src/channels/index.js';
 import type { VkInboundApi } from '../src/channels/vk/api.js';
 import type { VkPollTransport } from '../src/channels/vk/long-poll.js';
 import { createChatQueue, createLifecycleService, createMessageRouter } from '../src/core/index.js';
-import type { ChatId, ConnectionScope } from '../src/contracts/index.js';
+import type { ChatId, ConnectionScope, MembershipEvent } from '../src/contracts/index.js';
 import { openStorage } from '../src/storage/index.js';
 import type { Storage } from '../src/storage/index.js';
 import { flushQueue } from './helpers/chat-queue.js';
@@ -76,13 +76,14 @@ async function fixture() {
 function start(f: Awaited<ReturnType<typeof fixture>>, options: {
   readonly storage?: Storage;
   readonly api?: VkInboundApi;
+  readonly membership?: (event: MembershipEvent) => Promise<void>;
 } = {}) {
   const onDecision = vi.fn();
   const router = createMessageRouter({ storage: options.storage ?? f.storage, queue: f.queue, onDecision });
   const inbound = createVkInbound({
     groupId, token: 'synthetic-token', signal: f.controller.signal, lifecycle: f.lifecycle,
   }, { api: options.api ?? f.api, transport: f.transport });
-  return { inbound, onDecision, done: inbound.startRouted(router) };
+  return { inbound, onDecision, done: inbound.startRouted(router, options.membership) };
 }
 
 async function close(f: Awaited<ReturnType<typeof fixture>>, done: Promise<void>) {
@@ -221,7 +222,8 @@ describe('приём VK через штатный роутер', () => {
 
   it('приостанавливает приём при приглашении сообщества только в затронутой беседе', async () => {
     const f = await fixture();
-    const run = start(f);
+    const membership = vi.fn(async () => undefined);
+    const run = start(f, { membership });
     try {
       await f.ready;
       f.update(event(1), event(1, { peer_id: secondPeer }));
@@ -232,8 +234,96 @@ describe('приём VK через штатный роутер', () => {
       expect(() => f.lifecycle.current(firstChat)).toThrow('uncertain_connection');
       await vi.waitFor(() => expect(run.onDecision).toHaveBeenCalledOnce());
       expect(await f.storage.messages.list(second, { limit: 10 })).toMatchObject([{ messageId: '3' }]);
-      expect(await f.storage.messages.list(f.decide(firstChat), { limit: 10 })).toHaveLength(0);
-      expect(run.inbound.stats()).toMatchObject({ connectionChanges: 1, failed: 0 });
+      const continued = f.decide(firstChat);
+      expect(await f.storage.messages.list(continued, { limit: 10 })).toHaveLength(0);
+      expect(membership).toHaveBeenCalledWith(expect.objectContaining({
+        kind: 'membership', chatId: firstChat, eventId: '2', subjectId: `vk:${-groupId}`, change: 'invited',
+      }));
+      f.update(event(2, { action: { type: 'chat_invite_user', member_id: -groupId } }), event(4));
+      await vi.waitFor(() => expect(run.onDecision).toHaveBeenCalledTimes(2));
+      expect(await f.storage.messages.list(continued, { limit: 10 })).toMatchObject([{ messageId: '4' }]);
+      expect(run.inbound.stats()).toMatchObject({ connectionChanges: 2, duplicateSignals: 1, failed: 0 });
     } finally { await close(f, run.done); }
+  });
+
+  it('передаёт события людей отдельному обработчику при выключенном боте без журнала и заданий', async () => {
+    const f = await fixture();
+    const membership = vi.fn<(event: MembershipEvent) => Promise<void>>().mockResolvedValue(undefined);
+    const run = start(f, { membership });
+    try {
+      await f.ready;
+      f.update(event(1));
+      const scope = f.decide(firstChat);
+      await f.storage.chats.create(scope, { responseMode: 'normal', enabled: false, createdAt: 0 });
+      const actions = [
+        event(2, { action: { type: 'chat_invite_user', member_id: 84 } }),
+        event(3, { from_id: 84, action: { type: 'chat_invite_user_by_link', member_id: 84 } }),
+        event(4, { from_id: 84, action: { type: 'chat_kick_user', member_id: 84 } }),
+        event(5, { action: { type: 'chat_kick_user', member_id: 84 } }),
+        event(6, { from_id: undefined, conversation_message_id: undefined, action: { type: 'chat_kick_user' } }),
+      ];
+      f.update(...actions);
+      await flushQueue();
+      expect(membership.mock.calls.map(call => call[0])).toMatchObject([
+        { change: 'invited', actorId: owner, subjectId: 'vk:84' },
+        { change: 'joined', actorId: 'vk:84', subjectId: 'vk:84' },
+        { change: 'left', actorId: 'vk:84', subjectId: 'vk:84' },
+        { change: 'removed', actorId: owner, subjectId: 'vk:84' },
+        { change: 'unknown', actorId: null, subjectId: null },
+      ]);
+      expect(membership.mock.calls[4]?.[0]).not.toHaveProperty('eventId');
+      expect(await f.storage.messages.list(scope, { limit: 10 })).toEqual([]);
+      expect(run.onDecision).not.toHaveBeenCalled();
+      expect(f.handled).not.toHaveBeenCalled();
+      expect(run.inbound.hasMembershipObservation(firstChat)).toBe(true);
+      expect(run.inbound.hasMembershipObservation(secondChat)).toBe(false);
+      await f.gap();
+      expect(run.inbound.hasMembershipObservation(firstChat)).toBe(false);
+    } finally { await close(f, run.done); }
+  });
+
+  it('сигнал исключения отзывает ревизию уже начатого обогащения даже после продолжения', async () => {
+    const f = await fixture();
+    const requested = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const run = start(f, { api: { ...f.api, async enrich(message) {
+      if (message.cmid === 2) { requested.resolve(); await release.promise; }
+      return f.api.enrich(message);
+    } } });
+    try {
+      await f.ready;
+      f.update(event(1));
+      const original = f.decide(firstChat);
+      f.update(event(2));
+      await requested.promise;
+      f.update(event(3, { action: { type: 'chat_kick_user', member_id: -groupId } }));
+      const continued = f.decide(firstChat);
+      expect(continued.generation).toBe(original.generation);
+      f.update(event(4));
+      release.resolve();
+      await vi.waitFor(() => expect(run.onDecision).toHaveBeenCalledOnce());
+      expect(await f.storage.messages.list(continued, { limit: 10 })).toMatchObject([{ messageId: '4' }]);
+    } finally {
+      release.resolve();
+      await close(f, run.done);
+    }
+  });
+
+  it('публичный обработчик получает наблюдение об участии наряду с сообщениями', async () => {
+    const f = await fixture();
+    const handler = vi.fn(async () => undefined);
+    const inbound = createVkInbound({
+      groupId, token: 'synthetic-token', signal: f.controller.signal, lifecycle: f.lifecycle,
+    }, { api: f.api, transport: f.transport });
+    const done = inbound.start(handler);
+    try {
+      await f.ready;
+      f.update(event(1));
+      f.decide(firstChat);
+      f.update(event(2, { action: { type: 'chat_invite_user', member_id: 84 } }), event(3));
+      await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(2));
+      expect(handler).toHaveBeenNthCalledWith(1, expect.objectContaining({ kind: 'membership', change: 'invited' }));
+      expect(handler).toHaveBeenNthCalledWith(2, expect.objectContaining({ kind: 'message', messageId: '3' }));
+    } finally { await close(f, done); }
   });
 });

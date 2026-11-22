@@ -70,7 +70,9 @@ async function fixture(options: {
     if (method === 'users.get') return { response: [{ id: 73, first_name: 'Тест', last_name: '' }] };
     if (method === 'messages.getConversationMembers') return { response: { items: [] } };
     if (method === 'messages.setActivity') return { error: { error_code: 10, error_msg: 'private' } };
-    if (method === 'messages.getConversationsById') return { response: { items: [{ peer: { id: Number(args.peer_ids) }, can_write: { allowed: true } }] } };
+    if (method === 'messages.getConversationsById') return { response: { items: [{
+      peer: { id: Number(args.peer_ids) }, can_write: { allowed: true }, chat_settings: { state: 'in' },
+    }] } };
     const target = Number(args.peer_ids ?? args.peer_id);
     const list = rows.get(target)!;
     if (method === 'messages.getByConversationMessageId') {
@@ -124,6 +126,14 @@ async function fixture(options: {
         return { type: 'message_new', group_id: groupId, object: { message } };
       }));
     },
+    membership(memberId: number, type = 'chat_invite_user') {
+      update([{
+        type: 'message_new', group_id: groupId,
+        object: { message: { peer_id: peer, from_id: 73, conversation_message_id: 100, date,
+          action: { type, member_id: memberId },
+        } },
+      }]);
+    },
     sends: () => attempt.mock.calls.filter(([method]) => method === 'messages.send'),
     async close() {
       controller.abort();
@@ -154,6 +164,23 @@ describe('публикация VK через очередь и журнал', ()
       }
       expect(f.sends()).toHaveLength(4);
       expect(f.startedAt.every((time, i, times) => i === 0 || time - times[i - 1]! >= 50)).toBe(true);
+    } finally { await f.close(); }
+  });
+
+  it('подтверждает возможность служебных событий после наблюдения в той же области', async () => {
+    const f = await fixture();
+    try {
+      await f.storage.chats.create(f.scopes[0], { enabled: false, responseMode: 'normal', createdAt: 0 });
+      expect((await f.channel.capabilities({ chatId: chat })).support.membershipEvents).toBe('unknown');
+      f.membership(84);
+      expect((await f.channel.capabilities({ chatId: chat })).support).toMatchObject({
+        membershipEvents: 'supported', send: 'unknown',
+      });
+      expect((await f.channel.capabilities({ chatId: otherChat })).support.membershipEvents).toBe('unknown');
+      expect((await f.channel.capabilities({ chatId: 'vk:73' })).support.membershipEvents).toBe('unsupported');
+      await f.life.verify(chat, 'observation_lost');
+      f.decide(chat);
+      expect((await f.channel.capabilities({ chatId: chat })).support.membershipEvents).toBe('unknown');
     } finally { await f.close(); }
   });
 
@@ -188,7 +215,7 @@ describe('публикация VK через очередь и журнал', ()
     } finally { await f.close(); }
   });
 
-  it.each(['continue', 'new'] as const)('останавливается в лимитере при решении %s во время отправки', async policy => {
+  it.each(['continue', 'new'] as const)('останавливается в лимитере при сигнале VK и решении %s во время отправки', async policy => {
     const entered = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
     const f = await fixture({ onWaitAfterFirst() { entered.resolve(); return release.promise; } });
@@ -196,7 +223,8 @@ describe('публикация VK через очередь и журнал', ()
       f.submit(peer);
       await entered.promise;
       expect((await f.storage.messages.list(f.scopes[0], { limit: 10 })).map(row => row.messageId)).toEqual(['7', '8']);
-      await f.life.verify(chat, 'observation_lost');
+      f.membership(-groupId, 'chat_kick_user');
+      expect(() => f.life.current(chat)).toThrow('uncertain_connection');
       const latest = f.decide(chat, policy);
       release.resolve();
       await vi.waitFor(() => expect(f.publication.stats().partial_delivery).toBe(1));

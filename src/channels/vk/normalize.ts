@@ -1,11 +1,11 @@
-import type { Attachment, IncomingMessage, KnownBoolean } from '../../contracts/index.js';
+import type { Attachment, ChatId, IncomingMessage, KnownBoolean, MembershipEvent } from '../../contracts/index.js';
 
 const chatPeerStart = 2_000_000_000;
 const attachmentKinds = new Set([
   'audio', 'audio_message', 'call', 'doc', 'gift', 'graffiti', 'link', 'market', 'market_album',
   'photo', 'poll', 'sticker', 'story', 'video', 'wall', 'wall_reply',
 ]);
-const connectionActions = new Set([
+const membershipActions = new Set([
   'chat_invite_user', 'chat_invite_user_by_link', 'chat_invite_user_by_message_request', 'chat_kick_user',
 ]);
 
@@ -28,7 +28,13 @@ export interface VkIncoming {
 
 type ParseResult =
   | { readonly kind: 'message'; readonly message: VkIncoming }
-  | { readonly kind: 'connection_changed'; readonly peerId: number }
+  | {
+    readonly kind: 'membership';
+    readonly chatId: ChatId;
+    readonly event: MembershipEvent | undefined;
+    readonly affectsConnection: boolean;
+    readonly signalKey: string | undefined;
+  }
   | { readonly kind: 'ignored' | 'invalid' };
 
 export interface VkEnrichment {
@@ -86,6 +92,46 @@ function parseAttachments(value: unknown): readonly Attachment[] {
   });
 }
 
+function membershipChange(type: string, actor: number | undefined, subject: number | undefined): MembershipEvent['change'] {
+  switch (type) {
+    case 'chat_invite_user': return 'invited';
+    case 'chat_invite_user_by_link': return 'joined';
+    case 'chat_kick_user':
+      if (actor === undefined || subject === undefined) return 'unknown';
+      return actor === subject ? 'left' : 'removed';
+    default: return 'unknown';
+  }
+}
+
+function parseMembership(
+  row: Record<string, unknown>, action: Record<string, unknown>, type: string,
+  peerId: number, groupId: number, platformEventId: unknown,
+): ParseResult {
+  const actor = vkId(row.from_id);
+  const subject = vkId(action.member_id);
+  const affectsConnection = subject === -groupId;
+  const timestamp = toTimestamp(row.date);
+  if (timestamp === undefined && !affectsConnection) return { kind: 'invalid' };
+
+  const chatId = vkChatId(peerId);
+  const cmid = vkCmid(row.conversation_message_id);
+  const eventId = typeof platformEventId === 'string' && platformEventId.trim()
+    ? platformEventId
+    : cmid?.toString();
+  return {
+    kind: 'membership', chatId, affectsConnection,
+    // Локальный номер идентифицирует служебное сообщение в пределах беседы.
+    signalKey: cmid === undefined ? undefined : String(cmid),
+    event: timestamp === undefined ? undefined : {
+      kind: 'membership', chatId, timestamp,
+      ...(eventId === undefined ? {} : { eventId }),
+      subjectId: subject === undefined ? null : `vk:${subject}`,
+      actorId: actor === undefined ? null : `vk:${actor}`,
+      change: membershipChange(type, actor, subject),
+    },
+  };
+}
+
 export function parseVkIncoming(update: unknown, groupId: number): ParseResult {
   const event = vkRecord(update);
   if (!event || typeof event.type !== 'string') return { kind: 'invalid' };
@@ -94,9 +140,9 @@ export function parseVkIncoming(update: unknown, groupId: number): ParseResult {
   if (!row) return { kind: 'invalid' };
   const peerId = vkId(row.peer_id);
   const action = vkRecord(row.action);
-  if (peerId && isVkGroupChat(peerId) && action?.member_id === -groupId
-    && typeof action.type === 'string' && connectionActions.has(action.type)) {
-    return { kind: 'connection_changed', peerId };
+  if (action && typeof action.type === 'string' && membershipActions.has(action.type)) {
+    if (peerId === undefined) return { kind: 'invalid' };
+    if (isVkGroupChat(peerId)) return parseMembership(row, action, action.type, peerId, groupId, event.event_id);
   }
   if (row.out === 1 || row.out === true || row.action != null) return { kind: 'ignored' };
 

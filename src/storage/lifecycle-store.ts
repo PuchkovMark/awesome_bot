@@ -41,6 +41,16 @@ export function createLifecycleBackend(connection: Connection) {
     const generation=advanceClock(db);
     db.prepare('INSERT INTO chat_connections(chat_id,generation,revision,state) VALUES (?,?,0,?)').run(chatId,generation,state);
   }
+  function markUncertain(db: Database, chatId: ChatId, state: State | null) {
+    if (!state) {
+      create(db, chatId, 'uncertain');
+      return;
+    }
+    bump(db, chatId);
+    if (state.state === 'active') {
+      db.prepare("UPDATE chat_connections SET state='uncertain' WHERE chat_id=?").run(chatId);
+    }
+  }
   function assertScope(db:Database,scope:ConnectionScope) {
     requireInput(typeof scope==='object' && scope!==null && scopes.has(scope));
     const state=read(db,scope.chatId);
@@ -93,6 +103,29 @@ export function createLifecycleBackend(connection: Connection) {
         return issue(state,pinRevision);
       });
     },
+    applyConnectionSignal(proof: Verification, key: string | undefined) {
+      return connection.run(db => {
+        requireInput(!db.inTransaction);
+        return db.transaction(() => {
+          requireInput(checks.has(proof));
+          checks.delete(proof);
+          if (!matches(db, proof.expected)) return { status: 'stale' as const };
+          const { chatId } = proof.expected;
+          const state = read(db, chatId);
+          if (state && key !== undefined && db.prepare(
+            'SELECT 1 FROM connection_membership_signals WHERE chat_id=? AND generation=? AND signal_key=?',
+          ).get(chatId, state.generation, key)) return { status: 'duplicate' as const };
+
+          if (!state || state.state === 'active' || key !== undefined) markUncertain(db, chatId, state);
+          if (key !== undefined) {
+            const generation = state?.generation ?? read(db, chatId)!.generation;
+            db.prepare('INSERT INTO connection_membership_signals(chat_id,generation,signal_key) VALUES (?,?,?)')
+              .run(chatId, generation, key);
+          }
+          return { status: 'paused' as const };
+        }).immediate();
+      });
+    },
     apply(proof:Verification,observation:LifecycleObservation) {
       return connection.run(db=>{requireInput(!db.inTransaction);return db.transaction(()=>{
         requireInput(checks.has(proof)); checks.delete(proof);
@@ -107,8 +140,7 @@ export function createLifecycleBackend(connection: Connection) {
         if(observation.members)requireInput(typeof observation.members.complete==='boolean' && Array.isArray(observation.members.ids));
         let state=read(db,chatId);
         if(observation.confidence!=='confirmed' || observation.bot==='unknown') {
-          if(!state)create(db,chatId,'uncertain');
-          else {bump(db,chatId);db.prepare("UPDATE chat_connections SET state='uncertain' WHERE chat_id=?").run(chatId);}
+          markUncertain(db, chatId, state);
           return {status:'uncertain' as const};
         }
         if(state?.state==='uncertain')return {status:'uncertain' as const};

@@ -1,7 +1,10 @@
 import {expect,test} from 'vitest';
 import {openStorage} from '../src/storage/index.js';
+import { openConnection } from '../src/storage/connection.js';
+import { lifecycleBackend } from '../src/storage/lifecycle-store.js';
 import {createLifecycleService} from '../src/core/index.js';
 import type {LifecycleObservation} from '../src/contracts/index.js';
+import { storageFixture } from './helpers/storage-fixture.js';
 function deferred(){let resolve!:(value:LifecycleObservation)=>void;const promise=new Promise<LifecycleObservation>(r=>{resolve=r;});return{promise,resolve};}
 const observed=(creatorId:'vk:a'|'vk:b'):LifecycleObservation=>({confidence:'confirmed',bot:'present',creatorId});
 test.each([false,true])('два пересекающихся запроса: поздний ответ не перезаписывает принятый, reverse=%s',async reverse=>{
@@ -86,4 +89,91 @@ test('позднее подтверждение пригласившего со�
   observation={...observation,inviterId:'vk:a'};await life.verify('vk:1');await life.verify('vk:1');
   expect(await storage.authorization.transaction(scope,tx=>tx.bases('vk:a'))).toEqual(['inviter']);
  }finally{await storage.close();}
+});
+
+test('повтор сигнала локален для подключения и переживает продолжение и перезапуск', async () => {
+  const fixture = storageFixture();
+  const source = { async observe(): Promise<LifecycleObservation> { return { confidence: 'confirmed', bot: 'present' }; } };
+  const ownerId = 'vk:owner';
+  const first = 'vk:1';
+  const second = 'vk:2';
+  const storage = await openStorage(fixture.path);
+  try {
+    const life = createLifecycleService({ storage, source, ownerId });
+    expect(life.recordConnectionSignal(first, '8')).toEqual({ status: 'paused' });
+    const decision = life.owner(first, ownerId);
+    expect(life.recordConnectionSignal(first, '8')).toEqual({ status: 'duplicate' });
+    expect(life.recordConnectionSignal(first)).toEqual({ status: 'paused' });
+    const original = life.decide(decision, 'continue');
+    expect(life.recordConnectionSignal(second, '8')).toEqual({ status: 'paused' });
+    expect(life.current(first).generation).toBe(original.generation);
+    await storage.close();
+
+    const reopened = await openStorage(fixture.path);
+    try {
+      const restarted = createLifecycleService({ storage: reopened, source, ownerId });
+      const admission = restarted.admissionScope(first);
+      expect(restarted.recordConnectionSignal(first, '8')).toEqual({ status: 'duplicate' });
+      expect(restarted.isAdmissionCurrent(admission)).toBe(true);
+      expect(restarted.recordConnectionSignal(second, '8')).toEqual({ status: 'duplicate' });
+      const backend = lifecycleBackend(reopened);
+      const old = backend.begin(first);
+      const replacement = restarted.decide(restarted.owner(first, ownerId), 'new');
+      expect(backend.applyConnectionSignal(old, '9')).toEqual({ status: 'stale' });
+      expect(restarted.current(first).generation).toBe(replacement.generation);
+      expect(restarted.recordConnectionSignal(first, '8')).toEqual({ status: 'paused' });
+    } finally {
+      await reopened.close();
+    }
+  } finally {
+    await storage.close();
+    fixture.cleanup();
+  }
+});
+
+test('сбой записи сигнала откатывает паузу и закрывает допуск до повторного применения', async () => {
+  const fixture = storageFixture();
+  const storage = await openStorage(fixture.path);
+  const inspect = await openConnection(fixture.path);
+  let observation: LifecycleObservation = { confidence: 'confirmed', bot: 'present' };
+  const life = createLifecycleService({
+    storage, ownerId: 'vk:owner', source: { async observe() { return observation; } },
+  });
+  try {
+    const original = (await life.verify('vk:1')).scope!;
+    const neighbor = (await life.verify('vk:2')).scope!;
+    await storage.chats.create(original, { responseMode: 'normal', enabled: false, createdAt: 0 });
+    const admission = life.admissionScope('vk:1');
+    const neighborAdmission = life.admissionScope('vk:2');
+    const oldDecision = life.owner('vk:1', 'vk:owner');
+    inspect.run(db => db.exec(`
+      CREATE TRIGGER fail_signal BEFORE INSERT ON connection_membership_signals
+      BEGIN SELECT RAISE(ABORT,'private'); END
+    `));
+
+    expect(() => life.recordConnectionSignal('vk:1', '7')).toThrow('operation_failed');
+    expect(life.current('vk:1').generation).toBe(original.generation);
+    expect(() => life.admissionScope('vk:1')).toThrow('uncertain_connection');
+    expect(life.isAdmissionCurrent(admission)).toBe(false);
+    expect(life.isAdmissionCurrent(neighborAdmission)).toBe(true);
+    expect(() => life.decide(oldDecision, 'continue')).toThrow('stale_scope');
+    inspect.run(db => {
+      expect(db.prepare('SELECT * FROM connection_membership_signals').all()).toEqual([]);
+      db.exec('DROP TRIGGER fail_signal');
+    });
+
+    expect(life.recordConnectionSignal('vk:1', '7')).toEqual({ status: 'paused' });
+    expect(life.recordConnectionSignal('vk:2', '7')).toEqual({ status: 'paused' });
+    const continued = life.decide(life.owner('vk:1', 'vk:owner'), 'continue');
+    expect(await storage.chats.get(continued)).toMatchObject({ enabled: false });
+    expect(life.isAdmissionCurrent(admission)).toBe(false);
+    observation = { confidence: 'confirmed', bot: 'absent' };
+    expect(await life.verify('vk:1')).toMatchObject({ status: 'applied' });
+    expect(inspect.run(db => db.prepare('SELECT * FROM connection_membership_signals').all()))
+      .toEqual([{ chat_id: 'vk:2', generation: neighbor.generation, signal_key: '7' }]);
+  } finally {
+    inspect.close();
+    await storage.close();
+    fixture.cleanup();
+  }
 });

@@ -45,7 +45,12 @@ describe('Bots Long Poll', () => {
   });
 
   it('сообщает о потере позиции до первой пачки по новой позиции', async () => {
-    const event = { message: 1 };
+    const event = {
+      type: 'message_new', group_id: groupId, event_id: 'synthetic',
+      object: { message: { peer_id: peerId, from_id: 73, date: 1_700_000_000,
+        conversation_message_id: 8, action: { type: 'chat_invite_user', member_id: -groupId },
+      } },
+    };
     const run = simulate([{ failed: 1, ts: '55' }, { ts: '56', updates: [event] }], 1);
     await run.done;
     expect(run.received).toEqual(['startup', 'lost_position', event]);

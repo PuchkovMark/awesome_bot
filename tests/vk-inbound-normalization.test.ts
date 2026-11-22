@@ -69,8 +69,52 @@ describe('нормализация входящего сообщения VK', ()
 
   it('отделяет служебные, исходящие и относящиеся к другому сообществу события', () => {
     for (const ignored of [
-      event({ action: { type: 'chat_invite_user' } }), event({ out: 1 }),
+      event({ action: { type: 'chat_title_update' } }),
+      event({ peer_id: 73, action: { type: 'chat_invite_user' } }), event({ out: 1 }),
       { ...event(), type: 'message_edit' }, { ...event(), group_id: groupId + 1 },
     ]) expect(parseVkIncoming(ignored, groupId)).toEqual({ kind: 'ignored' });
+  });
+});
+
+describe('служебные действия участия VK', () => {
+  it.each([
+    ['chat_invite_user', 73, 84, 'invited'],
+    ['chat_invite_user_by_link', 73, 73, 'joined'],
+    ['chat_kick_user', 73, 73, 'left'],
+    ['chat_kick_user', 73, 84, 'removed'],
+    ['chat_kick_user', undefined, 84, 'unknown'],
+    ['chat_kick_user', 73, undefined, 'unknown'],
+    ['chat_invite_user_by_message_request', 73, 84, 'unknown'],
+  ] as const)('нормализует %s (%s, %s) как %s', (type, actor, subject, change) => {
+    expect(parseVkIncoming(event({ text: undefined, out: 1, from_id: actor,
+      action: { type, member_id: subject } }), groupId)).toEqual({
+      kind: 'membership', chatId: `vk:${peer}`, affectsConnection: false, signalKey: '8',
+      event: {
+        kind: 'membership', chatId: `vk:${peer}`, timestamp: 1_700_000_000_000, eventId: '8', change,
+        actorId: actor === undefined ? null : `vk:${actor}`,
+        subjectId: subject === undefined ? null : `vk:${subject}`,
+      },
+    });
+  });
+
+  it('сохраняет исходный ID события и область локального номера', () => {
+    const invite = event({ action: { type: 'chat_invite_user', member_id: -groupId } });
+    expect(parseVkIncoming({ ...invite, event_id: 'event-abc' }, groupId)).toMatchObject({
+      chatId: `vk:${peer}`, affectsConnection: true, signalKey: '8',
+      event: { eventId: 'event-abc', subjectId: `vk:${-groupId}` },
+    });
+    expect(parseVkIncoming(event({ peer_id: peer + 1, action: { type: 'chat_invite_user', member_id: -groupId } }), groupId))
+      .toMatchObject({ chatId: `vk:${peer + 1}`, signalKey: '8' });
+  });
+
+  it('обрабатывает событие без идентификаторов и сохраняет сигнал о боте при неизвестном времени', () => {
+    const noId = parseVkIncoming(event({ conversation_message_id: undefined, from_id: undefined,
+      action: { type: 'chat_kick_user' } }), groupId);
+    expect(noId).toMatchObject({ signalKey: undefined, event: { actorId: null, subjectId: null, change: 'unknown' } });
+    expect(noId).not.toHaveProperty('event.eventId');
+    expect(parseVkIncoming(event({ date: 'bad', action: { type: 'chat_kick_user', member_id: -groupId } }), groupId))
+      .toEqual({ kind: 'membership', chatId: `vk:${peer}`, affectsConnection: true, signalKey: '8', event: undefined });
+    expect(parseVkIncoming(event({ date: 'bad', action: { type: 'chat_kick_user', member_id: 84 } }), groupId))
+      .toEqual({ kind: 'invalid' });
   });
 });

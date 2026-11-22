@@ -6,6 +6,29 @@ import { migrations } from '../src/storage/migrations/index.js';
 import { storageFixture } from './helpers/storage-fixture.js';
 
 const insert = "INSERT INTO messages(chat_id,platform_message_id,user_id,author_name,role,text,timestamp) VALUES ('vk:1','1','vk:2','Имя','user','старый',0)";
+test('миграция 13 сохраняет поколения и связывает отметки с конкретным чатом и поколением', () => {
+  const db = new Database(':memory:');
+  try {
+    db.pragma('foreign_keys=ON');
+    migrate(db, migrations.slice(0, 12));
+    db.exec("INSERT INTO chat_connections(chat_id,generation,revision,state) VALUES ('vk:1',1,0,'active'),('vk:2',2,0,'uncertain')");
+    const history = db.prepare('SELECT * FROM schema_migrations').all();
+    const connections = db.prepare('SELECT * FROM chat_connections').all();
+    migrate(db);
+    expect(db.prepare('SELECT * FROM schema_migrations WHERE version<=12').all()).toEqual(history);
+    expect(db.prepare('SELECT * FROM chat_connections').all()).toEqual(connections);
+    const add = db.prepare('INSERT INTO connection_membership_signals VALUES (?,?,?)');
+    add.run('vk:1', 1, '8');
+    add.run('vk:2', 2, '8');
+    expect(() => add.run('vk:1', 2, '9')).toThrow();
+    db.prepare('DELETE FROM chat_connections WHERE chat_id=?').run('vk:1');
+    expect(db.prepare('SELECT * FROM connection_membership_signals').all()).toEqual([
+      { chat_id: 'vk:2', generation: 2, signal_key: '8' },
+    ]);
+    expect(db.pragma('foreign_key_check')).toEqual([]);
+  } finally { db.close(); }
+});
+
 test('переход первой схемы ко второй, история и повторный запуск', () => {
   const fixture = storageFixture();
   let db = new Database(fixture.path);

@@ -67,25 +67,35 @@ export function createVkChannel(options: VkChannelOptions, dependencies: VkChann
     async capabilities(context) {
       const peer = vkLocalId(context.chatId);
       const user = context.userId === undefined ? undefined : vkLocalId(context.userId);
+      const observedMembership = inbound.hasMembershipObservation(context.chatId);
       let send: CapabilityState = 'unknown';
+      let present = false;
       if (peer !== undefined) {
         try {
-          const result = vkRecord(await api.request('messages.getConversationsById', { peer_ids: String(peer) }, guardFor(context.chatId)));
+          const guard = guardFor(context.chatId);
+          const readGuard = observedMembership ? { signal: guard.signal, isCurrent: guard.isCurrent } : guard;
+          const result = vkRecord(await api.request('messages.getConversationsById', { peer_ids: String(peer) }, readGuard));
           const row = Array.isArray(result?.items)
             ? result.items.map(vkRecord).find(item => vkRecord(item?.peer)?.id === peer)
             : undefined;
           const allowed = vkRecord(row?.can_write)?.allowed;
-          if (allowed === true) send = 'supported';
-          else if (allowed === false) send = 'unsupported';
+          present = vkRecord(row?.chat_settings)?.state === 'in';
+          if (!observedMembership || await guard.allow()) {
+            if (allowed === true) send = 'supported';
+            else if (allowed === false) send = 'unsupported';
+          }
         } catch { /* Без актуального ответа возможность остаётся неизвестной. */ }
       }
+      const membershipEvents: CapabilityState = peer === undefined || isVkGroupChat(peer)
+        ? (present && inbound.hasMembershipObservation(context.chatId) ? 'supported' : 'unknown')
+        : 'unsupported';
       return Object.freeze({
         context: Object.freeze({ ...context }), observedAt: Date.now(),
         support: Object.freeze({
           send, reply: send,
           typing: peer !== undefined && peer > 0 && !isVkGroupChat(peer) ? send : 'unknown',
           getUserName: user !== undefined && user > 0 ? 'supported' : 'unknown',
-          adminInfo: 'unknown', membershipEvents: 'unsupported',
+          adminInfo: 'unknown', membershipEvents,
           directMessage: peer !== undefined && user === peer && peer > 0 && !isVkGroupChat(peer) ? send : 'unknown',
         }),
         maxMessageLength: peer === undefined ? 'unknown' : vkMessageLength,
