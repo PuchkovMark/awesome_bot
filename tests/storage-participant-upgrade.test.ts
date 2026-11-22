@@ -31,7 +31,7 @@ test('F1.4 → версия 3 сохраняет историю, настрой�
       try {
         inspection.run((db) => {
           expect(db.prepare('SELECT * FROM schema_migrations WHERE version <= 2 ORDER BY version').all()).toEqual(previous);
-          expect(db.prepare('SELECT version FROM schema_migrations ORDER BY version').all()).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 }, { version: 14 }, { version: 15 }, { version: 16 }]);
+          expect(db.prepare('SELECT version FROM schema_migrations ORDER BY version').all()).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 }, { version: 14 }, { version: 15 }, { version: 16 }, { version: 17 }]);
           expect(db.prepare('SELECT * FROM chat_participants').all()).toEqual([]);
           expect(db.prepare('SELECT * FROM participant_profiles').all()).toEqual([]);
           expect(db.prepare('SELECT * FROM profile_facts').all()).toEqual([]);
@@ -55,7 +55,7 @@ test('F1.4 → версия 3 сохраняет историю, настрой�
           expect(f.profiles('a:old', 'a:u')).toMatchObject([{ created_at: 0, updated_at: 0 }]);
           expect(f.facts('a:old', 'a:u')).toMatchObject([{ value: 'Сохранённый 🐈', visibility: 'bot', reliability: 'unverified' }]);
           expect(db.prepare('SELECT * FROM schema_migrations WHERE version <= 2 ORDER BY version').all()).toEqual(previous);
-          expect(db.prepare('SELECT count(*) AS n FROM schema_migrations').get()).toEqual({ n: 16 });
+          expect(db.prepare('SELECT count(*) AS n FROM schema_migrations').get()).toEqual({ n: 17 });
           expect(db.pragma('foreign_key_check')).toEqual([]);
         });
       } finally { inspection.close(); }

@@ -10,11 +10,12 @@ export function createNoticeBackend(connection:Connection,lifecycle:LifecycleBac
  const messages=createMessageStore(connection);
  return {
   reserve(scope,messageId,route,interval,now,kind='generic'){
-   requireInput(kind==='generic'||kind==='current_message_too_large');
+   requireInput(kind==='generic'||kind==='current_message_too_large'||kind==='quota_exhausted');
    timestamp(now);requireInput(Number.isSafeInteger(interval)&&interval>0);timestamp(now+interval);
    return lifecycle.transaction(scope,db=>{
     const settings=db.prepare('SELECT enabled,response_mode AS mode FROM chats WHERE chat_id=?').get(scope.chatId) as {enabled:number;mode:string}|undefined;
-    if(!settings?.enabled||settings.mode==='silent'||route.mode!=='normal'||(route.isGroupChat&&settings.mode==='active'))return null;
+    if(!settings?.enabled||settings.mode==='silent'||!['normal','active'].includes(route.mode))return null;
+    if(kind!=='quota_exhausted'&&(route.mode!=='normal'||(route.isGroupChat&&settings.mode==='active')))return null;
     const source=readMessage(db,scope.chatId,messageId);if(!source||source.purpose!=='conversation')return null;
     const changed=db.prepare(`INSERT INTO notice_periods(chat_id,generation,next_at) VALUES(?,?,?)
       ON CONFLICT(chat_id) DO UPDATE SET next_at=excluded.next_at WHERE notice_periods.generation=excluded.generation AND notice_periods.next_at<=?`).run(scope.chatId,scope.generation,now+interval,now).changes;

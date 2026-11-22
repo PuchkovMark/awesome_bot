@@ -25,6 +25,7 @@ export function createAgentLoopQueue(options:AgentLoopQueueOptions){
  const config=queueConfig({...options.config,loopTimeoutMs:settings.timeoutMs});
  if(!Number.isSafeInteger(prep)||prep<=0||prep>2147483647||!Number.isSafeInteger(margin)||margin<=0||config.handlerTimeoutMs<settings.timeoutMs+prep+margin)throw new QueueError('invalid_input');
  return createChatQueue({tracing:options.tracing,storage:options.storage,...(options.logger?{logger:options.logger}:{}),...(options.onSettled?{onSettled:options.onSettled}:{}),...(options.platform!==undefined?{platform:options.platform}:{}),config,
+ ...(options.limits===undefined?{}:{limits:options.limits}),
  handler:async work=>{
   const zero=createAttemptSummary().snapshot(0);work.recordTrace({summary:zero});
   const initialDisclosure=options.disclosure?.(work);
@@ -49,12 +50,14 @@ export function createAgentLoopQueue(options:AgentLoopQueueOptions){
   // Финальная синхронная проверка выполняется непосредственно перед запуском цикла.
   if(!work.isCurrent()||lifetime.aborted)return 'interrupted';
   work.recordTrace({prompt:prepared.metadata?.version??null,context:prepared.metadata??null});
-  const loop=createAgentLoop(client,settings,summary=>work.recordTrace({model:{name:modelName,invoked:'possible'},summary}),()=>{
-   if (!work.isCurrent())return false;
+  const allowed=()=>{
+   if (lifetime.aborted) return false;
    const checked=options.disclosure?.(work);
    if(checked)work.recordTrace({disclosure:checked});
    return checked?.allowed??true;
-  });
+  };
+  const loop=createAgentLoop(client,settings,summary=>work.recordTrace({model:{name:modelName,invoked:'possible'},summary}),
+    ()=>work.admitModelAttempt?work.admitModelAttempt(allowed):work.isCurrent()&&allowed());
   const result=await loop.run({...prepared.input,signal:lifetime});
   work.recordTrace({model:{name:result.summary.attempts?modelName:null,invoked:result.summary.attempts?'yes':'no'},summary:result.summary,resultKind:result.kind});
   const outcome=result.kind==='complete'?'completed':result.kind==='rate_limit'?'rate_limit':result.kind==='deadline_exceeded'?'deadline_exceeded':result.kind==='cancelled'?'interrupted':'failed';

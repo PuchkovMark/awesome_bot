@@ -15,6 +15,9 @@ import type { QueueWork, QueueOutcome, QueueRecord } from './queue-types.js';
 import { StorageError } from './errors.js';
 import { requireInput, timestamp } from './validation.js';
 import { readChatControl } from './chat-control-store.js';
+import { admitRequestQuota, pruneRequestQuota } from './request-quota-store.js';
+import { createAutonomousQuotaStore, pruneAutonomousQuota, restoreAutonomousQuota } from './autonomous-quota-store.js';
+import type { ChatLimits } from '../core/chat-limits/config.js';
 export function createQueueBackend(connection: Connection, lifecycle: LifecycleBackend,traces:TraceBackend) {
   const runningRevisions = new WeakMap<QueueWork, number>();
   function owned(db: Database, token: string) {
@@ -41,6 +44,13 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
     const row=db.prepare('UPDATE queue_lease SET sequence=sequence+1 WHERE singleton=1 AND sequence<9007199254740991 RETURNING sequence').get() as {sequence:number}|undefined;
     if(!row)throw new StorageError('operation_failed');
     db.prepare('INSERT INTO queue_turns(chat_id,generation,served) VALUES(?,?,?) ON CONFLICT(chat_id) DO UPDATE SET served=excluded.served').run(scope.chatId,scope.generation,row.sequence);
+  }
+  function running(db: Database, token: string, work: QueueWork): boolean {
+    return currentWork(db, work) && !!db.prepare(`SELECT j.id FROM queue_jobs j
+      JOIN chat_connections c ON c.chat_id=j.chat_id AND c.generation=j.generation
+      LEFT JOIN chats s ON s.chat_id=j.chat_id
+      WHERE j.id=? AND j.owner=? AND j.state='running' AND c.state='active'
+        AND coalesce(s.enabled,1)=1 AND (j.route_kind IS NULL OR s.response_mode!='silent')`).get(work.id, token);
   }
   const messages = createMessageStore(connection);
   return {
@@ -103,6 +113,7 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
         if (row.token !== null && row.expires > now) throw new StorageError('queue_owned');
         if(config)traces.configure(config);if(report)traces.observe(report);
         db.prepare('UPDATE queue_lease SET token=?,expires_at=?,safety_ms=? WHERE singleton=1').run(token, now + leaseMs, safetyMs);
+        restoreAutonomousQuota(db, pausePlatform === undefined ? null : `${pausePlatform}:`);
         if (pausePlatform !== undefined) lifecycle.pauseActivePlatform(db, pausePlatform);
         const running=db.prepare("SELECT j.id,j.chat_id AS chatId,j.generation,j.message_id AS messageId,j.received_at AS receivedAt FROM queue_jobs j WHERE j.state='running'").all() as {id:number;chatId:ConnectionScope['chatId'];generation:number;messageId:number;receivedAt:number}[];
         for(const row of running){
@@ -155,11 +166,27 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
       });
     },
     valid(token: string, work: QueueWork): boolean {
+      return transaction(token, db => running(db, token, work));
+    },
+    admitModelAttempt(token: string, work: QueueWork, limits: ChatLimits, allow: () => boolean, now = Date.now) {
       return transaction(token, db => {
-        if (!currentWork(db, work)) return false;
-        const row=db.prepare("SELECT j.id FROM queue_jobs j JOIN chat_connections c ON c.chat_id=j.chat_id AND c.generation=j.generation LEFT JOIN chats s ON s.chat_id=j.chat_id WHERE j.id=? AND j.owner=? AND j.state='running' AND c.state='active' AND coalesce(s.enabled,1)=1 AND (j.route_kind IS NULL OR s.response_mode!='silent')").get(work.id,token);
-        return !!row;
+        if (!work.route || !running(db, token, work) || !allow()) return false;
+        return admitRequestQuota(db, work, limits, now());
       });
+    },
+    autonomousQuota(token: string, limits: ChatLimits, platform?: string) {
+      return createAutonomousQuotaStore(operation => transaction(token, operation), (db, scope) => {
+        requireInput(platform === undefined || scope.chatId.startsWith(`${platform}:`));
+        lifecycle.assertScope(db, scope);
+      }, token, limits);
+    },
+    pruneQuotas(token: string, limits: ChatLimits, platform?: string, now = Date.now()) {
+      timestamp(now);
+      const prefix = platform === undefined ? null : `${platform}:`;
+      return transaction(token, db => ({
+        requests: pruneRequestQuota(db, limits, now, prefix),
+        autonomous: pruneAutonomousQuota(db, limits, now, prefix),
+      }));
     },
     publicationValid(token:string,work:QueueWork):boolean {
      return transaction(token,db=>{

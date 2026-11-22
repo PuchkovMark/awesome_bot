@@ -29,10 +29,11 @@ export interface AgentLoopSummary {
   readonly usage: { readonly input: TokenCounter; readonly output: TokenCounter };
 }
 export type AgentLoopErrorCode = Exclude<LlmErrorCode, 'rate_limit' | 'cancelled'> | 'invalid_input' | 'client_failure';
+export type AttemptAdmission = boolean | 'quota_exhausted';
 export type AgentLoopOutcome =
   | { readonly kind: 'complete'; readonly text: string }
   | { readonly kind: 'incomplete'; readonly partialText: string }
-  | { readonly kind: 'refused' | 'empty' | 'rate_limit' | 'tools_not_supported' | 'cancelled' | 'deadline_exceeded' }
+  | { readonly kind: 'refused' | 'empty' | 'rate_limit' | 'quota_exhausted' | 'tools_not_supported' | 'cancelled' | 'deadline_exceeded' }
   | { readonly kind: 'attempt_limit'; readonly lastErrorCode: 'server' }
   | { readonly kind: 'error'; readonly code: AgentLoopErrorCode; readonly message: string };
 export type AgentLoopResult = AgentLoopOutcome & { readonly summary: AgentLoopSummary };

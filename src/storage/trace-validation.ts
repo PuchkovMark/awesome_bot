@@ -1,7 +1,7 @@
 import {requireInput} from './validation.js';
 import {StorageError} from './errors.js';
 import type {TracePayload} from './trace-types.js';
-export const traceRows=['complete','unusable_response','unsuccessful','queue_full','current_message_too_large','static_budget_too_small','trace_write_failed','silent_outcome','invalid_route'] as const;
+export const traceRows=['complete','unusable_response','unsuccessful','queue_full','quota_exhausted','current_message_too_large','static_budget_too_small','trace_write_failed','silent_outcome','invalid_route'] as const;
 function plain(value:unknown,keys:readonly string[],optional:readonly string[]=[]):Record<string,unknown>{
  requireInput(value!==null&&typeof value==='object'&&!Array.isArray(value)&&Object.getPrototypeOf(value)===Object.prototype);
  const descriptors=Object.getOwnPropertyDescriptors(value);requireInput(Reflect.ownKeys(descriptors).every(k=>typeof k==='string'&&(keys.includes(k)||optional.includes(k))&&'value'in descriptors[k]!));
@@ -15,7 +15,7 @@ export function validateTrace(value:unknown):asserts value is TracePayload {
  const p=plain(value,['model','prompt','context','summary','route','resultKind','preparationFailure','publication','degraded','degradation','tools'],['disclosure']);
  if(Object.hasOwn(p,'disclosure')){const disclosure=plain(p.disclosure,['version','allowed']);requireInput(typeof disclosure.allowed==='boolean');if(disclosure.version!==null)requireInput(Number.isSafeInteger(disclosure.version)&&(disclosure.version as number)>0);if(disclosure.allowed)requireInput(disclosure.version!==null);}
  const model=plain(p.model,['name','invoked']);if(model.name!==null)text(model.name);one(model.invoked,['no','possible','yes']);
- one(p.resultKind,[null,'complete','incomplete','refused','empty','rate_limit','tools_not_supported','cancelled','deadline_exceeded','attempt_limit','error','completed','failed','interrupted','expired','message_missing']);
+ one(p.resultKind,[null,'complete','incomplete','refused','empty','rate_limit','quota_exhausted','tools_not_supported','cancelled','deadline_exceeded','attempt_limit','error','completed','failed','interrupted','expired','message_missing']);
  one(p.preparationFailure,[null,'missing_system_prompt','static_budget_too_small','current_message_too_large','internal_error']);
  requireInput(typeof p.degraded==='boolean');one(p.degradation,['none','write_failed','size_exceeded','legacy_metadata_missing']);
  const pub=plain(p.publication,['rowId','tableVersion','reaction','status','reason']);one(pub.rowId,traceRows);one(pub.tableVersion,[1]);one(pub.reaction,['answer','notice','silence']);one(pub.status,['pending_checks','allowed','suppressed','delivered','failed','unknown']);one(pub.reason,['none','no_port','guard','no_reply','notice_period','trace_write_failed','publication_failed','journal_failed','partial_delivery']);

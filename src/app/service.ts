@@ -25,6 +25,7 @@ import { parseAdminRecoveryCommand } from '../core/admin-recovery/commands.js';
 import { adminRecoveryStore } from '../storage/admin-recovery-store.js';
 import { chatControlStore } from '../storage/chat-control-store.js';
 import { createChatControlHandlers } from './chat-control.js';
+import type { ChatLimits } from '../core/chat-limits/config.js';
 
 interface ApplicationDependencies {
   readonly vk?: Parameters<typeof createVkChannel>[1];
@@ -33,6 +34,7 @@ interface ApplicationDependencies {
   readonly stopTimeoutMs?: number;
   readonly onboardingIntervalMs?: number;
   readonly administrationIntervalMs?: number;
+  readonly chatLimits?: Partial<ChatLimits>;
 }
 
 export async function runApplication(config: ApplicationConfig, logger: SafeLogger, externalSignal: AbortSignal,
@@ -141,6 +143,7 @@ export async function runApplication(config: ApplicationConfig, logger: SafeLogg
           ? onboarding.gate(work.scope).version !== null : checkDisclosure(work)?.allowed ?? true });
       queue = createAgentLoopQueue({
         storage, logger, modelName: config.llm.model, tracing: config.tracing,
+        limits: dependencies.chatLimits ?? {},
         client: dependencies.client ?? createLlmClient(config.llm),
         disclosure:checkDisclosure,
         platform: channel.platform, signal,

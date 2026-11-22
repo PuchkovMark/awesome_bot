@@ -10,6 +10,7 @@ import type { QueueWork } from '../../storage/queue-types.js';
 import { QueueError } from './errors.js';
 import { queueConfig } from './validation.js';
 import type { ChatQueue, ChatQueueOptions, QueueOutcome, QueueStats, QueueCompletion } from './types.js';
+import { chatLimits } from '../chat-limits/config.js';
 const outcomes = new Set<unknown>(['completed','failed','rate_limit','interrupted','expired','message_missing','deadline_exceeded']);
 interface Task { trace:TracePayload; deadline: number; work: QueueWork; controller: AbortController; timer: ReturnType<typeof setTimeout>; done: boolean; publishing:boolean }
 function disclosureVersion(work: QueueWork) {
@@ -28,6 +29,7 @@ function safeFailure(error: unknown): QueueError {
 export function createChatQueue(options: ChatQueueOptions): ChatQueue {
   if (!options || typeof options.handler !== 'function') throw new QueueError('invalid_input');
   const config = queueConfig(options.config);
+  const limits = options.limits === undefined ? undefined : chatLimits(options.limits);
   const platform = options.platform;
   if (platform !== undefined && (typeof platform !== 'string' || !/^[a-z][a-z0-9_-]*$/u.test(platform))) throw new QueueError('invalid_input');
   if(traceConfig(options.tracing).retentionDays*86400000<=config.handlerTimeoutMs)throw new QueueError('invalid_input');
@@ -102,6 +104,11 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
     const controller=new AbortController();
     const task:Task={trace:initialTrace(work.route),deadline:performance.now()+config.handlerTimeoutMs,work,controller,done:false,publishing:false,timer:setTimeout(()=>finish(task,'deadline_exceeded'),config.handlerTimeoutMs)};
     tasks.set(work.id,task);
+    const running = () => !task.done && phase === 'running' && !controller.signal.aborted && performance.now() < task.deadline;
+    const isCurrent = () => {
+      if (!running()) return false;
+      try { return backend.valid(token, work); } catch { return false; }
+    };
     void Promise.resolve().then(async()=>{
       if(task.done)return;
       const message=await readMessage(work.scope,work.messageId);
@@ -109,7 +116,10 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
       if(!message){finish(task,'message_missing');return;}
       if(!backend.valid(token,work)){finish(task,'interrupted');return;}
       if(work.route){const settings=await options.storage.chats.get(work.scope);if(task.done)return;if(!settings?.enabled||settings.responseMode==='silent'||!backend.valid(token,work)){finish(task,'interrupted');return;}}
-      const outcome:unknown=await handler(Object.freeze({jobId:work.id,recordTrace:(update:Partial<TracePayload>)=>{if(task.done||!backend.valid(token,work))return;const next={...task.trace,...update};if(backend.progress(token,work,next))task.trace=next;},scope:work.scope,messageId:work.messageId,signal:controller.signal,route:work.route,...disclosureVersion(work),isCurrent:()=>{if(task.done||phase!=='running'||controller.signal.aborted||performance.now()>=task.deadline)return false;try{return backend.valid(token,work);}catch{return false;}}}));
+      const outcome:unknown=await handler(Object.freeze({jobId:work.id,recordTrace:(update:Partial<TracePayload>)=>{if(task.done||!backend.valid(token,work))return;const next={...task.trace,...update};if(backend.progress(token,work,next))task.trace=next;},scope:work.scope,messageId:work.messageId,signal:controller.signal,route:work.route,...disclosureVersion(work),isCurrent,
+        ...(limits && work.route ? {admitModelAttempt:(allow:()=>boolean)=>
+          backend.admitModelAttempt(token,work,limits,()=>running()&&allow()&&running())} : {}),
+      }));
       const completion:QueueCompletion=typeof outcome==='object'&&outcome!==null&&outcomes.has((outcome as QueueCompletion).outcome)?outcome as QueueCompletion:{outcome:outcomes.has(outcome)?outcome as QueueOutcome:'failed'};
       finish(task,completion.outcome,completion);
     }).catch(()=>finish(task,'failed'));
@@ -118,7 +128,11 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
     if(phase!=='running' && phase!=='stopping')return;
     try {
       backend.check(token);
-      if(performance.now()>=renewAt){ backend.renew(token,config.leaseMs);renewAt=performance.now()+config.renewIntervalMs; }
+      if(performance.now()>=renewAt){
+        backend.renew(token,config.leaseMs);
+        if(limits)backend.pruneQuotas(token,limits,platform);
+        renewAt=performance.now()+config.renewIntervalMs;
+      }
       for(const task of [...tasks.values()])if(!(task.publishing?backend.publicationValid(token,task.work):backend.valid(token,task.work)))finish(task,'interrupted');
       if(phase==='running') {
         const expired=backend.expire(token);counters.expired=add(counters.expired,expired.length);expired.forEach(wait);

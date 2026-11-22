@@ -26,3 +26,21 @@ test('два соединения и перезапуск не сбрасыва�
  }finally{await a.close();await b.close();f.cleanup();}
 });
 test('настройка только положительное безопасное целое',()=>{expect(noticeInterval()).toBe(300000);for(const x of [0,-1,NaN,Infinity,'1',1.5])expect(()=>noticeInterval(x)).toThrow('invalid_configuration');vi.restoreAllMocks();});
+test('отказ по квоте в активном режиме разделяет период с другими уведомлениями', async () => {
+ const storage = await openStorage(':memory:');
+ const scope = scopeFor(storage, 'vk:chat');
+ try {
+  await storage.chats.create(scope, { responseMode: 'normal', enabled: true, createdAt: 0 });
+  const input = await storage.messages.append(scope, queueMessage(scope.chatId, '1'));
+  const notices = noticeBackend(storage);
+  expect(notices.reserve(scope, input.id, route, 100, 0)).not.toBeNull();
+  await storage.chats.update(scope, { responseMode: 'active' });
+  const activeRoute = { ...route, mode: 'active' } as const;
+  expect(notices.reserve(scope, input.id, activeRoute, 100, 99, 'quota_exhausted')).toBeNull();
+  expect(notices.reserve(scope, input.id, activeRoute, 100, 100)).toBeNull();
+  expect(notices.reserve(scope, input.id, activeRoute, 100, 100, 'quota_exhausted')).not.toBeNull();
+  await storage.chats.update(scope, { responseMode: 'normal' });
+  expect(notices.reserve(scope, input.id, route, 100, 199)).toBeNull();
+  expect(notices.reserve(scope, input.id, route, 100, 200)).not.toBeNull();
+ } finally { await storage.close(); }
+});

@@ -3,11 +3,11 @@ import { agentError } from './errors.js';
 import { createAttemptSummary } from './summary.js';
 import { loopOptions, parseAttempt, prepareLoopInput } from './validation.js';
 import type { ParsedAttempt } from './validation.js';
-import type { AgentLoop, AgentLoopInput, AgentLoopOptions, AgentLoopOutcome, AgentLoopResult } from './types.js';
+import type { AgentLoop, AgentLoopInput, AgentLoopOptions, AgentLoopOutcome, AgentLoopResult, AttemptAdmission } from './types.js';
 
 type Stop = { readonly kind: 'cancelled' | 'deadline_exceeded' };
 /** Только внедрённый клиент. Фабрика не создаёт инфраструктурные ресурсы. */
-export function createAgentLoop(client: LlmClient, options: AgentLoopOptions = {},onAttempt?:(summary:import('./types.js').AgentLoopSummary)=>void, allowAttempt?:()=>boolean): AgentLoop {
+export function createAgentLoop(client: LlmClient, options: AgentLoopOptions = {},onAttempt?:(summary:import('./types.js').AgentLoopSummary)=>void, allowAttempt?:()=>AttemptAdmission): AgentLoop {
   const config = loopOptions(options);
   let invoke: LlmClient['complete'];
   try {
@@ -54,14 +54,16 @@ export function createAgentLoop(client: LlmClient, options: AgentLoopOptions = {
         armDeadline();
         let attempts = 0;
         for (;;) {
-          const before = checkStopped();
-          if (before) return finish(before);
-          if (allowAttempt && !allowAttempt()) return finish({kind:'cancelled'});
           // Единственный логический шаг. Вызов получает собственную изменяемую копию.
           const request: LlmRequest = {
             system: prepared.system, messages: prepared.messages.map((message) => ({ role: message.role, text: message.text })),
             maxOutputTokens: prepared.maxOutputTokens, sessionId: prepared.sessionId, signal: controller.signal,
           };
+          const before = checkStopped();
+          if (before) return finish(before);
+          const admission = allowAttempt ? allowAttempt() : true;
+          if (admission === 'quota_exhausted') return finish({ kind: admission });
+          if (admission !== true) return finish({ kind: 'cancelled' });
           summary.beginAttempt();
           attempts++;
           onAttempt?.(summary.snapshot(Math.max(0,performance.now()-started)));
