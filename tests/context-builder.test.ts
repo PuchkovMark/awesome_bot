@@ -1,6 +1,7 @@
 import {expect,test} from 'vitest';
 import {contextFixture} from './helpers/context.js';
 import {createContextBuilder} from '../src/core/context/index.js';
+import {estimateInput} from '../src/core/context/budget.js';
 test('история заканчивается исходной записью, reply вне окна не дублируется',async()=>{
  const f=await contextFixture();try{
  const parent=await f.put('parent','цитируемое');await f.put('history','обычная история');const current=await f.put('trigger','вопрос',{replyToMessageId:'parent'});await f.put('late','человек уже ответил',{timestamp:0});
@@ -28,8 +29,30 @@ test('классификация переполнения, отсутствие 
 test('большая цитата помечается и не вытесняет текущее сообщение',async()=>{
  const f=await contextFixture();try{
  await f.put('p','😀'.repeat(10000));const a=await f.put('a','важный вопрос',{replyToMessageId:'p'});const r=await f.builder.prepare(f.work(a.id));if(r.kind!=='ready')throw Error(r.kind);
- expect(r.metadata.reply).toBe('truncated');expect(r.metadata.estimatedTokens).toBeLessThanOrEqual(8000);expect(r.input.messages[0]!.text).toContain('важный вопрос');expect(r.input.messages[0]!.text).toContain('"truncated":true');
+ expect(r.metadata.reply).toBe('truncated');expect(r.metadata.estimatedTokens).toBeLessThanOrEqual(8000);
+ expect(JSON.parse(r.input.messages[0]!.text)).toMatchObject({kind:'untrusted_chat_data',current:{text:'важный вопрос'},reply:{truncated:true}});
  }finally{await f.storage.close();}
+});
+test.each([true, false])('полное текущее сообщение на границе бюджета, беседа=%s', async group => {
+ const f = await contextFixture();
+ try {
+  const text = '"😀\n'.repeat(150);
+  const current = await f.put('trigger', text);
+  const work = f.work(current.id, group);
+  const initial = await f.builder.prepare(work);
+  if (initial.kind !== 'ready') throw Error(initial.kind);
+  const estimated = estimateInput(initial.input.system, initial.input.messages);
+  const exact = estimated + f.builder.config.environmentReserveTokens - initial.metadata.layerBytes.environment;
+  const prepareWithBudget = (inputBudgetTokens: number) => createContextBuilder({
+   ...f.options, config: {...f.options.config, inputBudgetTokens},
+  }).prepare(work);
+
+  const result = await prepareWithBudget(exact);
+  if (result.kind !== 'ready') throw Error(result.kind);
+  expect(JSON.parse(result.input.messages[0]!.text)).toMatchObject({kind:'untrusted_chat_data',current:{text}});
+  expect(result.metadata.estimatedTokens).toBe(estimated);
+  expect(await prepareWithBudget(exact - 1)).toEqual({kind:'failed',reason:'current_message_too_large'});
+ } finally { await f.storage.close(); }
 });
 test('неактуальность после чтения и зависшая зависимость не вызывают ready',async()=>{
  const f=await contextFixture();try{

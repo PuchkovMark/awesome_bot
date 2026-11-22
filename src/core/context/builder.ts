@@ -3,7 +3,7 @@ import type {ConnectionScope} from '../../contracts/lifecycle.js';
 import type {CapabilitySnapshot} from '../../contracts/capabilities.js';
 import type {ContextMessageReader,ContextStateReader} from '../../storage/context-types.js';
 import {contextConfig,type ContextConfig} from './config.js';
-import {contextSeparator,estimateInput,staticMinimum} from './budget.js';
+import {contextSeparator,estimateInput} from './budget.js';
 import {validateContextStartup} from './startup.js';
 import {formatEnvironment,type ContextRoute} from './environment.js';
 import {formatMessages,type ContextEntry} from './format.js';
@@ -42,7 +42,6 @@ export function createContextBuilder(options:ContextBuilderOptions){
   const serialize=()=>formatMessages(history,current,reply,replyState,w.route!.isGroupChat,settings.timezone);
   // Неиспользованный резерв окружения остаётся резервом, а не историей.
   const cost=()=>estimateInput(system,serialize())+c.environmentReserveTokens-Buffer.byteLength(env);
-  if(staticMinimum(version.text,c)>c.inputBudgetTokens)return {kind:'failed',reason:'static_budget_too_small'};
   if(cost()>c.inputBudgetTokens)return {kind:'failed',reason:'current_message_too_large'};
   let replyId:number|undefined;
   if(current.replyToMessageId){

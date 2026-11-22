@@ -1,6 +1,6 @@
 import {expect,test} from 'vitest';
 import {contextConfig} from '../src/core/context/config.js';
-import {estimateInput,staticMinimum} from '../src/core/context/budget.js';
+import {contextSeparator,estimateInput,staticMinimum} from '../src/core/context/budget.js';
 import {validateContextStartup} from '../src/core/context/startup.js';
 const c=contextConfig({modelContextTokens:16000});
 test('конфигурация ограничивает общий ввод и резерв независимо от провайдера',()=>{
@@ -18,8 +18,10 @@ test('нет fallback, начальная проверка различает о
  expect(validateContextStartup(version,exact)).toBe(null);
  expect(validateContextStartup(version,{...exact,inputBudgetTokens:exact.inputBudgetTokens-1})).toBe('static_budget_too_small');
 });
-test('начальная проверка резервирует обрамление текущего сообщения, даже когда его текст пуст',()=>{
+test('начальная проверка учитывает JSON-поле тега сверх действующего резерва обрамления',()=>{
  const version={ref:{area:'global',kind:'system_prompt',key:'base',version:1},text:'x',createdAt:0} as const;
- const budget=estimateInput(version.text+'\n\nОкружение харнеса:\n',[{role:'user',text:''}])+c.environmentReserveTokens;
- expect(validateContextStartup(version,{...c,inputBudgetTokens:budget})).toBe('static_budget_too_small');
+ const previousMinimum = estimateInput(version.text+contextSeparator,[{role:'user',text:''}])+c.environmentReserveTokens+256;
+ const addedBytes = Buffer.byteLength('"kind":"untrusted_chat_data",');
+ expect(staticMinimum(version.text,c)).toBe(previousMinimum+addedBytes);
+ expect(validateContextStartup(version,{...c,inputBudgetTokens:previousMinimum})).toBe('static_budget_too_small');
 });
