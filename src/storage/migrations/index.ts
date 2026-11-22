@@ -1,3 +1,4 @@
+import { responseTraces } from './012-response-traces.js';
 import { removeLegacyChatPrompt } from './011-remove-legacy-chat-prompt.js';
 import { contextOrderIndex } from './010-context-order-index.js';
 import { contextInput } from './009-context-input.js';
@@ -10,4 +11,4 @@ import { journalAndChats } from './001-journal-and-chats.js';
 import { messagesFts } from './002-messages-fts.js';
 import { participantsAndProfiles } from './003-participants-and-profiles.js';
 export interface Migration { readonly version: number; readonly name: string; readonly sql: string }
-export const migrations: readonly Migration[] = [journalAndChats, messagesFts, participantsAndProfiles, botAdministration, chatConnectionLifecycle, versionedContent, chatQueue, messageRouting, contextInput, contextOrderIndex, removeLegacyChatPrompt];
+export const migrations: readonly Migration[] = [journalAndChats, messagesFts, participantsAndProfiles, botAdministration, chatConnectionLifecycle, versionedContent, chatQueue, messageRouting, contextInput, contextOrderIndex, removeLegacyChatPrompt,responseTraces];

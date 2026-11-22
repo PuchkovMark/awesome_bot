@@ -10,7 +10,7 @@ import { readMessage, createMessageStore } from './messages.js';
 import { createChatStore } from './chats.js';
 import { createAuthorizationStore } from './authorization-store.js';
 import { requireInput } from './validation.js';
-export function createScopedStorage(connection:Connection,backend:LifecycleBackend,versions:VersionBackend,queue:{get(scope:ConnectionScope,id:number):QueueRecord|null}):ScopedStorage {
+export function createScopedStorage(connection:Connection,backend:LifecycleBackend,versions:VersionBackend,queue:{get(scope:ConnectionScope,id:number):QueueRecord|null}):Omit<ScopedStorage,'traces'> {
   const messages=createMessageStore(connection),chats=createChatStore(connection),authorization=createAuthorizationStore(connection);
   return {
     contextState:createContextStateReader(connection,backend,versions),

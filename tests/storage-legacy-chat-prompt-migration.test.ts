@@ -35,7 +35,7 @@ test('upgrade 10 → 11 сохраняет остальные таблицы, н
 test('ошибка после удаления откатывает весь неприменённый набор вместе со столбцом',()=>{
  const db=new Database(':memory:');try{
  legacyChatPromptFixture(db);const before=db.serialize();
- expect(()=>migrate(db,[...migrations,{version:12,name:'synthetic-failure',sql:'CREATE TABLE partial(x); INVALID SQL;'}])).toThrow('migration_failed');
+ expect(()=>migrate(db,[...migrations,{version:13,name:'synthetic-failure',sql:'CREATE TABLE partial(x); INVALID SQL;'}])).toThrow('migration_failed');
  expect(db.serialize()).toEqual(before);expect(columns(db)).toContain('system_prompt');expect(db.prepare("SELECT system_prompt FROM chats WHERE chat_id='vk:old'").get()).toEqual({system_prompt:legacyPrompt});expect(db.prepare('SELECT max(version) AS version FROM schema_migrations').get()).toEqual({version:10});
  }finally{db.close();}
 });

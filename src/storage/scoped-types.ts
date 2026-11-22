@@ -3,6 +3,7 @@ import type { ConnectionScope } from '../contracts/index.js';
 import type { AppendResult, ChatInput, ChatPatch, ChatSettings, CreateChatResult, HistoryQuery, MessageInput, StoredMessage } from './types.js';
 import type { AuthorizationTransaction } from './authorization-types.js';
 export interface ScopedStorage {
+  readonly traces:import('./trace-types.js').TraceReader;
   readonly contextState: import('./context-types.js').ContextStateReader;
   readonly contextMessages: import('./context-types.js').ContextMessageReader;
   readonly queue: import('./queue-types.js').QueueStore;
