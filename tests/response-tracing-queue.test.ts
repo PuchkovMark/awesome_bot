@@ -32,3 +32,6 @@ test('после удаления поколения поздний резуль
 test('второй экземпляр не меняет конфигурацию действующего владельца',async()=>{
  const s=await openStorage(':memory:');try{const q=queueBackend(s);const {traceBackend}=await import('../src/storage/trace-store.js');q.acquire('a',10000,100,{maxRecordBytes:16384,retentionDays:1,messageRetentionDays:30});expect(()=>q.acquire('b',10000,100,{maxRecordBytes:65536,retentionDays:7,messageRetentionDays:30})).toThrow('queue_owned');expect(traceBackend(s).config().maxRecordBytes).toBe(16384);q.release('a');}finally{await s.close();}
 });
+test('превышение размера сохраняет отдельную причину минимальной формы',async()=>{
+ const s=await openStorage(':memory:');try{const scope=scopeFor(s,'vk:a'),q=queueBackend(s);q.acquire('a',10000,100,{maxRecordBytes:16384,retentionDays:7,messageRetentionDays:30});q.admit('a',scope,queueMessage('vk:a','m'),()=>true,config);const w=q.take('a')!;const {initialTrace}=await import('../src/storage/trace-store.js');const p={...initialTrace(),tools:Array.from({length:500},()=>({name:'tool',outcome:'success' as const,bytes:1,durationMs:1}))};q.finish('a',w,'completed',p);const row=await s.traces.get(scope,w.id);expect(row?.payload.degradation).toBe('size_exceeded');expect(row?.payload.tools).toEqual([]);q.release('a');}finally{await s.close();}
+});

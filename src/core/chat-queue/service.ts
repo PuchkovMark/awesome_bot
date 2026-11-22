@@ -77,8 +77,10 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
     if(outcome==='interrupted'||now>=task.deadline)task.controller.abort();
     try {
       const actual = backend.valid(token,task.work)?outcome:'interrupted';
-      const publicationKind=completion?.preparationFailure??completion?.result?.kind??actual;
-      task.trace={...task.trace,publication:{rowId:publicationRow(task.work.route,{kind:publicationKind}),tableVersion:1,reaction:'silence',status:'pending_checks',reason:'none'}};
+      const relevant=completion?.outcome===actual?completion:undefined;
+      const publicationKind=relevant?.preparationFailure??relevant?.result?.kind??actual;
+      const canPublish=!!options.onSettled&&actual!=='interrupted'&&actual!=='expired'&&actual!=='message_missing'&&phase==='running'&&performance.now()<task.deadline;
+      task.trace={...task.trace,publication:{rowId:publicationRow(task.work.route,{kind:publicationKind}),tableVersion:1,reaction:'silence',status:canPublish?'pending_checks':'suppressed',reason:canPublish?'none':options.onSettled?'guard':'no_port'}};
       const committed=backend.finish(token,task.work,actual,{...task.trace,preparationFailure:completion?.preparationFailure??task.trace.preparationFailure,resultKind:completion?.result?.kind??task.trace.resultKind,summary:completion?.result?.summary??task.trace.summary});
       if(committed==='interrupted')counters.interrupted=add(counters.interrupted,1);
       emit();

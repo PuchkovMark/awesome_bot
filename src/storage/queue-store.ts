@@ -82,7 +82,7 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
         const running=db.prepare("SELECT j.id,j.chat_id AS chatId,j.generation,j.message_id AS messageId,j.received_at AS receivedAt FROM queue_jobs j WHERE j.state='running'").all() as {id:number;chatId:ConnectionScope['chatId'];generation:number;messageId:number;receivedAt:number}[];
         for(const row of running){
          const exists=db.prepare('SELECT payload FROM response_traces WHERE job_id=?').get(row.id) as {payload:string}|undefined;
-         if(!exists){startTrace(db,{...row,scope:row as unknown as ConnectionScope,route:null},traces.config(),now);db.prepare('UPDATE response_traces SET payload=? WHERE job_id=?').run(encodeTrace({...initialTrace(),degraded:true,degradation:'legacy_metadata_missing'},traces.config().maxRecordBytes),row.id);}
+         if(!exists){startTrace(db,{...row,scope:row as unknown as ConnectionScope,route:null},traces.config(),now);db.prepare('UPDATE response_traces SET payload=? WHERE job_id=?').run(encodeTrace({...initialTrace(),model:{name:null,invoked:'possible'},summary:null,degraded:true,degradation:'legacy_metadata_missing'},traces.config().maxRecordBytes),row.id);}
         }
         const open=db.prepare('SELECT job_id,payload FROM response_traces WHERE finished_at IS NULL').all() as {job_id:number;payload:string}[];
         for(const row of open){const payload=JSON.parse(row.payload) as TracePayload;db.prepare("UPDATE response_traces SET finished_at=max(started_at,?),outcome='interrupted',payload=? WHERE job_id=?").run(now,encodeTrace({...payload,resultKind:'interrupted',publication:{rowId:'silent_outcome',tableVersion:1,reaction:'silence',status:'suppressed',reason:'guard'}},traces.config().maxRecordBytes),row.job_id);}
@@ -138,7 +138,7 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
      return transaction(token,db=>{if(!this.valid(token,work))return false;let json:string;try{json=encodeTrace(payload,traces.config().maxRecordBytes);}catch(error){if(!(error instanceof StorageError)||error.code!=='limit_exceeded')throw error;traces.report('size_exceeded');json=encodeTrace(minimalTrace(payload,'size_exceeded'),traces.config().maxRecordBytes);traces.report('minimal_saved');}return db.prepare('UPDATE response_traces SET payload=? WHERE job_id=? AND finished_at IS NULL').run(json,work.id).changes===1;});
     },
     finish(token: string, work: QueueWork, outcome: QueueOutcome, payload?:TracePayload): QueueOutcome|null {
-      const commit=(minimal:boolean):QueueOutcome|null=>transaction(token, db => {
+      const commit=(minimal:boolean,reason:'write_failed'|'size_exceeded'='write_failed'):QueueOutcome|null=>transaction(token, db => {
         requireInput(['completed','failed','rate_limit','interrupted','expired','message_missing','deadline_exceeded'].includes(outcome));
         const state=db.prepare('SELECT state FROM chat_connections WHERE chat_id=? AND generation=?').get(work.scope.chatId,work.scope.generation) as {state:string}|undefined;
         const final=state?.state==='active'?outcome:'interrupted';
@@ -148,7 +148,7 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
         if(!row)throw new StorageError('operation_failed');
         const base=payload??JSON.parse(row.payload) as TracePayload;
         const p:TracePayload={...base,resultKind:base.resultKind??final,publication:final==='interrupted'?{rowId:'silent_outcome',tableVersion:1,reaction:'silence',status:'suppressed',reason:'guard'}:base.publication};
-        const json=encodeTrace(minimal?minimalTrace(p,'write_failed'):p,traces.config().maxRecordBytes);
+        const json=encodeTrace(minimal?minimalTrace(p,reason):p,traces.config().maxRecordBytes);
         db.prepare('UPDATE response_traces SET finished_at=max(started_at,?),outcome=?,payload=? WHERE job_id=? AND finished_at IS NULL').run(Date.now(),final,json,work.id);
         if(db.prepare("SELECT id FROM queue_jobs WHERE chat_id=? AND state='queued' LIMIT 1").get(work.scope.chatId))turn(db,work.scope);
         return final;
@@ -156,7 +156,7 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
       try{return commit(false);}catch(error){
        if(error instanceof StorageError&&error.code==='queue_lost_ownership')throw error;
        traces.report(error instanceof StorageError&&error.code==='limit_exceeded'?'size_exceeded':'full_write_failed');
-       try{const result=commit(true);traces.report('minimal_saved');return result;}catch{traces.report('trace_write_failed');throw new StorageError('operation_failed');}
+       try{const result=commit(true,error instanceof StorageError&&error.code==='limit_exceeded'?'size_exceeded':'write_failed');traces.report('minimal_saved');return result;}catch{traces.report('trace_write_failed');throw new StorageError('operation_failed');}
       }
     },
     get(scope: ConnectionScope, id: number): QueueRecord | null {
