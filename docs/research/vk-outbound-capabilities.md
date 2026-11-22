@@ -11,6 +11,12 @@
 | Исходное сообщение в Test Bot | Ранее отправленный тестовый текст найден через `messages.getByConversationMessageId` в области беседы сообщества |
 | Исходное сообщение в личке | Для аккаунта владельца проверено `can_write.allowed: true`. Ранее отправленный тестовый текст подтвердился запросом `messages.getById` с совпадающими автором и областью |
 
+## Уведомление владельца для F3.6
+
+22 ноября 2026 года на тестовом сообществе с ключом сообщества проверили личку настроенного владельца запросами чтения. `messages.isMessagesFromGroupAllowed` подтвердил разрешение. `messages.getConversationsById` вернул личный диалог с `can_write.allowed: true`. Доставку тестовых сообщений в этот диалог ранее наблюдали в [проверке F3.2](#отправка-reply-и-подтверждение). [Проверка разрешения VK](https://github.com/VKCOM/api-schema-typescript/blob/master/src/methods/messages.ts#L1018) · [Поля диалога VK](https://github.com/VKCOM/vk-api-schema/blob/333481bd082ad747d4873ef4a77f9247097eeef0/messages/objects.json#L739)
+
+Из этих наблюдений следует, что личка подходит как канал при действующем разрешении на сообщения. Схема VK описывает отказы `901` и `902` при отсутствии разрешения или ограничениях приватности. Закрытую личку и первое сообщение в новом диалоге в этой проверке не воспроизводили. Поведение при недоступности лички остаётся вопросом [F3.6](../tasks/025-vk-bot-onboarding.md#открытые-вопросы). [Коды VK](https://github.com/VKCOM/vk-api-schema/blob/333481bd082ad747d4873ef4a77f9247097eeef0/errors.json#L585-L594)
+
 ## Формы ответа и код ограничения
 
 Публичная схема описывает локальный ID в ответе `messages.send` для списка адресатов. В ней также перечислены `forward.is_reply` и `messages.setActivity`. Форму с одним адресатом, связь reply и поля после доставки нужно проверить в действующем VK. [Отправка](https://github.com/VKCOM/vk-api-schema/blob/333481bd082ad747d4873ef4a77f9247097eeef0/messages/methods.json#L2247) · [Поля ответа](https://github.com/VKCOM/vk-api-schema/blob/333481bd082ad747d4873ef4a77f9247097eeef0/messages/objects.json#L1948)
