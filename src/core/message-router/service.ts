@@ -21,12 +21,15 @@ export interface RouterOptions {
 }
 export function createMessageRouter(options:RouterOptions){
  const metrics=createRouterMetrics(options.logger);
- return Object.freeze({stats:metrics.snapshot,async receive(scope:ConnectionScope,input:IncomingMessage,context?:AuthorizationContext){
+ return Object.freeze({stats:metrics.snapshot,async receive(scope:ConnectionScope,input:IncomingMessage,context?:AuthorizationContext,isCurrent?:()=>boolean){
   const message=Object.freeze({...input});
+  if(isCurrent && !isCurrent())return {decision:null,admission:null};
   if(!validIncoming(message)||message.chatId!==scope.chatId)return {decision:{kind:'silence',reason:'invalid_input'} as RoutingDecision,admission:null};
   const settings=(await options.storage.chats.create(scope,{responseMode:'normal',enabled:true,createdAt:message.timestamp})).settings;
+  if(isCurrent && !isCurrent())return {decision:null,admission:null};
   const command=options.recognizeCommand?.(message)??null;
   const service=command?await commandAccess(options.authorization,context,scope,message,command):undefined;
+  if(isCurrent && !isCurrent())return {decision:null,admission:null};
   if(!settings.enabled){
    const decision=routeMessage({message,settings,...(service?{service}:{})});return {decision,admission:null};
   }

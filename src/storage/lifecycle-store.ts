@@ -20,7 +20,7 @@ export function installAuthorities(db:Database,chatId:ChatId,grantedAt=Date.now(
   }
 }
 export function createLifecycleBackend(connection: Connection) {
-  const scopes = new WeakSet<object>(); const checks = new WeakSet<object>();
+  const scopes = new WeakMap<object, number | null>(); const checks = new WeakSet<object>();
   function read(db: Database, chatId: ChatId): State | null {
     return db.prepare('SELECT chat_id AS chatId,generation,revision,state,creator_id AS creatorId,inviter_id AS inviterId FROM chat_connections WHERE chat_id=?').get(chatId) as State | undefined ?? null;
   }
@@ -29,9 +29,9 @@ export function createLifecycleBackend(connection: Connection) {
     const state=read(db,expected.chatId);
     return expected.generation===null ? state===null && clock(db)===expected.clock : state?.generation===expected.generation && state.revision===expected.revision;
   }
-  function issue(state: State): ConnectionScope {
+  function issue(state: State, pinRevision = false): ConnectionScope {
     const scope=Object.freeze({chatId:state.chatId,generation:state.generation}) as ConnectionScope;
-    scopes.add(scope); return scope;
+    scopes.set(scope,pinRevision?state.revision:null); return scope;
   }
   function bump(db:Database,chatId:ChatId) {
     const result=db.prepare('UPDATE chat_connections SET revision=revision+1 WHERE chat_id=? AND revision<9007199254740991').run(chatId);
@@ -46,6 +46,8 @@ export function createLifecycleBackend(connection: Connection) {
     const state=read(db,scope.chatId);
     if(!state || state.generation!==scope.generation)throw new StorageError('stale_scope');
     if(state.state!=='active')throw new StorageError('uncertain_connection');
+    const revision=scopes.get(scope);
+    if(revision!==null && revision!==state.revision)throw new StorageError('stale_scope');
     return state;
   }
   function remove(db:Database,chatId:ChatId):void {
@@ -60,6 +62,14 @@ export function createLifecycleBackend(connection: Connection) {
   }
   return {
     assertScope,
+    activeChatIds(platform: string): readonly ChatId[] {
+      return connection.run(db => {
+        const prefix = `${platform}:`;
+        const rows = db.prepare("SELECT chat_id AS chatId FROM chat_connections WHERE state='active' AND substr(chat_id,1,?)=?")
+          .all(prefix.length, prefix) as { chatId: ChatId }[];
+        return rows.map(row => row.chatId);
+      });
+    },
     restore(expected: {readonly chatId:ChatId;readonly generation:number}):ConnectionScope {
       return connection.run(db => { compositeId(expected.chatId); const state=read(db,expected.chatId);
         if(!state || state.generation!==expected.generation) throw new StorageError('stale_scope');
@@ -75,12 +85,12 @@ export function createLifecycleBackend(connection: Connection) {
         checks.add(proof); return proof;
       });
     },
-    current(chatId:ChatId):ConnectionScope {
+    current(chatId:ChatId, pinRevision = false):ConnectionScope {
       return connection.run(db=>{
         compositeId(chatId);const state=read(db,chatId);
         if(!state)throw new StorageError('stale_scope');
         if(state.state!=='active')throw new StorageError('uncertain_connection');
-        return issue(state);
+        return issue(state,pinRevision);
       });
     },
     apply(proof:Verification,observation:LifecycleObservation) {

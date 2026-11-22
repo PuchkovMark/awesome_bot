@@ -1,5 +1,5 @@
 import { observationOf } from './source.js';
-import type { ChatId, UserId, LifecycleSource } from '../../contracts/index.js';
+import type { ChatId, ConnectionScope, UserId, LifecycleSource } from '../../contracts/index.js';
 import type { Storage } from '../../storage/index.js';
 import { lifecycleBackend } from '../../storage/lifecycle-store.js';
 import { validId } from '../authorization/validation.js';
@@ -12,10 +12,21 @@ export function createLifecycleService(options:{readonly storage:Storage;readonl
   const owners=new WeakSet<object>();
   return Object.freeze({
     /** Только доверенная входная граница приложения, не параметры модели. */
-    current:backend.current,
-    async verify(chatId:ChatId) {
+    current(chatId: ChatId) {return backend.current(chatId);},
+    /** Область приёма действительна до следующей сверки или решения владельца. */
+    admissionScope(chatId: ChatId) {return backend.current(chatId,true);},
+    activeChatIds(platform: string) {
+      if(!/^[a-z][a-z0-9_-]*$/u.test(platform))throw new TypeError('Lifecycle: invalid_platform');
+      return backend.activeChatIds(platform);
+    },
+    isAdmissionCurrent(scope: ConnectionScope) {
+      try {backend.revision(scope);return true;}
+      catch {return false;}
+    },
+    async verify(chatId:ChatId, evidence?: 'observation_lost') {
       if(!validId(chatId))throw new TypeError('Lifecycle: invalid_chat');
       const proof=backend.begin(chatId);
+      if(evidence==='observation_lost')return backend.apply(proof,{confidence:'unavailable',bot:'unknown'});
       let observation;
       try {observation=await source.observe(Object.freeze({chatId}));}
       catch {observation={confidence:'unavailable' as const,bot:'unknown' as const};}
