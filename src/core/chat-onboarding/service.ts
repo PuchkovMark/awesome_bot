@@ -43,7 +43,7 @@ export function createChatOnboarding(options: {
     if (!guard.isCurrent()) return;
     const claim = store.claim(scope,row.id,text,Date.now(),options.replayWindowMs);
     if (!claim) return;
-    const outcome = await options.port.publish(scope,target,claim.text!,claim.sendId!,guard)
+    const outcome = await options.port.publish(scope,target,claim.text!,claim.sendId!,guard,claim.replayUntil)
       .catch(() => ({kind:'unknown' as const}));
     try {
       if (outcome.kind === 'delivered') store.finish(scope,claim,'delivered',Date.now(),null,outcome.receipt);

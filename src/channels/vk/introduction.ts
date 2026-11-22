@@ -6,6 +6,9 @@ import { isVkGroupChat, vkRecord } from './normalize.js';
 import type { createVkOutbound } from './outbound.js';
 import { vkLocalId } from './outbound.js';
 
+// Повтор в Test Bot через 15,6 секунды вернул ту же запись. В рабочем окне оставляем запас.
+export const vkIntroductionReplayWindowMs = 14_000;
+
 export function describeVkRights(administration: boolean): string {
   return administration ? 'Режим VK: отправка сообщений доступна.'
     : 'Ограниченный режим VK: права администратора сообщества в беседе не подтверждены.';
@@ -51,11 +54,13 @@ export function createVkIntroduction(options: {
           [901,902,917,925,932].includes(error.code ?? 0) ? 'denied' : 'unknown';
       }
     },
-    async publish(scope: ConnectionScope,target: 'chat' | 'owner',text: string,sendId: number,guard: IntroductionGuard): Promise<ServiceDelivery> {
+    async publish(scope: ConnectionScope,target: 'chat' | 'owner',text: string,sendId: number,guard: IntroductionGuard,
+      replayUntil?: number): Promise<ServiceDelivery> {
       const chatId = address(scope,target);
       if (!chatId || !guard.isCurrent()) return {kind:'failed'};
       let receipt: string | undefined;
-      const result = await options.outbound.send({...guard,kind:'service',chatId,text,sendId,confirmPart(part) {
+      const result = await options.outbound.send({...guard,kind:'service',chatId,text,sendId,
+        ...(replayUntil === undefined ? {} : {replayUntil}),confirmPart(part) {
         receipt = part.messageId;
       }});
       return result.kind === 'delivered' && receipt ? {kind:'delivered',receipt} : {kind:result.kind === 'failed' ? 'failed' : 'unknown'};

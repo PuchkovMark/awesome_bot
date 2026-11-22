@@ -16,6 +16,7 @@ type SendOutcome = { readonly kind: 'delivered'; readonly confirmedParts: number
 export interface VkSendRequest extends OutgoingMessage, VkRequestGuard {
   readonly kind: 'answer' | 'notice' | 'service';
   readonly sendId?: number;
+  readonly replayUntil?: number;
   readonly confirmPart: (part: PublishedPart) => void | Promise<void>;
 }
 
@@ -84,7 +85,13 @@ export function createVkOutbound(options: {
     }
   }
 
-  async function sendPart(peer: number, text: string, parent: VkMessage | undefined, guard: VkRequestGuard, sendId?: number) {
+  async function sendPart(peer: number, text: string, parent: VkMessage | undefined, input: VkSendRequest) {
+    const sendId = input.kind === 'service' ? input.sendId : undefined;
+    const replayUntil = input.replayUntil;
+    const guard = replayUntil === undefined ? input : {
+      ...input,
+      isCurrent: () => Date.now() < replayUntil && (!input.isCurrent || input.isCurrent()),
+    };
     const params = {
       peer_ids: String(peer), message: text, random_id: sendId ?? nextRandomId(), dont_parse_links: 1, disable_mentions: 1,
       ...(parent ? { forward: JSON.stringify({ peer_id: peer, conversation_message_ids: [parent.cmid], is_reply: true }) } : {}),
@@ -103,7 +110,7 @@ export function createVkOutbound(options: {
         if (!cmid) throw new VkApiError(undefined);
         return cmid;
       } catch (error) {
-        if (!(error instanceof VkApiError) || error.code !== 6 || retry >= 2) throw error;
+        if (replayUntil !== undefined || !(error instanceof VkApiError) || error.code !== 6 || retry >= 2) throw error;
         await wait(retry, guard.signal);
       }
     }
@@ -145,7 +152,7 @@ export function createVkOutbound(options: {
         const expectedParent = confirmedParts === 0 ? parent : undefined;
         let cmid: number;
         try {
-          cmid = await sendPart(peer, text, expectedParent, input, input.kind === 'service' ? input.sendId : undefined);
+          cmid = await sendPart(peer, text, expectedParent, input);
         } catch (error) {
           const denied = error instanceof VkRequestCancelled
             || (error instanceof VkApiError && error.code !== undefined && rejected.has(error.code));

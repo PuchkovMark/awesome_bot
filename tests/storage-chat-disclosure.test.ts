@@ -41,8 +41,9 @@ test('состояние и операция отправки переживаю
     reopened.recover(next);
     expect(reopened.publications(next)).toMatchObject([{state:'unknown',sendId:sending.sendId}]);
     expect(reopened.claim(next,intro.id,'Другой текст',12)).toBeNull();
+    expect(reopened.claim(next,intro.id,'Другой текст',15,5)).toBeNull();
     const replay = reopened.claim(next,intro.id,'Другой текст',12,5)!;
-    expect(replay).toMatchObject({sendId:sending.sendId,text:sending.text,attempt:2});
+    expect(replay).toMatchObject({sendId:sending.sendId,text:sending.text,attempt:2,replayUntil:15});
     expect(reopened.finish(next,replay,'unknown',13,'unconfirmed',null)).toBe(true);
     expect(reopened.claim(next,intro.id,'Другой текст',14,5)).toBeNull();
     expect(reopened.confirm(next,intro.id,'17',15)).toBe(true);

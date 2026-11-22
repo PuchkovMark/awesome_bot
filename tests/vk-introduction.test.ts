@@ -1,7 +1,8 @@
 import { expect, test, vi } from 'vitest';
 import { createVkIntroduction } from '../src/channels/vk/introduction.js';
 import { createVkOutbound } from '../src/channels/vk/outbound.js';
-import type { VkApiCall } from '../src/channels/vk/api.js';
+import { createVkApiCall, type VkApiCall } from '../src/channels/vk/api.js';
+import { createVkRateLimiter } from '../src/channels/vk/rate-limit.js';
 import type { ConnectionScope } from '../src/contracts/index.js';
 
 test('служебная публикация повторяет сохранённый ключ, сверяет запись VK и ограничивает адресата', async () => {
@@ -33,7 +34,7 @@ test('служебная публикация повторяет сохранё�
   ownerEnabled=true;
   expect(await port.writing(scope,'owner',guard)).toBe('allowed');
   expect(await port.publish(scope,'chat','Вступление',543,guard)).toEqual({kind:'unknown'});
-  expect(await port.publish(scope,'chat','Вступление',543,guard)).toEqual({kind:'delivered',receipt:'1'});
+  expect(await port.publish(scope,'chat','Вступление',543,guard,Date.now()+1_000)).toEqual({kind:'delivered',receipt:'1'});
   expect(posted.size).toBe(1);
   expect(await port.confirm(scope,'Вступление','1',10000,guard)).toBe(true);
   expect(await port.confirm(scope,'Вступление','1',11000,guard)).toBe(false);
@@ -41,4 +42,24 @@ test('служебная публикация повторяет сохранё�
   expect(await port.publish(scope,'owner','Оповещение',544,guard)).toEqual({kind:'delivered',receipt:'2'});
   expect(posted.get(544)?.peer_id).toBe(73);
   expect(await port.publish({chatId:'vk:13',generation:1} as unknown as ConnectionScope,'owner','Лишнее',545,guard)).toEqual({kind:'failed'});
+});
+
+test('окно повтора проверяется после ожидания лимитера и отказ VK завершает единственную попытку', async () => {
+  const scope = {chatId:'vk:2000000010',generation:1} as unknown as ConnectionScope;
+  const guard = {signal:new AbortController().signal,isCurrent:()=>true};
+  let tick = 0;
+  const clock = vi.spyOn(Date,'now').mockImplementation(() => 1000 + tick);
+  try {
+    const limit = createVkRateLimiter({now:() => tick,wait:async ms => {tick+=ms;}});
+    const attempt = vi.fn(async (method:string) => method === 'messages.send'
+      ? {error:{error_code:6}} : {response:{items:[]}});
+    const api = {request:createVkApiCall(attempt,limit)};
+    const port = createVkIntroduction({owner:'vk:73', groupId:17, api,outbound:createVkOutbound({api,groupId:17,wait:async()=>{}})});
+    await port.writing(scope,'chat',guard);
+    expect(await port.publish(scope,'chat','Вступление',543,guard,Date.now()+25)).toEqual({kind:'failed'});
+    expect(attempt.mock.calls.map(([method])=>method)).toEqual(['messages.getConversationsById']);
+
+    expect(await port.publish(scope,'chat','Вступление',543,guard,Date.now()+1000)).toEqual({kind:'failed'});
+    expect(attempt.mock.calls.map(([method])=>method)).toEqual(['messages.getConversationsById','messages.send']);
+  } finally { clock.mockRestore(); }
 });

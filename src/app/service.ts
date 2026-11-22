@@ -16,7 +16,7 @@ import { unconfirmedLifecycleSource } from './setup.js';
 import { createChatOnboarding } from '../core/chat-onboarding/service.js';
 import { canonicalTimezone, parseTimezoneCommand } from '../core/chat-onboarding/timezone.js';
 import { vkLocalId } from '../channels/vk/outbound.js';
-import { describeVkRights } from '../channels/vk/introduction.js';
+import { describeVkRights, vkIntroductionReplayWindowMs } from '../channels/vk/introduction.js';
 import { isVkGroupChat } from '../channels/vk/normalize.js';
 import type { ConnectionScope } from '../contracts/index.js';
 
@@ -83,7 +83,8 @@ export async function runApplication(config: ApplicationConfig, logger: SafeLogg
         return local !== undefined && isVkGroupChat(local);
       };
       const onboarding = createChatOnboarding({storage,lifecycle,port:channel.introduction!,signal,
-        provider:'OpenCode Go',describeRights:describeVkRights,groups:() => lifecycle.activeChatIds('vk').filter(group),
+        provider:'OpenCode Go',describeRights:describeVkRights,replayWindowMs:vkIntroductionReplayWindowMs,
+        groups:() => lifecycle.activeChatIds('vk').filter(group),
         ...(dependencies.onboardingIntervalMs === undefined ? {} : {intervalMs:dependencies.onboardingIntervalMs})});
       function checkDisclosure(work:{scope:ConnectionScope;disclosureVersion?:number}) {
         if (!group(work.scope.chatId)) return undefined;

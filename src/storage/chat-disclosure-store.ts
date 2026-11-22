@@ -160,7 +160,8 @@ export function createDisclosureStore(connection: Connection, lifecycle: Lifecyc
         db.prepare(`UPDATE disclosure_publications SET state='sending',reason=NULL,text=coalesce(text,?),
           send_id=coalesce(send_id,?),attempt=attempt+1,attempted_at=coalesce(attempted_at,?),replayed=? WHERE id=?`)
           .run(text,randomInt(1,0x80000000),now,Number(replay),id);
-        return {...readPublication(db,scope,id)!,replay};
+        const replayUntil = replay ? row.attemptedAt! + replayWindowMs : undefined;
+        return {...readPublication(db,scope,id)!,replay,replayUntil};
       });
     },
     finish(scope: ConnectionScope, claim: DisclosurePublication & {readonly replay:boolean}, outcome: 'delivered' | 'pending' | 'unknown',
