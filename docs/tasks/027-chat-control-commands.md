@@ -6,7 +6,7 @@
 - Дата: 2026-11-23
 - Дата завершения: —
 - Утверждение: владелец подтвердил задачу после уточнения поведения паузы в активном режиме 2026-11-23. [Решение](../decisions.md#утверждение-задачи-о-командах-управления-f42)
-- Связанные документы: [F4.2](../roadmap.md#веха-4-управление-и-защита), [согласованные режимы](../decisions.md#подтверждение-режимов-и-правил-данных), [роутер F2.4](completed/014-message-router.md), [зависимость F2.10](completed/016-remove-legacy-chat-prompt.md), [трассировка F2.6](completed/017-response-tracing.md), [вступление F3.6](completed/025-vk-bot-onboarding.md), [служебный путь владельца F4.1](completed/026-vk-bot-administrator-recovery.md), [черновик плана фичи](../plans/027-chat-control-commands.md).
+- Связанные документы: [F4.2](../roadmap.md#веха-4-управление-и-защита), [согласованные режимы](../decisions.md#подтверждение-режимов-и-правил-данных), [роутер F2.4](completed/014-message-router.md), [зависимость F2.10](completed/016-remove-legacy-chat-prompt.md), [трассировка F2.6](completed/017-response-tracing.md), [вступление F3.6](completed/025-vk-bot-onboarding.md), [служебный путь владельца F4.1](completed/026-vk-bot-administrator-recovery.md), [утверждённый план фичи](../plans/027-chat-control-commands.md).
 
 ## Проблема или цель
 
