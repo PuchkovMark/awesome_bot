@@ -48,13 +48,19 @@ test('одна пауза на всю беседу, запрет повторн�
 test('включение доступно владельцу из служебного контекста, повтор команды не возвращает старое состояние',async()=>{
   const f=await authorizationFixture();
   try {
-    const {owner,member,service}=f;
+    const {owner,member,service,storage}=f;
     const groupOwner=service.context({scope:owner.scope,userId:owner.userId});
     expect(await service.controlChat(owner,{kind:'off'},current,14)).toMatchObject({value:{state:{enabled:false,mode:'normal'}}});
     expect(await service.controlChat(groupOwner,{kind:'on'},current)).toMatchObject({allowed:false,code:'disabled'});
     expect(await service.controlChat(member,{kind:'settings'},current)).toMatchObject({allowed:false,code:'disabled'});
     expect(await service.controlChat(owner,{kind:'on'},current,15)).toMatchObject({value:{state:{enabled:true,mode:'normal'}}});
     expect(await service.controlChat(owner,{kind:'off'},current,14)).toMatchObject({value:{status:'duplicate',state:{enabled:true}}});
+    const freshScope=scopeFor(storage,'vk:2000000070');
+    const freshOwner=service.context({scope:freshScope,userId:owner.userId,kind:'owner'});
+    expect(await storage.chats.get(freshScope)).toBeNull();
+    expect(await service.controlChat(freshOwner,{kind:'off'},current,16))
+      .toMatchObject({allowed:true,value:{state:{enabled:false,mode:'normal'}}});
+    expect(await storage.chats.get(freshScope)).toMatchObject({enabled:false,responseMode:'normal'});
     expect(parseChatControl('/режим vk:2000000004@7 активный','private')).toEqual({
       command:{kind:'mode',mode:'active'},target:{chatId:'vk:2000000004',generation:7}});
     expect(parseChatControl('помолчи, пожалуйста','group')).toBeUndefined();

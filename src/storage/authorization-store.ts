@@ -10,6 +10,7 @@ import type { ChatPatch } from './types.js';
 
 const allBases: readonly GrantBasis[] = ['creator', 'inviter', 'explicit'];
 export function createAuthorizationStore(connection: Connection): SyncAuthorizationStore {
+  const chats=createChatStore(connection);
   return {
     transaction(chatId, callback) {
       return connection.run(db => {
@@ -48,8 +49,10 @@ export function createAuthorizationStore(connection: Connection): SyncAuthorizat
               db.prepare('UPDATE chats SET timezone=? WHERE chat_id=?').run(value,chatId);
             },
             controlState() {check();return readChatControl(db,chatId);},
-            updateControlSettings(patch: Pick<ChatPatch,'enabled'|'responseMode'>) {
-              check();createChatStore(connection).update(chatId,patch);
+            updateControlSettings(patch: Pick<ChatPatch,'enabled'|'responseMode'>, createdAt: number) {
+              check();
+              if (!chats.get(chatId)) chats.create(chatId,{enabled:true,responseMode:'normal',createdAt});
+              chats.update(chatId,patch);
             },
             writePause(pause: ChatPause) {check();writeChatPause(db,chatId,pause);},
             claimControlMessage(actorId: UserId,messageId: number) {check(actorId);return claimControlMessage(db,chatId,actorId,messageId);},

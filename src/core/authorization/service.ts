@@ -33,20 +33,24 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
     if (!validTime(time) || !Number.isSafeInteger(time + retentionMs)) throw new TypeError('Authorization: invalid_time');
     return time;
   };
-  function policy(tx: AuthorizationTransaction, context: AuthorizationContext, action: unknown, subjectId?: UserId): AuthorizationDecision {
+  function policy(tx: AuthorizationTransaction, context: AuthorizationContext, action: unknown, subjectId?: UserId,
+    allowInitialOwnerSettings = false): AuthorizationDecision {
     const settings = tx.settings();
-    if (!settings) return deny('not_found');
-    return evaluatePolicy({ context, ownerId: config.ownerId, action, enabled: settings.enabled,
+    if (!settings && !(allowInitialOwnerSettings && context.kind==='owner' && context.userId===config.ownerId)) {
+      return deny('not_found');
+    }
+    return evaluatePolicy({ context, ownerId: config.ownerId, action, enabled: settings?.enabled ?? true,
       bases: context.userId === config.ownerId ? [] : tx.bases(context.userId),
       revoked: context.userId === config.ownerId ? false : tx.isRevoked(context.userId),
       ...(subjectId === undefined ? {} : { subjectId }),
     });
   }
   async function guarded<T>(context: AuthorizationContext, action: unknown, subjectId: UserId | undefined,
-    operation: (tx: AuthorizationTransaction) => AuthorizationResult<T>): Promise<AuthorizationResult<T>> {
+    operation: (tx: AuthorizationTransaction) => AuthorizationResult<T>,
+    flags?: { readonly allowInitialOwnerSettings: boolean }): Promise<AuthorizationResult<T>> {
     if (disposed || !authority.contains(context)) return deny('invalid_context');
     return options.store.transaction(context.scope, tx => {
-      const decision = policy(tx, context, action, subjectId);
+      const decision = policy(tx, context, action, subjectId, flags?.allowInitialOwnerSettings);
       return decision.allowed ? operation(tx) : decision;
     });
   }
@@ -82,7 +86,7 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
           return {allowed:true,value:{status:'duplicate',state}};
         }
         return {allowed:true,value:applyChatControl(tx,command,now())};
-      });
+      }, {allowInitialOwnerSettings:true});
     },
     async readDiagnostics<T>(context:AuthorizationContext,read:()=>T):Promise<AuthorizationResult<T>> {
       return guarded(context,'diagnostics.read',undefined,()=>{const value=read();if(value instanceof Promise){void value.catch(()=>{});throw new TypeError('Diagnostics: async_reader');}return {allowed:true,value};});

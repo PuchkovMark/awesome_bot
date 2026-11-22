@@ -23,7 +23,7 @@ export interface AuthorizationTransaction {
   settings(): { readonly enabled: boolean } | null;
   updateTimezone(value: string): void;
   controlState(): ChatControlState;
-  updateControlSettings(patch: Pick<ChatPatch,'enabled'|'responseMode'>): void;
+  updateControlSettings(patch: Pick<ChatPatch,'enabled'|'responseMode'>, createdAt: Timestamp): void;
   writePause(pause: ChatPause): void;
   claimControlMessage(actorId: UserId, messageId: number): boolean;
   holder(basis: GrantBasis): UserId | null;

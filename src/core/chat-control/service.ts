@@ -14,8 +14,8 @@ export function applyChatControl(tx: AuthorizationTransaction, command: ChatCont
   const state=tx.controlState();
   switch (command.kind) {
     case 'settings': return {status:'applied',state};
-    case 'mode': tx.updateControlSettings({responseMode:command.mode});break;
-    case 'off': case 'on': tx.updateControlSettings({enabled:command.kind==='on'});break;
+    case 'mode': tx.updateControlSettings({responseMode:command.mode},now);break;
+    case 'off': case 'on': tx.updateControlSettings({enabled:command.kind==='on'},now);break;
     case 'disableAutonomous': tx.writePause({...state,autonomousDisabled:true});break;
     case 'pause': case 'extend': {
       if (state.autonomousDisabled) return {status:'permanent',state};
