@@ -326,6 +326,7 @@ import {
 
 const publication = createPublicationService({ storage, port });
 const queue = createAgentLoopQueue({
+  modelName: config.llm.model, tracing: { messageRetentionDays },
   storage, client, prepare, logger, onSettled: publication.onSettled,
 });
 const router = createMessageRouter({
@@ -370,6 +371,7 @@ const startupFailure = preparation.checkStartup(
 );
 if (startupFailure) throw new Error('Ошибка конфигурации контекста: ' + startupFailure);
 const queue = createAgentLoopQueue({
+  modelName: config.llm.model, tracing: { messageRetentionDays },
   storage, client, prepare: preparation.prepare,
   preparationTimeoutMs: preparation.config.preparationTimeoutMs,
   postPreparationMarginMs: preparation.config.postPreparationMarginMs,
@@ -384,7 +386,7 @@ await queue.start();
 
 Не помещается статика — static_budget_too_small, текущее сообщение — current_message_too_large; модель не вызывается и текущее сообщение не усекается. В normal/личке для большого сообщения разрешён reply «Сообщение слишком большое для ответа. Попробуйте сократить его.», для ошибок конфигурации — прежний общий шаблон; active в беседе молчит. Все причины делят прежний долговечный период, успешное уведомление журналируется service_notice и исключается из контекста/FTS.
 
-preparation.stats() и безопасное событие context_stats показывают отдельные счётчики missing_system_prompt/static_budget_too_small/current_message_too_large/internal_error/cancelled/unavailable/deadline_exceeded без текстов и идентификаторов. Метаданные снимка содержат точную версию, cutoff, id записей, размеры и ограничения окна; долговечная трассировка остаётся F2.6. Профили, паспорт, персонаж, память и саммари пока обозначены отсутствующими слоями.
+preparation.stats() и безопасное событие context_stats показывают отдельные счётчики missing_system_prompt/static_budget_too_small/current_message_too_large/internal_error/cancelled/unavailable/deadline_exceeded без текстов и идентификаторов. Метаданные снимка содержат точную версию, cutoff, id записей, размеры и ограничения окна; долговечная трассировка реализована F2.6. Профили, паспорт, персонаж, память и саммари пока обозначены отсутствующими слоями.
 
 [F2.10](docs/roadmap.md#веха-2-ядро-без-платформы) завершена: индивидуальное поле удалено из схемы и API. Реальные Go/VK, отправитель и боевой startup остаются будущими интеграциями. Проверены сборка, 735 обычных тестов и 4 нагрузочных; 50000 записей дают около 17 мс подготовки и одну SQL-страницу из 32 строк на локальном стенде. Это не обещание производительности боевого провайдера.
 
@@ -405,3 +407,5 @@ preparation.stats() и безопасное событие context_stats пок�
 Технические `storage.traces.get(scope, jobId)` / `last(scope)` возвращают замороженный снимок и скрывают истёкшие записи. Будущие команды используют `createTraceDiagnostics({storage, authorization})`: get/last принимают подлинный AuthorizationContext; роль diagnostics.read проверяется вместе с чтением, для выключенного чата доступен только владелец. Фасад не выдаётся модели или сборщику контекста. `createTraceMaintenance(storage).prune(scope, now, limit)` удаляет порциями 1–1000 записей (default 100), возвращает deleted/more. При старте очереди чистится одна порция; постоянный планировщик остаётся F4.4. Удаление источника или беседы удаляет трассировку независимо от срока. В выгрузку человека трассировки не входят.
 
 `queue.traceStats()` и безопасное событие trace_stats содержат full_write_failed, size_exceeded, minimal_saved, trace_write_failed; они независимы от очистки. Метрики не читают трассировки: `npm run check:traces` проверяет граф импортов и входит в build наряду с границами контекста и каталога. Команда сводки, постоянный учёт расходов, реальные инструменты и внешняя доставка остаются будущими фичами. Правило блокировки при двойном отказе записи пересматривается после первых недель эксплуатации.
+
+F2.6 проверена: npm run build, 773 обычных теста и 5 нагрузочных проходят; review после исправлений без замечаний. [Результаты реализации](docs/impl-plans/completed/017-response-tracing.md).
