@@ -21,13 +21,11 @@ export interface ChatInput {
   readonly enabled: boolean;
   readonly createdAt: Timestamp;
   readonly title?: string | null;
-  readonly systemPrompt?: string | null;
   readonly timezone?: string;
 }
 export interface ChatSettings {
   readonly chatId: ChatId;
   readonly title: string | null;
-  readonly systemPrompt: string | null;
   readonly responseMode: ResponseMode;
   readonly enabled: boolean;
   readonly timezone: string;
@@ -35,7 +33,6 @@ export interface ChatSettings {
 }
 export interface ChatPatch {
   readonly title?: string | null;
-  readonly systemPrompt?: string | null;
   readonly responseMode?: ResponseMode;
   readonly enabled?: boolean;
   readonly timezone?: string;

@@ -5,8 +5,8 @@ import type { Connection } from './connection.js';
 import type { ChatInput, ChatPatch, ChatSettings, ChatStore } from './legacy-types.js';
 import { compositeId, mode, nullableString, object, requireInput, timestamp, timezone } from './validation.js';
 
-const patchFields = ['title', 'systemPrompt', 'responseMode', 'enabled', 'timezone'] as const;
-const columns = `chat_id AS chatId, title, system_prompt AS systemPrompt,
+const patchFields = ['title', 'responseMode', 'enabled', 'timezone'] as const;
+const columns = `chat_id AS chatId, title,
   response_mode AS responseMode, timezone, enabled, created_at AS createdAt`;
 type ChatRow = Omit<ChatSettings, 'enabled'> & { enabled: number };
 function fromRow(row: ChatRow | undefined): ChatSettings | null {
@@ -15,7 +15,6 @@ function fromRow(row: ChatRow | undefined): ChatSettings | null {
 function validatePatch(patch: ChatPatch): void {
   object(patch, patchFields);
   if ('title' in patch) nullableString(patch.title);
-  if ('systemPrompt' in patch) nullableString(patch.systemPrompt);
   if ('responseMode' in patch) mode(patch.responseMode);
   if ('enabled' in patch) requireInput(typeof patch.enabled === 'boolean');
   if ('timezone' in patch) timezone(patch.timezone);
@@ -39,9 +38,9 @@ export function createChatStore(connection: Connection): SyncStore<ChatStore> {
       return connection.run((db) => {
         compositeId(chatId); validateCreate(input);
         const result = db.prepare(`INSERT INTO chats
-          (chat_id,title,system_prompt,response_mode,timezone,enabled,created_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+          (chat_id,title,response_mode,timezone,enabled,created_at) VALUES (?, ?, ?, ?, ?, ?)
           ON CONFLICT(chat_id) DO NOTHING`).run(
-          chatId, input.title ?? null, input.systemPrompt ?? null, input.responseMode,
+          chatId, input.title ?? null, input.responseMode,
           input.timezone ?? 'Europe/Moscow', input.enabled ? 1 : 0, input.createdAt,
         );
         installAuthorities(db,chatId);
@@ -55,7 +54,7 @@ export function createChatStore(connection: Connection): SyncStore<ChatStore> {
         compositeId(chatId); validatePatch(patch);
         requireInput(Object.keys(patch).length > 0);
         // Имена колонок берутся только из внутреннего словаря.
-        const mapping = { title: 'title', systemPrompt: 'system_prompt', responseMode: 'response_mode', enabled: 'enabled', timezone: 'timezone' } as const;
+        const mapping = { title: 'title', responseMode: 'response_mode', enabled: 'enabled', timezone: 'timezone' } as const;
         const keys = patchFields.filter((key) => Object.hasOwn(patch, key));
         const values = keys.map((key) => key === 'enabled' ? (patch.enabled ? 1 : 0) : patch[key]);
         db.prepare(`UPDATE chats SET ${keys.map((key) => `${mapping[key]} = ?`).join(', ')} WHERE chat_id = ?`).run(...values, chatId);

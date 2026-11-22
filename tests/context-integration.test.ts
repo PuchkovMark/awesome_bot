@@ -15,7 +15,7 @@ test('роутер → очередь → сборщик → цикл: позд�
  await q.start();const router=createMessageRouter({storage:f.storage,queue:q});
  await router.receive(f.scope,{kind:'message',chatId:f.scope.chatId,messageId:'trigger',userId:'vk:u',authorName:'Имя',text:'Пенек помоги',isBot:false,isAdmin:false,isGroupChat:true,isMentioned:false,isReplyToBot:false,timestamp:10,attachments:[]});
  await f.put('late','Человек ответил',{timestamp:0});await flushQueue();await flushQueue();
- expect(captured).toHaveLength(1);expect(JSON.stringify(captured[0])).not.toContain('Человек ответил');expect(JSON.stringify(captured[0])).not.toContain('LEGACY_SECRET');
+ expect(captured).toHaveLength(1);expect(JSON.stringify(captured[0])).not.toContain('Человек ответил');
  const old=await f.admin.systemPrompt();const v=await f.admin.append({kind:'system_prompt',key:'base',text:'НОВЫЕ ПРАВИЛА',createdAt:1,expectedHead:1});if(v.status!=='created'||v.value.ref.area!=='global')throw Error();await f.admin.selectSystemPrompt(v.value.ref,old!.ref as never);
  await vi.advanceTimersByTimeAsync(1000);expect(captured).toHaveLength(2);expect(captured[0]!.system).toBe(captured[1]!.system);expect(captured[0]!.messages).toEqual(captured[1]!.messages);expect(stats.length).toBeGreaterThan(0);
  }finally{await q.stop();await f.storage.close();vi.useRealTimers();}

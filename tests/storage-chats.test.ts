@@ -13,17 +13,17 @@ test('явная начальная политика, default таймзоны �
   expect(await chats.get(chatScope(chats,'vk:1'))).toBeNull();
   expect(await chats.update(chatScope(chats,'vk:1'), { enabled: true })).toBeNull();
   expect(await chats.create(chatScope(chats,'vk:1'), initial)).toEqual({ status: 'created', settings: {
-    chatId: 'vk:1', ...initial, title: null, systemPrompt: null, timezone: 'Europe/Moscow',
+    chatId: 'vk:1', ...initial, title: null, timezone: 'Europe/Moscow',
   } });
-  expect(await chats.create(chatScope(chats,'vk:2'), { ...initial, responseMode: 'active', enabled: true, timezone: 'UTC', title: 'Имя', systemPrompt: 'Текст' }))
-    .toMatchObject({ settings: { responseMode: 'active', enabled: true, timezone: 'UTC', title: 'Имя', systemPrompt: 'Текст' } });
+  expect(await chats.create(chatScope(chats,'vk:2'), { ...initial, responseMode: 'active', enabled: true, timezone: 'UTC', title: 'Имя' }))
+    .toMatchObject({ settings: { responseMode: 'active', enabled: true, timezone: 'UTC', title: 'Имя' } });
 });
-test('patch изолирован, не меняет дату, null сбрасывает промпт, повторное создание сохраняет изменения', async () => {
+test('patch изолирован, не меняет дату, null сбрасывает название, повторное создание сохраняет изменения', async () => {
   const chats = await setup();
   await chats.create(chatScope(chats,'vk:1'), initial); await chats.create(chatScope(chats,'vk:2'), initial);
-  await chats.update(chatScope(chats,'vk:1'), { title: 'Новый', systemPrompt: 'Текст', enabled: true, responseMode: 'active', timezone: 'UTC' });
-  const expected = await chats.update(chatScope(chats,'vk:1'), { systemPrompt: null });
-  expect(expected).toMatchObject({ title: 'Новый', systemPrompt: null, createdAt: 0, enabled: true });
+  await chats.update(chatScope(chats,'vk:1'), { title: 'Новый', enabled: true, responseMode: 'active', timezone: 'UTC' });
+  const expected = await chats.update(chatScope(chats,'vk:1'), { title: null });
+  expect(expected).toMatchObject({ title: null, createdAt: 0, enabled: true });
   expect(await chats.create(chatScope(chats,'vk:1'), { ...initial, createdAt: 100 })).toEqual({ status: 'existing', settings: expected });
   expect(await chats.get(chatScope(chats,'vk:2'))).toMatchObject({ title: null, enabled: false, responseMode: 'normal' });
 });
@@ -42,3 +42,12 @@ for (const patch of [{}, { chatId: 'vk:2' }, { createdAt: 1 }, { arbitrary: 1 },
     await expect(chats.update(chatScope(chats,'vk:1'), patch as ChatPatch)).rejects.toMatchObject({ code: 'invalid_input' });
   });
 }
+for(const value of [null,undefined,'legacy'])test(`устаревший systemPrompt отклоняется до любых записей: ${String(value)}`,async()=>{
+ const chats=await setup(),scope=chatScope(chats,'vk:old');
+ await expect(chats.create(scope,{...initial,systemPrompt:value} as ChatInput)).rejects.toMatchObject({code:'invalid_input'});
+ expect(await chats.get(scope)).toBeNull();
+ await chats.create(scope,initial);const before=await chats.get(scope);expect(before).not.toHaveProperty('systemPrompt');
+ await expect(chats.create(scope,{...initial,systemPrompt:value} as ChatInput)).rejects.toMatchObject({code:'invalid_input'});
+ await expect(chats.update(scope,{title:'Не применять',enabled:true,systemPrompt:value} as ChatPatch)).rejects.toMatchObject({code:'invalid_input'});
+ expect(await chats.get(scope)).toEqual(before);
+});

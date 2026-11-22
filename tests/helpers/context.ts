@@ -8,7 +8,7 @@ export function contextCapabilities(chatId:`${string}:${string}`):CapabilitySnap
 }
 export async function contextFixture(chatId:`${string}:${string}`='vk:ctx'){
  const storage=await openStorage(':memory:'),scope=scopeFor(storage,chatId);
- await storage.chats.create(scope,{enabled:true,responseMode:'normal',createdAt:0,timezone:'UTC',systemPrompt:'LEGACY_SECRET'});
+ await storage.chats.create(scope,{enabled:true,responseMode:'normal',createdAt:0,timezone:'UTC'});
  const admin=catalogAdministration(storage);const version=await admin.append({kind:'system_prompt',key:'base',text:'Общие правила.',createdAt:0,expectedHead:null});if(version.status!=='created'||version.value.ref.area!=='global')throw Error();
  await admin.selectSystemPrompt(version.value.ref,null);
  const options={messages:storage.contextMessages,state:storage.contextState,config:{modelContextTokens:16000},capabilities:async()=>contextCapabilities(scope.chatId),sessionId:()=> 'session',now:()=>0};

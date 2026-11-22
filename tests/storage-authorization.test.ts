@@ -87,7 +87,7 @@ test('версия 3 → 4 сохраняет данные и метаданны
   try {
     let s = await openStorage(f.path);
     expect(await s.authorization.transaction(scopeFor(s, 'vk:one'), tx => tx.bases('vk:user'))).toEqual([]);
-    expect(await s.chats.get(scopeFor(s, 'vk:one'))).toMatchObject({ responseMode: 'normal', enabled: false, systemPrompt: 'prompt' });
+    expect(await s.chats.get(scopeFor(s, 'vk:one'))).toMatchObject({ responseMode: 'normal', enabled: false });
     await s.authorization.transaction(scopeFor(s, 'vk:one'), tx => { tx.grant(grant); tx.revoke(audit); });
     await s.close(); s = await openStorage(f.path);
     try {

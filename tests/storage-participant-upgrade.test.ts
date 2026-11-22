@@ -23,7 +23,7 @@ test('F1.4 → версия 3 сохраняет историю, настрой�
     const storage = await openStorage(fixture.path);
     try {
       expect(await storage.messages.list(scopeFor(storage, oldMessage.chatId), { limit: 10 })).toMatchObject([oldMessage]);
-      expect(await storage.chats.get(scopeFor(storage, oldMessage.chatId))).toMatchObject({ title: 'Изменённое название', systemPrompt: 'Сохранённый промпт', responseMode: 'normal', timezone: 'UTC', enabled: true, createdAt: 0 });
+      expect(await storage.chats.get(scopeFor(storage, oldMessage.chatId))).toMatchObject({ title: 'Изменённое название', responseMode: 'normal', timezone: 'UTC', enabled: true, createdAt: 0 });
       expect(await storage.messages.append(scopeFor(storage, ({ ...oldMessage, text: 'неподменять' }).chatId), { ...oldMessage, text: 'неподменять' })).toMatchObject({ status: 'duplicate' });
       await storage.messages.append(scopeFor(storage, ({ ...oldMessage, chatId: 'a:before-settings', messageId: 'new' }).chatId), { ...oldMessage, chatId: 'a:before-settings', messageId: 'new' });
       expect(await storage.chats.get(scopeFor(storage, 'a:before-settings'))).toBeNull();

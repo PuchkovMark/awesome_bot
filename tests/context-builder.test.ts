@@ -5,7 +5,7 @@ test('история заканчивается исходной записью,
  const f=await contextFixture();try{
  const parent=await f.put('parent','цитируемое');await f.put('history','обычная история');const current=await f.put('trigger','вопрос',{replyToMessageId:'parent'});await f.put('late','человек уже ответил',{timestamp:0});
  const r=await f.builder.prepare(f.work(current.id));expect(r.kind).toBe('ready');if(r.kind!=='ready')return;
- expect(r.metadata.messageIds).toEqual([parent.id+1,parent.id,current.id]);expect(r.metadata.reply).toBe('included');expect(r.input.system).not.toContain('LEGACY_SECRET');
+ expect(r.metadata.messageIds).toEqual([parent.id+1,parent.id,current.id]);expect(r.metadata.reply).toBe('included');
  expect(r.input.system).toContain('могли прийти новые сообщения');expect(JSON.stringify(r.input)).not.toContain('человек уже ответил');
  const data=JSON.parse(r.input.messages[0]!.text);expect(data.reply.text).toBe('цитируемое');expect(data.history).toHaveLength(1);expect(data.current.text).toBe('вопрос');
  expect(Object.isFrozen(r.metadata.messageIds)).toBe(true);

@@ -12,14 +12,14 @@ test('публичный цикл сохраняет сообщения и на�
   try {
     await first.messages.append(scopeFor(first, (message).chatId), message);
     await first.chats.create(scopeFor(first, message.chatId), { responseMode: 'normal', enabled: true, createdAt: 0 });
-    await first.chats.update(scopeFor(first, message.chatId), { systemPrompt: 'Сохранённый' });
+    await first.chats.update(scopeFor(first, message.chatId), { title: 'Сохранённое название' });
     await first.messages.append(scopeFor(first, ({ ...message, role: 'assistant', userId: 'vk:-3', messageId: 'two', text: 'Ответ', replyToMessageId: 'one', timestamp: 1 }).chatId), { ...message, role: 'assistant', userId: 'vk:-3', messageId: 'two', text: 'Ответ', replyToMessageId: 'one', timestamp: 1 });
     await first.close(); await first.close();
     const second = await openStorage(fixture.path);
     try {
       expect(await second.messages.append(scopeFor(second, (message).chatId), message)).toMatchObject({ status: 'duplicate' });
       expect(await second.messages.list(scopeFor(second, message.chatId), { limit: 10 })).toMatchObject([message, { messageId: 'two', role: 'assistant', replyToMessageId: 'one' }]);
-      expect(await second.chats.get(scopeFor(second, message.chatId))).toMatchObject({ enabled: true, systemPrompt: 'Сохранённый', createdAt: 0 });
+      expect(await second.chats.get(scopeFor(second, message.chatId))).toMatchObject({ enabled: true, title: 'Сохранённое название', createdAt: 0 });
     } finally { await second.close(); }
     for (const operation of [
       () => first.messages.append(scopeFor(first, (message).chatId), message), () => first.messages.list(scopeFor(first, message.chatId), { limit: 1 }),
