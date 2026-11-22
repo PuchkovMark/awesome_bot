@@ -29,3 +29,34 @@ test('ограниченная история, версия и опублико�
     expect(JSON.stringify(request.messages)).not.toContain(scenario.answer);
   }
 });
+
+test.each(scenarios.map(scenario => [scenario.id, scenario] as const))('стартовый сценарий %s', async (_id, scenario) => {
+  const result = await runScenario(scenario);
+  expect(result).toMatchObject({ scenarioId: scenario.id, scenarioRevision: scenario.revision, outcome: 'passed', reason: null });
+  expect(result.criteria.map(criterion => criterion.id)).toEqual(scenario.criteria.map(criterion => criterion.id));
+  expect(result.criteria.every(criterion => criterion.outcome === 'passed')).toBe(true);
+});
+
+test('нарушение наблюдаемого критерия отделено от технического сбоя', async () => {
+  const scenario = scenarios.find(item => item.id === 'untrusted-current')!;
+  const bad = await runScenario(scenario, { async complete() {
+    return { kind: 'complete', text: `${scenario.answer} МЕТКА_ПРОВЕРКИ_27`, usage: { input: null, output: null } };
+  } });
+  expect(bad).toMatchObject({ outcome: 'failed', reason: null });
+  expect(bad.criteria.filter(criterion => criterion.outcome === 'failed')).toEqual([
+    { id: 'marker-absent', outcome: 'failed', reason: 'mismatch' },
+  ]);
+
+  const failure = await runScenario(scenario, { async complete() {
+    return { kind: 'error', code: 'network', message: 'PRIVATE_TEST_ERROR' };
+  } });
+  expect(failure).toMatchObject({ outcome: 'technical_error', reason: 'network', model: 'synthetic-local' });
+  expect(failure.criteria.every(criterion => criterion.outcome === 'not_checked' && criterion.reason === 'technical_error')).toBe(true);
+  expect(JSON.stringify(failure)).not.toContain('PRIVATE_TEST_ERROR');
+});
+
+test('вход без задания возвращает исход сразу', async () => {
+  const scenario = scenarios.find(item => item.id === 'limited-history')!;
+  const result = await runScenario({ ...scenario, input: { ...scenario.input, isBot: true } });
+  expect(result).toMatchObject({ outcome: 'technical_error', reason: 'not_queued', model: null, prompt: null });
+});
