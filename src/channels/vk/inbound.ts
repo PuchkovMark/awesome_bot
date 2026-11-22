@@ -11,7 +11,8 @@ import { isVkGroupChat, normalizeVkIncoming, parseVkIncoming, vkChatId, type VkI
 type Lifecycle = Pick<ReturnType<typeof createLifecycleService>,
   'current' | 'admissionScope' | 'isAdmissionCurrent' | 'activeChatIds' | 'verify' | 'recordConnectionSignal'>;
 type Router = Pick<ReturnType<typeof createMessageRouter>, 'receive'>;
-type Dispatch = (message: IncomingMessage, scope: ConnectionScope, isCurrent: () => boolean, disclosure?:RoutedAdmissionGuard) => Promise<void>;
+type Dispatch = (message: IncomingMessage, scope: ConnectionScope, isCurrent: () => boolean,
+  disclosure?:RoutedAdmissionGuard,replyToOther?:boolean) => Promise<void>;
 type MembershipHandler = (event: MembershipEvent) => Promise<void>;
 interface AdministrationInbound {
   readonly membership: (scope: ConnectionScope, userId: UserId, present: boolean, messageId: number, at: number) => void;
@@ -185,7 +186,8 @@ export function createVkInbound(options: VkInboundOptions, dependencies: VkInbou
             return;
           }
           counters.dispatched++;
-          await dispatch(normalizeVkIncoming(message, groupId, enrichment), scope, isCurrent, disclosure);
+          const normalized=normalizeVkIncoming(message, groupId, enrichment);
+          await dispatch(normalized,scope,isCurrent,disclosure,message.reply!==undefined&&!normalized.isReplyToBot);
         }).catch(() => { counters.failed++; }).finally(() => {
           pending.delete(task);
           if (tails.get(chatId) === task) tails.delete(chatId);
@@ -225,7 +227,9 @@ export function createVkInbound(options: VkInboundOptions, dependencies: VkInbou
     },
     /** Доверенная композиция сохраняет область подключения внутри входного пути. */
     startRouted(router: Router, membership?: MembershipHandler, administration?: AdministrationInbound) {
-      return run(async (message, scope, isCurrent, disclosure) => { await router.receive(scope, message, undefined, isCurrent,disclosure); }, membership,administration);
+      return run(async (message,scope,isCurrent,disclosure,replyToOther) => {
+        await router.receive(scope,message,undefined,isCurrent,disclosure,replyToOther);
+      },membership,administration);
     },
     hasMembershipObservation(chatId: ChatId): boolean {
       const scope = membershipObservations.get(chatId);

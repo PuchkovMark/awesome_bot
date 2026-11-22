@@ -5,6 +5,8 @@ import type { AuthorizationContext, AuthorizationDecision, AuthorizationDenial, 
 import type { AppConfig } from '../../config/types.js';
 import type { AuthorizationTransaction, RevocationAudit } from '../../storage/index.js';
 import type { RecoveryOperation } from '../../storage/admin-recovery-store.js';
+import { chatControlAction, type ChatControlCommand } from '../chat-control/commands.js';
+import { applyChatControl, type ChatControlResult } from '../chat-control/service.js';
 import { createContextAuthority } from './context.js';
 import { botRole, evaluatePolicy } from './policy.js';
 import { platformOf, validId, validTime } from './validation.js';
@@ -68,6 +70,18 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
         if (!isCurrent()) return deny('conflict');
         tx.updateTimezone(value);
         return {allowed:true,value:undefined};
+      });
+    },
+    async controlChat(context: AuthorizationContext, command: ChatControlCommand, isCurrent: () => boolean,
+      messageId?: number): Promise<AuthorizationResult<ChatControlResult>> {
+      return guarded<ChatControlResult>(context,chatControlAction(command).action,undefined,tx => {
+        if (!isCurrent()) return deny('conflict');
+        const state=tx.controlState();
+        if ((!state.enabled||command.kind==='on')&&context.kind!=='owner') return deny('disabled');
+        if (command.kind!=='settings'&&messageId!==undefined&&!tx.claimControlMessage(context.userId,messageId)) {
+          return {allowed:true,value:{status:'duplicate',state}};
+        }
+        return {allowed:true,value:applyChatControl(tx,command,now())};
       });
     },
     async readDiagnostics<T>(context:AuthorizationContext,read:()=>T):Promise<AuthorizationResult<T>> {

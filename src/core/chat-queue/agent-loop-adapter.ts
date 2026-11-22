@@ -50,6 +50,7 @@ export function createAgentLoopQueue(options:AgentLoopQueueOptions){
   if(!work.isCurrent()||lifetime.aborted)return 'interrupted';
   work.recordTrace({prompt:prepared.metadata?.version??null,context:prepared.metadata??null});
   const loop=createAgentLoop(client,settings,summary=>work.recordTrace({model:{name:modelName,invoked:'possible'},summary}),()=>{
+   if (!work.isCurrent())return false;
    const checked=options.disclosure?.(work);
    if(checked)work.recordTrace({disclosure:checked});
    return checked?.allowed??true;

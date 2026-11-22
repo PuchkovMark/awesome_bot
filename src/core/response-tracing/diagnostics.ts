@@ -8,6 +8,27 @@ export function createTraceDiagnostics(options:{readonly storage:Storage;readonl
  return Object.freeze({
   get(context:AuthorizationContext,jobId:number){return options.authorization.readDiagnostics(context,()=>backend.get(context.scope,jobId));},
   last(context:AuthorizationContext){return options.authorization.readDiagnostics(context,()=>backend.get(context.scope));},
+  explain(context:AuthorizationContext,id?:number){
+   return options.authorization.readDiagnostics(context,()=>{
+    const trace=backend.deliveredAnswer(context.scope,id);
+    if(!trace)return null;
+    const cause=trace.payload.route?.kind;
+    const reason=cause==='mention'?'упоминание бота':cause==='reply'?'ответ на сообщение бота':
+      cause==='name'?'обращение по имени':'обращение';
+    const mode=trace.payload.route?.mode;
+    const lines=[`Повод ответа: ${reason}.`];
+    if(mode==='normal'||mode==='active')lines.push(`Режим: ${mode==='active'?'активный':'нормальный'}.`);
+    const finished=new Date(trace.finishedAt!);
+    if(Number.isFinite(finished.getTime()))lines.push(`Обработка завершилась ${finished.toISOString()}.`);
+    const bytes=trace.payload.context?.layerBytes;
+    const sources=[];
+    if(bytes?.system)sources.push('системные правила');
+    if(bytes?.environment)sources.push('настройки беседы');
+    if(bytes?.messages)sources.push('сообщения беседы');
+    if(sources.length)lines.push(`Источники: ${sources.join(', ')}.`);
+    return {jobId:trace.jobId,text:lines.join('\n')};
+   });
+  },
  });
 }
 /** Порт инфраструктурной очистки, не команда участника и не инструмент модели. */

@@ -1,5 +1,7 @@
 import type { ChatId, UserId, GrantBasis, Timestamp } from '../contracts/index.js';
 import type { RecoveryCommand, RecoveryOperation } from './admin-recovery-store.js';
+import type { ChatControlState,ChatPause } from './chat-control-store.js';
+import type { ChatPatch } from './types.js';
 
 export interface AdminGrant {
   readonly userId: UserId;
@@ -20,6 +22,10 @@ export interface AuthorizationTransaction {
   revision(): number;
   settings(): { readonly enabled: boolean } | null;
   updateTimezone(value: string): void;
+  controlState(): ChatControlState;
+  updateControlSettings(patch: Pick<ChatPatch,'enabled'|'responseMode'>): void;
+  writePause(pause: ChatPause): void;
+  claimControlMessage(actorId: UserId, messageId: number): boolean;
   holder(basis: GrantBasis): UserId | null;
   bases(userId: UserId): readonly GrantBasis[];
   isRevoked(userId: UserId): boolean;

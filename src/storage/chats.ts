@@ -4,6 +4,7 @@ import type { ChatId } from '../contracts/index.js';
 import type { Connection } from './connection.js';
 import type { ChatInput, ChatPatch, ChatSettings, ChatStore } from './legacy-types.js';
 import { compositeId, mode, nullableString, object, requireInput, timestamp, timezone } from './validation.js';
+import { revokeOrdinaryWork } from './chat-control-store.js';
 
 const patchFields = ['title', 'responseMode', 'enabled', 'timezone'] as const;
 const columns = `chat_id AS chatId, title,
@@ -50,16 +51,21 @@ export function createChatStore(connection: Connection): SyncStore<ChatStore> {
       });
     },
     update(chatId, patch) {
-      return connection.run((db) => {
+      return connection.run((db) => db.transaction(() => {
         compositeId(chatId); validatePatch(patch);
         requireInput(Object.keys(patch).length > 0);
         // Имена колонок берутся только из внутреннего словаря.
         const mapping = { title: 'title', responseMode: 'response_mode', enabled: 'enabled', timezone: 'timezone' } as const;
         const keys = patchFields.filter((key) => Object.hasOwn(patch, key));
         const values = keys.map((key) => key === 'enabled' ? (patch.enabled ? 1 : 0) : patch[key]);
+        const before=read(chatId);
+        if (!before) return null;
         db.prepare(`UPDATE chats SET ${keys.map((key) => `${mapping[key]} = ?`).join(', ')} WHERE chat_id = ?`).run(...values, chatId);
+        if ((patch.enabled===false && before.enabled) || (patch.responseMode==='silent' && before.responseMode!=='silent')) {
+          revokeOrdinaryWork(db,chatId);
+        }
         return read(chatId);
-      });
+      }).immediate());
     },
   };
 }

@@ -23,6 +23,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { createAdminRecoveryService } from '../core/admin-recovery/service.js';
 import { parseAdminRecoveryCommand } from '../core/admin-recovery/commands.js';
 import { adminRecoveryStore } from '../storage/admin-recovery-store.js';
+import { chatControlStore } from '../storage/chat-control-store.js';
+import { createChatControlHandlers } from './chat-control.js';
 
 interface ApplicationDependencies {
   readonly vk?: Parameters<typeof createVkChannel>[1];
@@ -72,10 +74,20 @@ export async function runApplication(config: ApplicationConfig, logger: SafeLogg
       const lifecycle = createLifecycleService({
         storage, ownerId: config.authorization.ownerId, source: unconfirmedLifecycleSource,
       });
+      const controls=chatControlStore(storage);
       let ready = false;
       const channel = createVkChannel({
         ...config.vk, lifecycle, chats: storage.chats, signal, owner: config.authorization.ownerId,
-        captureDisclosure: scope => onboarding.capture(scope),
+        captureDisclosure: scope => {
+          const disclosure=onboarding.capture(scope);
+          try {
+            const control=controls.capture(scope);
+            return ()=>{
+              const gate=disclosure(),state=control();
+              return {...gate,journal:gate.journal&&state.journal,ordinary:state.ordinary};
+            };
+          } catch { return ()=>({journal:false,respond:false,version:null,ordinary:false});}
+        },
         onReady() {
           if (signal.aborted || ready) return;
           ready = true;
@@ -152,13 +164,16 @@ export async function runApplication(config: ApplicationConfig, logger: SafeLogg
       adminRecoveryStore(storage).restoreSending(ownerId);
       const administration=createAdminRecoveryService({storage,authorization,lifecycle,ownerId,group,platform:channel.platform,signal,
         delivery:channel.administrationDelivery!,hasMember:channel.administrationEvidence.hasMember});
+      const chatControl=createChatControlHandlers({storage,authorization,lifecycle,channel,ownerId,group,signal});
       const router = createMessageRouter({ storage, queue, logger, authorization, onQueueFull: publication.queueFull,
-        recognizeCommand:message => message.isGroupChat && message.isBot === false && parseTimezoneCommand(message.text) !== null
-          ? {action:'chat.configure',minimumRole:'admin'} : null,
+        recognizeCommand:(message,replyToOther) => chatControl.recognize(message,replyToOther) ??
+          (message.isGroupChat&&message.isBot===false&&parseTimezoneCommand(message.text)!==null
+            ? {action:'chat.configure',minimumRole:'admin'} : null),
         identity:(scope,message)=>commandAuthorization.context({scope,userId:message.userId}),
         async executeCommand(context,message,isCurrent) {
           const input = parseTimezoneCommand(message.text);
-          const timezone = input === null ? null : canonicalTimezone(input);
+          if (input===null) return chatControl.execute(context,message,isCurrent);
+          const timezone = canonicalTimezone(input);
           if (timezone) await commandAuthorization.setTimezone(context,timezone,isCurrent);
         },
       });
@@ -167,7 +182,7 @@ export async function runApplication(config: ApplicationConfig, logger: SafeLogg
         membership(scope,userId,present,messageId,at) { lifecycle.observeAdminMembership(scope,userId,present,messageId,at); },
         command(message,isCurrent) {
           const command=parseAdminRecoveryCommand(message.text);
-          if (!command) return undefined;
+          if (!command) return chatControl.privateCommand(message,isCurrent);
           if (message.peerId!==ownerPeer || message.authorId!==ownerPeer || message.isMentioned || message.reply ||
             ownerPeer===undefined || ownerPeer<=0 || isVkGroupChat(ownerPeer)) return Promise.resolve();
           return administration.handle(ownerId,command,message.cmid,isCurrent);

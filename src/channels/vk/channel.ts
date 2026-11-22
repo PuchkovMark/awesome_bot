@@ -131,6 +131,14 @@ export function createVkChannel(options: VkChannelOptions, dependencies: VkChann
     ...adapter,
     administrationEvidence: createVkAdministrationEvidence(api,options.groupId),
     administrationDelivery: options.owner ? createVkAdministrationDelivery(api,outbound,options.owner,options.groupId) : undefined,
+    replyPrivateControl(sender: UserId,text: string,guard: PublicationGuard) {
+      return createVkAdministrationDelivery(api,outbound,sender,options.groupId).reply(text,guard);
+    },
+    async replyGroupControl(scope: ConnectionScope,text: string,guard: PublicationGuard) {
+      if (guard.isCurrent()) {
+        await outbound.send({...guard,chatId:scope.chatId,text,kind:'answer',confirmPart(){}});
+      }
+    },
     introduction: options.owner ? createVkIntroduction({owner: options.owner,groupId:options.groupId,api,outbound}) : undefined,
     startRouted: inbound.startRouted,
     async sendTypingForWork(scope: ConnectionScope,

@@ -32,7 +32,7 @@ export interface QueueStats {
   readonly waitCount: number; readonly waitTotalMs: number; readonly waitMaxMs: number;
   readonly rejected: number; readonly expired: number; readonly interrupted: number;
 }
-export interface QueueWork { readonly id: number; readonly scope: ConnectionScope; readonly messageId: number; readonly receivedAt: number; readonly route:RouteMetadata|null; readonly disclosureVersion?:number }
+export interface QueueWork { readonly id: number; readonly scope: ConnectionScope; readonly messageId: number; readonly receivedAt: number; readonly route:RouteMetadata|null; readonly disclosureVersion?:number; readonly controlRevision?:number }
 export type QueueMessage = MessageInput;
 
 export interface RouteMetadata { readonly kind:'direct_message'|'mention'|'reply'|'name'; readonly mode:'normal'|'active'; readonly isGroupChat:boolean }
@@ -40,4 +40,4 @@ export interface RouteMetadata { readonly kind:'direct_message'|'mention'|'reply
 export interface RoutedQueueDecision { readonly route:RouteMetadata|null; readonly reason:'direct_message'|'mention'|'reply'|'name'|'service'|'disabled'|'silent'|'sender_bot'|'sender_unknown'|'invalid_input'|'not_addressed'|'forbidden' }
 export type RoutedQueueCallback=(input:QueueRoutingSnapshot & {readonly settings:import('./types.js').ChatSettings})=>RoutedQueueDecision;
 export interface RoutedAdmission {readonly admission:QueueAdmission|{readonly status:'paused'};readonly decision:RoutedQueueDecision|null}
-export type RoutedAdmissionGuard = () => { readonly journal: boolean; readonly respond: boolean; readonly version: number | null };
+export type RoutedAdmissionGuard = () => { readonly journal: boolean; readonly respond: boolean; readonly version: number | null; readonly ordinary?:boolean };

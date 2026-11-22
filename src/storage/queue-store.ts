@@ -14,6 +14,7 @@ import type { LifecycleBackend } from './lifecycle-store.js';
 import type { QueueWork, QueueOutcome, QueueRecord } from './queue-types.js';
 import { StorageError } from './errors.js';
 import { requireInput, timestamp } from './validation.js';
+import { readChatControl } from './chat-control-store.js';
 export function createQueueBackend(connection: Connection, lifecycle: LifecycleBackend,traces:TraceBackend) {
   const runningRevisions = new WeakMap<QueueWork, number>();
   function owned(db: Database, token: string) {
@@ -26,7 +27,11 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
   function currentWork(db: Database, work: QueueWork): boolean {
     const expected = runningRevisions.get(work);
     if (expected === undefined) return false;
-    try { return lifecycle.assertScope(db, work.scope).revision === expected; }
+    try {
+      if (lifecycle.assertScope(db, work.scope).revision !== expected) return false;
+      if (!work.route) return true;
+      return readChatControl(db,work.scope.chatId).responseRevision===(work.controlRevision??0);
+    }
     catch (error) {
       if (error instanceof StorageError && (error.code === 'stale_scope' || error.code === 'uncertain_connection')) return false;
       throw error;
@@ -51,13 +56,19 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
        const value:unknown=gate && !gate.respond ? {route:null,reason:'forbidden'} : decision(Object.freeze({...snapshot,settings:Object.freeze(settings)}));
        if(value instanceof Promise){void value.catch(()=>{});throw new StorageError('invalid_input');}
        requireInput(value!==null&&typeof value==='object');
-       const result=value as import('./queue-types.js').RoutedQueueDecision;
-       requireInput(['direct_message','mention','reply','name','service','disabled','silent','sender_bot','sender_unknown','invalid_input','not_addressed','forbidden'].includes(result.reason));
-       if(result.route!==null){requireInput(['direct_message','mention','reply','name'].includes(result.route.kind)&&['normal','active'].includes(result.route.mode)&&typeof result.route.isGroupChat==='boolean'&&result.reason===result.route.kind);}
+       const routed=value as import('./queue-types.js').RoutedQueueDecision;
+       requireInput(['direct_message','mention','reply','name','service','disabled','silent','sender_bot','sender_unknown','invalid_input','not_addressed','forbidden'].includes(routed.reason));
+       if(routed.route!==null){requireInput(['direct_message','mention','reply','name'].includes(routed.route.kind)&&['normal','active'].includes(routed.route.mode)&&typeof routed.route.isGroupChat==='boolean'&&routed.reason===routed.route.kind);}
+       const result:import('./queue-types.js').RoutedQueueDecision=gate?.ordinary===false&&routed.route
+         ? {route:null,reason:'silent'} : routed;
        chosen=Object.freeze({reason:result.reason,route:result.route===null?null:Object.freeze({...result.route})});return chosen.route!==null;
       },config);
       const route=(chosen as import('./queue-types.js').RoutedQueueDecision|null)?.route;
-      if(admission.status==='queued'&&route)db.prepare('UPDATE queue_jobs SET route_kind=?,route_mode=?,route_group=?,disclosure_version=? WHERE id=?').run(route.kind,route.mode,route.isGroupChat?1:0,gate?.version??null,admission.jobId);
+      if(admission.status==='queued'&&route) {
+        const revision=readChatControl(db,scope.chatId).responseRevision;
+        db.prepare('UPDATE queue_jobs SET route_kind=?,route_mode=?,route_group=?,disclosure_version=?,control_revision=? WHERE id=?')
+          .run(route.kind,route.mode,route.isGroupChat?1:0,gate?.version??null,revision,admission.jobId);
+      }
       return Object.freeze({admission,decision:chosen});
      }));
     },
@@ -126,18 +137,18 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
     take(token: string, excluded:readonly string[]=[], platform?: string): QueueWork|null {
       return transaction(token, db => {
         const prefix = platform === undefined ? null : platform + ':';
-        const row=db.prepare(`SELECT j.id,j.chat_id AS chatId,j.generation,j.message_id AS messageId,j.received_at AS receivedAt,j.route_kind AS routeKind,j.route_mode AS routeMode,j.route_group AS routeGroup,j.disclosure_version AS disclosureVersion
+        const row=db.prepare(`SELECT j.id,j.chat_id AS chatId,j.generation,j.message_id AS messageId,j.received_at AS receivedAt,j.route_kind AS routeKind,j.route_mode AS routeMode,j.route_group AS routeGroup,j.disclosure_version AS disclosureVersion,j.control_revision AS controlRevision
           FROM queue_jobs j JOIN chat_connections c ON c.chat_id=j.chat_id AND c.generation=j.generation
           LEFT JOIN chats s ON s.chat_id=j.chat_id LEFT JOIN queue_turns t ON t.chat_id=j.chat_id
           WHERE j.state='queued' AND j.expires_at>? AND c.state='active' AND coalesce(s.enabled,1)=1
           AND (? IS NULL OR substr(j.chat_id,1,length(?))=?)
           AND NOT EXISTS(SELECT 1 FROM queue_jobs r WHERE r.chat_id=j.chat_id AND r.state='running')
           AND j.chat_id NOT IN (SELECT value FROM json_each(?))
-          ORDER BY coalesce(t.served,0),j.id LIMIT 1`).get(Date.now(),prefix,prefix,prefix,JSON.stringify(excluded)) as {routeKind:RouteMetadata['kind']|null;routeMode:RouteMetadata['mode']|null;routeGroup:number|null;disclosureVersion:number|null;id:number;chatId:ConnectionScope['chatId'];generation:number;messageId:number;receivedAt:number}|undefined;
+          ORDER BY coalesce(t.served,0),j.id LIMIT 1`).get(Date.now(),prefix,prefix,prefix,JSON.stringify(excluded)) as {routeKind:RouteMetadata['kind']|null;routeMode:RouteMetadata['mode']|null;routeGroup:number|null;disclosureVersion:number|null;controlRevision:number;id:number;chatId:ConnectionScope['chatId'];generation:number;messageId:number;receivedAt:number}|undefined;
         if(!row)return null;
         const scope=lifecycle.restore(row);
         db.prepare("UPDATE queue_jobs SET state='running',owner=? WHERE id=?").run(token,row.id);
-        const work=Object.freeze({id:row.id,scope,messageId:row.messageId,receivedAt:row.receivedAt,route:row.routeKind&&row.routeMode&&row.routeGroup!==null?Object.freeze({kind:row.routeKind,mode:row.routeMode,isGroupChat:row.routeGroup===1}):null,
+        const work=Object.freeze({id:row.id,scope,messageId:row.messageId,receivedAt:row.receivedAt,route:row.routeKind&&row.routeMode&&row.routeGroup!==null?Object.freeze({kind:row.routeKind,mode:row.routeMode,isGroupChat:row.routeGroup===1}):null,controlRevision:row.controlRevision,
           ...(row.disclosureVersion===null?{}:{disclosureVersion:row.disclosureVersion})});
         runningRevisions.set(work,lifecycle.assertScope(db,scope).revision);
         startTrace(db,work,traces.config());return work;
@@ -152,7 +163,7 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
     },
     publicationValid(token:string,work:QueueWork):boolean {
      return transaction(token,db=>{
-      return currentWork(db,work)&&!!db.prepare("SELECT j.id FROM queue_jobs j JOIN chats s ON s.chat_id=j.chat_id WHERE j.id=? AND j.chat_id=? AND j.generation=? AND j.state='terminal' AND s.enabled=1").get(work.id,work.scope.chatId,work.scope.generation);
+      return currentWork(db,work)&&!!db.prepare("SELECT j.id FROM queue_jobs j JOIN chats s ON s.chat_id=j.chat_id WHERE j.id=? AND j.chat_id=? AND j.generation=? AND j.state='terminal' AND s.enabled=1 AND (j.route_kind IS NULL OR s.response_mode<>'silent')").get(work.id,work.scope.chatId,work.scope.generation);
      });
     },
     progress(token:string,work:QueueWork,payload:TracePayload){

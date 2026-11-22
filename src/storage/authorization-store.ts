@@ -4,6 +4,9 @@ import type { SyncAuthorizationStore, AuthorizationTransaction, RevocationAudit,
 import { compositeId, requireInput, string, timestamp, timezone } from './validation.js';
 import { StorageError } from './errors.js';
 import { findRecoveryCommand, recordRecoveryCommand, type RecoveryCommand, type RecoveryOperation } from './admin-recovery-store.js';
+import { claimControlMessage,readChatControl,writeChatPause,type ChatPause } from './chat-control-store.js';
+import { createChatStore } from './chats.js';
+import type { ChatPatch } from './types.js';
 
 const allBases: readonly GrantBasis[] = ['creator', 'inviter', 'explicit'];
 export function createAuthorizationStore(connection: Connection): SyncAuthorizationStore {
@@ -44,6 +47,12 @@ export function createAuthorizationStore(connection: Connection): SyncAuthorizat
               check(); timezone(value);
               db.prepare('UPDATE chats SET timezone=? WHERE chat_id=?').run(value,chatId);
             },
+            controlState() {check();return readChatControl(db,chatId);},
+            updateControlSettings(patch: Pick<ChatPatch,'enabled'|'responseMode'>) {
+              check();createChatStore(connection).update(chatId,patch);
+            },
+            writePause(pause: ChatPause) {check();writeChatPause(db,chatId,pause);},
+            claimControlMessage(actorId: UserId,messageId: number) {check(actorId);return claimControlMessage(db,chatId,actorId,messageId);},
             bases(userId: UserId) {
               check(userId);
               return (db.prepare('SELECT basis FROM bot_admin_grants WHERE chat_id=? AND user_id=? ORDER BY basis').all(chatId, userId) as { basis: GrantBasis }[]).map(row => row.basis);

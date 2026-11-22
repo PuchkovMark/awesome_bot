@@ -7,7 +7,8 @@ export function routeMessage(input:RoutingInput):RoutingDecision {
  const silent=(reason:Extract<RoutingDecision,{kind:'silence'}>['reason']):RoutingDecision=>({kind:'silence',reason});
  if(!validIncoming(message)||!settings||!['silent','normal','active'].includes(settings.responseMode)||typeof settings.enabled!=='boolean')return silent('invalid_input');
  if(service){
-  if(!service.allowed || service.role==='member' || (service.command.minimumRole==='owner'&&service.role!=='owner') || (!settings.enabled&&service.role!=='owner'))return silent('forbidden');
+  const participantPause=service.command.minimumRole==='member'&&service.command.action==='chat.pause';
+  if(!service.allowed || (service.role==='member'&&!participantPause) || (service.command.minimumRole==='owner'&&service.role!=='owner') || (!settings.enabled&&service.role!=='owner'))return silent('forbidden');
   return {kind:'service',reason:'service'};
  }
  if(!settings.enabled)return silent('disabled');

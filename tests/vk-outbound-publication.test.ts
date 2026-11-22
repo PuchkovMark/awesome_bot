@@ -198,6 +198,24 @@ describe('публикация VK через очередь и журнал', ()
     } finally { await f.close(); }
   });
 
+  it('быстрое выключение и включение останавливает старую часть в лимитере VK', async () => {
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const f = await fixture({ onWaitAfterFirst() { entered.resolve(); return release.promise; } });
+    try {
+      const scope = f.scopes[0];
+      f.submit(peer);
+      await entered.promise;
+      await f.storage.chats.update(scope, { enabled: false });
+      await f.storage.chats.update(scope, { enabled: true });
+      release.resolve();
+      await vi.waitFor(async () => expect((await f.storage.traces.get(scope, 1))?.payload.publication)
+        .toMatchObject({ status: 'failed', reason: 'partial_delivery' }));
+      expect(f.sends()).toHaveLength(1);
+      expect((await f.storage.messages.list(scope, { limit: 10 })).map(row => row.messageId)).toEqual(['7', '8']);
+    } finally { release.resolve(); await f.close(); }
+  });
+
   it('останавливает остальные части, если подтверждённую запись нельзя сохранить', async () => {
     const f = await fixture();
     try {
