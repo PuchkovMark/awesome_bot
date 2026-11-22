@@ -10,6 +10,7 @@ test('Node.js загружает собранные ESM-модули без за
     (layer) => pathToFileURL(resolve('dist', layer, 'index.js')).href,
   );
   modules.push(pathToFileURL(resolve('dist/storage/catalog-admin.js')).href);
+  modules.push(pathToFileURL(resolve('dist/evals/runner.js')).href);
   const directory = mkdtempSync(join(tmpdir(), 'awesome-import-'));
   try {
     const script = `
@@ -42,5 +43,5 @@ test('Node.js загружает собранные ESM-модули без за
     expect(output.stderr).toBe('');
     expect(readdirSync(directory)).toEqual([]);
   } finally { rmSync(directory, { recursive: true, force: true }); }
-  expect(readdirSync('dist').sort()).toEqual(['channels', 'config', 'contracts', 'core', 'llm', 'logger', 'storage', 'tools']);
+  expect(readdirSync('dist').sort()).toEqual(['channels', 'config', 'contracts', 'core', 'evals', 'llm', 'logger', 'storage', 'tools']);
 });
