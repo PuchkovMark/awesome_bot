@@ -1,3 +1,4 @@
+import { adminRecovery } from './015-admin-recovery.js';
 import { chatDisclosure } from './014-chat-disclosure.js';
 import { membershipSignalDeduplication } from './013-membership-signal-deduplication.js';
 import { responseTraces } from './012-response-traces.js';
@@ -13,4 +14,4 @@ import { journalAndChats } from './001-journal-and-chats.js';
 import { messagesFts } from './002-messages-fts.js';
 import { participantsAndProfiles } from './003-participants-and-profiles.js';
 export interface Migration { readonly version: number; readonly name: string; readonly sql: string }
-export const migrations: readonly Migration[] = [journalAndChats, messagesFts, participantsAndProfiles, botAdministration, chatConnectionLifecycle, versionedContent, chatQueue, messageRouting, contextInput, contextOrderIndex, removeLegacyChatPrompt, responseTraces, membershipSignalDeduplication, chatDisclosure];
+export const migrations: readonly Migration[] = [journalAndChats, messagesFts, participantsAndProfiles, botAdministration, chatConnectionLifecycle, versionedContent, chatQueue, messageRouting, contextInput, contextOrderIndex, removeLegacyChatPrompt, responseTraces, membershipSignalDeduplication, chatDisclosure, adminRecovery];

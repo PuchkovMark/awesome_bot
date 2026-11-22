@@ -3,6 +3,7 @@ import type { Connection } from './connection.js';
 import type { SyncAuthorizationStore, AuthorizationTransaction, RevocationAudit, AdminGrant } from './legacy-authorization-types.js';
 import { compositeId, requireInput, string, timestamp, timezone } from './validation.js';
 import { StorageError } from './errors.js';
+import { findRecoveryCommand, recordRecoveryCommand, type RecoveryCommand, type RecoveryOperation } from './admin-recovery-store.js';
 
 const allBases: readonly GrantBasis[] = ['creator', 'inviter', 'explicit'];
 export function createAuthorizationStore(connection: Connection): SyncAuthorizationStore {
@@ -88,6 +89,12 @@ export function createAuthorizationStore(connection: Connection): SyncAuthorizat
             },
             recoveryBlocked() {
               check(); return !!db.prepare('SELECT 1 FROM bot_admin_controls WHERE chat_id=?').get(chatId);
+            },
+            recoveryCommand(ownerId: UserId,commandId: number) {
+              check(); return findRecoveryCommand(db,ownerId,commandId);
+            },
+            recordRecovery(input: RecoveryCommand,result: RecoveryOperation['result'],at: number) {
+              check(input.userId); return recordRecoveryCommand(db,chatId,input,result,at);
             },
           });
           try {

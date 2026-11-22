@@ -19,6 +19,10 @@ import { vkLocalId } from '../channels/vk/outbound.js';
 import { describeVkRights, vkIntroductionReplayWindowMs } from '../channels/vk/introduction.js';
 import { isVkGroupChat } from '../channels/vk/normalize.js';
 import type { ConnectionScope } from '../contracts/index.js';
+import { setTimeout as delay } from 'node:timers/promises';
+import { createAdminRecoveryService } from '../core/admin-recovery/service.js';
+import { parseAdminRecoveryCommand } from '../core/admin-recovery/commands.js';
+import { adminRecoveryStore } from '../storage/admin-recovery-store.js';
 
 interface ApplicationDependencies {
   readonly vk?: Parameters<typeof createVkChannel>[1];
@@ -26,6 +30,7 @@ interface ApplicationDependencies {
   readonly readyTimeoutMs?: number;
   readonly stopTimeoutMs?: number;
   readonly onboardingIntervalMs?: number;
+  readonly administrationIntervalMs?: number;
 }
 
 export async function runApplication(config: ApplicationConfig, logger: SafeLogger, externalSignal: AbortSignal,
@@ -40,6 +45,7 @@ export async function runApplication(config: ApplicationConfig, logger: SafeLogg
   let queue: ChatQueue | undefined;
   let poll: Promise<void> | undefined;
   let introductionWork: Promise<void> | undefined;
+  let administrationWork: Promise<void> | undefined;
   let readyTimer: ReturnType<typeof setTimeout> | undefined;
   let stopTimer: ReturnType<typeof setTimeout> | undefined;
   const typing = new Set<Promise<void>>();
@@ -76,12 +82,27 @@ export async function runApplication(config: ApplicationConfig, logger: SafeLogg
           clearTimeout(readyTimer);
           logger.event({ event: 'application_ready' }, 'info');
           introductionWork = onboarding.run().catch(() => stop('vk_failed'));
+          administrationWork = checkAdministration().catch(() => stop('vk_failed'));
         },
       }, dependencies.vk);
       const group = (chatId: ConnectionScope['chatId']) => {
         const local = vkLocalId(chatId);
         return local !== undefined && isVkGroupChat(local);
       };
+      async function checkAdministration() {
+        while (!signal.aborted) {
+          for (const chatId of lifecycle.activeChatIds('vk').filter(group)) {
+            if (signal.aborted) return;
+            try {
+              const scope=lifecycle.admissionScope(chatId);
+              const guard={signal,isCurrent:()=>!signal.aborted&&lifecycle.isAdmissionCurrent(scope)};
+              await lifecycle.refreshAdministration(scope,input=>channel.administrationEvidence.observe(scope,input,guard));
+            } catch { /* Подключение и сведения будут проверены в следующем цикле. */ }
+          }
+          try { await delay(dependencies.administrationIntervalMs??30_000,undefined,{signal}); }
+          catch { return; }
+        }
+      }
       const onboarding = createChatOnboarding({storage,lifecycle,port:channel.introduction!,signal,
         provider:'OpenCode Go',describeRights:describeVkRights,replayWindowMs:vkIntroductionReplayWindowMs,
         groups:() => lifecycle.activeChatIds('vk').filter(group),
@@ -126,6 +147,11 @@ export async function runApplication(config: ApplicationConfig, logger: SafeLogg
 
       startupFailure = 'vk_failed';
       const commandAuthorization = authorization;
+      const ownerId=config.authorization.ownerId;
+      const ownerPeer=vkLocalId(ownerId);
+      adminRecoveryStore(storage).restoreSending(ownerId);
+      const administration=createAdminRecoveryService({storage,authorization,lifecycle,ownerId,group,platform:channel.platform,signal,
+        delivery:channel.administrationDelivery!,hasMember:channel.administrationEvidence.hasMember});
       const router = createMessageRouter({ storage, queue, logger, authorization, onQueueFull: publication.queueFull,
         recognizeCommand:message => message.isGroupChat && message.isBot === false && parseTimezoneCommand(message.text) !== null
           ? {action:'chat.configure',minimumRole:'admin'} : null,
@@ -137,7 +163,16 @@ export async function runApplication(config: ApplicationConfig, logger: SafeLogg
         },
       });
       readyTimer = setTimeout(() => stop('ready_timeout'), dependencies.readyTimeoutMs ?? 45_000);
-      poll = channel.startRouted(router).then(
+      poll = channel.startRouted(router,undefined,{
+        membership(scope,userId,present,messageId,at) { lifecycle.observeAdminMembership(scope,userId,present,messageId,at); },
+        command(message,isCurrent) {
+          const command=parseAdminRecoveryCommand(message.text);
+          if (!command) return undefined;
+          if (message.peerId!==ownerPeer || message.authorId!==ownerPeer || message.isMentioned || message.reply ||
+            ownerPeer===undefined || ownerPeer<=0 || isVkGroupChat(ownerPeer)) return Promise.resolve();
+          return administration.handle(ownerId,command,message.cmid,isCurrent);
+        },
+      }).then(
         () => { if (!signal.aborted) stop('vk_failed'); },
         () => stop('vk_failed'),
       );
@@ -149,7 +184,7 @@ export async function runApplication(config: ApplicationConfig, logger: SafeLogg
   const cleanup = (async () => {
     await stopping.promise;
     await startup;
-    const results = await Promise.allSettled([queue?.stop(), poll,introductionWork, ...typing]);
+    const results = await Promise.allSettled([queue?.stop(), poll,introductionWork,administrationWork, ...typing]);
     authorization?.dispose();
     try { await storage?.close(); }
     catch { return reason ?? 'stop_failed'; }

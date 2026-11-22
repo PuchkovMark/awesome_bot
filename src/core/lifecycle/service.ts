@@ -1,8 +1,8 @@
 import { observationOf } from './source.js';
-import type { ChatId, ConnectionScope, UserId, LifecycleSource } from '../../contracts/index.js';
+import type { ChatId, ConnectionScope, KnownBoolean, UserId, LifecycleObservation, LifecycleSource } from '../../contracts/index.js';
 import type { Storage } from '../../storage/index.js';
 import { StorageError } from '../../storage/errors.js';
-import { lifecycleBackend } from '../../storage/lifecycle-store.js';
+import { lifecycleBackend, type AdministrationInvite } from '../../storage/lifecycle-store.js';
 import { validId } from '../authorization/validation.js';
 
 export function createLifecycleService(options:{readonly storage:Storage;readonly ownerId:UserId;readonly source:LifecycleSource}) {
@@ -33,18 +33,32 @@ export function createLifecycleService(options:{readonly storage:Storage;readonl
       catch {return false;}
     },
     /** Доверенный вход сообщает о возможном изменении подключения. */
-    recordConnectionSignal(chatId: ChatId, key?: string) {
+    recordConnectionSignal(chatId: ChatId, key?: string, invite?: AdministrationInvite) {
       if (!validId(chatId) || (key !== undefined && (typeof key !== 'string' || !key.trim()))) {
         throw new TypeError('Lifecycle: invalid_signal');
       }
       try {
-        const result = backend.applyConnectionSignal(backend.begin(chatId), key);
+        const result = backend.applyConnectionSignal(backend.begin(chatId), key, invite);
         if (result.status === 'paused') failedPauses.delete(chatId);
         return result;
       } catch (error) {
         failedPauses.set(chatId, Symbol());
         throw error;
       }
+    },
+    observeAdminMembership(scope: ConnectionScope, userId: UserId, present: boolean, messageId: number, at: number) {
+      if (failedPauses.has(scope.chatId)) return false;
+      return backend.observeAdminMembership(scope,userId,present,messageId,at);
+    },
+    async refreshAdministration(scope: ConnectionScope, observe: (
+      input: ReturnType<typeof backend.administrationInputs>,
+    ) => Promise<{readonly observation: LifecycleObservation; readonly communityAdmin: KnownBoolean}>) {
+      if (failedPauses.has(scope.chatId)) return false;
+      const proof = backend.begin(scope.chatId);
+      const inputs = backend.administrationInputs(scope);
+      const result = await observe(inputs);
+      if (failedPauses.has(scope.chatId)) return false;
+      return backend.applyAdministration(proof,observationOf(result.observation,scope.chatId.split(':')[0]!),result.communityAdmin);
     },
     async verify(chatId:ChatId, evidence?: 'observation_lost') {
       if(!validId(chatId))throw new TypeError('Lifecycle: invalid_chat');

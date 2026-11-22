@@ -1,4 +1,4 @@
-import type { ChatId, ConnectionScope, EventHandler, IncomingMessage, MembershipEvent } from '../../contracts/index.js';
+import type { ChatId, ConnectionScope, EventHandler, IncomingMessage, MembershipEvent, UserId } from '../../contracts/index.js';
 import type { createLifecycleService, createMessageRouter } from '../../core/index.js';
 import type { RoutedAdmissionGuard } from '../../storage/queue-types.js';
 import { StorageError } from '../../storage/errors.js';
@@ -6,13 +6,17 @@ import { createVkSdkApi } from './api.js';
 import type { VkInboundApi } from './api.js';
 import { createVkLongPoll } from './long-poll.js';
 import type { VkPollGap, VkPollTransport } from './long-poll.js';
-import { isVkGroupChat, normalizeVkIncoming, parseVkIncoming, vkChatId } from './normalize.js';
+import { isVkGroupChat, normalizeVkIncoming, parseVkIncoming, vkChatId, type VkIncoming } from './normalize.js';
 
 type Lifecycle = Pick<ReturnType<typeof createLifecycleService>,
   'current' | 'admissionScope' | 'isAdmissionCurrent' | 'activeChatIds' | 'verify' | 'recordConnectionSignal'>;
 type Router = Pick<ReturnType<typeof createMessageRouter>, 'receive'>;
 type Dispatch = (message: IncomingMessage, scope: ConnectionScope, isCurrent: () => boolean, disclosure?:RoutedAdmissionGuard) => Promise<void>;
 type MembershipHandler = (event: MembershipEvent) => Promise<void>;
+interface AdministrationInbound {
+  readonly membership: (scope: ConnectionScope, userId: UserId, present: boolean, messageId: number, at: number) => void;
+  readonly command: (message: VkIncoming, isCurrent: () => boolean) => Promise<void> | undefined;
+}
 
 export interface VkInboundOptions {
   readonly groupId: number;
@@ -75,7 +79,7 @@ export function createVkInbound(options: VkInboundOptions, dependencies: VkInbou
     }
   }
 
-  async function run(dispatch: Dispatch, membership?: MembershipHandler): Promise<void> {
+  async function run(dispatch: Dispatch, membership?: MembershipHandler, administration?: AdministrationInbound): Promise<void> {
     if (started) throw new Error('VK inbound: already started');
     started = true;
     let subscription = Symbol();
@@ -98,7 +102,11 @@ export function createVkInbound(options: VkInboundOptions, dependencies: VkInbou
           if (parsed.affectsConnection) {
             counters.connectionChanges++;
             try {
-              const { status } = lifecycle.recordConnectionSignal(chatId, parsed.signalKey);
+              const actor = event?.actorId;
+              const invitation = administration && event?.change==='invited' && actor && /^vk:[1-9]\d*$/u.test(actor) &&
+                parsed.signalKey ? { actorId:actor,messageId:Number(parsed.signalKey),timestamp:event.timestamp } : undefined;
+              const { status } = invitation ? lifecycle.recordConnectionSignal(chatId,parsed.signalKey,invitation)
+                : lifecycle.recordConnectionSignal(chatId,parsed.signalKey);
               if (status === 'stale') {
                 counters.staleSignals++;
                 continue;
@@ -113,6 +121,16 @@ export function createVkInbound(options: VkInboundOptions, dependencies: VkInbou
             }
           }
           if (event) {
+            const subject=event.subjectId;
+            if (administration && !parsed.affectsConnection && subject && /^vk:[1-9]\d*$/u.test(subject) &&
+              parsed.signalKey && event.change!=='unknown') {
+              try {
+                administration.membership(lifecycle.admissionScope(chatId),subject,
+                  event.change==='joined'||event.change==='invited',Number(parsed.signalKey),event.timestamp);
+              } catch (error) {
+                if (!(error instanceof StorageError && (error.code==='uncertain_connection'||error.code==='stale_scope'))) counters.failed++;
+              }
+            }
             observeMembership(chatId);
             if (membership) {
               const task = deliverMembership(event, membership)
@@ -129,6 +147,12 @@ export function createVkInbound(options: VkInboundOptions, dependencies: VkInbou
         const message = parsed.message;
         const chatId = vkChatId(message.peerId);
         const receivedIn = subscription;
+        const command=administration?.command(message,()=>!signal.aborted&&receivedIn===subscription);
+        if (command) {
+          const work=command.catch(()=>{counters.failed++;}).finally(()=>{pending.delete(work);});
+          pending.add(work);
+          continue;
+        }
         let scope: ConnectionScope;
         try {
           scope = lifecycle.admissionScope(chatId);
@@ -200,8 +224,8 @@ export function createVkInbound(options: VkInboundOptions, dependencies: VkInbou
       return run(message => handler(message), handler);
     },
     /** Доверенная композиция сохраняет область подключения внутри входного пути. */
-    startRouted(router: Router, membership?: MembershipHandler) {
-      return run(async (message, scope, isCurrent, disclosure) => { await router.receive(scope, message, undefined, isCurrent,disclosure); }, membership);
+    startRouted(router: Router, membership?: MembershipHandler, administration?: AdministrationInbound) {
+      return run(async (message, scope, isCurrent, disclosure) => { await router.receive(scope, message, undefined, isCurrent,disclosure); }, membership,administration);
     },
     hasMembershipObservation(chatId: ChatId): boolean {
       const scope = membershipObservations.get(chatId);

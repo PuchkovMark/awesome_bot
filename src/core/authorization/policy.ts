@@ -5,13 +5,13 @@ const minimum: Record<AuthorizationAction, BotRole> = {
   'chat.configure': 'admin', 'chat.history.clear': 'admin', 'chat.passport.edit': 'admin',
   'chat.persona.select': 'admin', 'chat.onboarding.configure': 'admin', 'chat.pause': 'member',
   'chat.pause.extend': 'admin', 'admin.grant': 'admin', 'admin.remove': 'admin',
-  'admin.revoke': 'owner', 'admin.restore': 'owner', 'admin.audit.read': 'owner',
+  'admin.revoke': 'owner', 'admin.restore': 'owner', 'admin.recover': 'owner', 'admin.audit.read': 'owner',
   'diagnostics.read': 'admin', 'usage.read': 'owner', 'consent.edit': 'owner',
   'profile.admin.add': 'admin', 'profile.self.manage': 'member', 'persona.self.select': 'member',
   'onboarding.self.manage': 'member',
 };
 const ownActions = new Set<AuthorizationAction>(['profile.self.manage', 'persona.self.select', 'onboarding.self.manage']);
-const ownerScope = new Set<AuthorizationAction>(['admin.revoke', 'admin.restore', 'admin.audit.read', 'usage.read']);
+const ownerScope = new Set<AuthorizationAction>(['admin.revoke', 'admin.restore', 'admin.recover', 'admin.audit.read', 'usage.read']);
 export function botRole(userId: UserId, ownerId: UserId, bases: readonly GrantBasis[], revoked: boolean): BotRole {
   return userId === ownerId ? 'owner' : revoked ? 'member' : bases.length ? 'admin' : 'member';
 }

@@ -1,4 +1,5 @@
 import type { ChatId, UserId, GrantBasis, Timestamp } from '../contracts/index.js';
+import type { RecoveryCommand, RecoveryOperation } from './admin-recovery-store.js';
 
 export interface AdminGrant {
   readonly userId: UserId;
@@ -28,5 +29,7 @@ export interface AuthorizationTransaction {
   restore(userId: UserId): void;
   audit(userId: UserId): RevocationAudit | null;
   recoveryBlocked(): boolean;
+  recoveryCommand(ownerId: UserId, commandId: number): RecoveryOperation | undefined;
+  recordRecovery(input: RecoveryCommand, result: RecoveryOperation['result'], at: Timestamp): RecoveryOperation;
 }
 export type AuthorizationStore = import('./scoped-types.js').ScopedStorage['authorization'];

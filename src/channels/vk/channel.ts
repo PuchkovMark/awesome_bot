@@ -9,6 +9,8 @@ import type { VkPollTransport } from './long-poll.js';
 import { isVkGroupChat, vkRecord } from './normalize.js';
 import { createVkOutbound, vkLocalId } from './outbound.js';
 import { createVkIntroduction } from './introduction.js';
+import { createVkAdministrationEvidence } from './administration-evidence.js';
+import { createVkAdministrationDelivery } from './administration-delivery.js';
 import { vkMessageLength } from './outbound-text.js';
 import type { waitForVkRetry } from './rate-limit.js';
 
@@ -127,6 +129,8 @@ export function createVkChannel(options: VkChannelOptions, dependencies: VkChann
 
   return Object.freeze({
     ...adapter,
+    administrationEvidence: createVkAdministrationEvidence(api,options.groupId),
+    administrationDelivery: options.owner ? createVkAdministrationDelivery(api,outbound,options.owner,options.groupId) : undefined,
     introduction: options.owner ? createVkIntroduction({owner: options.owner,groupId:options.groupId,api,outbound}) : undefined,
     startRouted: inbound.startRouted,
     async sendTypingForWork(scope: ConnectionScope,

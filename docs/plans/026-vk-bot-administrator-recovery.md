@@ -7,7 +7,7 @@
 - Дата завершения: —
 - Утверждение: владелец подтвердил план фичи 2026-11-22. [Решение](../decisions.md#утверждение-плана-фичи-восстановления-администраторов-f41)
 - Связанные документы: [утверждённая задача 026](../tasks/026-vk-bot-administrator-recovery.md), [решения владельца](../decisions.md#утверждение-задачи-о-восстановлении-администраторов-f41), [F4.1](../roadmap.md#веха-4-управление-и-защита), [жизненный цикл F1.6b](../tasks/completed/007-chat-connection-lifecycle.md), [исследование возможностей VK](../research/vk-lifecycle-capabilities.md#матрица-требований-f16b), [служебные события F3.3](../research/vk-membership-events.md).
-- План реализации: [черновик](../impl-plans/026-vk-bot-administrator-recovery.md).
+- План реализации: [утверждён](../impl-plans/026-vk-bot-administrator-recovery.md).
 
 ## Подход и ключевые решения
 

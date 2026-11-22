@@ -1,13 +1,19 @@
 import type { Database } from 'better-sqlite3';
-import type { ChatId, ConnectionScope, LifecycleObservation } from '../contracts/index.js';
+import type { ChatId, ConnectionScope, KnownBoolean, LifecycleObservation, UserId } from '../contracts/index.js';
 import type { Connection } from './connection.js';
 import { advanceClock } from './lifecycle-clock.js';
 import { StorageError } from './errors.js';
 import { compositeId, requireInput, timestamp } from './validation.js';
+import { setAdminPresence } from './admin-recovery-store.js';
 
 interface State { chatId: ChatId; generation: number; revision: number; state: 'active' | 'uncertain'; creatorId:string|null; inviterId:string|null }
 interface Expected { chatId: ChatId; generation: number | null; revision: number | null; clock: number }
 export interface Verification { readonly expected: Expected }
+export interface AdministrationInvite {
+  readonly actorId: UserId;
+  readonly messageId: number;
+  readonly timestamp: number;
+}
 export function installAuthorities(db:Database,chatId:ChatId,grantedAt=Date.now()) {
   timestamp(grantedAt);
   for(const [basis,column]of [['creator','creator_id'],['inviter','inviter_id']]as const) {
@@ -47,6 +53,10 @@ export function createLifecycleBackend(connection: Connection) {
       return;
     }
     bump(db, chatId);
+    db.prepare('DELETE FROM admin_presence WHERE chat_id=?').run(chatId);
+    db.prepare('UPDATE admin_observations SET community_admin=NULL WHERE chat_id=?').run(chatId);
+    db.prepare(`UPDATE admin_recovery_operations SET state='pending_delivery',reason='interrupted'
+      WHERE chat_id=? AND state='sending'`).run(chatId);
     if (state.state === 'active') {
       db.prepare("UPDATE chat_connections SET state='uncertain' WHERE chat_id=?").run(chatId);
     }
@@ -78,6 +88,9 @@ export function createLifecycleBackend(connection: Connection) {
       const where = "state='active' AND substr(chat_id,1,?)=?";
       if (db.prepare(`SELECT 1 FROM chat_connections WHERE ${where} AND revision=9007199254740991 LIMIT 1`)
         .get(prefix.length, prefix)) throw new StorageError('operation_failed');
+      db.prepare(`DELETE FROM admin_presence WHERE chat_id IN (SELECT chat_id FROM chat_connections WHERE ${where})`).run(prefix.length,prefix);
+      db.prepare(`UPDATE admin_observations SET community_admin=NULL
+        WHERE chat_id IN (SELECT chat_id FROM chat_connections WHERE ${where})`).run(prefix.length,prefix);
       db.prepare(`UPDATE chat_connections SET state='uncertain',revision=revision+1 WHERE ${where}`)
         .run(prefix.length, prefix);
     },
@@ -112,7 +125,7 @@ export function createLifecycleBackend(connection: Connection) {
         return issue(state,pinRevision);
       });
     },
-    applyConnectionSignal(proof: Verification, key: string | undefined) {
+    applyConnectionSignal(proof: Verification, key: string | undefined, invite?: AdministrationInvite) {
       return connection.run(db => {
         requireInput(!db.inTransaction);
         return db.transaction(() => {
@@ -127,13 +140,92 @@ export function createLifecycleBackend(connection: Connection) {
 
           if (!state || state.state === 'active' || key !== undefined) markUncertain(db, chatId, state);
           if (key !== undefined) {
-            const generation = state?.generation ?? read(db, chatId)!.generation;
+            const connection = read(db,chatId)!;
             db.prepare('INSERT INTO connection_membership_signals(chat_id,generation,signal_key) VALUES (?,?,?)')
-              .run(chatId, generation, key);
+              .run(chatId, connection.generation, key);
+            if (invite && key === String(invite.messageId)) {
+              db.prepare(`INSERT INTO admin_observations(chat_id,generation,invite_id,invite_actor,invite_at,invite_revision)
+                VALUES (?,?,?,?,?,?) ON CONFLICT(chat_id,generation) DO UPDATE SET invite_id=excluded.invite_id,
+                invite_actor=excluded.invite_actor,invite_at=excluded.invite_at,invite_revision=excluded.invite_revision,invite_selected=0
+                WHERE (invite_id IS NULL OR invite_id<excluded.invite_id)
+                  AND (opened_at IS NULL OR excluded.invite_at >= ((opened_at+999)/1000)*1000)`)
+                .run(chatId,connection.generation,invite.messageId,invite.actorId,invite.timestamp,connection.revision);
+            }
           }
           return { status: 'paused' as const };
         }).immediate();
       });
+    },
+    administrationInputs(scope: ConnectionScope) {
+      return this.transaction(scope,db => {
+        const invite = db.prepare(`SELECT invite_id AS messageId,invite_actor AS actorId,invite_at AS timestamp
+          FROM admin_observations JOIN chat_connections USING(chat_id,generation)
+          WHERE chat_id=? AND generation=? AND invite_selected=1 AND inviter_id IS NULL`)
+          .get(scope.chatId,scope.generation) as AdministrationInvite | undefined;
+        const admins = db.prepare('SELECT DISTINCT user_id AS userId FROM bot_admin_grants WHERE chat_id=? ORDER BY user_id')
+          .all(scope.chatId) as {userId: UserId}[];
+        return {invite,admins:admins.map(row => row.userId)};
+      });
+    },
+    observeAdminMembership(scope: ConnectionScope, userId: UserId, present: boolean, messageId: number, at: number) {
+      compositeId(userId);timestamp(at);
+      requireInput(userId.split(':')[0]===scope.chatId.split(':')[0] && Number.isSafeInteger(messageId) && messageId>0);
+      return connection.run(db=>db.transaction(()=>{
+        const state=assertScope(db,scope);
+        const previous=db.prepare(`SELECT last_membership_id AS last,opened_at AS opened
+          FROM admin_observations WHERE chat_id=? AND generation=?`).get(scope.chatId,scope.generation) as {last:number;opened:number|null}|undefined;
+        if (previous && (messageId<=previous.last || (previous.opened!==null && at<Math.ceil(previous.opened/1000)*1000))) return false;
+        const member=db.prepare('SELECT event_id AS id FROM admin_presence WHERE chat_id=? AND generation=? AND user_id=?')
+          .get(scope.chatId,scope.generation,userId) as {id:number|null}|undefined;
+        if (member?.id!=null && member.id>=messageId) return false;
+        if (db.prepare('SELECT 1 FROM bot_admin_grants WHERE chat_id=? AND user_id=?').get(scope.chatId,userId)) {
+          setAdminPresence(db,scope,userId,present,messageId);
+          if (!present) db.prepare("DELETE FROM bot_admin_grants WHERE chat_id=? AND user_id=? AND basis='explicit'").run(scope.chatId,userId);
+        }
+        bump(db,state.chatId);
+        return true;
+      }).immediate());
+    },
+    applyAdministration(proof: Verification, observation: LifecycleObservation, communityAdmin: KnownBoolean) {
+      return connection.run(db=>db.transaction(()=>{
+        requireInput(checks.has(proof));checks.delete(proof);
+        if (!matches(db,proof.expected)) return false;
+        const state=read(db,proof.expected.chatId);
+        if (state?.state!=='active') return false;
+        const {chatId,generation}=state;
+        if (observation.confidence==='uncertain') {
+          markUncertain(db,chatId,state);
+          return true;
+        }
+        db.prepare(`INSERT INTO admin_observations(chat_id,generation,community_admin) VALUES (?,?,?)
+          ON CONFLICT(chat_id,generation) DO UPDATE SET community_admin=excluded.community_admin`)
+          .run(chatId,generation,typeof communityAdmin==='boolean' ? Number(communityAdmin) : null);
+        if (observation.confidence!=='confirmed' || observation.bot!=='present') return false;
+        let changed=false;
+        const recoveryBlocked = !!db.prepare('SELECT 1 FROM bot_admin_controls WHERE chat_id=?').get(chatId) &&
+          !db.prepare(`SELECT 1 FROM admin_presence p JOIN bot_admin_grants g USING(chat_id,user_id)
+            WHERE p.chat_id=? AND p.generation=? AND p.present=1`).get(chatId,generation);
+        if (observation.creatorId && observation.creatorId!==state.creatorId) {
+          db.prepare("DELETE FROM bot_admin_grants WHERE chat_id=? AND basis='creator'").run(chatId);
+          db.prepare('UPDATE chat_connections SET creator_id=?,creator_applied=? WHERE chat_id=?')
+            .run(observation.creatorId,Number(recoveryBlocked),chatId);
+          changed=true;
+        }
+        if (observation.inviterId && state.inviterId===null) {
+          db.prepare('UPDATE chat_connections SET inviter_id=?,inviter_applied=? WHERE chat_id=?')
+            .run(observation.inviterId,Number(recoveryBlocked),chatId);
+          changed=true;
+        }
+        if (changed) installAuthorities(db,chatId);
+        for (const userId of observation.members?.ids??[]) {
+          if (db.prepare('SELECT 1 FROM bot_admin_grants WHERE chat_id=? AND user_id=?').get(chatId,userId) &&
+            !db.prepare('SELECT 1 FROM admin_presence WHERE chat_id=? AND generation=? AND user_id=?').get(chatId,generation,userId)) {
+            changed=setAdminPresence(db,state,userId,true)||changed;
+          }
+        }
+        if (changed) bump(db,chatId);
+        return changed;
+      }).immediate());
     },
     apply(proof:Verification,observation:LifecycleObservation) {
       return connection.run(db=>{requireInput(!db.inTransaction);return db.transaction(()=>{
@@ -178,10 +270,24 @@ export function createLifecycleBackend(connection: Connection) {
         requireInput(checks.has(proof)); checks.delete(proof);
         if(!matches(db,proof.expected))throw new StorageError('stale_scope');
         const {chatId}=proof.expected; const state=read(db,chatId);
-        if(decision==='new') {if(state)remove(db,chatId);create(db,chatId,'active');}
+        if(decision==='new') {
+          const invite = state && db.prepare(`SELECT invite_id AS messageId,invite_actor AS actorId,invite_at AS timestamp
+            FROM admin_observations WHERE chat_id=? AND generation=? AND invite_revision=? AND invite_selected=0`)
+            .get(chatId,state.generation,state.revision) as AdministrationInvite | null | undefined;
+          if(state)remove(db,chatId);create(db,chatId,'active');
+          db.prepare(`INSERT INTO admin_observations(chat_id,generation,opened_at,last_membership_id,invite_id,invite_actor,invite_at,invite_selected)
+            VALUES (?,?,?,?,?,?,?,?)`).run(chatId,read(db,chatId)!.generation,Date.now(),invite?.messageId??0,
+            invite?.messageId??null,invite?.actorId??null,invite?.timestamp??null,Number(Boolean(invite)));
+        }
         else {
           requireInput(decision==='continue' && state!==null);
+          const initial=state.revision===0 && !db.prepare('SELECT 1 FROM chats WHERE chat_id=?').get(chatId);
           bump(db,chatId);db.prepare("UPDATE chat_connections SET state='active' WHERE chat_id=?").run(chatId);
+          db.prepare(`INSERT INTO admin_observations(chat_id,generation,opened_at) VALUES (?,?,?)
+            ON CONFLICT(chat_id,generation) DO UPDATE SET opened_at=excluded.opened_at`).run(chatId,state.generation,Date.now());
+          if (initial) db.prepare(`UPDATE admin_observations SET invite_selected=1,last_membership_id=invite_id
+            WHERE chat_id=? AND invite_id IS NOT NULL AND invite_revision=?`).run(chatId,state.revision);
+          db.prepare(`UPDATE admin_observations SET invite_revision=NULL WHERE chat_id=? AND invite_selected=0`).run(chatId);
         }
         return issue(read(db,chatId)!);
       }).immediate();});

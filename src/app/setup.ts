@@ -6,6 +6,7 @@ import type { ApplicationFailure } from '../logger/types.js';
 import { catalogAdministration } from '../storage/catalog-admin.js';
 import { openStorage } from '../storage/index.js';
 import { disclosureStore, type DisclosureInput } from '../storage/chat-disclosure-store.js';
+import { adminRecoveryStore } from '../storage/admin-recovery-store.js';
 import { createVkChannel } from '../channels/index.js';
 import { isVkGroupChat } from '../channels/vk/normalize.js';
 
@@ -80,6 +81,14 @@ export async function readOnboarding(config: LocalConfig, chatId?: ChatId) {
   try {
     const store = disclosureStore(storage);
     return chatId ? store.status(chatId) : {states:store.diagnostics()};
+  } finally { await storage.close(); }
+}
+
+export async function readAdminRecovery(config: LocalConfig, chatId: ChatId) {
+  const storage=await openStorage(config.databasePath);
+  try {
+    const store=adminRecoveryStore(storage);
+    return {operations:store.status(chatId,config.ownerId),communityAdmin:store.communityRole(chatId)};
   } finally { await storage.close(); }
 }
 

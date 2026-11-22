@@ -4,6 +4,7 @@ import type { AuthorizationScheduler } from './maintenance.js';
 import type { AuthorizationContext, AuthorizationDecision, AuthorizationDenial, ConnectionScope, GrantBasis, UserId } from '../../contracts/index.js';
 import type { AppConfig } from '../../config/types.js';
 import type { AuthorizationTransaction, RevocationAudit } from '../../storage/index.js';
+import type { RecoveryOperation } from '../../storage/admin-recovery-store.js';
 import { createContextAuthority } from './context.js';
 import { botRole, evaluatePolicy } from './policy.js';
 import { platformOf, validId, validTime } from './validation.js';
@@ -109,6 +110,23 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
         const existing = tx.bases(userId).includes('explicit');
         tx.grant({ userId, basis: 'explicit', grantedAt: now(), grantedBy: context.userId });
         return { allowed: true, value: existing ? 'existing' : 'granted' };
+      });
+    },
+    async recoverAdmin(context: AuthorizationContext, userId: UserId, commandId: number, membership: unknown,
+      isCurrent: () => boolean): Promise<AuthorizationResult<{readonly operation: RecoveryOperation; readonly created: boolean}>> {
+      return guarded<{operation:RecoveryOperation;created:boolean}>(context,'admin.recover',userId,tx => {
+        if (!isCurrent()) return deny('conflict');
+        const previous = tx.recoveryCommand(context.userId,commandId);
+        if (previous) {
+          return previous.chatId === context.chatId && previous.generation === context.scope.generation && previous.userId === userId
+            ? {allowed:true,value:{operation:previous,created:false}} : deny('conflict');
+        }
+        if (tx.isRevoked(userId)) return deny('revoked');
+        if (!authority.hasMembership(membership,context.scope,userId,tx.revision())) return deny('unconfirmed_member');
+        const result = tx.bases(userId).includes('explicit') ? 'existing' : 'granted';
+        const at = now();
+        tx.grant({userId,basis:'explicit',grantedAt:at,grantedBy:context.userId});
+        return {allowed:true,value:{operation:tx.recordRecovery({ownerId:context.userId,commandId,userId},result,at),created:true}};
       });
     },
     async revoke(context: AuthorizationContext, userId: UserId, reason: unknown): Promise<AuthorizationResult<'revoked' | 'existing'>> {

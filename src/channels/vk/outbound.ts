@@ -17,6 +17,7 @@ export interface VkSendRequest extends OutgoingMessage, VkRequestGuard {
   readonly kind: 'answer' | 'notice' | 'service';
   readonly sendId?: number;
   readonly replayUntil?: number;
+  readonly receivedId?: (messageId: string) => void;
   readonly confirmPart: (part: PublishedPart) => void | Promise<void>;
 }
 
@@ -159,6 +160,7 @@ export function createVkOutbound(options: {
           return { kind: denied ? 'failed' : 'unknown', confirmedParts };
         }
         if (confirmedIds.has(cmid)) return { kind: 'unknown', confirmedParts };
+        input.receivedId?.(String(cmid));
         const observed = await lookupConfirmed(peer, cmid, input);
         if (!observed || observed.author !== -groupId) return { kind: 'unknown', confirmedParts };
         const linked = expectedParent !== undefined && observed.reply?.conversation_message_id === expectedParent.cmid

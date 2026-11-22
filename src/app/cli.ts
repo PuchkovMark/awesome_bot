@@ -8,7 +8,7 @@ import type { ApplicationFailure } from '../logger/types.js';
 import { runApplication } from './service.js';
 import {
   applicationChatId, applicationGroupId, configureDisclosure, confirmApplicationDisclosure, deleteApplicationChatData,
-  initializePrompt, readOnboarding, requestDisclosureUpdate, resolveApplicationChat,
+  initializePrompt, readAdminRecovery, readOnboarding, requestDisclosureUpdate, resolveApplicationChat,
 } from './setup.js';
 
 interface CliOptions {
@@ -60,6 +60,12 @@ export async function runCli(args: readonly string[], options: CliOptions = {}):
       if (args[1] !== undefined && !target) return fail('invalid_arguments');
       const status = await readOnboarding(loadResolutionConfig(options.config),target);
       destination.write(JSON.stringify(status)+'\n');
+      return 0;
+    }
+    if (args[0]==='admin-recovery-status' && args.length===2) {
+      const target=applicationGroupId(args[1]!);
+      if (!target) return fail('invalid_arguments');
+      destination.write(JSON.stringify(await readAdminRecovery(loadResolutionConfig(options.config),target))+'\n');
       return 0;
     }
     if (args.length === 2 && args[0] === 'publish-disclosure' && args[1]) {

@@ -6,7 +6,7 @@ export type GrantBasis = 'creator' | 'inviter' | 'explicit';
 export type AuthorizationAction =
   | 'chat.configure' | 'chat.history.clear' | 'chat.passport.edit' | 'chat.persona.select'
   | 'chat.onboarding.configure' | 'chat.pause' | 'chat.pause.extend'
-  | 'admin.grant' | 'admin.remove' | 'admin.revoke' | 'admin.restore' | 'admin.audit.read'
+  | 'admin.grant' | 'admin.remove' | 'admin.revoke' | 'admin.restore' | 'admin.recover' | 'admin.audit.read'
   | 'diagnostics.read' | 'usage.read' | 'consent.edit' | 'profile.admin.add'
   | 'profile.self.manage' | 'persona.self.select' | 'onboarding.self.manage';
 export type AuthorizationDenial = 'invalid_context' | 'unknown_action' | 'forbidden'

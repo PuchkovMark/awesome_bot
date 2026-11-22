@@ -10,6 +10,7 @@ import { versionLimits } from './version-limits.js';
 import type { VersionLimits } from '../contracts/versioning.js';
 import { createLifecycleBackend, registerLifecycle } from './lifecycle-store.js';
 import { createDisclosureStore, registerDisclosureStore } from './chat-disclosure-store.js';
+import { createAdminRecoveryStore, registerAdminRecovery } from './admin-recovery-store.js';
 import { createScopedStorage } from './scoped-storage.js';
 import { openConnection } from './connection.js';
 import { migrate } from './migrate.js';
@@ -26,6 +27,7 @@ export async function openStorage(path:string,options:{readonly versioning?:Vers
   const queue=createQueueBackend(connection,backend,traces);
   const storage:Storage={...createScopedStorage(connection,backend,versions,queue),traces:{async get(scope,id){return traces.get(scope,id);},async last(scope){return traces.get(scope);}},async close(){connection.close();}};
   registerDisclosureStore(storage,createDisclosureStore(connection,backend));
+  registerAdminRecovery(storage,createAdminRecoveryStore(connection,backend));
   registerTraces(storage,traces);registerNotices(storage,createNoticeBackend(connection,backend));registerQueue(storage,queue);registerLifecycle(storage,backend);registerVersions(storage,versions);return storage;
  }catch(error){connection.close();throw error;}
 }
