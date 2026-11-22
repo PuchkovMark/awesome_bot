@@ -9,7 +9,7 @@ test('upgrade 8 сохраняет контрольные суммы, текст
  const db=new Database(':memory:');try{
  migrate(db,migrations.slice(0,8));const before=db.prepare('SELECT * FROM schema_migrations').all();
  db.exec("INSERT INTO messages(chat_id,platform_message_id,user_id,author_name,role,text,timestamp) VALUES('vk:a','1','vk:u','','user','кот',0)");
- migrate(db);expect(db.prepare('SELECT * FROM schema_migrations WHERE version<=8').all()).toEqual(before);
+ migrate(db,migrations.slice(0,9));expect(db.prepare('SELECT * FROM schema_migrations WHERE version<=8').all()).toEqual(before);
  expect(db.prepare('SELECT attachment_count FROM messages').get()).toEqual({attachment_count:null});
  expect(db.prepare("SELECT rowid FROM messages_fts WHERE messages_fts MATCH 'кот'").all()).toHaveLength(1);
  expect(db.prepare('PRAGMA table_info(chats)').all()).toContainEqual(expect.objectContaining({name:'system_prompt'}));
