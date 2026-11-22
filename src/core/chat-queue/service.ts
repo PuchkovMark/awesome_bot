@@ -12,6 +12,9 @@ import { queueConfig } from './validation.js';
 import type { ChatQueue, ChatQueueOptions, QueueOutcome, QueueStats, QueueCompletion } from './types.js';
 const outcomes = new Set<unknown>(['completed','failed','rate_limit','interrupted','expired','message_missing','deadline_exceeded']);
 interface Task { trace:TracePayload; deadline: number; work: QueueWork; controller: AbortController; timer: ReturnType<typeof setTimeout>; done: boolean; publishing:boolean }
+function disclosureVersion(work: QueueWork) {
+  return work.disclosureVersion === undefined ? {} : {disclosureVersion:work.disclosureVersion};
+}
 function safeFailure(error: unknown): QueueError {
   // Не читать произвольные свойства ошибок внедрённого обработчика.
   if (error instanceof QueueError) return error;
@@ -90,7 +93,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
         task.publishing=true;
         const isCurrent=()=>{if(task.done||phase!=='running'||performance.now()>=task.deadline)return false;try{return backend.publicationValid(token,task.work);}catch{return false;}};
         const accepted=completion&&committed===completion.outcome?completion:{outcome:committed};
-        void Promise.resolve().then(()=>{if(isCurrent())return options.onSettled!({jobId:task.work.id,scope:task.work.scope,messageId:task.work.messageId,route:task.work.route,signal:task.controller.signal,isCurrent},accepted);}).catch(()=>{}).finally(()=>{if(!task.done)releaseTask(task);});
+        void Promise.resolve().then(()=>{if(isCurrent())return options.onSettled!({jobId:task.work.id,scope:task.work.scope,messageId:task.work.messageId,route:task.work.route,signal:task.controller.signal,isCurrent,...disclosureVersion(task.work)},accepted);}).catch(()=>{}).finally(()=>{if(!task.done)releaseTask(task);});
       }else releaseTask(task);
     }catch(error){task.controller.abort();fault(error);}
   }
@@ -106,7 +109,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
       if(!message){finish(task,'message_missing');return;}
       if(!backend.valid(token,work)){finish(task,'interrupted');return;}
       if(work.route){const settings=await options.storage.chats.get(work.scope);if(task.done)return;if(!settings?.enabled||settings.responseMode==='silent'||!backend.valid(token,work)){finish(task,'interrupted');return;}}
-      const outcome:unknown=await handler(Object.freeze({jobId:work.id,recordTrace:(update:Partial<TracePayload>)=>{if(task.done||!backend.valid(token,work))return;const next={...task.trace,...update};if(backend.progress(token,work,next))task.trace=next;},scope:work.scope,messageId:work.messageId,signal:controller.signal,route:work.route,isCurrent:()=>{if(task.done||phase!=='running'||controller.signal.aborted||performance.now()>=task.deadline)return false;try{return backend.valid(token,work);}catch{return false;}}}));
+      const outcome:unknown=await handler(Object.freeze({jobId:work.id,recordTrace:(update:Partial<TracePayload>)=>{if(task.done||!backend.valid(token,work))return;const next={...task.trace,...update};if(backend.progress(token,work,next))task.trace=next;},scope:work.scope,messageId:work.messageId,signal:controller.signal,route:work.route,...disclosureVersion(work),isCurrent:()=>{if(task.done||phase!=='running'||controller.signal.aborted||performance.now()>=task.deadline)return false;try{return backend.valid(token,work);}catch{return false;}}}));
       const completion:QueueCompletion=typeof outcome==='object'&&outcome!==null&&outcomes.has((outcome as QueueCompletion).outcome)?outcome as QueueCompletion:{outcome:outcomes.has(outcome)?outcome as QueueOutcome:'failed'};
       finish(task,completion.outcome,completion);
     }).catch(()=>finish(task,'failed'));
@@ -142,11 +145,11 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
       phase='running';renewAt=performance.now()+config.renewIntervalMs;pump();armTick();
       if(failure)throw failure;
     },
-    async admitRouted(scope,message,decision){
+    async admitRouted(scope,message,decision,guard){
       if(phase!=='running')return {admission:{status:'stopped'},decision:null};
       if(platform!==undefined&&!scope.chatId.startsWith(platform+':'))throw new QueueError('invalid_input');
       try{
-       const result=backend.admitRouted(token,scope,message,decision,config);
+       const result=backend.admitRouted(token,scope,message,decision,config,guard);
        if(result.admission.status==='queue_full')counters.rejected=add(counters.rejected,1);
        emit();schedule();return result;
       }catch(error){try{backend.check(token);}catch(fatal){fault(fatal);}throw safeFailure(error);}

@@ -7,7 +7,7 @@ import type { VkRequestGuard } from './rate-limit.js';
 
 type ApiMethod = 'groups.getLongPollServer' | 'users.get'
   | 'messages.getConversationMembers' | 'messages.getByConversationMessageId' | 'messages.getConversationsById'
-  | 'messages.send' | 'messages.setActivity';
+  | 'messages.send' | 'messages.setActivity' | 'messages.isMessagesFromGroupAllowed';
 
 type ApiParameters = Record<string, string | number>;
 

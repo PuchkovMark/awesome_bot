@@ -1,4 +1,4 @@
-import type { CapabilityState, ChannelAdapter, ChatId, ConnectionScope, PlatformMessageId, SendResult } from '../../contracts/index.js';
+import type { CapabilityState, ChannelAdapter, ChatId, ConnectionScope, PlatformMessageId, SendResult, UserId } from '../../contracts/index.js';
 import type { PublicationGuard, PublicationPort } from '../../core/index.js';
 import type { Storage } from '../../storage/index.js';
 import { createVkSdkApi } from './api.js';
@@ -8,11 +8,13 @@ import type { VkInboundOptions } from './inbound.js';
 import type { VkPollTransport } from './long-poll.js';
 import { isVkGroupChat, vkRecord } from './normalize.js';
 import { createVkOutbound, vkLocalId } from './outbound.js';
+import { createVkIntroduction } from './introduction.js';
 import { vkMessageLength } from './outbound-text.js';
 import type { waitForVkRetry } from './rate-limit.js';
 
 export interface VkChannelOptions extends VkInboundOptions {
   readonly chats: Pick<Storage['chats'], 'get'>;
+  readonly owner?: UserId;
 }
 
 interface VkChannelDependencies {
@@ -125,6 +127,7 @@ export function createVkChannel(options: VkChannelOptions, dependencies: VkChann
 
   return Object.freeze({
     ...adapter,
+    introduction: options.owner ? createVkIntroduction({owner: options.owner,groupId:options.groupId,api,outbound}) : undefined,
     startRouted: inbound.startRouted,
     async sendTypingForWork(scope: ConnectionScope,
       work: Pick<PublicationGuard, 'signal' | 'isCurrent'>) {

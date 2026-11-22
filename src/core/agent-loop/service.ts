@@ -7,7 +7,7 @@ import type { AgentLoop, AgentLoopInput, AgentLoopOptions, AgentLoopOutcome, Age
 
 type Stop = { readonly kind: 'cancelled' | 'deadline_exceeded' };
 /** Только внедрённый клиент. Фабрика не создаёт инфраструктурные ресурсы. */
-export function createAgentLoop(client: LlmClient, options: AgentLoopOptions = {},onAttempt?:(summary:import('./types.js').AgentLoopSummary)=>void): AgentLoop {
+export function createAgentLoop(client: LlmClient, options: AgentLoopOptions = {},onAttempt?:(summary:import('./types.js').AgentLoopSummary)=>void, allowAttempt?:()=>boolean): AgentLoop {
   const config = loopOptions(options);
   let invoke: LlmClient['complete'];
   try {
@@ -56,6 +56,7 @@ export function createAgentLoop(client: LlmClient, options: AgentLoopOptions = {
         for (;;) {
           const before = checkStopped();
           if (before) return finish(before);
+          if (allowAttempt && !allowAttempt()) return finish({kind:'cancelled'});
           // Единственный логический шаг. Вызов получает собственную изменяемую копию.
           const request: LlmRequest = {
             system: prepared.system, messages: prepared.messages.map((message) => ({ role: message.role, text: message.text })),

@@ -75,5 +75,13 @@ export function createLifecycleService(options:{readonly storage:Storage;readonl
       failedPauses.delete(scope.chatId);
       return scope;
     },
+    deleteData(proof: ReturnType<typeof backend.begin>, generation: number) {
+      if (!proof || !owners.has(proof)) throw new TypeError('Lifecycle: forbidden');
+      const pauseAtDecisionStart = owners.get(proof);
+      owners.delete(proof);
+      if (pauseAtDecisionStart !== failedPauses.get(proof.expected.chatId)) throw new StorageError('stale_scope');
+      backend.ownerDelete(proof,generation);
+      failedPauses.delete(proof.expected.chatId);
+    },
   });
 }

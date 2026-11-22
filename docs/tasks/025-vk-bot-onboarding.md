@@ -2,10 +2,10 @@
 
 - Номер: 025
 - Название: Добавление бота в беседу VK
-- Статус: утверждено
+- Статус: на ревью
 - Дата: 2026-11-22
 - Дата завершения: —
-- Связанные документы: [F3.6](../roadmap.md#веха-3-vk-работает), [события участия VK](completed/022-vk-membership-events.md), [ручная проверка VK](completed/024-vk-manual-acceptance.md), [решения владельца](../decisions.md#утверждение-задачи-о-добавлении-бота-в-vk-f36), [проверка канала уведомления](../research/vk-outbound-capabilities.md#уведомление-владельца-для-f36), [утверждённый план фичи](../plans/025-vk-bot-onboarding.md), [черновик плана реализации](../impl-plans/025-vk-bot-onboarding.md).
+- Связанные документы: [F3.6](../roadmap.md#веха-3-vk-работает), [события участия VK](completed/022-vk-membership-events.md), [ручная проверка VK](completed/024-vk-manual-acceptance.md), [решения владельца](../decisions.md#утверждение-задачи-о-добавлении-бота-в-vk-f36), [проверка канала уведомления](../research/vk-outbound-capabilities.md#уведомление-владельца-для-f36), [утверждённый план фичи](../plans/025-vk-bot-onboarding.md), [утверждённый план реализации](../impl-plans/025-vk-bot-onboarding.md).
 
 ## Проблема или цель
 

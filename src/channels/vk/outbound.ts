@@ -14,7 +14,8 @@ type SendOutcome = { readonly kind: 'delivered'; readonly confirmedParts: number
   | { readonly kind: 'failed' | 'unknown'; readonly confirmedParts: number };
 
 export interface VkSendRequest extends OutgoingMessage, VkRequestGuard {
-  readonly kind: 'answer' | 'notice';
+  readonly kind: 'answer' | 'notice' | 'service';
+  readonly sendId?: number;
   readonly confirmPart: (part: PublishedPart) => void | Promise<void>;
 }
 
@@ -83,9 +84,9 @@ export function createVkOutbound(options: {
     }
   }
 
-  async function sendPart(peer: number, text: string, parent: VkMessage | undefined, guard: VkRequestGuard) {
+  async function sendPart(peer: number, text: string, parent: VkMessage | undefined, guard: VkRequestGuard, sendId?: number) {
     const params = {
-      peer_ids: String(peer), message: text, random_id: nextRandomId(), dont_parse_links: 1, disable_mentions: 1,
+      peer_ids: String(peer), message: text, random_id: sendId ?? nextRandomId(), dont_parse_links: 1, disable_mentions: 1,
       ...(parent ? { forward: JSON.stringify({ peer_id: peer, conversation_message_ids: [parent.cmid], is_reply: true }) } : {}),
     };
     for (let retry = 0; ; retry++) {
@@ -109,6 +110,13 @@ export function createVkOutbound(options: {
   }
 
   return Object.freeze({
+    async confirmService(chatId: OutgoingMessage['chatId'], text: string, receipt: string, notBefore: number, guard: VkRequestGuard) {
+      const peer = vkLocalId(chatId);
+      const cmid = localMessageId(receipt);
+      if (peer === undefined || cmid === undefined) return false;
+      const row = await lookupConfirmed(peer,cmid,guard);
+      return row?.author === -groupId && row.text === text && row.reply === undefined && row.date >= Math.floor(notBefore / 1000);
+    },
     async canReply(chatId: VkSendRequest['chatId'], sourceId: string | undefined, guard: VkRequestGuard): Promise<boolean> {
       const peer = vkLocalId(chatId);
       const cmid = localMessageId(sourceId);
@@ -121,7 +129,9 @@ export function createVkOutbound(options: {
       const chunks = splitVkText(input.text);
       const replyId = localMessageId(input.replyToMessageId);
       if (chunks.length === 0 || (input.replyToMessageId !== undefined && replyId === undefined)
-        || (input.kind === 'notice' && (chunks.length !== 1 || replyId === undefined))) {
+        || (input.kind === 'notice' && (chunks.length !== 1 || replyId === undefined))
+        || (input.kind === 'service' && (chunks.length !== 1 || replyId !== undefined ||
+          input.sendId === undefined || !Number.isInteger(input.sendId) || input.sendId <= 0 || input.sendId > 0x7fffffff))) {
         return { kind: 'failed', confirmedParts: 0 };
       }
       let parent: VkMessage | undefined;
@@ -135,7 +145,7 @@ export function createVkOutbound(options: {
         const expectedParent = confirmedParts === 0 ? parent : undefined;
         let cmid: number;
         try {
-          cmid = await sendPart(peer, text, expectedParent, input);
+          cmid = await sendPart(peer, text, expectedParent, input, input.kind === 'service' ? input.sendId : undefined);
         } catch (error) {
           const denied = error instanceof VkRequestCancelled
             || (error instanceof VkApiError && error.code !== undefined && rejected.has(error.code));

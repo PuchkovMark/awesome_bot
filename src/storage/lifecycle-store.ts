@@ -186,6 +186,14 @@ export function createLifecycleBackend(connection: Connection) {
         return issue(read(db,chatId)!);
       }).immediate();});
     },
+    ownerDelete(proof: Verification, generation: number) {
+      return connection.run(db => db.transaction(() => {
+        requireInput(checks.has(proof));
+        checks.delete(proof);
+        if (proof.expected.generation !== generation || !matches(db,proof.expected)) throw new StorageError('stale_scope');
+        remove(db,proof.expected.chatId);
+      }).immediate());
+    },
     revision(scope:ConnectionScope):number {return this.transaction(scope,db=>read(db,scope.chatId)!.revision);},
     bump,
   };

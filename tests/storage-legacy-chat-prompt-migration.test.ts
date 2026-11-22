@@ -16,11 +16,12 @@ test('upgrade 10 → 11 сохраняет остальные таблицы, н
  const f=storageFixture();const db=new Database(f.path);try{
  legacyChatPromptFixture(db);expect(db.prepare("SELECT system_prompt FROM chats WHERE chat_id='vk:old'").get()).toEqual({system_prompt:legacyPrompt});
  const tables=(db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'messages_fts%' AND name NOT IN ('chats','schema_migrations') ORDER BY name").all() as {name:string}[]).map(v=>v.name);
- const snapshots=tables.map(t=>db.prepare('SELECT * FROM '+t).all());
+ const projections=tables.map(t=>(db.pragma(`table_info(${t})`) as {name:string}[]).map(column=>column.name).join(','));
+ const snapshots=tables.map((t,i)=>db.prepare('SELECT '+projections[i]+' FROM '+t).all());
  const settings=db.prepare('SELECT chat_id,title,response_mode,timezone,enabled,created_at FROM chats ORDER BY chat_id').all();
  const checksums=db.prepare('SELECT * FROM schema_migrations ORDER BY version').all();
  migrate(db);expect(columns(db)).not.toContain('system_prompt');
- tables.forEach((t,i)=>expect(db.prepare('SELECT * FROM '+t).all()).toEqual(snapshots[i]));
+ tables.forEach((t,i)=>expect(db.prepare('SELECT '+projections[i]+' FROM '+t).all()).toEqual(snapshots[i]));
  expect(db.prepare('SELECT chat_id,title,response_mode,timezone,enabled,created_at FROM chats ORDER BY chat_id').all()).toEqual(settings);
  expect(db.prepare('SELECT * FROM schema_migrations WHERE version<=10 ORDER BY version').all()).toEqual(checksums);
  expect(db.prepare("SELECT rowid FROM messages_fts WHERE messages_fts MATCH 'кот'").all()).toEqual([{rowid:1}]);

@@ -15,6 +15,7 @@ export interface AgentLoopQueueOptions extends Omit<ChatQueueOptions,'handler'|'
  readonly preparationTimeoutMs?:number;readonly postPreparationMarginMs?:number;
  readonly signal?:AbortSignal;
  readonly prepare:(work:QueueHandlerInput)=>Promise<QueuePreparation>;
+ readonly disclosure?:(work:QueueHandlerInput)=>import('../../storage/trace-types.js').TracePayload['disclosure'];
 }
 export function createAgentLoopQueue(options:AgentLoopQueueOptions){
  const settings=loopOptions(options.loopOptions??{});
@@ -26,6 +27,8 @@ export function createAgentLoopQueue(options:AgentLoopQueueOptions){
  return createChatQueue({tracing:options.tracing,storage:options.storage,...(options.logger?{logger:options.logger}:{}),...(options.onSettled?{onSettled:options.onSettled}:{}),...(options.platform!==undefined?{platform:options.platform}:{}),config,
  handler:async work=>{
   const zero=createAttemptSummary().snapshot(0);work.recordTrace({summary:zero});
+  const initialDisclosure=options.disclosure?.(work);
+  if(initialDisclosure&&!initialDisclosure.allowed){work.recordTrace({disclosure:initialDisclosure});return 'interrupted';}
   const lifetime=options.signal?AbortSignal.any([work.signal,options.signal]):work.signal;
   const controller=new AbortController(),signal=AbortSignal.any([lifetime,controller.signal]);
   let abort:()=>void=()=>{};
@@ -46,7 +49,11 @@ export function createAgentLoopQueue(options:AgentLoopQueueOptions){
   // Финальная синхронная проверка выполняется непосредственно перед запуском цикла.
   if(!work.isCurrent()||lifetime.aborted)return 'interrupted';
   work.recordTrace({prompt:prepared.metadata?.version??null,context:prepared.metadata??null});
-  const loop=createAgentLoop(client,settings,summary=>work.recordTrace({model:{name:modelName,invoked:'possible'},summary}));
+  const loop=createAgentLoop(client,settings,summary=>work.recordTrace({model:{name:modelName,invoked:'possible'},summary}),()=>{
+   const checked=options.disclosure?.(work);
+   if(checked)work.recordTrace({disclosure:checked});
+   return checked?.allowed??true;
+  });
   const result=await loop.run({...prepared.input,signal:lifetime});
   work.recordTrace({model:{name:result.summary.attempts?modelName:null,invoked:result.summary.attempts?'yes':'no'},summary:result.summary,resultKind:result.kind});
   const outcome=result.kind==='complete'?'completed':result.kind==='rate_limit'?'rate_limit':result.kind==='deadline_exceeded'?'deadline_exceeded':result.kind==='cancelled'?'interrupted':'failed';

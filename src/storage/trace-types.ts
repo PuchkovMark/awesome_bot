@@ -8,6 +8,7 @@ export interface TracePublication {
  readonly reason:'none'|'no_port'|'guard'|'no_reply'|'notice_period'|'trace_write_failed'|'publication_failed'|'journal_failed'|'partial_delivery';
 }
 export interface TracePayload {
+ readonly disclosure?: {readonly version:number|null;readonly allowed:boolean};
  readonly model:{readonly name:string|null;readonly invoked:'no'|'possible'|'yes'};
  readonly prompt:ContextMetadata['version']|null;readonly context:ContextMetadata|null;readonly summary:AgentLoopSummary|null;
  readonly route:RouteMetadata|null;readonly resultKind:string|null;readonly preparationFailure:PreparationFailure|null;

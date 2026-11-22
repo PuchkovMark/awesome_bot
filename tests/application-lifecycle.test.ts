@@ -2,15 +2,17 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { expect, test, vi } from 'vitest';
 import { runApplication } from '../src/app/service.js';
-import { initializePrompt, resolveApplicationChat } from '../src/app/setup.js';
+import { initializePrompt, requestDisclosureUpdate, resolveApplicationChat } from '../src/app/setup.js';
 import { createVkApi, createVkApiCall } from '../src/channels/vk/api.js';
 import type { VkPollTransport } from '../src/channels/vk/long-poll.js';
 import { createVkRateLimiter } from '../src/channels/vk/rate-limit.js';
 import { loadApplicationConfig } from '../src/config/application.js';
 import { createLifecycleService } from '../src/core/index.js';
 import type { LlmRequest, LlmResult } from '../src/llm/index.js';
+import { llmFailure } from '../src/llm/errors.js';
 import type { LogEvent, SafeLogger } from '../src/logger/index.js';
 import { openStorage } from '../src/storage/index.js';
+import { disclosureStore, type DisclosureInput } from '../src/storage/chat-disclosure-store.js';
 import { storageFixture } from './helpers/storage-fixture.js';
 
 const ownerId = 'vk:73';
@@ -59,22 +61,28 @@ function loggerFixture() {
   return { logger, events };
 }
 
-function vkFixture(beforeSend?: () => Promise<void>, startId = 100) {
+function vkFixture(beforeSend?: (peer:number) => Promise<void>, startId = 100, rights?: {
+  readonly group: () => boolean;
+  readonly owner: () => boolean;
+}) {
   const rows = new Map<string, Record<string, unknown>>();
   let at = 0;
   let counter = startId;
   const attempt = vi.fn<Parameters<typeof createVkApiCall>[0]>(async (method, params) => {
     if (method === 'users.get') return { response: [{ id: 73, first_name: 'Тест' }] };
     if (method === 'messages.getConversationsById') return { response: { items: [{
-      peer: { id: Number(params.peer_ids) }, can_write: { allowed: true },
+      peer: { id: Number(params.peer_ids) }, chat_settings:{state:'in'},
+      can_write: { allowed: Number(params.peer_ids)>2_000_000_000 ? rights?.group() ?? true : rights?.owner() ?? true },
     }] } };
+    if (method === 'messages.isMessagesFromGroupAllowed') return {response:{is_allowed:rights?.owner()===false ? 0 : 1}};
+    if (method === 'messages.getConversationMembers') return {response:{items:[{member_id:-groupId,is_admin:false}]}};
     if (method === 'messages.setActivity') return { response: 1 };
     if (method === 'messages.getByConversationMessageId') return { response: {
       items: String(params.conversation_message_ids).split(',').map(id => rows.get(`${params.peer_id}:${id}`)).filter(Boolean),
     } };
     if (method === 'messages.send') {
-      await beforeSend?.();
       const peer = Number(params.peer_ids);
+      await beforeSend?.(peer);
       const id = ++counter;
       const forward = params.forward === undefined ? null : JSON.parse(String(params.forward)) as { conversation_message_ids: number[] };
       rows.set(`${peer}:${id}`, {
@@ -90,9 +98,9 @@ function vkFixture(beforeSend?: () => Promise<void>, startId = 100) {
   })));
   return {
     api, attempt,
-    event(id: number, peer = 73, action?: object) {
+    event(id: number, peer = 73, action?: object, text = '[club314|Пенек] Вопрос') {
       const message = { peer_id: peer, from_id: 73, conversation_message_id: id,
-        text: '[club314|Пенек] Вопрос', date: 1_700_000_000 + id, out: 0, ...(action ? { action } : {}),
+        text, date: 1_700_000_000 + id, out: 0, ...(action ? { action } : {}),
       };
       rows.set(`${peer}:${id}`, message);
       return { type: 'message_new', group_id: groupId, object: { message } };
@@ -109,6 +117,103 @@ async function inspect(path: string) {
     } } }),
   };
 }
+
+const testDisclosure = {provider:'OpenCode Go',dataPolicy:'history',storagePolicy:'initial',detailsText:'Синтетические условия.',
+  detailsUrl:'https://example.test/disclosure/1',ownerContact:'Тестовый владелец',change:'material'} satisfies DisclosureInput;
+const testPeer = 2_000_000_010;
+const testGroup = 'vk:2000000010';
+
+test('граница публикации закрывает ранний вход, а восстановление права отменяет предупреждение владельцу', async () => {
+  const f=await fixture();
+  const inspector=await inspect(f.files.path);
+  const store=disclosureStore(inspector.storage);
+  const transport=transportFixture();
+  const {logger}=loggerFixture();
+  const stop=new AbortController();
+  const entered=Promise.withResolvers<void>();
+  const publish=Promise.withResolvers<void>();
+  let groupAllowed=false, ownerAllowed=false;
+  const vk=vkFixture(async peer => {
+    if(peer===testPeer){entered.resolve();await publish.promise;}
+  },100,{group:()=>groupAllowed,owner:()=>ownerAllowed});
+  const model=vi.fn(async()=>testResponse);
+  await f.init();
+  const version=store.register(testDisclosure,Date.now());
+  const run=runApplication(f.config,logger,stop.signal,{vk:{api:vk.api,transport:transport.transport},client:{complete:model},onboardingIntervalMs:5});
+  try {
+    await transport.ready;
+    transport.update(vk.event(51,testPeer,{type:'chat_invite_user',member_id:-groupId}));
+    await resolveApplicationChat({databasePath:f.files.path,ownerId},testGroup,'continue');
+    const scope=inspector.life.current(testGroup);
+    await vi.waitFor(()=>expect(store.publications(scope).find(row=>row.kind==='owner')?.reason).toBe('owner_closed'));
+    groupAllowed=true;ownerAllowed=true;
+    await entered.promise;
+    transport.update(vk.event(52,testPeer));
+    expect(await inspector.storage.messages.list(scope,{limit:20})).toEqual([]);
+    expect(model).not.toHaveBeenCalled();
+    publish.resolve();
+    await vi.waitFor(()=>expect(store.gate(scope).version).toBe(version));
+    expect(store.publications(scope).find(row=>row.kind==='owner')?.state).toBe('cancelled');
+    expect(store.diagnostics()).toEqual([{kind:'introduction',state:'delivered',connections:1},{kind:'owner',state:'cancelled',connections:1}]);
+    transport.update(vk.event(53,testPeer),vk.event(54,testPeer,undefined,'/часовой-пояс GMT'));
+    await vi.waitFor(async()=>{
+      const entries=await inspector.storage.messages.list(scope,{limit:20});
+      expect(entries.find(row=>row.replyToMessageId==='53')).toMatchObject({text:'Ответ'});
+      expect(entries.some(row=>row.messageId==='52')).toBe(false);
+      expect((await inspector.storage.chats.get(scope))?.timezone).toBe('UTC');
+    });
+    expect(model).toHaveBeenCalledTimes(1);
+    expect((await inspector.storage.traces.last(scope))?.payload.disclosure).toEqual({version,allowed:true});
+    expect(vk.attempt.mock.calls.filter(([method])=>method==='messages.send').map(([,args])=>Number(args.peer_ids))).toEqual([testPeer,testPeer]);
+  } finally { publish.resolve();stop.abort();expect(await run).toBeNull();await inspector.storage.close();f.files.cleanup(); }
+});
+
+test('смена версии перед повтором закрывает вызов и оставляет журнал при прежних условиях хранения', async () => {
+  const f=await fixture();
+  const inspector=await inspect(f.files.path);
+  const store=disclosureStore(inspector.storage);
+  const transport=transportFixture();
+  const vk=vkFixture();
+  const {logger}=loggerFixture();
+  const stop=new AbortController();
+  await f.init();
+  const version=store.register(testDisclosure,Date.now());
+  const model=vi.fn(async():Promise<LlmResult>=>{
+    if(model.mock.calls.length===1){
+      store.register({...testDisclosure,dataPolicy:'new data'},Date.now());
+      return llmFailure('server');
+    }
+    return testResponse;
+  });
+  const run=runApplication(f.config,logger,stop.signal,{vk:{api:vk.api,transport:transport.transport},client:{complete:model},onboardingIntervalMs:5});
+  try {
+    await transport.ready;
+    transport.update(vk.event(60,testPeer,{type:'chat_invite_user',member_id:-groupId}));
+    await resolveApplicationChat({databasePath:f.files.path,ownerId},testGroup,'continue');
+    const scope=inspector.life.current(testGroup);
+    await vi.waitFor(()=>expect(store.gate(scope).version).toBe(version));
+    store.register({...testDisclosure,change:'editorial',detailsUrl:'https://example.test/disclosure/editorial'},Date.now());
+    transport.update(vk.event(61,testPeer));
+    await vi.waitFor(async()=>expect((await inspector.storage.traces.last(scope))?.outcome).toBe('interrupted'),{timeout:3500});
+    expect(model).toHaveBeenCalledTimes(1);
+    expect((await inspector.storage.traces.last(scope))?.payload.disclosure).toEqual({version,allowed:false});
+    transport.update(vk.event(62,testPeer));
+    await vi.waitFor(async()=>expect((await inspector.storage.messages.list(scope,{limit:20})).some(row=>row.messageId==='62')).toBe(true));
+    expect(model).toHaveBeenCalledTimes(1);
+    const replacement=store.register({...testDisclosure,dataPolicy:'new data',storagePolicy:'changed'},Date.now());
+    transport.update(vk.event(63,testPeer));
+    expect(await requestDisclosureUpdate({databasePath:f.files.path,ownerId},testGroup)).toBe(true);
+    await vi.waitFor(()=>expect(store.gate(scope).version).toBe(replacement));
+    transport.update(vk.event(64,testPeer));
+    await vi.waitFor(async()=>{
+      const rows=await inspector.storage.messages.list(scope,{limit:20});
+      expect(rows.some(row=>row.messageId==='63')).toBe(false);
+      expect(rows.find(row=>row.replyToMessageId==='64')).toMatchObject({text:'Ответ'});
+    });
+    expect(model).toHaveBeenCalledTimes(2);
+    expect((await inspector.storage.traces.last(scope))?.payload.disclosure).toEqual({version:replacement,allowed:true});
+  } finally { stop.abort();expect(await run).toBeNull();await inspector.storage.close();f.files.cleanup(); }
+});
 
 test('штатная композиция ждёт допуска, публикует через VK и сохраняет сессию после перезапуска', async () => {
   const f = await fixture();

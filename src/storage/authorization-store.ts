@@ -1,7 +1,7 @@
 import type { UserId, GrantBasis } from '../contracts/index.js';
 import type { Connection } from './connection.js';
 import type { SyncAuthorizationStore, AuthorizationTransaction, RevocationAudit, AdminGrant } from './legacy-authorization-types.js';
-import { compositeId, requireInput, string, timestamp } from './validation.js';
+import { compositeId, requireInput, string, timestamp, timezone } from './validation.js';
 import { StorageError } from './errors.js';
 
 const allBases: readonly GrantBasis[] = ['creator', 'inviter', 'explicit'];
@@ -38,6 +38,10 @@ export function createAuthorizationStore(connection: Connection): SyncAuthorizat
               check(); requireInput(basis === 'creator' || basis === 'inviter');
               const row = db.prepare('SELECT user_id AS userId FROM bot_admin_grants WHERE chat_id=? AND basis=?').get(chatId, basis) as { userId: UserId } | undefined;
               return row?.userId ?? null;
+            },
+            updateTimezone(value: string) {
+              check(); timezone(value);
+              db.prepare('UPDATE chats SET timezone=? WHERE chat_id=?').run(value,chatId);
             },
             bases(userId: UserId) {
               check(userId);

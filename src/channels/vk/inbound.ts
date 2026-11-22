@@ -1,16 +1,17 @@
 import type { ChatId, ConnectionScope, EventHandler, IncomingMessage, MembershipEvent } from '../../contracts/index.js';
 import type { createLifecycleService, createMessageRouter } from '../../core/index.js';
+import type { RoutedAdmissionGuard } from '../../storage/queue-types.js';
 import { StorageError } from '../../storage/errors.js';
 import { createVkSdkApi } from './api.js';
 import type { VkInboundApi } from './api.js';
 import { createVkLongPoll } from './long-poll.js';
 import type { VkPollGap, VkPollTransport } from './long-poll.js';
-import { normalizeVkIncoming, parseVkIncoming, vkChatId } from './normalize.js';
+import { isVkGroupChat, normalizeVkIncoming, parseVkIncoming, vkChatId } from './normalize.js';
 
 type Lifecycle = Pick<ReturnType<typeof createLifecycleService>,
   'current' | 'admissionScope' | 'isAdmissionCurrent' | 'activeChatIds' | 'verify' | 'recordConnectionSignal'>;
 type Router = Pick<ReturnType<typeof createMessageRouter>, 'receive'>;
-type Dispatch = (message: IncomingMessage, scope: ConnectionScope, isCurrent: () => boolean) => Promise<void>;
+type Dispatch = (message: IncomingMessage, scope: ConnectionScope, isCurrent: () => boolean, disclosure?:RoutedAdmissionGuard) => Promise<void>;
 type MembershipHandler = (event: MembershipEvent) => Promise<void>;
 
 export interface VkInboundOptions {
@@ -19,6 +20,7 @@ export interface VkInboundOptions {
   readonly lifecycle: Lifecycle;
   readonly signal?: AbortSignal;
   readonly onReady?: () => void;
+  readonly captureDisclosure?: (scope: ConnectionScope) => RoutedAdmissionGuard;
 }
 
 interface VkInboundDependencies {
@@ -146,6 +148,8 @@ export function createVkInbound(options: VkInboundOptions, dependencies: VkInbou
         function isCurrent() {
           return !signal.aborted && receivedIn === subscription && lifecycle.isAdmissionCurrent(scope);
         }
+        const disclosure=isVkGroupChat(message.peerId) ? options.captureDisclosure?.(scope) : undefined;
+        if(disclosure && !disclosure().journal) { counters.paused++; continue; }
         const task = (tails.get(chatId) ?? Promise.resolve()).then(async () => {
           if (!isCurrent()) {
             counters.paused++;
@@ -157,7 +161,7 @@ export function createVkInbound(options: VkInboundOptions, dependencies: VkInbou
             return;
           }
           counters.dispatched++;
-          await dispatch(normalizeVkIncoming(message, groupId, enrichment), scope, isCurrent);
+          await dispatch(normalizeVkIncoming(message, groupId, enrichment), scope, isCurrent, disclosure);
         }).catch(() => { counters.failed++; }).finally(() => {
           pending.delete(task);
           if (tails.get(chatId) === task) tails.delete(chatId);
@@ -197,7 +201,7 @@ export function createVkInbound(options: VkInboundOptions, dependencies: VkInbou
     },
     /** Доверенная композиция сохраняет область подключения внутри входного пути. */
     startRouted(router: Router, membership?: MembershipHandler) {
-      return run(async (message, scope, isCurrent) => { await router.receive(scope, message, undefined, isCurrent); }, membership);
+      return run(async (message, scope, isCurrent, disclosure) => { await router.receive(scope, message, undefined, isCurrent,disclosure); }, membership);
     },
     hasMembershipObservation(chatId: ChatId): boolean {
       const scope = membershipObservations.get(chatId);

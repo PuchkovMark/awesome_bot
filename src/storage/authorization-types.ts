@@ -18,6 +18,7 @@ export interface RevocationAudit {
 export interface AuthorizationTransaction {
   revision(): number;
   settings(): { readonly enabled: boolean } | null;
+  updateTimezone(value: string): void;
   holder(basis: GrantBasis): UserId | null;
   bases(userId: UserId): readonly GrantBasis[];
   isRevoked(userId: UserId): boolean;

@@ -35,7 +35,7 @@ async function bounded<T>(signal:AbortSignal,promise:Promise<T>):Promise<T|null>
  const interrupted=new Promise<null>(resolve=>{abort=()=>resolve(null);signal.addEventListener('abort',abort,{once:true});});
  try{return await Promise.race([promise,interrupted]);}finally{signal.removeEventListener('abort',abort);}
 }
-export function createPublicationService(options:{readonly storage:Storage;readonly port?:PublicationPort;readonly noticeIntervalMs?:number;readonly queueFullTimeoutMs?:number;readonly onFailure?:(code:PublicationFailure)=>void}){
+export function createPublicationService(options:{readonly storage:Storage;readonly port?:PublicationPort;readonly noticeIntervalMs?:number;readonly queueFullTimeoutMs?:number;readonly onFailure?:(code:PublicationFailure)=>void;readonly disclosureCurrent?:(work:QueueSettlement)=>boolean}){
  const fullTimeout=noticeInterval(options.queueFullTimeoutMs??10000);if(fullTimeout>2147483647)throw new TypeError('Router: invalid_configuration');
  const interval=noticeInterval(options.noticeIntervalMs),notices=noticeBackend(options.storage),traces=traceBackend(options.storage);
  const lifecycle=lifecycleBackend(options.storage);
@@ -66,7 +66,7 @@ export function createPublicationService(options:{readonly storage:Storage;reado
    scope=lifecycle.transaction(work.scope,()=>lifecycle.current(work.scope.chatId,true));
    function isCurrent():boolean {
     if (closed || work.signal.aborted || !work.isCurrent()) return false;
-    try {lifecycle.revision(scope);return true;}
+    try {lifecycle.revision(scope);return options.disclosureCurrent?.(work)??true;}
     catch {return false;}
    }
    const settings=await options.storage.chats.get(scope);if(!settings||!isCurrent())return suppressed('guard');

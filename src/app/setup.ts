@@ -1,10 +1,13 @@
 import { readFile } from 'node:fs/promises';
-import type { loadPromptConfig, loadResolutionConfig } from '../config/application.js';
+import type { loadApplicationConfig, loadPromptConfig, loadResolutionConfig } from '../config/application.js';
 import type { ChatId, LifecycleSource } from '../contracts/index.js';
 import { createLifecycleService, validateContextStartup } from '../core/index.js';
 import type { ApplicationFailure } from '../logger/types.js';
 import { catalogAdministration } from '../storage/catalog-admin.js';
 import { openStorage } from '../storage/index.js';
+import { disclosureStore, type DisclosureInput } from '../storage/chat-disclosure-store.js';
+import { createVkChannel } from '../channels/index.js';
+import { isVkGroupChat } from '../channels/vk/normalize.js';
 
 export const unconfirmedLifecycleSource: LifecycleSource = {
   async observe() { return { confidence: 'unavailable', bot: 'unknown' }; },
@@ -57,4 +60,65 @@ export async function resolveApplicationChat(
   } finally {
     await storage.close();
   }
+}
+
+type LocalConfig = ReturnType<typeof loadResolutionConfig>;
+export function applicationGroupId(value: string) {
+  const id = applicationChatId(value);
+  return id && isVkGroupChat(Number(id.slice(3))) ? id : undefined;
+}
+
+export async function configureDisclosure(config: LocalConfig, path: string) {
+  const input = JSON.parse(await readFile(path,'utf8')) as DisclosureInput;
+  const storage = await openStorage(config.databasePath);
+  try { return disclosureStore(storage).register(input,Date.now()); }
+  finally { await storage.close(); }
+}
+
+export async function readOnboarding(config: LocalConfig, chatId?: ChatId) {
+  const storage = await openStorage(config.databasePath);
+  try {
+    const store = disclosureStore(storage);
+    return chatId ? store.status(chatId) : {states:store.diagnostics()};
+  } finally { await storage.close(); }
+}
+
+export async function requestDisclosureUpdate(config: LocalConfig, chatId: ChatId) {
+  const storage = await openStorage(config.databasePath);
+  try {
+    const lifecycle = createLifecycleService({storage,ownerId:config.ownerId,source:unconfirmedLifecycleSource});
+    const scope = lifecycle.admissionScope(chatId);
+    const store = disclosureStore(storage);
+    const current = store.latest();
+    if (!current || store.gate(scope).version !== null ||
+      !store.publications(scope).some(row => row.kind === 'introduction' && row.state === 'delivered')) return false;
+    store.ensure(scope,'update',current.version);
+    return true;
+  } finally { await storage.close(); }
+}
+
+export async function deleteApplicationChatData(config: LocalConfig, chatId: ChatId, generation: number) {
+  const storage = await openStorage(config.databasePath);
+  try {
+    const lifecycle = createLifecycleService({storage,ownerId:config.ownerId,source:unconfirmedLifecycleSource});
+    lifecycle.deleteData(lifecycle.owner(chatId,config.ownerId),generation);
+  } finally { await storage.close(); }
+}
+
+export async function confirmApplicationDisclosure(config: ReturnType<typeof loadApplicationConfig>['config'],
+  chatId: ChatId, receipt: string, version?: number) {
+  const storage = await openStorage(config.databasePath);
+  try {
+    const lifecycle = createLifecycleService({storage,ownerId:config.authorization.ownerId,source:unconfirmedLifecycleSource});
+    const scope = lifecycle.admissionScope(chatId);
+    const store = disclosureStore(storage);
+    const row = store.publications(scope).find(item => item.state === 'unknown' &&
+      (version === undefined ? item.kind === 'introduction' : item.kind === 'update' && item.version === version));
+    if (!row?.text || row.attemptedAt === null) return false;
+    const signal = AbortSignal.timeout(10_000);
+    const channel = createVkChannel({...config.vk,owner:config.authorization.ownerId,lifecycle,chats:storage.chats,signal});
+    const guard = {signal,isCurrent:() => !signal.aborted && lifecycle.isAdmissionCurrent(scope)};
+    if (!await channel.introduction!.confirm(scope,row.text,receipt,row.attemptedAt,guard)) return false;
+    return store.confirm(scope,row.id,receipt,Date.now());
+  } finally { await storage.close(); }
 }

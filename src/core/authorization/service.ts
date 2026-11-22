@@ -62,6 +62,13 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
     async check(context: AuthorizationContext, action: unknown, subjectId?: UserId): Promise<AuthorizationDecision> {
       return guarded(context, action, subjectId, () => ({ allowed: true, value: undefined }));
     },
+    async setTimezone(context: AuthorizationContext, value: string, isCurrent: () => boolean): Promise<AuthorizationDecision> {
+      return guarded(context,'chat.configure',undefined,tx => {
+        if (!isCurrent()) return deny('conflict');
+        tx.updateTimezone(value);
+        return {allowed:true,value:undefined};
+      });
+    },
     async readDiagnostics<T>(context:AuthorizationContext,read:()=>T):Promise<AuthorizationResult<T>> {
       return guarded(context,'diagnostics.read',undefined,()=>{const value=read();if(value instanceof Promise){void value.catch(()=>{});throw new TypeError('Diagnostics: async_reader');}return {allowed:true,value};});
     },

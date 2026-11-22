@@ -6,7 +6,10 @@ import type { ConfigOptions } from '../config/index.js';
 import { createLogger, reportConfigError } from '../logger/index.js';
 import type { ApplicationFailure } from '../logger/types.js';
 import { runApplication } from './service.js';
-import { applicationChatId, initializePrompt, resolveApplicationChat } from './setup.js';
+import {
+  applicationChatId, applicationGroupId, configureDisclosure, confirmApplicationDisclosure, deleteApplicationChatData,
+  initializePrompt, readOnboarding, requestDisclosureUpdate, resolveApplicationChat,
+} from './setup.js';
 
 interface CliOptions {
   readonly config?: ConfigOptions;
@@ -45,6 +48,39 @@ export async function runCli(args: readonly string[], options: CliOptions = {}):
       try { await resolveApplicationChat(config, chatId, decision); }
       catch { return fail('resolution_failed'); }
       createLogger({ destination }).event({ event: 'chat_resolved' }, 'info');
+      return 0;
+    }
+    if (args.length === 2 && args[0] === 'set-disclosure' && args[1]) {
+      const version = await configureDisclosure(loadResolutionConfig(options.config),args[1]);
+      destination.write(JSON.stringify({version})+'\n');
+      return 0;
+    }
+    if (args[0] === 'onboarding-status' && args.length <= 2) {
+      const target = args[1] === undefined ? undefined : applicationGroupId(args[1]);
+      if (args[1] !== undefined && !target) return fail('invalid_arguments');
+      const status = await readOnboarding(loadResolutionConfig(options.config),target);
+      destination.write(JSON.stringify(status)+'\n');
+      return 0;
+    }
+    if (args.length === 2 && args[0] === 'publish-disclosure' && args[1]) {
+      const target = applicationGroupId(args[1]);
+      if (!target || !await requestDisclosureUpdate(loadResolutionConfig(options.config),target)) return fail('resolution_failed');
+      return 0;
+    }
+    if (args.length === 3 && args[0] === 'delete-chat-data' && args[1] && args[2]) {
+      const target = applicationGroupId(args[1]);
+      const generation = Number(args[2]);
+      if (!target || !Number.isSafeInteger(generation) || generation <= 0 || String(generation) !== args[2]) return fail('invalid_arguments');
+      await deleteApplicationChatData(loadResolutionConfig(options.config),target,generation);
+      return 0;
+    }
+    if ((args.length === 3 || args.length === 4) && args[0] === 'confirm-disclosure' && args[1] && args[2]) {
+      const target = applicationGroupId(args[1]);
+      const receipt = args[2];
+      const version = args[3] === undefined ? undefined : Number(args[3]);
+      if (!target || !/^[1-9]\d*$/u.test(receipt) ||
+        (version !== undefined && (!Number.isSafeInteger(version) || version <= 0 || String(version) !== args[3]))) return fail('invalid_arguments');
+      if (!await confirmApplicationDisclosure(loadApplicationConfig(options.config).config,target,receipt,version)) return fail('resolution_failed');
       return 0;
     }
     return fail('invalid_arguments');

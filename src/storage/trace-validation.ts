@@ -2,9 +2,9 @@ import {requireInput} from './validation.js';
 import {StorageError} from './errors.js';
 import type {TracePayload} from './trace-types.js';
 export const traceRows=['complete','unusable_response','unsuccessful','queue_full','current_message_too_large','static_budget_too_small','trace_write_failed','silent_outcome','invalid_route'] as const;
-function plain(value:unknown,keys:readonly string[]):Record<string,unknown>{
+function plain(value:unknown,keys:readonly string[],optional:readonly string[]=[]):Record<string,unknown>{
  requireInput(value!==null&&typeof value==='object'&&!Array.isArray(value)&&Object.getPrototypeOf(value)===Object.prototype);
- const descriptors=Object.getOwnPropertyDescriptors(value);requireInput(Reflect.ownKeys(descriptors).every(k=>typeof k==='string'&&keys.includes(k)&&'value'in descriptors[k]!));
+ const descriptors=Object.getOwnPropertyDescriptors(value);requireInput(Reflect.ownKeys(descriptors).every(k=>typeof k==='string'&&(keys.includes(k)||optional.includes(k))&&'value'in descriptors[k]!));
  requireInput(keys.every(k=>Object.hasOwn(descriptors,k)));return value as Record<string,unknown>;
 }
 function num(v:unknown){requireInput(typeof v==='number'&&Number.isFinite(v)&&v>=0&&v<=Number.MAX_SAFE_INTEGER);}
@@ -12,7 +12,8 @@ function text(v:unknown,max=1024){requireInput(typeof v==='string'&&v.length>0&&
 function one(v:unknown,values:readonly unknown[]){requireInput(values.includes(v));}
 function list(v:unknown,max:number,fn:(v:unknown)=>void){requireInput(Array.isArray(v)&&Object.getPrototypeOf(v)===Array.prototype&&v.length<=max);requireInput(Reflect.ownKeys(v).every(k=>k==='length'||(typeof k==='string'&&/^(0|[1-9][0-9]*)$/.test(k)&&Number(k)<v.length)));for(let i=0;i<v.length;i++){const d=Object.getOwnPropertyDescriptor(v,String(i));requireInput(d&&'value'in d);fn(d.value);}}
 export function validateTrace(value:unknown):asserts value is TracePayload {
- const p=plain(value,['model','prompt','context','summary','route','resultKind','preparationFailure','publication','degraded','degradation','tools']);
+ const p=plain(value,['model','prompt','context','summary','route','resultKind','preparationFailure','publication','degraded','degradation','tools'],['disclosure']);
+ if(Object.hasOwn(p,'disclosure')){const disclosure=plain(p.disclosure,['version','allowed']);requireInput(typeof disclosure.allowed==='boolean');if(disclosure.version!==null)requireInput(Number.isSafeInteger(disclosure.version)&&(disclosure.version as number)>0);if(disclosure.allowed)requireInput(disclosure.version!==null);}
  const model=plain(p.model,['name','invoked']);if(model.name!==null)text(model.name);one(model.invoked,['no','possible','yes']);
  one(p.resultKind,[null,'complete','incomplete','refused','empty','rate_limit','tools_not_supported','cancelled','deadline_exceeded','attempt_limit','error','completed','failed','interrupted','expired','message_missing']);
  one(p.preparationFailure,[null,'missing_system_prompt','static_budget_too_small','current_message_too_large','internal_error']);
