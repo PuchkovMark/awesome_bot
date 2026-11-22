@@ -13,11 +13,12 @@ const handlerMarginMs = 3_000;
 
 function classifyFailure(completion: QueueCompletion, trace: TraceRecord): EvaluationResult['reason'] {
   if (completion.preparationFailure) return completion.preparationFailure;
-  if (trace.payload.publication.status === 'failed' || trace.payload.publication.status === 'unknown') return 'publication_failed';
   const result = completion.result;
   if (!result) return 'processing_failed';
   if (result.kind === 'error') return result.code;
   if (result.kind === 'attempt_limit' || result.kind === 'rate_limit' || result.kind === 'deadline_exceeded' || result.kind === 'cancelled') return result.kind;
+  const { status, reason } = trace.payload.publication;
+  if (status !== 'delivered' && (status !== 'suppressed' || reason === 'trace_write_failed')) return 'publication_failed';
   return null;
 }
 
