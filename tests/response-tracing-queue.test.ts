@@ -28,3 +28,7 @@ test('двойной отказ не фиксирует противоречащ
 test('после удаления поколения поздний результат не воссоздаёт запись',async()=>{
  const s=await openStorage(':memory:');try{const scope=scopeFor(s,'vk:a'),q=queueBackend(s);q.acquire('a',10000,100);q.admit('a',scope,queueMessage('vk:a','m'),()=>true,config);const work=q.take('a')!;q.finish('a',work,'completed');q.release('a');const {lifecycleBackend}=await import('../src/storage/lifecycle-store.js');const l=lifecycleBackend(s);l.ownerDecision(l.begin('vk:a'),'new');q.acquire('b',10000,100);expect(q.finish('b',work,'completed')).toBeNull();expect(await s.traces.last(scopeFor(s,'vk:a'))).toBeNull();q.release('b');}finally{await s.close();vi.useRealTimers();}
 });
+
+test('второй экземпляр не меняет конфигурацию действующего владельца',async()=>{
+ const s=await openStorage(':memory:');try{const q=queueBackend(s);const {traceBackend}=await import('../src/storage/trace-store.js');q.acquire('a',10000,100,{maxRecordBytes:16384,retentionDays:1,messageRetentionDays:30});expect(()=>q.acquire('b',10000,100,{maxRecordBytes:65536,retentionDays:7,messageRetentionDays:30})).toThrow('queue_owned');expect(traceBackend(s).config().maxRecordBytes).toBe(16384);q.release('a');}finally{await s.close();}
+});

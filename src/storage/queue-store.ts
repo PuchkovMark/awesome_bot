@@ -71,12 +71,13 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
         return {status:'queued',messageId:appended.id,jobId:inserted.id};
       }));
     },
-    acquire(token: string, leaseMs: number, safetyMs: number) {
+    acquire(token: string, leaseMs: number, safetyMs: number,config?:import('../core/response-tracing/config.js').TraceConfig,report?:(event:import('../core/response-tracing/metrics.js').TraceEvent)=>void) {
       requireInput(typeof token === 'string' && token.length > 0); timestamp(leaseMs); timestamp(safetyMs);
       return connection.run(db => db.transaction(() => {
         const now = Date.now(); timestamp(now + leaseMs);
         const row = db.prepare('SELECT token,expires_at AS expires FROM queue_lease WHERE singleton=1').get() as {token:string|null;expires:number};
         if (row.token !== null && row.expires > now) throw new StorageError('queue_owned');
+        if(config)traces.configure(config);if(report)traces.observe(report);
         db.prepare('UPDATE queue_lease SET token=?,expires_at=?,safety_ms=? WHERE singleton=1').run(token, now + leaseMs, safetyMs);
         const running=db.prepare("SELECT j.id,j.chat_id AS chatId,j.generation,j.message_id AS messageId,j.received_at AS receivedAt FROM queue_jobs j WHERE j.state='running'").all() as {id:number;chatId:ConnectionScope['chatId'];generation:number;messageId:number;receivedAt:number}[];
         for(const row of running){

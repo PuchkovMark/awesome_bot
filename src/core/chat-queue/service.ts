@@ -1,5 +1,5 @@
 import {publicationRow} from '../message-router/publication.js';
-import {traceBackend,initialTrace} from '../../storage/trace-store.js';
+import {initialTrace} from '../../storage/trace-store.js';
 import type {TracePayload} from '../../storage/trace-types.js';
 import {traceConfig} from '../response-tracing/config.js';
 import {createTraceMetrics} from '../response-tracing/metrics.js';
@@ -26,7 +26,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
   if (!options || typeof options.handler !== 'function') throw new QueueError('invalid_input');
   const config = queueConfig(options.config);
   if(traceConfig(options.tracing).retentionDays*86400000<=config.handlerTimeoutMs)throw new QueueError('invalid_input');
-  const traces=traceBackend(options.storage);traces.configure(traceConfig(options.tracing));const traceMetrics=createTraceMetrics(options.logger);traces.observe(traceMetrics.record);
+  const traceSettings=traceConfig(options.tracing);const traceMetrics=createTraceMetrics(options.logger);
   const backend = queueBackend(options.storage);
   const readMessage = options.storage.messages.get.bind(options.storage.messages);
   const handler = options.handler;
@@ -133,7 +133,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
     async start() {
       if(phase!=='idle')throw new QueueError('stopped');
       token=randomUUID();
-      try { counters.interrupted=backend.acquire(token,config.leaseMs,config.renewIntervalMs); }
+      try { counters.interrupted=backend.acquire(token,config.leaseMs,config.renewIntervalMs,traceSettings,traceMetrics.record); }
       catch(error) { throw safeFailure(error); }
       phase='running';renewAt=performance.now()+config.renewIntervalMs;pump();armTick();
       if(failure)throw failure;
