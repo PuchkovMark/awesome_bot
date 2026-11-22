@@ -6,7 +6,7 @@
 - Дата: 2026-11-22
 - Дата завершения: —
 - Утверждение: владелец подтвердил задачу и две предложенные настройки 2026-11-22. [Решение](../decisions.md#утверждение-задачи-о-восстановлении-администраторов-f41)
-- Связанные документы: [F4.1](../roadmap.md#веха-4-управление-и-защита), [согласованное ручное восстановление](../decisions.md#самостоятельная-f16a-и-ручное-восстановление-владельцем), [роли](completed/006-roles-and-authorization.md), [жизненный цикл](completed/007-chat-connection-lifecycle.md), [события участия VK](completed/022-vk-membership-events.md), [исследование VK](../research/vk-lifecycle-capabilities.md#матрица-требований-f16b), [черновик плана фичи](../plans/026-vk-bot-administrator-recovery.md).
+- Связанные документы: [F4.1](../roadmap.md#веха-4-управление-и-защита), [согласованное ручное восстановление](../decisions.md#самостоятельная-f16a-и-ручное-восстановление-владельцем), [роли](completed/006-roles-and-authorization.md), [жизненный цикл](completed/007-chat-connection-lifecycle.md), [события участия VK](completed/022-vk-membership-events.md), [исследование VK](../research/vk-lifecycle-capabilities.md#матрица-требований-f16b), [утверждённый план фичи](../plans/026-vk-bot-administrator-recovery.md).
 
 ## Проблема или цель
 
