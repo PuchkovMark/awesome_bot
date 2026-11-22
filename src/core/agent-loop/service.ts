@@ -7,7 +7,7 @@ import type { AgentLoop, AgentLoopInput, AgentLoopOptions, AgentLoopOutcome, Age
 
 type Stop = { readonly kind: 'cancelled' | 'deadline_exceeded' };
 /** Только внедрённый клиент. Фабрика не создаёт инфраструктурные ресурсы. */
-export function createAgentLoop(client: LlmClient, options: AgentLoopOptions = {}): AgentLoop {
+export function createAgentLoop(client: LlmClient, options: AgentLoopOptions = {},onAttempt?:(summary:import('./types.js').AgentLoopSummary)=>void): AgentLoop {
   const config = loopOptions(options);
   let invoke: LlmClient['complete'];
   try {
@@ -63,6 +63,7 @@ export function createAgentLoop(client: LlmClient, options: AgentLoopOptions = {
           };
           summary.beginAttempt();
           attempts++;
+          onAttempt?.(summary.snapshot(Math.max(0,performance.now()-started)));
           let pending: Promise<ParsedAttempt>;
           try { pending = Promise.resolve(invoke(request)).then(parseAttempt, () => parseAttempt(undefined)); }
           catch { pending = Promise.resolve(parseAttempt(undefined)); }

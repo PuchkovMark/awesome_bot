@@ -134,7 +134,7 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
      return transaction(token,db=>!!db.prepare("SELECT j.id FROM queue_jobs j JOIN chat_connections c ON c.chat_id=j.chat_id AND c.generation=j.generation JOIN chats s ON s.chat_id=j.chat_id WHERE j.id=? AND j.chat_id=? AND j.generation=? AND j.state='terminal' AND c.state='active' AND s.enabled=1").get(work.id,work.scope.chatId,work.scope.generation));
     },
     progress(token:string,work:QueueWork,payload:TracePayload){
-     return transaction(token,db=>{if(!this.valid(token,work))return false;const json=encodeTrace(payload,traces.config().maxRecordBytes);return db.prepare('UPDATE response_traces SET payload=? WHERE job_id=? AND finished_at IS NULL').run(json,work.id).changes===1;});
+     return transaction(token,db=>{if(!this.valid(token,work))return false;let json:string;try{json=encodeTrace(payload,traces.config().maxRecordBytes);}catch(error){if(!(error instanceof StorageError)||error.code!=='limit_exceeded')throw error;traces.report('size_exceeded');json=encodeTrace(minimalTrace(payload,'size_exceeded'),traces.config().maxRecordBytes);traces.report('minimal_saved');}return db.prepare('UPDATE response_traces SET payload=? WHERE job_id=? AND finished_at IS NULL').run(json,work.id).changes===1;});
     },
     finish(token: string, work: QueueWork, outcome: QueueOutcome, payload?:TracePayload): QueueOutcome|null {
       const commit=(minimal:boolean):QueueOutcome|null=>transaction(token, db => {
