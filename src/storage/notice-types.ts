@@ -10,5 +10,6 @@ export interface NoticeBackend {
  reserve(scope:ConnectionScope,messageId:number,route:RouteMetadata,interval:number,now:number,kind?:NoticeKind):NoticePermit|null;
  confirm(scope:ConnectionScope,permit:NoticePermit,receipt:NoticeReceipt):void;
  recordAnswer(scope:ConnectionScope,receipt:NoticeReceipt,text:string,replyToMessageId?:string):void;
+ retarget(permit:NoticePermit):void;
  discard(permit:NoticePermit):void;
 }

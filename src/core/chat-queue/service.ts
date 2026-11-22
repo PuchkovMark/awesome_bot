@@ -1,3 +1,4 @@
+import {publicationRow} from '../message-router/publication.js';
 import {traceBackend,initialTrace} from '../../storage/trace-store.js';
 import type {TracePayload} from '../../storage/trace-types.js';
 import {traceConfig} from '../response-tracing/config.js';
@@ -75,6 +76,8 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
     if(outcome==='interrupted'||now>=task.deadline)task.controller.abort();
     try {
       const actual = backend.valid(token,task.work)?outcome:'interrupted';
+      const publicationKind=completion?.preparationFailure??completion?.result?.kind??actual;
+      task.trace={...task.trace,publication:{rowId:publicationRow(task.work.route,{kind:publicationKind}),tableVersion:1,reaction:'silence',status:'pending_checks',reason:'none'}};
       const committed=backend.finish(token,task.work,actual,{...task.trace,preparationFailure:completion?.preparationFailure??task.trace.preparationFailure,resultKind:completion?.result?.kind??task.trace.resultKind,summary:completion?.result?.summary??task.trace.summary});
       if(committed==='interrupted')counters.interrupted=add(counters.interrupted,1);
       emit();

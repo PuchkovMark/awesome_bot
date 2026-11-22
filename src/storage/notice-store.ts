@@ -42,6 +42,7 @@ export function createNoticeBackend(connection:Connection,lifecycle:LifecycleBac
     if(appended.status==='duplicate'){const old=readMessage(db,scope.chatId,appended.id);requireInput(old?.purpose==='conversation'&&old.role==='assistant'&&old.text===text&&old.userId===receipt.userId&&old.replyToMessageId===replyToMessageId);}
    });
   },
+  retarget(permit){const data=permits.get(permit);requireInput(data&&data.confirmed===null);data.text=noticeTemplate('generic');},
   discard(permit){permits.delete(permit);},
  };
 }

@@ -12,5 +12,13 @@ export function publicationDecision(route:RouteMetadata|null,current:{readonly e
  }
  if(route.mode==='active'||(route.isGroupChat&&current.responseMode==='active'))return silence;
  if(kind==='current_message_too_large')return {kind:'notice',template:'current_message_too_large'};
- return typeof kind==='string'&&['incomplete','refused','empty','rate_limit','tools_not_supported','deadline_exceeded','attempt_limit','error','failed','queue_full','missing_system_prompt','static_budget_too_small','internal_error'].includes(kind)?{kind:'notice'}:silence;
+ return typeof kind==='string'&&['incomplete','refused','empty','rate_limit','tools_not_supported','deadline_exceeded','attempt_limit','error','failed','queue_full','missing_system_prompt','static_budget_too_small','internal_error','trace_write_failed'].includes(kind)?{kind:'notice'}:silence;
+}
+
+export function publicationRow(route:RouteMetadata|null,outcome:unknown):import('../../storage/trace-types.js').TracePublication['rowId'] {
+ if(!route)return 'invalid_route';
+ const kind=outcome&&typeof outcome==='object'?Object.getOwnPropertyDescriptor(outcome,'kind')?.value as unknown:undefined;
+ if(typeof kind!=='string')return 'silent_outcome';
+ if(['complete','queue_full','current_message_too_large','static_budget_too_small','trace_write_failed'].includes(kind))return kind;
+ return ['incomplete','refused','empty','rate_limit','tools_not_supported','deadline_exceeded','attempt_limit','error','failed','missing_system_prompt','internal_error'].includes(kind)?'unsuccessful':'silent_outcome';
 }
