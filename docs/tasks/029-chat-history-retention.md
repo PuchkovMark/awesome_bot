@@ -6,7 +6,7 @@
 - Дата: 2026-11-23
 - Дата завершения: —
 - Утверждение: владелец подтвердил задачу 2026-11-23 после уточнения правил очистки и контрольного сценария. [Решение](../decisions.md#утверждение-задачи-об-очистке-истории-f44)
-- Связанные документы: [F4.4](../roadmap.md#веха-4-управление-и-защита), [очередь F2.3](completed/013-chat-queue.md), [трассировка F2.6](completed/017-response-tracing.md), [команды F4.2](completed/027-chat-control-commands.md), [лимиты F4.3](completed/028-user-and-chat-limits.md), [черновик плана фичи](../plans/029-chat-history-retention.md).
+- Связанные документы: [F4.4](../roadmap.md#веха-4-управление-и-защита), [очередь F2.3](completed/013-chat-queue.md), [трассировка F2.6](completed/017-response-tracing.md), [команды F4.2](completed/027-chat-control-commands.md), [лимиты F4.3](completed/028-user-and-chat-limits.md), [утверждённый план фичи](../plans/029-chat-history-retention.md).
 
 ## Проблема или цель
 
