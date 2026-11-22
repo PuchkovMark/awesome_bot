@@ -11,6 +11,7 @@ test('Node.js загружает собранные ESM-модули без за
   );
   modules.push(pathToFileURL(resolve('dist/storage/catalog-admin.js')).href);
   modules.push(pathToFileURL(resolve('dist/evals/runner.js')).href);
+  modules.push(pathToFileURL(resolve('dist/evals/cli.js')).href);
   const directory = mkdtempSync(join(tmpdir(), 'awesome-import-'));
   try {
     const script = `

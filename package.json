@@ -16,7 +16,8 @@
     "check:traces": "node scripts/check-trace-boundary.mjs",
     "check:catalog": "node scripts/check-catalog-boundary.mjs",
     "test:queue-load": "vitest run --config vitest.queue-load.config.ts",
-    "check:context": "node scripts/check-context-boundary.mjs"
+    "check:context": "node scripts/check-context-boundary.mjs",
+    "eval:local": "node dist/evals/cli.js"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
