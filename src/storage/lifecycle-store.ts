@@ -72,6 +72,15 @@ export function createLifecycleBackend(connection: Connection) {
   }
   return {
     assertScope,
+    pauseActivePlatform(db: Database, platform: string) {
+      requireInput(db.inTransaction && /^[a-z][a-z0-9_-]*$/u.test(platform));
+      const prefix = platform + ':';
+      const where = "state='active' AND substr(chat_id,1,?)=?";
+      if (db.prepare(`SELECT 1 FROM chat_connections WHERE ${where} AND revision=9007199254740991 LIMIT 1`)
+        .get(prefix.length, prefix)) throw new StorageError('operation_failed');
+      db.prepare(`UPDATE chat_connections SET state='uncertain',revision=revision+1 WHERE ${where}`)
+        .run(prefix.length, prefix);
+    },
     activeChatIds(platform: string): readonly ChatId[] {
       return connection.run(db => {
         const prefix = `${platform}:`;

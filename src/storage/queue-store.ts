@@ -81,7 +81,7 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
         return {status:'queued',messageId:appended.id,jobId:inserted.id};
       }));
     },
-    acquire(token: string, leaseMs: number, safetyMs: number,config?:import('../core/response-tracing/config.js').TraceConfig,report?:(event:import('../core/response-tracing/metrics.js').TraceEvent)=>void) {
+    acquire(token: string, leaseMs: number, safetyMs: number,config?:import('../core/response-tracing/config.js').TraceConfig,report?:(event:import('../core/response-tracing/metrics.js').TraceEvent)=>void,pausePlatform?:string) {
       requireInput(typeof token === 'string' && token.length > 0); timestamp(leaseMs); timestamp(safetyMs);
       return connection.run(db => db.transaction(() => {
         const now = Date.now(); timestamp(now + leaseMs);
@@ -89,6 +89,7 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
         if (row.token !== null && row.expires > now) throw new StorageError('queue_owned');
         if(config)traces.configure(config);if(report)traces.observe(report);
         db.prepare('UPDATE queue_lease SET token=?,expires_at=?,safety_ms=? WHERE singleton=1').run(token, now + leaseMs, safetyMs);
+        if (pausePlatform !== undefined) lifecycle.pauseActivePlatform(db, pausePlatform);
         const running=db.prepare("SELECT j.id,j.chat_id AS chatId,j.generation,j.message_id AS messageId,j.received_at AS receivedAt FROM queue_jobs j WHERE j.state='running'").all() as {id:number;chatId:ConnectionScope['chatId'];generation:number;messageId:number;receivedAt:number}[];
         for(const row of running){
          const exists=db.prepare('SELECT payload FROM response_traces WHERE job_id=?').get(row.id) as {payload:string}|undefined;
@@ -119,15 +120,17 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
         return rows.map(row=>Math.max(0,now-row.receivedAt));
       });
     },
-    take(token: string, excluded:readonly string[]=[]): QueueWork|null {
+    take(token: string, excluded:readonly string[]=[], platform?: string): QueueWork|null {
       return transaction(token, db => {
+        const prefix = platform === undefined ? null : platform + ':';
         const row=db.prepare(`SELECT j.id,j.chat_id AS chatId,j.generation,j.message_id AS messageId,j.received_at AS receivedAt,j.route_kind AS routeKind,j.route_mode AS routeMode,j.route_group AS routeGroup
           FROM queue_jobs j JOIN chat_connections c ON c.chat_id=j.chat_id AND c.generation=j.generation
           LEFT JOIN chats s ON s.chat_id=j.chat_id LEFT JOIN queue_turns t ON t.chat_id=j.chat_id
           WHERE j.state='queued' AND j.expires_at>? AND c.state='active' AND coalesce(s.enabled,1)=1
+          AND (? IS NULL OR substr(j.chat_id,1,length(?))=?)
           AND NOT EXISTS(SELECT 1 FROM queue_jobs r WHERE r.chat_id=j.chat_id AND r.state='running')
           AND j.chat_id NOT IN (SELECT value FROM json_each(?))
-          ORDER BY coalesce(t.served,0),j.id LIMIT 1`).get(Date.now(),JSON.stringify(excluded)) as {routeKind:RouteMetadata['kind']|null;routeMode:RouteMetadata['mode']|null;routeGroup:number|null;id:number;chatId:ConnectionScope['chatId'];generation:number;messageId:number;receivedAt:number}|undefined;
+          ORDER BY coalesce(t.served,0),j.id LIMIT 1`).get(Date.now(),prefix,prefix,prefix,JSON.stringify(excluded)) as {routeKind:RouteMetadata['kind']|null;routeMode:RouteMetadata['mode']|null;routeGroup:number|null;id:number;chatId:ConnectionScope['chatId'];generation:number;messageId:number;receivedAt:number}|undefined;
         if(!row)return null;
         const scope=lifecycle.restore(row);
         db.prepare("UPDATE queue_jobs SET state='running',owner=? WHERE id=?").run(token,row.id);

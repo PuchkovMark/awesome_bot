@@ -1,4 +1,4 @@
-import type { CapabilityState, ChannelAdapter, ChatId, PlatformMessageId, SendResult } from '../../contracts/index.js';
+import type { CapabilityState, ChannelAdapter, ChatId, ConnectionScope, PlatformMessageId, SendResult } from '../../contracts/index.js';
 import type { PublicationGuard, PublicationPort } from '../../core/index.js';
 import type { Storage } from '../../storage/index.js';
 import { createVkSdkApi } from './api.js';
@@ -22,7 +22,8 @@ interface VkChannelDependencies {
 }
 
 export function createVkChannel(options: VkChannelOptions, dependencies: VkChannelDependencies = {}) {
-  const api = dependencies.api ?? createVkSdkApi(options.groupId, options.token);
+  const signal = options.signal ?? new AbortController().signal;
+  const api = dependencies.api ?? createVkSdkApi(options.groupId, options.token, signal);
   const inbound = createVkInbound(options, {
     api,
     ...(dependencies.transport ? { transport: dependencies.transport } : {}),
@@ -30,7 +31,6 @@ export function createVkChannel(options: VkChannelOptions, dependencies: VkChann
   const outbound = createVkOutbound({
     groupId: options.groupId, api, ...(dependencies.wait ? { wait: dependencies.wait } : {}),
   });
-  const signal = options.signal ?? new AbortController().signal;
   let typingFailed = 0;
 
   function guardFor(chatId: ChatId): PublicationGuard {
@@ -126,6 +126,17 @@ export function createVkChannel(options: VkChannelOptions, dependencies: VkChann
   return Object.freeze({
     ...adapter,
     startRouted: inbound.startRouted,
+    async sendTypingForWork(scope: ConnectionScope,
+      work: Pick<PublicationGuard, 'signal' | 'isCurrent'>) {
+      if (!work.isCurrent() || work.signal.aborted) return;
+      try {
+        const guard = guardFor(scope.chatId);
+        await outbound.sendTyping(scope.chatId, {
+          ...guard, signal: AbortSignal.any([signal, work.signal]),
+          isCurrent: () => guard.isCurrent() && work.isCurrent(),
+        });
+      } catch { typingFailed++; }
+    },
     publicationPort,
     stats: () => Object.freeze({ ...inbound.stats(), typingFailed }),
   });

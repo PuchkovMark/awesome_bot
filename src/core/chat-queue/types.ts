@@ -13,6 +13,8 @@ export interface ChatQueueOptions {
   readonly onSettled?:(work:QueueSettlement,completion:QueueCompletion)=>Promise<void>;
   readonly storage: Storage; readonly handler: QueueHandler;
   readonly config?: Partial<QueueConfig>; readonly logger?: SafeLogger;
+  /** У привязанного к платформе воркера проверка непрерывности предшествует выдаче работы. */
+  readonly platform?: string;
 }
 export interface ChatQueue {
   readonly signal:AbortSignal;

@@ -79,6 +79,26 @@ describe('Bots Long Poll', () => {
       .rejects.toMatchObject({ code: 'access_denied', vkCode: 5, message: 'VK Long Poll: access_denied' });
     expect(fetch).not.toHaveBeenCalled();
   });
+
+  it('подтверждает готовность только на корректной странице и сохраняет её события', async () => {
+    const controller = new AbortController();
+    const events: string[] = [];
+    const serverRequest = vi.fn(async () => server);
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(Response.json({ failed: 1, ts: '50' }))
+      .mockResolvedValueOnce(Response.json({ ts: '51', updates: [{ sample: true }] }));
+    await createVkLongPoll({ fetch, api: { getLongPollServer: serverRequest } }).run({
+      async onGap(reason) { events.push(reason); },
+      onReady() { events.push('ready'); },
+      onUpdates(updates) {
+        expect(updates).toEqual([{ sample: true }]);
+        events.push('updates');
+        controller.abort();
+      },
+    }, controller.signal);
+    expect(events).toEqual(['startup', 'lost_position', 'ready', 'updates']);
+    expect(serverRequest).toHaveBeenCalledWith(controller.signal);
+  });
 });
 
 describe('VK API на входной границе', () => {

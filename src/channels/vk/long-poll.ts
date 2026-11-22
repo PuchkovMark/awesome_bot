@@ -11,6 +11,7 @@ export type VkPollGap = 'startup' | 'lost_position' | 'renew_server' | 'invalid_
 interface VkPollListener {
   readonly onGap: (reason: VkPollGap) => Promise<void>;
   readonly onUpdates: (updates: readonly unknown[]) => void;
+  readonly onReady?: () => void;
 }
 
 export interface VkPollTransport {
@@ -55,6 +56,7 @@ export function createVkLongPoll(options: {
     async run(listener: VkPollListener, signal: AbortSignal): Promise<void> {
       if (signal.aborted) return;
       let backoff = 250;
+      let ready = false;
       let lastGap: VkPollGap | undefined;
       let session: { url: URL; key: string; cursor: string } | undefined;
 
@@ -78,7 +80,7 @@ export function createVkLongPoll(options: {
       while (!signal.aborted) {
         if (!session) {
           try {
-            const server = await options.api.getLongPollServer();
+            const server = await options.api.getLongPollServer(signal);
             session = { url: serverUrl(server.server), key: server.key, cursor: server.ts };
           } catch (error) {
             if (signal.aborted) return;
@@ -121,6 +123,11 @@ export function createVkLongPoll(options: {
           session.cursor = next;
           backoff = 250;
           lastGap = undefined;
+          if (!ready) {
+            ready = true;
+            listener.onReady?.();
+          }
+          if (signal.aborted) return;
           listener.onUpdates(page.updates);
           continue;
         }

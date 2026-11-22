@@ -18,6 +18,7 @@ export interface VkInboundOptions {
   readonly token: string;
   readonly lifecycle: Lifecycle;
   readonly signal?: AbortSignal;
+  readonly onReady?: () => void;
 }
 
 interface VkInboundDependencies {
@@ -30,9 +31,9 @@ export function createVkInbound(options: VkInboundOptions, dependencies: VkInbou
   if (!Number.isSafeInteger(groupId) || groupId <= 0 || !token.trim()) {
     throw new TypeError('VK inbound: invalid configuration');
   }
-  const api = dependencies.api ?? createVkSdkApi(groupId, token);
-  const transport = dependencies.transport ?? createVkLongPoll({ api });
   const signal = options.signal ?? new AbortController().signal;
+  const api = dependencies.api ?? createVkSdkApi(groupId, token, signal);
+  const transport = dependencies.transport ?? createVkLongPoll({ api });
   const counters = {
     ignored: 0, invalid: 0, paused: 0, dispatched: 0, failed: 0,
     connectionChanges: 0, membershipDispatched: 0, duplicateSignals: 0, staleSignals: 0,
@@ -150,7 +151,7 @@ export function createVkInbound(options: VkInboundOptions, dependencies: VkInbou
             counters.paused++;
             return;
           }
-          const enrichment = await api.enrich(message);
+          const enrichment = await api.enrich(message, { signal, isCurrent });
           if (!isCurrent()) {
             counters.paused++;
             return;
@@ -168,6 +169,7 @@ export function createVkInbound(options: VkInboundOptions, dependencies: VkInbou
 
     try {
       await transport.run({
+        ...(options.onReady ? { onReady: options.onReady } : {}),
         async onGap(reason) {
           gaps[reason]++;
           const next = Symbol();

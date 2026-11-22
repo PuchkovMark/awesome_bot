@@ -1,5 +1,6 @@
 import { ConfigError, configErrorCodes } from '../config/errors.js';
 import { configParameters } from '../config/types.js';
+import { applicationFailures } from './types.js';
 import type { ErrorCategory, LogEvent } from './types.js';
 
 // Не читать геттеры, не вызывать toJSON и не передавать исходный объект сериализатору.
@@ -26,6 +27,11 @@ export function safeEvent(input: unknown): LogEvent | undefined {
     }
   }
   if (event === 'config_loaded') return { event };
+  if (event === 'application_ready' || event === 'application_stopped' || event === 'prompt_initialized' || event === 'chat_resolved') return { event };
+  if (event === 'application_failed') {
+    const reason = applicationFailures.find(candidate => candidate === ownData(input, 'reason'));
+    if (reason) return { event, reason };
+  }
   if (event === 'component_error') {
     const category = ownData(input, 'category');
     if (category === 'configuration' || category === 'type' || category === 'range' || category === 'unknown') {

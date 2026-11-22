@@ -25,6 +25,8 @@ function safeFailure(error: unknown): QueueError {
 export function createChatQueue(options: ChatQueueOptions): ChatQueue {
   if (!options || typeof options.handler !== 'function') throw new QueueError('invalid_input');
   const config = queueConfig(options.config);
+  const platform = options.platform;
+  if (platform !== undefined && (typeof platform !== 'string' || !/^[a-z][a-z0-9_-]*$/u.test(platform))) throw new QueueError('invalid_input');
   if(traceConfig(options.tracing).retentionDays*86400000<=config.handlerTimeoutMs)throw new QueueError('invalid_input');
   const traceSettings=traceConfig(options.tracing);const traceMetrics=createTraceMetrics(options.logger);
   const backend = queueBackend(options.storage);
@@ -118,7 +120,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
       if(phase==='running') {
         const expired=backend.expire(token);counters.expired=add(counters.expired,expired.length);expired.forEach(wait);
         while(tasks.size<config.maxConcurrentChats) {
-          const work=backend.take(token,[...tasks.values()].map(t=>t.work.scope.chatId));if(!work)break;launch(work);
+          const work=backend.take(token,[...tasks.values()].map(t=>t.work.scope.chatId),platform);if(!work)break;launch(work);
         }
         emit();
       }
@@ -135,13 +137,14 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
     async start() {
       if(phase!=='idle')throw new QueueError('stopped');
       token=randomUUID();
-      try { counters.interrupted=backend.acquire(token,config.leaseMs,config.renewIntervalMs,traceSettings,traceMetrics.record); }
+      try { counters.interrupted=backend.acquire(token,config.leaseMs,config.renewIntervalMs,traceSettings,traceMetrics.record,platform); }
       catch(error) { throw safeFailure(error); }
       phase='running';renewAt=performance.now()+config.renewIntervalMs;pump();armTick();
       if(failure)throw failure;
     },
     async admitRouted(scope,message,decision){
       if(phase!=='running')return {admission:{status:'stopped'},decision:null};
+      if(platform!==undefined&&!scope.chatId.startsWith(platform+':'))throw new QueueError('invalid_input');
       try{
        const result=backend.admitRouted(token,scope,message,decision,config);
        if(result.admission.status==='queue_full')counters.rejected=add(counters.rejected,1);
@@ -150,6 +153,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
     },
     async admit(scope,message,decision) {
       if(phase!=='running')return {status:'stopped' as const};
+      if(platform!==undefined&&!scope.chatId.startsWith(platform+':'))throw new QueueError('invalid_input');
       try {
         const expired=backend.expire(token); counters.expired=add(counters.expired,expired.length);expired.forEach(wait);
         const result=backend.admit(token,scope,message,decision,config);

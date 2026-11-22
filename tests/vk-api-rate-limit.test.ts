@@ -84,4 +84,24 @@ describe('общий лимитер VK API', () => {
     await expect(api.getLongPollServer()).rejects.toMatchObject({ code: 6 });
     expect(attempt).toHaveBeenCalledTimes(3);
   });
+
+  it('после остановки не повторяет начатый запрос сервера и не начинает чтение профиля', async () => {
+    const controller = new AbortController();
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const attempt = vi.fn(async () => {
+      entered.resolve();
+      await release.promise;
+      return { error: { error_code: 6 } };
+    });
+    const request = createVkApiCall(attempt, createVkRateLimiter(clockFixture()));
+    const api = createVkApi(314, request, controller.signal);
+    const pending = expect(api.getLongPollServer(controller.signal)).rejects.toMatchObject({ code: 6 });
+    await entered.promise;
+    controller.abort();
+    release.resolve();
+    await pending;
+    expect(await api.getUserName(73)).toBeNull();
+    expect(attempt).toHaveBeenCalledOnce();
+  });
 });

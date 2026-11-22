@@ -9,6 +9,9 @@
   },
   "packageManager": "npm@11.20.0",
   "scripts": {
+    "start": "node dist/app/cli.js start",
+    "init:prompt": "node dist/app/cli.js init-prompt",
+    "resolve:chat": "node dist/app/cli.js resolve-chat",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "build": "npm run lint && npm run check:catalog && npm run check:context && npm run check:traces && npm run typecheck && tsc -p tsconfig.build.json",
