@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createVkInbound } from '../src/channels/index.js';
-import type { VkApi } from '../src/channels/vk/api.js';
+import type { VkInboundApi } from '../src/channels/vk/api.js';
 import type { VkPollTransport } from '../src/channels/vk/long-poll.js';
 import { createChatQueue, createLifecycleService, createMessageRouter } from '../src/core/index.js';
 import type { ChatId, ConnectionScope } from '../src/contracts/index.js';
@@ -49,7 +49,7 @@ async function fixture() {
   });
   const { transport, update, gap, ready } = transportFixture();
   const controller = new AbortController();
-  const api: VkApi = {
+  const api: VkInboundApi = {
     // Подмена транспорта работает без сервера VK.
     async getLongPollServer() { throw new Error('Unexpected network'); },
     async enrich(message) {
@@ -75,7 +75,7 @@ async function fixture() {
 
 function start(f: Awaited<ReturnType<typeof fixture>>, options: {
   readonly storage?: Storage;
-  readonly api?: VkApi;
+  readonly api?: VkInboundApi;
 } = {}) {
   const onDecision = vi.fn();
   const router = createMessageRouter({ storage: options.storage ?? f.storage, queue: f.queue, onDecision });

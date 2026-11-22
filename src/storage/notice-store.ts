@@ -22,16 +22,17 @@ export function createNoticeBackend(connection:Connection,lifecycle:LifecycleBac
     const permit=Object.freeze({}) as NoticePermit;permits.set(permit,{scope,source:source.messageId,confirmed:null,text:noticeTemplate(kind)});return permit;
    });
   },
-  confirm(scope,permit,receipt){
+  confirm(scope,permit,receipt,text){
    lifecycle.transaction(scope,db=>{
     const data=permits.get(permit);requireInput(data?.scope===scope);
     requireInput((db.prepare('SELECT enabled FROM chats WHERE chat_id=?').get(scope.chatId) as {enabled:number}|undefined)?.enabled===1);
     string(receipt.messageId,true);string(receipt.authorName);timestamp(receipt.timestamp);
     requireInput(data.confirmed===null||data.confirmed===receipt.messageId);
-    const input={chatId:scope.chatId,messageId:receipt.messageId,userId:receipt.userId,authorName:receipt.authorName,role:'assistant' as const,text:data.text,replyToMessageId:data.source,timestamp:receipt.timestamp};
+    const deliveredText=text??data.text;
+    const input={chatId:scope.chatId,messageId:receipt.messageId,userId:receipt.userId,authorName:receipt.authorName,role:'assistant' as const,text:deliveredText,replyToMessageId:data.source,timestamp:receipt.timestamp};
     const appended=messages.append(input);
     if(appended.status==='inserted')db.prepare("UPDATE messages SET purpose='service_notice' WHERE id=?").run(appended.id);
-    else{const old=readMessage(db,scope.chatId,appended.id);requireInput(old?.purpose==='service_notice'&&old.text===data.text&&old.replyToMessageId===data.source&&old.role==='assistant'&&old.userId===receipt.userId);}
+    else{const old=readMessage(db,scope.chatId,appended.id);requireInput(old?.purpose==='service_notice'&&old.text===deliveredText&&old.replyToMessageId===data.source&&old.role==='assistant'&&old.userId===receipt.userId);}
     data.confirmed=receipt.messageId;
    });
   },

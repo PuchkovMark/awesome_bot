@@ -2,7 +2,7 @@ import type { ChatId, ConnectionScope, EventHandler, IncomingMessage } from '../
 import type { createLifecycleService, createMessageRouter } from '../../core/index.js';
 import { StorageError } from '../../storage/errors.js';
 import { createVkSdkApi } from './api.js';
-import type { VkApi } from './api.js';
+import type { VkInboundApi } from './api.js';
 import { createVkLongPoll } from './long-poll.js';
 import type { VkPollGap, VkPollTransport } from './long-poll.js';
 import { normalizeVkIncoming, parseVkIncoming, vkChatId } from './normalize.js';
@@ -19,7 +19,7 @@ export interface VkInboundOptions {
 }
 
 interface VkInboundDependencies {
-  readonly api?: VkApi;
+  readonly api?: VkInboundApi;
   readonly transport?: VkPollTransport;
 }
 

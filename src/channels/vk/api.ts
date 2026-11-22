@@ -1,12 +1,18 @@
-import { API } from 'vk-io';
+import { API, APIRequest } from 'vk-io';
 import type { KnownBoolean } from '../../contracts/index.js';
 import { isVkGroupChat, vkId, vkRecord } from './normalize.js';
 import type { VkEnrichment, VkIncoming } from './normalize.js';
+import { createVkRateLimiter, waitForVkRetry } from './rate-limit.js';
+import type { VkRequestGuard } from './rate-limit.js';
 
 type ApiMethod = 'groups.getLongPollServer' | 'users.get'
-  | 'messages.getConversationMembers' | 'messages.getByConversationMessageId';
+  | 'messages.getConversationMembers' | 'messages.getByConversationMessageId' | 'messages.getConversationsById'
+  | 'messages.send' | 'messages.setActivity';
 
-export type VkApiCall = (method: ApiMethod, parameters: Record<string, string | number>) => Promise<unknown>;
+type ApiParameters = Record<string, string | number>;
+
+export type VkApiCall = (method: ApiMethod, parameters: ApiParameters, guard?: VkRequestGuard) => Promise<unknown>;
+type VkApiAttempt = (method: ApiMethod, parameters: ApiParameters) => Promise<unknown>;
 
 export interface VkLongPollServer {
   readonly server: string;
@@ -20,6 +26,41 @@ export class VkApiError extends Error {
     super(code === undefined ? 'VK API request failed' : `VK API error ${code}`);
     this.name = 'VkApiError';
     this.code = code;
+  }
+}
+
+export function vkErrorCode(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+}
+
+export function createVkApiCall(attempt: VkApiAttempt, limit = createVkRateLimiter()): VkApiCall {
+  return (method, parameters, guard) => limit(async () => {
+    let body: Record<string, unknown> | undefined;
+    try {
+      body = vkRecord(await attempt(method, parameters));
+    } catch {
+      throw new VkApiError(undefined);
+    }
+    if (body && Object.hasOwn(body, 'response')) {
+      if (body.error !== undefined || body.response === undefined) throw new VkApiError(undefined);
+      return body.response;
+    }
+    throw new VkApiError(vkErrorCode(vkRecord(body?.error)?.error_code));
+  }, guard);
+}
+
+export function vkReadRetryable(error: unknown): boolean {
+  return error instanceof VkApiError && (error.code === undefined || error.code === 6 || error.code === 10);
+}
+
+async function readWithRetry(call: VkApiCall, method: ApiMethod, parameters: ApiParameters): Promise<unknown> {
+  for (let retry = 0; ; retry++) {
+    try {
+      return await call(method, parameters);
+    } catch (error) {
+      if (retry >= 2 || !vkReadRetryable(error)) throw error;
+      await waitForVkRetry(retry);
+    }
   }
 }
 
@@ -134,15 +175,19 @@ export function createVkApi(
   groupId: number,
   call: VkApiCall,
 ) {
-  const nameFor = personalProfiles(call);
+  const read: VkApiCall = (method, parameters) => readWithRetry(call, method, parameters);
+  const nameFor = personalProfiles(read);
   return Object.freeze({
+    request: call,
+    async getUserName(id: number): Promise<string | null> {
+      return (await nameFor(id)) ?? null;
+    },
     async getLongPollServer(): Promise<VkLongPollServer> {
       let response: Record<string, unknown> | undefined;
       try {
-        response = vkRecord(await call('groups.getLongPollServer', { group_id: groupId }));
+        response = vkRecord(await read('groups.getLongPollServer', { group_id: groupId }));
       } catch (error) {
-        const code = vkRecord(error)?.code;
-        throw new VkApiError(typeof code === 'number' && Number.isSafeInteger(code) && code > 0 ? code : undefined);
+        throw new VkApiError(vkErrorCode(vkRecord(error)?.code));
       }
       const ts = vkCursor(response?.ts);
       if (!ts || typeof response?.server !== 'string' || !response.server || typeof response.key !== 'string' || !response.key) {
@@ -152,7 +197,7 @@ export function createVkApi(
     },
     async enrich(message: VkIncoming): Promise<VkEnrichment> {
       const [name, isAdmin, verifiedReply] = await Promise.all([
-        nameFor(message.authorId), adminFor(call, message), verifyReply(call, message),
+        nameFor(message.authorId), adminFor(read, message), verifyReply(read, message),
       ]);
       return {
         ...(name === undefined ? {} : { authorName: name }),
@@ -165,8 +210,9 @@ export function createVkApi(
 }
 
 export type VkApi = ReturnType<typeof createVkApi>;
+export type VkInboundApi = Pick<VkApi, 'getLongPollServer' | 'enrich'>;
 
 export function createVkSdkApi(groupId: number, token: string): VkApi {
-  const sdk = new API({ token, apiBaseUrl: 'https://api.vk.ru/method', apiVersion: '5.199', apiLimit: 20 });
-  return createVkApi(groupId, (method, parameters) => sdk.call<unknown>(method, parameters));
+  const sdk = new API({ token, apiBaseUrl: 'https://api.vk.ru/method', apiVersion: '5.199' });
+  return createVkApi(groupId, createVkApiCall((method, params) => new APIRequest({ api: sdk, method, params }).make()));
 }

@@ -15,12 +15,22 @@ import type { QueueWork, QueueOutcome, QueueRecord } from './queue-types.js';
 import { StorageError } from './errors.js';
 import { requireInput, timestamp } from './validation.js';
 export function createQueueBackend(connection: Connection, lifecycle: LifecycleBackend,traces:TraceBackend) {
+  const runningRevisions = new WeakMap<QueueWork, number>();
   function owned(db: Database, token: string) {
     const row = db.prepare('SELECT token,expires_at AS expires FROM queue_lease WHERE singleton=1').get() as {token:string|null;expires:number};
     if (row.token !== token || row.expires <= Date.now()) throw new StorageError('queue_lost_ownership');
   }
   function transaction<T>(token: string, operation: (db: Database) => T): T {
     return connection.run(db => db.transaction(() => { owned(db, token); const result = operation(db); owned(db, token); return result; }).immediate());
+  }
+  function currentWork(db: Database, work: QueueWork): boolean {
+    const expected = runningRevisions.get(work);
+    if (expected === undefined) return false;
+    try { return lifecycle.assertScope(db, work.scope).revision === expected; }
+    catch (error) {
+      if (error instanceof StorageError && (error.code === 'stale_scope' || error.code === 'uncertain_connection')) return false;
+      throw error;
+    }
   }
   function turn(db:Database, scope:{readonly chatId:string;readonly generation:number}) {
     const row=db.prepare('UPDATE queue_lease SET sequence=sequence+1 WHERE singleton=1 AND sequence<9007199254740991 RETURNING sequence').get() as {sequence:number}|undefined;
@@ -122,17 +132,21 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
         const scope=lifecycle.restore(row);
         db.prepare("UPDATE queue_jobs SET state='running',owner=? WHERE id=?").run(token,row.id);
         const work=Object.freeze({id:row.id,scope,messageId:row.messageId,receivedAt:row.receivedAt,route:row.routeKind&&row.routeMode&&row.routeGroup!==null?Object.freeze({kind:row.routeKind,mode:row.routeMode,isGroupChat:row.routeGroup===1}):null});
+        runningRevisions.set(work,lifecycle.assertScope(db,scope).revision);
         startTrace(db,work,traces.config());return work;
       });
     },
     valid(token: string, work: QueueWork): boolean {
       return transaction(token, db => {
+        if (!currentWork(db, work)) return false;
         const row=db.prepare("SELECT j.id FROM queue_jobs j JOIN chat_connections c ON c.chat_id=j.chat_id AND c.generation=j.generation LEFT JOIN chats s ON s.chat_id=j.chat_id WHERE j.id=? AND j.owner=? AND j.state='running' AND c.state='active' AND coalesce(s.enabled,1)=1 AND (j.route_kind IS NULL OR s.response_mode!='silent')").get(work.id,token);
         return !!row;
       });
     },
     publicationValid(token:string,work:QueueWork):boolean {
-     return transaction(token,db=>!!db.prepare("SELECT j.id FROM queue_jobs j JOIN chat_connections c ON c.chat_id=j.chat_id AND c.generation=j.generation JOIN chats s ON s.chat_id=j.chat_id WHERE j.id=? AND j.chat_id=? AND j.generation=? AND j.state='terminal' AND c.state='active' AND s.enabled=1").get(work.id,work.scope.chatId,work.scope.generation));
+     return transaction(token,db=>{
+      return currentWork(db,work)&&!!db.prepare("SELECT j.id FROM queue_jobs j JOIN chats s ON s.chat_id=j.chat_id WHERE j.id=? AND j.chat_id=? AND j.generation=? AND j.state='terminal' AND s.enabled=1").get(work.id,work.scope.chatId,work.scope.generation);
+     });
     },
     progress(token:string,work:QueueWork,payload:TracePayload){
      return transaction(token,db=>{if(!this.valid(token,work))return false;let json:string;try{json=encodeTrace(payload,traces.config().maxRecordBytes);}catch(error){if(!(error instanceof StorageError)||error.code!=='limit_exceeded')throw error;traces.report('size_exceeded');json=encodeTrace(minimalTrace(payload,'size_exceeded'),traces.config().maxRecordBytes);traces.report('minimal_saved');}return db.prepare('UPDATE response_traces SET payload=? WHERE job_id=? AND finished_at IS NULL').run(json,work.id).changes===1;});

@@ -5,7 +5,7 @@ import type {RouteMetadata} from './queue-types.js';
 export interface TracePublication {
  readonly rowId:string;readonly tableVersion:1;readonly reaction:'answer'|'notice'|'silence';
  readonly status:'pending_checks'|'allowed'|'suppressed'|'delivered'|'failed'|'unknown';
- readonly reason:'none'|'no_port'|'guard'|'no_reply'|'notice_period'|'trace_write_failed'|'publication_failed'|'journal_failed';
+ readonly reason:'none'|'no_port'|'guard'|'no_reply'|'notice_period'|'trace_write_failed'|'publication_failed'|'journal_failed'|'partial_delivery';
 }
 export interface TracePayload {
  readonly model:{readonly name:string|null;readonly invoked:'no'|'possible'|'yes'};
