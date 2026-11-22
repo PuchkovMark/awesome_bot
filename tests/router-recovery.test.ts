@@ -15,6 +15,6 @@ test('routed callback видит согласованные настройки, 
  backend.admitRouted('o',scope,queueMessage('vk:a','1'),callback,queueConfig());expect(callback).toHaveBeenCalledOnce();
  expect(()=>backend.admitRouted('o',scope,queueMessage('vk:a','bad'),(async()=>({reason:'mention',route})) as never,queueConfig())).toThrow('invalid_input');expect(await s.messages.list(scope,{limit:10})).toHaveLength(1);
  backend.release('o');await s.close();s=await openStorage(f.path);const seen=vi.fn(async(work)=>{expect(work.route).toEqual(route);});
- const q=createChatQueue({storage:s,handler:async()=> 'completed',onSettled:seen});await q.start();await flushQueue();expect(seen).toHaveBeenCalledOnce();await q.stop();
+ const q=createChatQueue({tracing:{messageRetentionDays:30},storage:s,handler:async()=> 'completed',onSettled:seen});await q.start();await flushQueue();expect(seen).toHaveBeenCalledOnce();await q.stop();
  }finally{await s.close();f.cleanup();}
 });

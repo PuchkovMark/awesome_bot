@@ -11,7 +11,7 @@ test('расчётная модель: 4 слота, 130 секунд, 8 ожи�
  vi.useFakeTimers();vi.setSystemTime(10000);const storage=await openStorage(':memory:');let calls=0,completed=0;
  const scopes=['vk:a','vk:b','vk:c','vk:d'].map(id=>scopeFor(storage,id));const backend=queueBackend(storage);backend.acquire('seed',30000,10000);
  for(const scope of scopes)for(let i=0;i<2;i++)backend.admit('seed',scope,queueMessage(scope.chatId,String(i)),()=>true,queueConfig());backend.release('seed');
- const q=createChatQueue({storage,handler:async()=>{calls++;await new Promise(r=>setTimeout(r,129000));completed++;return 'completed';}});
+ const q=createChatQueue({tracing:{messageRetentionDays:30},storage,handler:async()=>{calls++;await new Promise(r=>setTimeout(r,129000));completed++;return 'completed';}});
  try{
  await q.start();await flushQueue();for(const scope of scopes)await q.admit(scope,queueMessage(scope.chatId,'new'),()=>true);
  expect(q.stats()).toMatchObject({depthRunning:4,depthQueued:8});
@@ -22,7 +22,7 @@ test('расчётная модель: 4 слота, 130 секунд, 8 ожи�
 });
 test('реальная SQLite: всплеск, ограниченная вместимость, журнал независимо от допуска',async()=>{
  const f=storageFixture(),storage=await openStorage(f.path);let completed=0;
- const q=createChatQueue({storage,handler:async()=>{await new Promise(r=>setTimeout(r,1));completed++;return 'completed';}});
+ const q=createChatQueue({tracing:{messageRetentionDays:30},storage,handler:async()=>{await new Promise(r=>setTimeout(r,1));completed++;return 'completed';}});
  try{
  await q.start();const started=performance.now();let rejected=0;const scopes=Array.from({length:20},(_,i)=>scopeFor(storage,`vk:${i}`));
  for(let i=0;i<500;i++){const s=scopes[i%20]!;if((await q.admit(s,queueMessage(s.chatId,String(i)),()=>true)).status==='queue_full')rejected++;}

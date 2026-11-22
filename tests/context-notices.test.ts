@@ -8,7 +8,7 @@ for(const mode of ['normal','active'] as const)for(const reason of ['current_mes
  const f=await contextFixture();await f.storage.chats.update(f.scope,{responseMode:mode});const complete=vi.fn();
  let failure:PreparationFailure=reason;const publish=vi.fn(async()=>({kind:'delivered' as const,receipt:{messageId:'notice',userId:'vk:bot' as const,authorName:'',timestamp:200}}));
  const service=createPublicationService({storage:f.storage,port:{async canReply(){return true;},publish}});
- const q=createAgentLoopQueue({storage:f.storage,client:{complete},prepare:async()=>({kind:'failed',reason:failure}),onSettled:service.onSettled});
+ const q=createAgentLoopQueue({tracing:{messageRetentionDays:30},storage:f.storage,client:{complete},prepare:async()=>({kind:'failed',reason:failure}),onSettled:service.onSettled});
  try{
  await q.start();const route={kind:'mention',mode,isGroupChat:true} as const;
  await q.admitRouted(f.scope,queueMessage(f.scope.chatId,'a'),()=>({route,reason:'mention'}));await flushQueue();await flushQueue();

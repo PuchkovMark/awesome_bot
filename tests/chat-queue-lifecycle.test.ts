@@ -7,7 +7,7 @@ import { queueMessage,flushQueue } from './helpers/chat-queue.js';
 test('uncertain отменяет текущий результат, queued продолжает только после решения владельца',async()=>{
  vi.useFakeTimers();const storage=await openStorage(':memory:');const life=lifecycleBackend(storage),scope=scopeFor(storage,'vk:a');
  const signals:AbortSignal[]=[];const release:(()=>void)[]=[];
- const q=createChatQueue({storage,handler:async w=>{signals.push(w.signal);await new Promise<void>(r=>release.push(r));return 'completed';}});
+ const q=createChatQueue({tracing:{messageRetentionDays:30},storage,handler:async w=>{signals.push(w.signal);await new Promise<void>(r=>release.push(r));return 'completed';}});
  try{
  await q.start();await q.admit(scope,queueMessage('vk:a','1'),()=>true);await flushQueue();await q.admit(scope,queueMessage('vk:a','2'),()=>true);
  life.apply(life.begin('vk:a'),{confidence:'unavailable',bot:'unknown'});await vi.advanceTimersByTimeAsync(1000);
@@ -20,7 +20,7 @@ test('uncertain отменяет текущий результат, queued пр�
 test('удаление текущего поколения отменяет локальную работу, поздний результат не попадает в новое',async()=>{
  const storage=await openStorage(':memory:'),life=lifecycleBackend(storage),old=scopeFor(storage,'vk:a');
  const release:(()=>void)[]=[],signals:AbortSignal[]=[];
- const q=createChatQueue({storage,config:{maxConcurrentChats:1},handler:async w=>{signals.push(w.signal);await new Promise<void>(r=>release.push(r));return 'completed';}});
+ const q=createChatQueue({tracing:{messageRetentionDays:30},storage,config:{maxConcurrentChats:1},handler:async w=>{signals.push(w.signal);await new Promise<void>(r=>release.push(r));return 'completed';}});
  try{
  await q.start();await q.admit(old,queueMessage('vk:a','1'),()=>true);await flushQueue();await q.admit(old,queueMessage('vk:a','2'),()=>true);
  life.apply(life.begin('vk:a'),{confidence:'confirmed',bot:'absent'});

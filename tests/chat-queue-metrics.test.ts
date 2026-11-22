@@ -7,7 +7,7 @@ import { queueMessage,flushQueue } from './helpers/chat-queue.js';
 test('логи содержат только счётчики, повтор перехода не удваивает interrupted',async()=>{
  vi.useFakeTimers();const storage=await openStorage(':memory:');const scope=scopeFor(storage,'vk:secret-chat');const lines:string[]=[];
  const logger=createLogger({destination:{write(line){lines.push(line);}}});
- const q=createChatQueue({storage,logger,config:{maxQueuedPerChat:1},handler:()=>new Promise(()=>{})});
+ const q=createChatQueue({tracing:{messageRetentionDays:30},storage,logger,config:{maxQueuedPerChat:1},handler:()=>new Promise(()=>{})});
  try{
  await q.start();await q.admit(scope,queueMessage('vk:secret-chat','private1'),()=>true);await flushQueue();
  await q.admit(scope,queueMessage('vk:secret-chat','private2'),()=>true);await q.admit(scope,queueMessage('vk:secret-chat','private3'),()=>true);
@@ -18,7 +18,7 @@ test('логи содержат только счётчики, повтор пе
 });
 test('сбой логгера не меняет обработку',async()=>{
  const storage=await openStorage(':memory:');const logger=createLogger({destination:{write(){throw Error('private');}}});
- const q=createChatQueue({storage,logger,handler:async()=> 'completed'});try{
+ const q=createChatQueue({tracing:{messageRetentionDays:30},storage,logger,handler:async()=> 'completed'});try{
  await q.start();const scope=scopeFor(storage,'vk:a');await q.admit(scope,queueMessage('vk:a','1'),()=>true);await flushQueue();expect(q.stats().depthRunning).toBe(0);
  }finally{await q.stop();await storage.close();}
 });

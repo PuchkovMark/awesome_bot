@@ -5,7 +5,7 @@ import { scopeFor } from './helpers/connection-scope.js';
 import { queueMessage,flushQueue } from './helpers/chat-queue.js';
 test('общий срок обработчика 130 секунд, поздний успех не меняет сводку',async()=>{
  vi.useFakeTimers();const storage=await openStorage(':memory:'),scope=scopeFor(storage,'vk:a');let resolve!:(x:'completed')=>void;let signal!:AbortSignal;
- const q=createChatQueue({storage,handler:w=>{signal=w.signal;return new Promise(r=>{resolve=r;});}});
+ const q=createChatQueue({tracing:{messageRetentionDays:30},storage,handler:w=>{signal=w.signal;return new Promise(r=>{resolve=r;});}});
  try{
  await q.start();await q.admit(scope,queueMessage('vk:a','1'),()=>true);await flushQueue();
  await vi.advanceTimersByTimeAsync(129999);expect(signal.aborted).toBe(false);
@@ -16,7 +16,7 @@ test('общий срок обработчика 130 секунд, поздни�
 test('потеря владения прекращает запуск, поздний результат старого владельца не фиксируется',async()=>{
  vi.useFakeTimers();vi.setSystemTime(1000);const storage=await openStorage(':memory:'),scope=scopeFor(storage,'vk:a');
  const {queueBackend}=await import('../src/storage/queue-registry.js');let finish!:(x:'completed')=>void;
- const q=createChatQueue({storage,handler:()=>new Promise(r=>{finish=r;})});
+ const q=createChatQueue({tracing:{messageRetentionDays:30},storage,handler:()=>new Promise(r=>{finish=r;})});
  try{
  await q.start();await q.admit(scope,queueMessage('vk:a','1'),()=>true);await flushQueue();
  vi.setSystemTime(32000);const backend=queueBackend(storage);expect(backend.acquire('next',30000,10000)).toBe(1);
@@ -28,7 +28,7 @@ test('потеря владения прекращает запуск, позд�
 test.each([false,true])('задержанный таймер не пропускает просроченный результат, stop=%s',async stopping=>{
  vi.useFakeTimers();let mono=0;const clock=vi.spyOn(performance,'now').mockImplementation(()=>mono);
  const storage=await openStorage(':memory:'),scope=scopeFor(storage,'vk:a');let resolve!:(x:'completed')=>void;
- const q=createChatQueue({storage,handler:()=>new Promise(r=>{resolve=r;})});
+ const q=createChatQueue({tracing:{messageRetentionDays:30},storage,handler:()=>new Promise(r=>{resolve=r;})});
  try{
  await q.start();await q.admit(scope,queueMessage('vk:a','1'),()=>true);await flushQueue();
  const stopped=stopping?q.stop():undefined;mono=stopping?10001:130001;

@@ -18,7 +18,7 @@ for(const selected of [true,false])test(`восстановленное зада
  s=await openStorage(f.path);const scope=scopeFor(s,'vk:old'),other=scopeFor(s,'vk:other');
  const prep=createContextPreparation({storage:s,config:{modelContextTokens:16000},sessionId:()=> 'synthetic-session',capabilities:async()=>contextCapabilities(scope.chatId)});
  const calls:LlmRequest[]=[];
- q=createAgentLoopQueue({storage:s,prepare:prep.prepare,client:{async complete(input){calls.push(input);return{kind:'complete',text:'Ответ',usage:{input:0,output:0}};}}});
+ q=createAgentLoopQueue({tracing:{messageRetentionDays:30},storage:s,prepare:prep.prepare,client:{async complete(input){calls.push(input);return{kind:'complete',text:'Ответ',usage:{input:0,output:0}};}}});
  expect(await s.versions.selected(scope,'persona')).toMatchObject({text:'локальный персонаж'});
  expect(await s.versions.selected(scope,'greeting_template')).toMatchObject({text:'приветствие'});
  const savedOther=await s.chats.get(other);expect(savedOther).not.toHaveProperty('systemPrompt');

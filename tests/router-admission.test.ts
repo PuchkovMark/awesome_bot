@@ -7,7 +7,7 @@ import {flushQueue} from './helpers/chat-queue.js';
 import type {IncomingMessage} from '../src/contracts/index.js';
 const incoming:IncomingMessage={kind:'message',chatId:'vk:a',userId:'vk:u',authorName:'',isGroupChat:true,isAdmin:false,isBot:false,text:'Пенек помоги',messageId:'1',isMentioned:false,isReplyToBot:false,timestamp:0,attachments:[]};
 test('роутер журналирует до решения, дубли не повторяются, silent/unknown не запускают обработчик',async()=>{
- const storage=await openStorage(':memory:'),scope=scopeFor(storage,'vk:a'),handler=vi.fn(async()=> 'completed' as const);const queue=createChatQueue({storage,handler});await queue.start();
+ const storage=await openStorage(':memory:'),scope=scopeFor(storage,'vk:a'),handler=vi.fn(async()=> 'completed' as const);const queue=createChatQueue({tracing:{messageRetentionDays:30},storage,handler});await queue.start();
  const onDecision=vi.fn(),router=createMessageRouter({storage,queue,onDecision});
  try{expect((await router.receive(scope,incoming)).decision?.kind).toBe('ordinary');await flushQueue();expect(handler).toHaveBeenCalledOnce();
  expect((await router.receive(scope,incoming)).admission?.status).toBe('duplicate');expect(onDecision).toHaveBeenCalledOnce();

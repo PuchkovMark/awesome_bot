@@ -8,7 +8,7 @@ export const input=(chatId:ChatId,id:string)=>({chatId,messageId:id,userId:'vk:u
 test('один чат FIFO, другие параллельны, ошибка не останавливает',async()=>{
  const storage=await openStorage(':memory:');const a=scopeFor(storage,'vk:a'),b=scopeFor(storage,'vk:b');
  const calls:string[]=[];const releases:(()=>void)[]=[];
- const q=createChatQueue({storage,handler:async work=>{
+ const q=createChatQueue({tracing:{messageRetentionDays:30},storage,handler:async work=>{
    const m=await storage.messages.get(work.scope,work.messageId);calls.push(m!.chatId+':'+m!.text);
    await new Promise<void>(resolve=>releases.push(resolve));if(m!.text==='bad')throw Error('private');return 'completed';
  }});

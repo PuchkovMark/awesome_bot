@@ -11,6 +11,7 @@ export function ownData(object: unknown, key: string): unknown {
 
 export function safeEvent(input: unknown): LogEvent | undefined {
   const event = ownData(input, 'event');
+  if(event==='trace_stats'&&ownData(input,'window')==='run'){const keys=['full_write_failed','size_exceeded','minimal_saved','trace_write_failed'] as const;const fields=Object.fromEntries(keys.map(k=>[k,ownData(input,k)]));if(keys.every(k=>Number.isSafeInteger(fields[k])&&(fields[k] as number)>=0))return {event,window:'run',...fields} as LogEvent;}
   if(event==='context_stats'&&ownData(input,'window')==='run'){
    const keys=['missing_system_prompt','static_budget_too_small','current_message_too_large','internal_error','cancelled','unavailable','deadline_exceeded'] as const;
    const fields=Object.fromEntries(keys.map(key=>[key,ownData(input,key)]));

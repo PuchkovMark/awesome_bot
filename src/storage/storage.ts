@@ -22,7 +22,7 @@ export async function openStorage(path:string,options:{readonly versioning?:Vers
   const backend=createLifecycleBackend(connection);
   const versions=createVersionBackend(connection,backend,limits);
   const traces=createTraceBackend(connection,backend);
-  const queue=createQueueBackend(connection,backend);
+  const queue=createQueueBackend(connection,backend,traces);
   const storage:Storage={...createScopedStorage(connection,backend,versions,queue),traces:{async get(scope,id){return traces.get(scope,id);},async last(scope){return traces.get(scope);}},async close(){connection.close();}};
   registerTraces(storage,traces);registerNotices(storage,createNoticeBackend(connection,backend));registerQueue(storage,queue);registerLifecycle(storage,backend);registerVersions(storage,versions);return storage;
  }catch(error){connection.close();throw error;}

@@ -1,3 +1,4 @@
+import type {TraceEvent} from '../core/response-tracing/metrics.js';
 import type {Database} from 'better-sqlite3';
 import type {ConnectionScope} from '../contracts/index.js';
 import type {Connection} from './connection.js';
@@ -19,7 +20,9 @@ export function traceRecord(db:Database,scope:ConnectionScope,id:number|undefine
 export function startTrace(db:Database,w:QueueWork,c:Pick<TraceConfig,'maxRecordBytes'|'retentionDays'>,now=Date.now()) {db.prepare('INSERT INTO response_traces(job_id,chat_id,generation,message_id,started_at,expires_at,payload) VALUES(?,?,?,?,?,?,?)').run(w.id,w.scope.chatId,w.scope.generation,w.messageId,now,now+c.retentionDays*86400000,encodeTrace(initialTrace(w.route),c.maxRecordBytes));}
 export function createTraceBackend(connection:Connection,lifecycle:LifecycleBackend){
  let config:Pick<TraceConfig,'maxRecordBytes'|'retentionDays'>={maxRecordBytes:65536,retentionDays:7};
+ let report:(event:TraceEvent)=>void=()=>{};
  return {
+  observe(fn:(event:TraceEvent)=>void){report=fn;},report(event:TraceEvent){report(event);},
   configure(c:TraceConfig){config=c;},config(){return config;},
   get(scope:ConnectionScope,id?:number){if(id!==undefined)requireInput(Number.isSafeInteger(id)&&id>0);return lifecycle.transaction(scope,db=>traceRecord(db,scope,id));},
   prune(scope:ConnectionScope,now:number,limit=100){timestamp(now);requireInput(Number.isSafeInteger(limit)&&limit>0&&limit<=1000);return lifecycle.transaction(scope,db=>{const deleted=db.prepare('DELETE FROM response_traces WHERE job_id IN (SELECT job_id FROM response_traces WHERE chat_id=? AND generation=? AND expires_at<=? LIMIT ?)').run(scope.chatId,scope.generation,now,limit).changes;return {deleted,more:!!db.prepare('SELECT 1 FROM response_traces WHERE chat_id=? AND generation=? AND expires_at<=? LIMIT 1').get(scope.chatId,scope.generation,now)};});},

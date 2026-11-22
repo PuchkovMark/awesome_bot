@@ -25,7 +25,9 @@ test('создание очереди вне исходников не запу�
       const {registerQueue} = await import('./dist/storage/queue-registry.js');
       const storage = {messages:{async get(){throw Error('Unexpected read');}}};
       registerQueue(storage,{});
-      const queue = createChatQueue({storage,handler:async()=>{throw Error('Unexpected handler');}});
+      const {registerTraces}=await import('./dist/storage/trace-store.js');
+      registerTraces(storage,{configure(){},observe(){}});
+      const queue = createChatQueue({tracing:{messageRetentionDays:30},storage,handler:async()=>{throw Error('Unexpected handler');}});
       if(before !== JSON.stringify(process.env)) throw Error('Side effect');
       globalThis.setTimeout=timer;
       await queue.stop();

@@ -19,7 +19,7 @@ export function createAgentLoopQueue(options:AgentLoopQueueOptions){
  const prep=options.preparationTimeoutMs??2000,margin=options.postPreparationMarginMs??1000;
  const config=queueConfig({...options.config,loopTimeoutMs:settings.timeoutMs});
  if(!Number.isSafeInteger(prep)||prep<=0||prep>2147483647||!Number.isSafeInteger(margin)||margin<=0||config.handlerTimeoutMs<settings.timeoutMs+prep+margin)throw new QueueError('invalid_input');
- return createChatQueue({storage:options.storage,...(options.logger?{logger:options.logger}:{}),...(options.onSettled?{onSettled:options.onSettled}:{}),config,
+ return createChatQueue({tracing:options.tracing,storage:options.storage,...(options.logger?{logger:options.logger}:{}),...(options.onSettled?{onSettled:options.onSettled}:{}),config,
  handler:async work=>{
   const controller=new AbortController(),signal=AbortSignal.any([work.signal,controller.signal]);
   let abort:()=>void=()=>{};

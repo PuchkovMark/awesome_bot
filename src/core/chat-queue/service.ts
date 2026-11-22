@@ -1,3 +1,7 @@
+import {traceBackend,initialTrace} from '../../storage/trace-store.js';
+import type {TracePayload} from '../../storage/trace-types.js';
+import {traceConfig} from '../response-tracing/config.js';
+import {createTraceMetrics} from '../response-tracing/metrics.js';
 import { StorageError } from '../../storage/errors.js';
 import { randomUUID } from 'node:crypto';
 import { queueBackend } from '../../storage/queue-registry.js';
@@ -6,7 +10,7 @@ import { QueueError } from './errors.js';
 import { queueConfig } from './validation.js';
 import type { ChatQueue, ChatQueueOptions, QueueOutcome, QueueStats, QueueCompletion } from './types.js';
 const outcomes = new Set<unknown>(['completed','failed','rate_limit','interrupted','expired','message_missing','deadline_exceeded']);
-interface Task { deadline: number; work: QueueWork; controller: AbortController; timer: ReturnType<typeof setTimeout>; done: boolean; publishing:boolean }
+interface Task { trace:TracePayload; deadline: number; work: QueueWork; controller: AbortController; timer: ReturnType<typeof setTimeout>; done: boolean; publishing:boolean }
 function safeFailure(error: unknown): QueueError {
   // Не читать произвольные свойства ошибок внедрённого обработчика.
   if (error instanceof QueueError) return error;
@@ -20,6 +24,7 @@ function safeFailure(error: unknown): QueueError {
 export function createChatQueue(options: ChatQueueOptions): ChatQueue {
   if (!options || typeof options.handler !== 'function') throw new QueueError('invalid_input');
   const config = queueConfig(options.config);
+  const traces=traceBackend(options.storage);traces.configure(traceConfig(options.tracing));traces.observe(createTraceMetrics(options.logger).record);
   const backend = queueBackend(options.storage);
   const readMessage = options.storage.messages.get.bind(options.storage.messages);
   const handler = options.handler;
@@ -70,21 +75,21 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
     if(outcome==='interrupted'||now>=task.deadline)task.controller.abort();
     try {
       const actual = backend.valid(token,task.work)?outcome:'interrupted';
-      const committed=backend.finish(token,task.work,actual);
+      const committed=backend.finish(token,task.work,actual,{...task.trace,preparationFailure:completion?.preparationFailure??task.trace.preparationFailure,resultKind:completion?.result?.kind??task.trace.resultKind,summary:completion?.result?.summary??task.trace.summary});
       if(committed==='interrupted')counters.interrupted=add(counters.interrupted,1);
       emit();
       if(options.onSettled&&committed&&committed!=='interrupted'&&committed!=='expired'&&committed!=='message_missing'&&phase==='running'&&performance.now()<task.deadline){
         task.publishing=true;
         const isCurrent=()=>{if(task.done||phase!=='running'||performance.now()>=task.deadline)return false;try{return backend.publicationValid(token,task.work);}catch{return false;}};
         const accepted=completion&&committed===completion.outcome?completion:{outcome:committed};
-        void Promise.resolve().then(()=>{if(isCurrent())return options.onSettled!({scope:task.work.scope,messageId:task.work.messageId,route:task.work.route,signal:task.controller.signal,isCurrent},accepted);}).catch(()=>{}).finally(()=>{if(!task.done)releaseTask(task);});
+        void Promise.resolve().then(()=>{if(isCurrent())return options.onSettled!({jobId:task.work.id,scope:task.work.scope,messageId:task.work.messageId,route:task.work.route,signal:task.controller.signal,isCurrent},accepted);}).catch(()=>{}).finally(()=>{if(!task.done)releaseTask(task);});
       }else releaseTask(task);
     }catch(error){task.controller.abort();fault(error);}
   }
   function launch(work:QueueWork) {
     wait(Math.max(0,Date.now()-work.receivedAt));
     const controller=new AbortController();
-    const task:Task={deadline:performance.now()+config.handlerTimeoutMs,work,controller,done:false,publishing:false,timer:setTimeout(()=>finish(task,'deadline_exceeded'),config.handlerTimeoutMs)};
+    const task:Task={trace:initialTrace(work.route),deadline:performance.now()+config.handlerTimeoutMs,work,controller,done:false,publishing:false,timer:setTimeout(()=>finish(task,'deadline_exceeded'),config.handlerTimeoutMs)};
     tasks.set(work.id,task);
     void Promise.resolve().then(async()=>{
       if(task.done)return;
@@ -93,7 +98,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
       if(!message){finish(task,'message_missing');return;}
       if(!backend.valid(token,work)){finish(task,'interrupted');return;}
       if(work.route){const settings=await options.storage.chats.get(work.scope);if(task.done)return;if(!settings?.enabled||settings.responseMode==='silent'||!backend.valid(token,work)){finish(task,'interrupted');return;}}
-      const outcome:unknown=await handler(Object.freeze({scope:work.scope,messageId:work.messageId,signal:controller.signal,route:work.route,isCurrent:()=>{if(task.done||phase!=='running'||controller.signal.aborted||performance.now()>=task.deadline)return false;try{return backend.valid(token,work);}catch{return false;}}}));
+      const outcome:unknown=await handler(Object.freeze({jobId:work.id,recordTrace:(update:Partial<TracePayload>)=>{if(task.done||!backend.valid(token,work))return;const next={...task.trace,...update};if(backend.progress(token,work,next))task.trace=next;},scope:work.scope,messageId:work.messageId,signal:controller.signal,route:work.route,isCurrent:()=>{if(task.done||phase!=='running'||controller.signal.aborted||performance.now()>=task.deadline)return false;try{return backend.valid(token,work);}catch{return false;}}}));
       const completion:QueueCompletion=typeof outcome==='object'&&outcome!==null&&outcomes.has((outcome as QueueCompletion).outcome)?outcome as QueueCompletion:{outcome:outcomes.has(outcome)?outcome as QueueOutcome:'failed'};
       finish(task,completion.outcome,completion);
     }).catch(()=>finish(task,'failed'));

@@ -1,3 +1,7 @@
+import {initialTrace,startTrace,minimalTrace} from './trace-store.js';
+import type {TraceBackend} from './trace-store.js';
+import type {TracePayload} from './trace-types.js';
+import {encodeTrace} from './trace-validation.js';
 import { createChatStore } from './chats.js';
 import type { RoutedQueueCallback, RoutedAdmission, RouteMetadata } from './queue-types.js';
 import { createMessageStore, readMessage } from './messages.js';
@@ -10,7 +14,7 @@ import type { LifecycleBackend } from './lifecycle-store.js';
 import type { QueueWork, QueueOutcome, QueueRecord } from './queue-types.js';
 import { StorageError } from './errors.js';
 import { requireInput, timestamp } from './validation.js';
-export function createQueueBackend(connection: Connection, lifecycle: LifecycleBackend) {
+export function createQueueBackend(connection: Connection, lifecycle: LifecycleBackend,traces:TraceBackend) {
   function owned(db: Database, token: string) {
     const row = db.prepare('SELECT token,expires_at AS expires FROM queue_lease WHERE singleton=1').get() as {token:string|null;expires:number};
     if (row.token !== token || row.expires <= Date.now()) throw new StorageError('queue_lost_ownership');
@@ -74,6 +78,14 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
         const row = db.prepare('SELECT token,expires_at AS expires FROM queue_lease WHERE singleton=1').get() as {token:string|null;expires:number};
         if (row.token !== null && row.expires > now) throw new StorageError('queue_owned');
         db.prepare('UPDATE queue_lease SET token=?,expires_at=?,safety_ms=? WHERE singleton=1').run(token, now + leaseMs, safetyMs);
+        const running=db.prepare("SELECT j.id,j.chat_id AS chatId,j.generation,j.message_id AS messageId,j.received_at AS receivedAt FROM queue_jobs j WHERE j.state='running'").all() as {id:number;chatId:ConnectionScope['chatId'];generation:number;messageId:number;receivedAt:number}[];
+        for(const row of running){
+         const exists=db.prepare('SELECT payload FROM response_traces WHERE job_id=?').get(row.id) as {payload:string}|undefined;
+         if(!exists){startTrace(db,{...row,scope:row as unknown as ConnectionScope,route:null},traces.config(),now);db.prepare('UPDATE response_traces SET payload=? WHERE job_id=?').run(encodeTrace({...initialTrace(),degraded:true,degradation:'legacy_metadata_missing'},traces.config().maxRecordBytes),row.id);}
+        }
+        const open=db.prepare('SELECT job_id,payload FROM response_traces WHERE finished_at IS NULL').all() as {job_id:number;payload:string}[];
+        for(const row of open){const payload=JSON.parse(row.payload) as TracePayload;db.prepare("UPDATE response_traces SET finished_at=max(started_at,?),outcome='interrupted',payload=? WHERE job_id=?").run(now,encodeTrace({...payload,resultKind:'interrupted',publication:{rowId:'silent_outcome',tableVersion:1,reaction:'silence',status:'suppressed',reason:'guard'}},traces.config().maxRecordBytes),row.job_id);}
+        db.prepare('DELETE FROM response_traces WHERE job_id IN (SELECT job_id FROM response_traces WHERE expires_at<=? AND finished_at IS NOT NULL LIMIT 100)').run(now);
         const recovered = db.prepare("UPDATE queue_jobs SET state='terminal',outcome='interrupted',owner=NULL WHERE state='running'").run().changes;
         owned(db,token); return recovered;
       }).immediate());
@@ -108,7 +120,8 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
         if(!row)return null;
         const scope=lifecycle.restore(row);
         db.prepare("UPDATE queue_jobs SET state='running',owner=? WHERE id=?").run(token,row.id);
-        return Object.freeze({id:row.id,scope,messageId:row.messageId,receivedAt:row.receivedAt,route:row.routeKind&&row.routeMode&&row.routeGroup!==null?Object.freeze({kind:row.routeKind,mode:row.routeMode,isGroupChat:row.routeGroup===1}):null});
+        const work=Object.freeze({id:row.id,scope,messageId:row.messageId,receivedAt:row.receivedAt,route:row.routeKind&&row.routeMode&&row.routeGroup!==null?Object.freeze({kind:row.routeKind,mode:row.routeMode,isGroupChat:row.routeGroup===1}):null});
+        startTrace(db,work,traces.config());return work;
       });
     },
     valid(token: string, work: QueueWork): boolean {
@@ -120,15 +133,30 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
     publicationValid(token:string,work:QueueWork):boolean {
      return transaction(token,db=>!!db.prepare("SELECT j.id FROM queue_jobs j JOIN chat_connections c ON c.chat_id=j.chat_id AND c.generation=j.generation JOIN chats s ON s.chat_id=j.chat_id WHERE j.id=? AND j.chat_id=? AND j.generation=? AND j.state='terminal' AND c.state='active' AND s.enabled=1").get(work.id,work.scope.chatId,work.scope.generation));
     },
-    finish(token: string, work: QueueWork, outcome: QueueOutcome): QueueOutcome|null {
-      return transaction(token, db => {
+    progress(token:string,work:QueueWork,payload:TracePayload){
+     return transaction(token,db=>{if(!this.valid(token,work))return false;const json=encodeTrace(payload,traces.config().maxRecordBytes);return db.prepare('UPDATE response_traces SET payload=? WHERE job_id=? AND finished_at IS NULL').run(json,work.id).changes===1;});
+    },
+    finish(token: string, work: QueueWork, outcome: QueueOutcome, payload?:TracePayload): QueueOutcome|null {
+      const commit=(minimal:boolean):QueueOutcome|null=>transaction(token, db => {
         requireInput(['completed','failed','rate_limit','interrupted','expired','message_missing','deadline_exceeded'].includes(outcome));
         const state=db.prepare('SELECT state FROM chat_connections WHERE chat_id=? AND generation=?').get(work.scope.chatId,work.scope.generation) as {state:string}|undefined;
         const final=state?.state==='active'?outcome:'interrupted';
         const result=db.prepare("UPDATE queue_jobs SET state='terminal',outcome=?,owner=NULL WHERE id=? AND owner=? AND state='running'").run(final,work.id,token);
-        if(result.changes===1 && db.prepare("SELECT id FROM queue_jobs WHERE chat_id=? AND state='queued' LIMIT 1").get(work.scope.chatId))turn(db,work.scope);
-        return result.changes===1?final:null;
+        if(result.changes!==1)return null;
+        const row=db.prepare('SELECT payload FROM response_traces WHERE job_id=?').get(work.id) as {payload:string}|undefined;
+        if(!row)throw new StorageError('operation_failed');
+        const base=payload??JSON.parse(row.payload) as TracePayload;
+        const p:TracePayload={...base,resultKind:base.resultKind??final,publication:final==='interrupted'?{rowId:'silent_outcome',tableVersion:1,reaction:'silence',status:'suppressed',reason:'guard'}:base.publication};
+        const json=encodeTrace(minimal?minimalTrace(p,'write_failed'):p,traces.config().maxRecordBytes);
+        db.prepare('UPDATE response_traces SET finished_at=max(started_at,?),outcome=?,payload=? WHERE job_id=? AND finished_at IS NULL').run(Date.now(),final,json,work.id);
+        if(db.prepare("SELECT id FROM queue_jobs WHERE chat_id=? AND state='queued' LIMIT 1").get(work.scope.chatId))turn(db,work.scope);
+        return final;
       });
+      try{return commit(false);}catch(error){
+       if(error instanceof StorageError&&error.code==='queue_lost_ownership')throw error;
+       traces.report(error instanceof StorageError&&error.code==='limit_exceeded'?'size_exceeded':'full_write_failed');
+       try{const result=commit(true);traces.report('minimal_saved');return result;}catch{traces.report('trace_write_failed');throw new StorageError('operation_failed');}
+      }
     },
     get(scope: ConnectionScope, id: number): QueueRecord | null {
       requireInput(Number.isSafeInteger(id) && id > 0);

@@ -10,7 +10,7 @@ test('роутер → очередь → сборщик → цикл: позд�
  vi.useFakeTimers();const f=await contextFixture();const stats:object[]=[];const captured:LlmRequest[]=[];
  const prep=createContextPreparation({...f.options,storage:f.storage,onStats:s=>stats.push(s)});
  const selected=await f.admin.systemPrompt();expect(prep.checkStartup(selected)).toBeNull();
- const q=createAgentLoopQueue({storage:f.storage,prepare:prep.prepare,client:{async complete(input){captured.push(input);if(captured.length===1)return{kind:'error',code:'server',message:'SECRET'};return{kind:'complete',text:'Ответ',usage:{input:0,output:0}};}}});
+ const q=createAgentLoopQueue({tracing:{messageRetentionDays:30},storage:f.storage,prepare:prep.prepare,client:{async complete(input){captured.push(input);if(captured.length===1)return{kind:'error',code:'server',message:'SECRET'};return{kind:'complete',text:'Ответ',usage:{input:0,output:0}};}}});
  try{
  await q.start();const router=createMessageRouter({storage:f.storage,queue:q});
  await router.receive(f.scope,{kind:'message',chatId:f.scope.chatId,messageId:'trigger',userId:'vk:u',authorName:'Имя',text:'Пенек помоги',isBot:false,isAdmin:false,isGroupChat:true,isMentioned:false,isReplyToBot:false,timestamp:10,attachments:[]});
