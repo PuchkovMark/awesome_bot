@@ -27,3 +27,7 @@ export type { QueueCompletion, QueueSettlement } from './chat-queue/types.js';
 export {createContextPreparation} from './prepare-context.js';
 export {createContextBuilder,contextConfig,validateContextStartup} from './context/index.js';
 export type {ContextConfig,ContextMetadata,PreparationResult,PreparationFailure,ContextBuilderOptions,ContextWork} from './context/index.js';
+
+export {createTraceDiagnostics,createTraceMaintenance} from './response-tracing/diagnostics.js';
+export {traceConfig} from './response-tracing/config.js';
+export type {TraceConfig} from './response-tracing/config.js';

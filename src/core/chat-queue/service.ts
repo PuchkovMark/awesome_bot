@@ -25,7 +25,8 @@ function safeFailure(error: unknown): QueueError {
 export function createChatQueue(options: ChatQueueOptions): ChatQueue {
   if (!options || typeof options.handler !== 'function') throw new QueueError('invalid_input');
   const config = queueConfig(options.config);
-  const traces=traceBackend(options.storage);traces.configure(traceConfig(options.tracing));traces.observe(createTraceMetrics(options.logger).record);
+  if(traceConfig(options.tracing).retentionDays*86400000<=config.handlerTimeoutMs)throw new QueueError('invalid_input');
+  const traces=traceBackend(options.storage);traces.configure(traceConfig(options.tracing));const traceMetrics=createTraceMetrics(options.logger);traces.observe(traceMetrics.record);
   const backend = queueBackend(options.storage);
   const readMessage = options.storage.messages.get.bind(options.storage.messages);
   const handler = options.handler;
@@ -169,6 +170,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
       for(const task of [...tasks.values()])if(task.publishing)releaseTask(task);
       completeStop();return stopPromise;
     },
+    traceStats:traceMetrics.snapshot,
     stats():QueueStats { if(phase==='running'||phase==='stopping')emit();return Object.freeze({...counters}); },
   };
   return Object.freeze(service);

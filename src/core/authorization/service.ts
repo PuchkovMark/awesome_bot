@@ -62,6 +62,9 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
     async check(context: AuthorizationContext, action: unknown, subjectId?: UserId): Promise<AuthorizationDecision> {
       return guarded(context, action, subjectId, () => ({ allowed: true, value: undefined }));
     },
+    async readDiagnostics<T>(context:AuthorizationContext,read:()=>T):Promise<AuthorizationResult<T>> {
+      return guarded(context,'diagnostics.read',undefined,()=>{const value=read();if(value instanceof Promise){void value.catch(()=>{});throw new TypeError('Diagnostics: async_reader');}return {allowed:true,value};});
+    },
     async role(context: AuthorizationContext) {
       if (disposed || !authority.contains(context)) return deny('invalid_context');
       return options.store.transaction(context.scope, tx => ({ allowed: true as const, value: botRole(context.userId, config.ownerId,

@@ -21,5 +21,6 @@ export interface ChatQueue {
   admit(scope: ConnectionScope, message: MessageInput, decision: QueueDecision): Promise<QueueAdmission>;
   admitRouted(scope:ConnectionScope,message:MessageInput,decision:RoutedQueueCallback):Promise<RoutedAdmission>;
   stop(): Promise<void>;
+  traceStats():Readonly<Record<import('../response-tracing/metrics.js').TraceEvent,number>>;
   stats(): QueueStats;
 }

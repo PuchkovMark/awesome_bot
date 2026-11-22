@@ -1,5 +1,5 @@
 import type { IncomingMessage, AuthorizationAction, BotRole } from '../../contracts/index.js';
-import type { ChatSettings } from '../../storage/index.js';
+import type { ChatSettings } from '../../storage/types.js';
 import type { RouteMetadata } from '../../storage/queue-types.js';
 export interface ServiceCommand { readonly action: AuthorizationAction; readonly minimumRole: 'admin'|'owner' }
 export interface RoutingInput {
