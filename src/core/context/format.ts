@@ -1,3 +1,4 @@
+import type { PublicProfileFact } from '../../contracts/profile-facts';
 import type { ContextMessage } from '../../storage/context-types';
 import type { AgentLoopMessage } from '../agent-loop/types';
 
@@ -77,4 +78,31 @@ export function createContextMessageFormatter(
       return [...history, { role: 'user', text: prefix + latest }];
     },
   };
+}
+
+export function serializeParticipantCard(card: {
+  readonly author: string;
+  readonly authorLabel: string | undefined;
+  readonly addressForm?: string;
+  readonly facts?: readonly PublicProfileFact[];
+}) {
+  return JSON.stringify({
+    author: card.author,
+    authorLabel: card.authorLabel,
+    addressForm: card.addressForm,
+    ...(card.facts?.length
+      ? {
+          facts: card.facts.map(({ fieldKey, value, sourceKind, reliability }) => ({
+            fieldKey,
+            value,
+            sourceKind,
+            reliability,
+          })),
+        }
+      : {}),
+  });
+}
+
+export function appendParticipantCards(text: string, parts: readonly string[]) {
+  return text.slice(0, -1) + ',"participantCards":[' + parts.join(',') + ']}';
 }

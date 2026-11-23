@@ -8,7 +8,7 @@ function positive(n: number, max = Number.MAX_SAFE_INTEGER) {
   requireInput(Number.isSafeInteger(n) && n > 0 && n <= max);
 }
 const columns = `m.id,m.chat_id AS chatId,m.platform_message_id AS messageId,m.user_id AS userId,m.role,
- m.reply_to_message_id AS replyToMessageId,m.timestamp,m.purpose,m.attachment_count AS attachmentCount`;
+ m.reply_to_message_id AS replyToMessageId,m.timestamp,m.purpose,m.attachment_count AS attachmentCount,m.sender_bot AS senderBot`;
 const projection = `${columns},
  coalesce(CAST(substr(CAST(m.text AS BLOB),1,?) AS TEXT),'') AS text,
  coalesce(CAST(substr(CAST(m.author_name AS BLOB),1,?) AS TEXT),'') AS authorName,
@@ -16,8 +16,9 @@ const projection = `${columns},
 const authorJoin = `LEFT JOIN chat_author_labels a
  ON a.chat_id=m.chat_id AND a.generation=? AND a.user_id=m.user_id AND m.role='user'`;
 const visible = `m.chat_id=? AND m.purpose='conversation' AND m.id>? AND m.timestamp>?`;
-type MessageRow = Omit<ContextMessage, 'replyToMessageId' | 'authorNumber'> & {
+type MessageRow = Omit<ContextMessage, 'replyToMessageId' | 'authorNumber' | 'senderBot'> & {
   replyToMessageId: string | null;
+  senderBot: number | null;
   authorNumber: number | null;
 };
 type Row = MessageRow & {
@@ -25,9 +26,10 @@ type Row = MessageRow & {
   nameBytes: number;
 };
 function contextMessage(row: MessageRow): ContextMessage {
-  const { replyToMessageId, authorNumber, ...message } = row;
+  const { replyToMessageId, authorNumber, senderBot, ...message } = row;
   return {
     ...message,
+    ...(senderBot == null ? {} : { senderBot: senderBot !== 0 }),
     ...(replyToMessageId !== null ? { replyToMessageId } : {}),
     ...(authorNumber !== null ? { authorNumber } : {}),
   };

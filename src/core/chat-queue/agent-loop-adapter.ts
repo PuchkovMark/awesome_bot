@@ -1,5 +1,11 @@
+import {
+  createParticipantCardComposer,
+  type PreparedCards,
+  type UsedCard,
+  type CardReference,
+} from '../context/participant-cards';
 import { estimateRequestInput } from '../context/budget';
-import type { AddressPreferenceReference, ConnectionScope } from '../../contracts/index';
+import type { AddressPreferenceReference, ConnectionScope, UserId } from '../../contracts/index';
 import { createJobModelAttempts } from './delegated-attempts';
 import type { LlmClient } from '../../llm/types';
 import type { AgentLoopInput, AgentLoopOptions, LoopTools } from '../agent-loop/types';
@@ -18,6 +24,7 @@ export type QueuePreparation =
       readonly metadata?: import('../context/types').ContextMetadata;
       readonly authorLabels?: readonly string[];
       readonly addressPreference?: AddressPreferenceReference;
+      readonly participantCards?: PreparedCards;
     }
   | Exclude<PreparationResult, { kind: 'ready' }>;
 export interface AgentLoopQueueOptions extends Omit<ChatQueueOptions, 'handler' | 'config'> {
@@ -142,7 +149,26 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
           prompt: prepared.metadata?.version ?? null,
           context: prepared.metadata ?? null,
         });
+        const cards = prepared.participantCards;
+        const compose = cards
+          ? createParticipantCardComposer(cards, options.modelInputLimit)
+          : undefined;
+        const usedRefs = new Map<CardReference['value'], CardReference>();
+        const cardSubjects = new Set<UserId>();
+        const cardSources = new Set<number>();
+        let candidateCards: readonly UsedCard[] = [];
+        let cardBytes = 0;
+        let context = prepared.metadata;
+        let staleContext = false;
+        const cardsCurrent = () => cards?.current([...usedRefs.values()]) ?? true;
         const allowed = () => {
+          if (
+            cards &&
+            !cards.current([...usedRefs.values(), ...candidateCards.flatMap(({ refs }) => refs)])
+          ) {
+            staleContext = true;
+            return false;
+          }
           if (
             lifetime.aborted ||
             (session && !session.current()) ||
@@ -163,7 +189,6 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
           attempts: jobAttempts,
           settings,
         });
-        let staleContext = false;
         const loop = createAgentLoop(
           client,
           settings,
@@ -173,18 +198,11 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
             if (options.modelInputLimit && estimateRequestInput(request) > options.modelInputLimit)
               return 'token_budget_exhausted';
             const ids = [
-              ...new Set([
-                ...(prepared.metadata?.messageIds ?? []),
-                ...(session?.sourceIds() ?? []),
-              ]),
+              ...new Set([...(context?.messageIds ?? []), ...(session?.sourceIds() ?? [])]),
             ];
-            if (
-              prepared.metadata &&
-              session &&
-              (session.sourceIds().length || session.trace().length)
-            )
+            if (context && session && (session.sourceIds().length || session.trace().length))
               work.recordTrace({
-                context: { ...prepared.metadata, messageIds: ids },
+                context: { ...context, messageIds: ids },
                 tools: session.trace(),
               });
             const admission =
@@ -199,10 +217,47 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
                 : work.admitModelAttempt
                   ? work.admitModelAttempt(allowed, ids)
                   : work.isCurrent() && allowed();
-            staleContext = admission === 'context_stale';
+            if (admission === 'context_stale') staleContext = true;
+            if (admission === true || (admission !== null && typeof admission === 'object')) {
+              for (const card of candidateCards) {
+                cardSubjects.add(card.owner);
+                for (const id of card.sourceIds) cardSources.add(id);
+                for (const ref of card.refs) usedRefs.set(ref.value, ref);
+              }
+              if (cards && context && prepared.metadata && candidateCards.length) {
+                const index = cards.messageIndex;
+                const bytes =
+                  Buffer.byteLength(request.messages[index]?.text ?? '') -
+                  Buffer.byteLength(prepared.input.messages[index]?.text ?? '');
+                if (bytes > cardBytes) {
+                  cardBytes = bytes;
+                  context = {
+                    ...prepared.metadata,
+                    layerBytes: {
+                      ...prepared.metadata.layerBytes,
+                      messages: prepared.metadata.layerBytes.messages + bytes,
+                    },
+                    estimatedTokens: prepared.metadata.estimatedTokens + bytes,
+                    absentLayers: prepared.metadata.absentLayers.filter(
+                      (layer) => layer !== 'profiles',
+                    ),
+                  };
+                  work.recordTrace({ context: { ...context, messageIds: ids } });
+                }
+              }
+              candidateCards = [];
+            }
             return admission;
           },
-          session,
+          session && cards
+            ? { ...session, current: () => session.current() && cardsCurrent() }
+            : session,
+          compose &&
+            ((request) => {
+              const result = compose(request);
+              candidateCards = result.used;
+              return result.request;
+            }),
         );
         const result = await loop.run({ ...prepared.input, signal: lifetime });
         if (staleContext && result.summary.attempts === 0) continue;
@@ -229,9 +284,11 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
           outcome,
           result,
           ...(prepared.addressPreference ? { addressPreference: prepared.addressPreference } : {}),
-          ...(session
-            ? { toolResultsCurrent: session.current, subjectIds: session.subjectIds?.() ?? [] }
+          ...(session ? { toolResultsCurrent: session.current } : {}),
+          ...(cardSubjects.size
+            ? { participantCards: { current: cardsCurrent, sourceIds: [...cardSources] } }
             : {}),
+          subjectIds: [...new Set([...(session?.subjectIds?.() ?? []), ...cardSubjects])],
           authorLabels: [...(prepared.authorLabels ?? []), ...(session?.labels() ?? [])],
         };
       }

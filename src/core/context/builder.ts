@@ -1,3 +1,4 @@
+import type { CardCandidate, ContextCardReader, PreparedCards } from './participant-cards';
 import type { AddressForm, UserId } from '../../contracts/index';
 import { addressPrompt } from './address-prompt';
 import { setImmediate as yieldImmediate } from 'node:timers/promises';
@@ -42,6 +43,7 @@ export interface ContextBuilderOptions {
   ) => void;
   readonly sessionId: (scope: ConnectionScope) => string;
   readonly now?: () => number;
+  readonly participantCards?: ContextCardReader;
   readonly addressForm?: (
     scope: ConnectionScope,
     userId: UserId,
@@ -79,6 +81,8 @@ export function createContextBuilder(options: ContextBuilderOptions) {
     if (!isWorkCurrent()) return { kind: 'cancelled' };
     if (!currentMessage || currentMessage.role !== 'user') return { kind: 'unavailable' };
     const currentJournalId = currentMessage.id;
+    const currentUser = currentMessage.userId;
+    const { isGroupChat } = route;
 
     const settings = await options.state.settings(scope);
     if (!isWorkCurrent()) return { kind: 'cancelled' };
@@ -133,9 +137,41 @@ export function createContextBuilder(options: ContextBuilderOptions) {
       options.addressForm ? (address?.text ?? currentMessage.authorName) : undefined,
     );
     const authorLabels = new Set<string>();
-    function includeAuthor(message: ContextMessage) {
+    let initiatingAuthor: CardCandidate | undefined;
+    const candidates = new Map<UserId, CardCandidate>();
+    const cardReader = options.participantCards;
+    function includeAuthor(message: ContextMessage, evidenceOnly = false) {
       const label = formatter.authorLabel(message);
       if (label) authorLabels.add(label);
+      if (
+        !cardReader ||
+        evidenceOnly ||
+        message.role !== 'user' ||
+        message.senderBot !== false ||
+        (isGroupChat ? label === undefined : scope.chatId !== message.userId)
+      )
+        return;
+      const row: CardCandidate = {
+        userId: message.userId,
+        author: message.authorName,
+        ...(label === undefined ? {} : { authorLabel: label }),
+        timestamp: message.timestamp,
+        id: message.id,
+      };
+      if (message.id === currentJournalId) {
+        const shownAddress = options.addressForm
+          ? (address?.text ?? message.authorName)
+          : undefined;
+        initiatingAuthor = { ...row, ...(shownAddress === undefined ? {} : { shownAddress }) };
+      } else if (message.userId !== currentUser) {
+        const existing = candidates.get(message.userId);
+        if (
+          !existing ||
+          row.timestamp > existing.timestamp ||
+          (row.timestamp === existing.timestamp && row.id > existing.id)
+        )
+          candidates.set(row.userId, row);
+      }
     }
     includeAuthor(currentMessage);
     let evidenceField = '';
@@ -146,7 +182,7 @@ export function createContextBuilder(options: ContextBuilderOptions) {
       const evidence = await options.messages.get(scope, evidenceId);
       if (!isWorkCurrent()) return { kind: 'cancelled' };
       if (!evidence) return { kind: 'unavailable' };
-      includeAuthor(evidence);
+      includeAuthor(evidence, true);
       evidenceField = ',"initiativeEvidence":' + formatter.serializeEntry({ message: evidence });
     }
     // Неиспользованный резерв окружения не увеличивает окно истории.
@@ -301,6 +337,20 @@ export function createContextBuilder(options: ContextBuilderOptions) {
     if (estimatedTokens > config.inputBudgetTokens) {
       return { kind: 'failed', reason: 'internal_error' };
     }
+    const participantCards: PreparedCards | undefined =
+      cardReader && (initiatingAuthor || candidates.size)
+        ? {
+            candidates: Object.freeze([
+              ...(initiatingAuthor ? [initiatingAuthor] : []),
+              ...[...candidates.values()].sort((a, b) => b.timestamp - a.timestamp || b.id - a.id),
+            ]),
+            messageIndex: messages.length - 1,
+            modelContextTokens: config.modelContextTokens,
+            read: (actor) =>
+              cardReader.read(scope, actor, currentMessage.timestamp, route.isGroupChat),
+            current: (refs) => cardReader.current(scope, refs),
+          }
+        : undefined;
     const metadata = Object.freeze({
       version: Object.freeze({ ...systemPrompt.ref }),
       cutoffId: currentJournalId,
@@ -330,6 +380,7 @@ export function createContextBuilder(options: ContextBuilderOptions) {
         sessionId: options.sessionId(scope),
       }),
       metadata,
+      ...(participantCards ? { participantCards } : {}),
       ...(address ? { addressPreference: address.reference } : {}),
       ...(authorLabels.size ? { authorLabels: Object.freeze([...authorLabels]) } : {}),
     };

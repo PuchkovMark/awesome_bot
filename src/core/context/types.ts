@@ -1,3 +1,4 @@
+import type { PreparedCards } from './participant-cards';
 import type { AddressPreferenceReference } from '../../contracts/index';
 import type { GlobalVersionRef } from '../../contracts/versioning';
 import type { AgentLoopInput } from '../agent-loop/types';
@@ -24,6 +25,7 @@ export type PreparationResult =
       readonly metadata: ContextMetadata;
       readonly authorLabels?: readonly string[];
       readonly addressPreference?: AddressPreferenceReference;
+      readonly participantCards?: PreparedCards;
     }
   | { readonly kind: 'failed'; readonly reason: PreparationFailure }
   | { readonly kind: 'cancelled' | 'unavailable' | 'deadline_exceeded' };

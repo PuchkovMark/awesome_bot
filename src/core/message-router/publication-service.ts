@@ -106,9 +106,16 @@ export function createPublicationService(options: {
       readonly flood?: FloodNotice;
       readonly authorLabels?: readonly string[];
       readonly addressPreference?: AddressPreferenceReference;
+      readonly participantCards?: QueueCompletion['participantCards'];
     } = {},
   ): Promise<string> {
-    const { withoutJob = false, flood, authorLabels = [], addressPreference } = details;
+    const {
+      withoutJob = false,
+      flood,
+      authorLabels = [],
+      addressPreference,
+      participantCards,
+    } = details;
     const jobId = work.jobId;
     if (!withoutJob && (jobId === undefined || active.has(jobId))) return 'silence';
     if (jobId !== undefined) active.add(jobId);
@@ -120,6 +127,7 @@ export function createPublicationService(options: {
       meter: ResponsePublication | undefined,
       started = false;
     let preferenceDenied = false;
+    let cardsDenied = false;
     let meteredOutcome: import('../../storage/response-rate-store').ResponseRateOutcome = 'unknown';
     const denial: { reason?: Extract<ResponsePublicationAdmission, { allowed: false }>['reason'] } =
       {};
@@ -167,6 +175,7 @@ export function createPublicationService(options: {
       scope = lifecycle.transaction(work.scope, () => lifecycle.current(work.scope.chatId, true));
       const addressCurrent = () =>
         !addressPreference || options.addressCurrent?.(scope, addressPreference) === true;
+      const cardsCurrent = () => participantCards?.current() ?? true;
       const guardReason = () =>
         addressCurrent() ? ('guard' as const) : ('address_preference_changed' as const);
       function isCurrent(): boolean {
@@ -181,7 +190,7 @@ export function createPublicationService(options: {
           return false;
         }
       }
-      const readyToSend = () => isCurrent() && addressCurrent();
+      const readyToSend = () => isCurrent() && addressCurrent() && cardsCurrent();
       const settings = await options.storage.chats.get(scope);
       if (!settings || !readyToSend()) return suppressed(guardReason());
       let decision = publicationDecision(route, settings, outcome);
@@ -190,11 +199,12 @@ export function createPublicationService(options: {
         signal: work.signal,
         isCurrent,
         async allow() {
-          if (!isCurrent()) return false;
+          if (!isCurrent() || !cardsCurrent()) return false;
           const latest = await options.storage.chats.get(scope);
           return (
             !!latest &&
             isCurrent() &&
+            cardsCurrent() &&
             publicationDecision(
               route,
               latest,
@@ -274,6 +284,10 @@ export function createPublicationService(options: {
       }
       const beforeSend = () => {
         if (!isCurrent()) return false;
+        if (!cardsCurrent()) {
+          cardsDenied = true;
+          return false;
+        }
         if (!addressCurrent()) {
           preferenceDenied = true;
           return false;
@@ -337,7 +351,13 @@ export function createPublicationService(options: {
                 db,
                 scope,
                 messageId,
-                [work.messageId, ...ids],
+                [
+                  ...new Set([
+                    work.messageId,
+                    ...ids,
+                    ...(decision.kind === 'answer' ? (participantCards?.sourceIds ?? []) : []),
+                  ]),
+                ],
                 decision.kind === 'answer' ? details.subjectIds : undefined,
               );
             }
@@ -358,7 +378,7 @@ export function createPublicationService(options: {
             text,
             ...replyFields,
             ...guard,
-            ...(meter || addressPreference ? { beforeSend } : {}),
+            ...(meter || addressPreference || participantCards ? { beforeSend } : {}),
             confirmPart,
           }),
         );
@@ -378,6 +398,7 @@ export function createPublicationService(options: {
       if (parts.size > 0) meteredOutcome = 'delivered';
       else if (!journalFailed && result?.kind === 'failed') meteredOutcome = 'failed';
       if (denial.reason && !started) return suppressed(denial.reason);
+      if (parts.size === 0 && (cardsDenied || !cardsCurrent())) return suppressed('guard');
       if (preferenceDenied && parts.size === 0 && result?.kind === 'failed')
         return suppressed('address_preference_changed');
       if (journalFailed) {
@@ -444,6 +465,7 @@ export function createPublicationService(options: {
           : (completion.result ?? { kind: completion.outcome }),
         {
           subjectIds: completion.subjectIds ?? [],
+          ...(completion.participantCards ? { participantCards: completion.participantCards } : {}),
           authorLabels: completion.authorLabels ?? [],
           ...(completion.addressPreference
             ? { addressPreference: completion.addressPreference }

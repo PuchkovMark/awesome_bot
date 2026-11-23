@@ -21,6 +21,7 @@ export function createAgentLoop(
   onAttempt?: (summary: import('./types').AgentLoopSummary) => void,
   allowAttempt?: (request: Readonly<LlmRequest>, ordinal: number) => AttemptAdmission,
   tools?: LoopTools,
+  decorateRequest?: (request: LlmRequest) => LlmRequest,
 ): AgentLoop {
   const config = loopOptions(options);
   let invoke: LlmClient['complete'];
@@ -92,7 +93,7 @@ export function createAgentLoop(
               ])
             : undefined;
           if (!safeCurrent()) return finish({ kind: 'cancelled' });
-          const request: LlmRequest = {
+          const base: LlmRequest = {
             system: prepared.system,
             messages: structuredClone(transcript),
             ...(offered?.length ? { tools: structuredClone(offered) } : {}),
@@ -100,6 +101,7 @@ export function createAgentLoop(
             sessionId: prepared.sessionId,
             signal: controller.signal,
           };
+          const request = decorateRequest?.(base) ?? base;
           const before = checkStopped();
           if (before) return finish(before);
           const admission = allowAttempt ? allowAttempt(request, attempts + 1) : true;
@@ -176,7 +178,11 @@ export function createAgentLoop(
               return finish({ kind: 'step_limit' });
             transcript.push({ role: 'assistant', toolCalls: calls });
             const pendingIds = calls.map((c) => c.id);
-            tools.beginBatch({ ...request, messages: transcript }, pendingIds, parentStep + 1);
+            const batchRequest = () => ({
+              ...request,
+              messages: [...request.messages, ...transcript.slice(request.messages.length)],
+            });
+            tools.beginBatch(batchRequest(), pendingIds, parentStep + 1);
             const execute = (call: LlmToolCall) => {
               const cached = executions.get(call.id);
               if (cached) {
@@ -204,11 +210,7 @@ export function createAgentLoop(
               if (!results || !safeCurrent()) return finish(stopped ?? { kind: 'cancelled' });
               for (const [index, call] of batch.entries())
                 transcript.push({ role: 'tool', callId: call.id, text: results[index]! });
-              tools.beginBatch(
-                { ...request, messages: transcript },
-                pendingIds.slice(i),
-                parentStep + 1,
-              );
+              tools.beginBatch(batchRequest(), pendingIds.slice(i), parentStep + 1);
             }
             parentStep++;
             stepAttempts = 0;

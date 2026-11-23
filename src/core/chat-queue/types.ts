@@ -59,6 +59,10 @@ export type QueueHandler = (input: QueueHandlerInput) => Promise<QueueOutcome | 
 export interface QueueCompletion {
   readonly subjectIds?: readonly import('../../contracts/index').UserId[];
   readonly toolResultsCurrent?: () => boolean;
+  readonly participantCards?: {
+    readonly current: () => boolean;
+    readonly sourceIds: readonly number[];
+  };
   readonly outcome: QueueOutcome;
   readonly preparationFailure?: import('../context/types').PreparationFailure;
   readonly result?: import('../agent-loop/types').AgentLoopResult;

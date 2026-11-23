@@ -331,3 +331,139 @@ test.each(['single', 'sameChat', 'parallelChats'] as const)(
     });
   },
 );
+
+test('карточки читают профили только окна при росте состава беседы', async () => {
+  const { contextParticipantCards } = await import('../../src/app/context-participant-cards');
+  const { createParticipantCardComposer } =
+    await import('../../src/core/context/participant-cards');
+  const { disclosureStore } = await import('../../src/storage/chat-disclosure-store');
+  const { participantRegistryStore } = await import('../../src/storage/participant-registry');
+  const { profileNotice } = await import('../helpers/profile-fact-fixture');
+  const f = await contextFixture('vk:latency-cards');
+  const { storage, scope } = f;
+  const readers = contextParticipantCards(storage);
+  const people = Array.from({ length: 12 }, (_, index) => `vk:${41 + index}` as const);
+  try {
+    const disclosures = disclosureStore(storage);
+    const version = disclosures.register(profileNotice, nowMs - 2000);
+    const pending = disclosures.ensure(scope, 'introduction', version);
+    const claim = disclosures.claim(scope, pending.id, profileNotice.profileNotice, nowMs - 1000)!;
+    expect(disclosures.finish(scope, claim, 'delivered', nowMs - 1000, null, 'cards')).toBe(true);
+    for (let i = 0; i < historySize; i++) {
+      const userId = people[i % people.length]!;
+      const { id } = await f.put('source-' + i, 'Короткая предыдущая реплика.', {
+        userId,
+        isGroupChat: true,
+        senderBot: false,
+        timestamp: nowMs,
+      });
+      if (i < people.length)
+        await storage.authorization.transaction(scope, (tx) => {
+          expect(
+            tx.changeProfileFact(userId, {
+              subjectId: userId,
+              messageId: id,
+              change: {
+                kind: 'set',
+                fieldKey: 'interest',
+                value: 'Гончарное дело',
+                reliability: 'confirmed',
+              },
+            }),
+          ).toBe('recorded');
+        });
+    }
+    const current = await f.put('current', 'Вопрос стенда', {
+      userId: people[0],
+      senderBot: false,
+      isGroupChat: true,
+      timestamp: nowMs,
+    });
+    const reads: string[] = [];
+    const options = {
+      ...f.options,
+      config: { modelContextTokens, inputBudgetTokens },
+      now: () => nowMs,
+    };
+    const baseline = createContextPreparation({ ...options, storage });
+    const extended = createContextPreparation({
+      ...options,
+      storage,
+      participantCards: {
+        ...readers,
+        read(...input) {
+          reads.push(input[1]);
+          return readers.read(...input);
+        },
+      },
+    });
+    const tools = [
+      {
+        name: 'participant',
+        description: 'Описание схемы стенда',
+        parameters: { type: 'object' as const },
+      },
+    ];
+    const warmup = 2,
+      measured = 12;
+    const silent = 2000;
+    const members = participantRegistryStore(storage);
+    const results = [];
+    for (const silentParticipants of [0, silent]) {
+      if (silentParticipants)
+        for (let i = 0; i < silentParticipants; i++)
+          members.observe(scope, {
+            kind: 'membership',
+            chatId: scope.chatId,
+            change: 'joined',
+            subjectId: `vk:${1000 + i}`,
+            actorId: null,
+            timestamp: nowMs,
+          });
+      const durations = { baseline: [] as number[], cards: [] as number[] };
+      for (let i = 0; i < warmup + measured; i++) {
+        let baseData: unknown;
+        for (const [key, preparation] of [
+          ['baseline', baseline],
+          ['cards', extended],
+        ] as const) {
+          reads.length = 0;
+          const began = performance.now();
+          const ready = await preparation.prepare(f.work(current.id));
+          if (ready.kind !== 'ready') throw Error('Стенд не собрал запрос.');
+          const input = { ...ready.input, tools };
+          const sent = ready.participantCards
+            ? createParticipantCardComposer(ready.participantCards)(input)
+            : { request: input, used: [] };
+          const elapsed = performance.now() - began;
+          if (i >= warmup) durations[key].push(elapsed);
+          const { participantCards, ...rest } = JSON.parse(sent.request.messages[0]!.text!);
+          if (key === 'baseline') {
+            baseData = rest;
+            expect(reads).toEqual([]);
+            expect(participantCards).toBeUndefined();
+          } else {
+            expect(rest).toEqual(baseData);
+            expect(participantCards).toHaveLength(people.length);
+            expect(reads.slice().sort()).toEqual(people.slice().sort());
+          }
+        }
+      }
+      results.push({
+        silentParticipants,
+        windowParticipants: people.length,
+        profileReads: reads.length,
+        baseline: summarizeDurations(durations.baseline),
+        cards: summarizeDurations(durations.cards),
+      });
+    }
+    await recordQueueLoad({
+      benchmark: 'participantContextCards',
+      historySize,
+      modelContextTokens,
+      results,
+    });
+  } finally {
+    await storage.close();
+  }
+});

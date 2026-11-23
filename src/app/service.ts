@@ -1,5 +1,6 @@
 import { createProfileCommands } from './profile-commands';
 import { applicationTools } from './model-tools';
+import { contextParticipantCards } from './context-participant-cards';
 import { createGreetingService } from '../core/greetings/service';
 import type { QuestionnaireInvitationSource } from '../core/greetings/invitation';
 import { greetingStore } from '../storage/greeting-store';
@@ -352,6 +353,7 @@ export async function runApplication(
         sessionId: createLlmSessionId(config.sessionSecret),
         capabilities: ({ chatId }) => channel.capabilities({ chatId }),
         addressForm: addressPreferences.resolve,
+        participantCards: contextParticipantCards(storage),
       });
       const contextFailure = preparation.checkStartup(
         await catalogAdministration(storage).systemPrompt(),

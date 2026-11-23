@@ -160,6 +160,7 @@ export function applicationTools(
     let offered: readonly LlmToolDescription[] = [];
     const session: LoopTools = {
       async schemas(request) {
+        // Дополнительные карточки вписываются после выбора схем для базового ввода.
         offered = await schemas();
         if (
           modelInputLimit &&

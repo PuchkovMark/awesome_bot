@@ -164,3 +164,74 @@ test('резерв покрывает сериализованный ответ 
     );
   }
 });
+
+test('продолжение получает те же схемы и исходные сообщения, когда карточка перестала помещаться', async () => {
+  const { createAgentLoop } = await import('../src/core/agent-loop/service');
+  const { createParticipantCardComposer } = await import('../src/core/context/participant-cards');
+  const text =
+    '{"kind":"untrusted_chat_data","history":[{"text":"История"}],"reply":null,"current":{"text":"Запрос"}}';
+  const base = {
+    system: 'Главные правила.',
+    messages: [{ role: 'user' as const, text }],
+    sessionId: 'opaque',
+    maxOutputTokens: 640,
+  };
+  const issued = [tool('lookup', 'read')];
+  const complete = vi
+    .fn<(request: LlmRequest) => Promise<LlmResult>>()
+    .mockResolvedValueOnce({
+      kind: 'tool_calls',
+      calls: [{ name: 'lookup', id: 'lookup-1', arguments: '{}' }],
+      text: null,
+      usage: { input: 1, output: 1 },
+    })
+    .mockResolvedValueOnce({ kind: 'complete', text: 'Готово.', usage: { input: 1, output: 1 } });
+  const schemas = vi.fn<(request: LlmRequest) => Promise<typeof issued>>(async () => issued);
+  const beginBatch = vi.fn();
+  const composer = createParticipantCardComposer({
+    candidates: [{ id: 1, timestamp: 1, userId: 'vk:41', author: 'Саша', authorLabel: 'u1' }],
+    messageIndex: 0,
+    modelContextTokens: 2350,
+    read: () => ({
+      facts: [
+        {
+          value: {
+            fieldKey: 'заметка',
+            value: 'с'.repeat(530),
+            sourceKind: 'self',
+            reliability: 'confirmed',
+          },
+          reference: {} as import('../src/contracts/profile-facts').ContextCardFactReference,
+          sourceIds: [17],
+        },
+      ],
+    }),
+    current: () => true,
+  });
+  const run = createAgentLoop(
+    { complete },
+    {},
+    undefined,
+    undefined,
+    {
+      schemas,
+      beginBatch,
+      execute: async () => 'Аргументы.'.repeat(50),
+      helperSteps: () => 0,
+      trace: () => [],
+      current: () => true,
+      sourceIds: () => [],
+      labels: () => [],
+    },
+    (request) => composer(request).request,
+  );
+  expect(await run.run(base)).toMatchObject({ kind: 'complete' });
+  expect(complete).toHaveBeenCalledTimes(2);
+  const [first, next] = complete.mock.calls.map(([request]) => request);
+  expect(first?.messages[0]?.text).toContain('participantCards');
+  expect(next?.messages[0]?.text).toBe(text);
+  expect(next?.tools).toEqual(first?.tools);
+  expect(next?.messages.map(({ role }) => role)).toEqual(['user', 'assistant', 'tool']);
+  expect(schemas.mock.calls.map(([request]) => request?.messages[0]?.text)).toEqual([text, text]);
+  expect(beginBatch.mock.calls[0]?.[0].messages[0].text).toContain('participantCards');
+});
