@@ -11,6 +11,7 @@ import type { Connection } from './connection';
 import type { LifecycleBackend } from './lifecycle-store';
 import type { Storage } from './types';
 import { compositeId, requireInput, timestamp } from './validation';
+import { participantProfileAvailable, readDeparture } from './participant-departures';
 
 const week = 7 * 86_400_000;
 
@@ -26,8 +27,17 @@ export function profileAdmitted(
   scope: ConnectionScope,
   userId: UserId,
   sourceTime: number,
+  purpose: 'read' | 'write' = 'read',
 ) {
   timestamp(sourceTime);
+  const args = parameters(scope, userId);
+  if (
+    !participantProfileAvailable(
+      readDeparture(db, scope, userId),
+      purpose === 'write' ? sourceTime : undefined,
+    )
+  )
+    return false;
   const row = db
     .prepare(
       `SELECT 1 FROM disclosure_publications p
@@ -40,7 +50,7 @@ export function profileAdmitted(
       AND NOT EXISTS (SELECT 1 FROM personal_deletions WHERE ${subject} AND confirmed_at IS NOT NULL)
     LIMIT 1`,
     )
-    .get({ ...parameters(scope, userId), sourceTime });
+    .get({ ...args, sourceTime });
   return Boolean(row);
 }
 

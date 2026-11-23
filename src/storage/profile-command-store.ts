@@ -11,6 +11,7 @@ import type {
 } from './profile-command-types';
 import type { OwnProfileFact } from './participant-types';
 import { selectOwnProfile } from './profile-fact-selection';
+import { participantProfileAvailable, readDeparture } from './participant-departures';
 import type { Storage } from './types';
 import { requireInput, timestamp } from './validation';
 
@@ -146,6 +147,7 @@ export function createProfileCommandStore(
         lifecycle.assertScope(db, privateScope);
         lifecycle.assertScope(db, event.scope);
         if (!claimProfileCommand(db, actor, event, now)) return null;
+        if (!participantProfileAvailable(readDeparture(db, target, actor), event.at)) return null;
         db.prepare('DELETE FROM profile_command_lists WHERE user_id=?').run(actor);
         const saved = db
           .prepare(
@@ -229,6 +231,8 @@ export function createProfileCommandStore(
         if (!available) return 'stale';
         const target = lifecycle.restore({ chatId: list.chat_id, generation: list.generation });
         return lifecycle.transaction(target, (targetDb) => {
+          if (!participantProfileAvailable(readDeparture(targetDb, target, actor), input.at))
+            return 'stale';
           const fact = selectOwnProfile(targetDb, target, actor, now).find((row) =>
             samePosition(position, row),
           );

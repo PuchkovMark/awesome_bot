@@ -3,6 +3,7 @@ import type { RuntimeTool } from './registry';
 
 export interface PublicParticipant {
   user: UserId;
+  participationRevision?: number;
   name: string;
   present: boolean;
   address?: string;
@@ -25,20 +26,22 @@ export function participantTools(
   anchors: ReadonlyMap<string, UserId>,
   permitted: () => boolean,
 ) {
-  const shown = new Map<UserId, string>();
+  type Seen = { readonly key: string; readonly participation: number };
+  const shown = new Map<UserId, Seen>();
   const compare = new Intl.Collator('ru', { sensitivity: 'base' });
   type Mode = 'participant_card' | 'participant_search' | 'participant_list';
-  function select(mode: Mode, args: Record<string, unknown>, prior: ReadonlyMap<UserId, string>) {
+  function select(mode: Mode, args: Record<string, unknown>, prior: ReadonlyMap<UserId, Seen>) {
     const query = String(args.query ?? '')
       .trim()
       .toLocaleLowerCase('ru');
     const view = roster(mode === 'participant_search' ? query : undefined);
     const ref = String(args.ref ?? '');
-    let subject = anchors.get(ref) ?? [...prior].find(([, key]) => key === ref)?.[0];
+    let subject = anchors.get(ref) ?? [...prior].find(([, { key }]) => key === ref)?.[0];
     if (subject && !anchors.has(ref)) {
       const selected = view.members.find((person) => person.user === subject);
       if (
-        selected &&
+        !selected ||
+        (selected.participationRevision ?? 0) !== prior.get(subject)?.participation ||
         view.members.some(
           (person) =>
             person.user !== subject &&
@@ -73,19 +76,21 @@ export function participantTools(
         limited = true;
         break;
       }
-      let key = next.get(p.user);
-      if (!key) {
+      const participation = p.participationRevision ?? 0;
+      let seen = next.get(p.user);
+      if (seen && seen.participation !== participation) continue;
+      if (!seen) {
         if (next.size >= 10) {
           limited = true;
           continue;
         }
-        key = 'participant' + (next.size + 1);
-        next.set(p.user, key);
+        seen = { key: 'participant' + (next.size + 1), participation };
+        next.set(p.user, seen);
       }
       subjects.push(p.user);
       const detail = mode === 'participant_card' ? (view.describe?.(p.user) ?? p) : undefined;
       rows.push({
-        ref: key,
+        ref: seen.key,
         name: p.name,
         ...(p.address ? { address: p.address } : {}),
         interests: detail?.interests ?? [],
@@ -135,7 +140,10 @@ export function participantTools(
             return (
               latest.text === result.text &&
               latest.ids.join(',') === result.ids.join(',') &&
-              [...result.next].every(([id, key]) => latest.next.get(id) === key)
+              [...result.next].every(([id, { key, participation }]) => {
+                const found = latest.next.get(id);
+                return found?.key === key && found.participation === participation;
+              })
             );
           },
         };
@@ -154,6 +162,6 @@ export function participantTools(
       ),
       definition('participant_list', 'Показать ограниченный список присутствующих в этой беседе.'),
     ],
-    labels: () => [...shown.values()],
+    labels: () => [...shown.values()].map(({ key }) => key),
   };
 }

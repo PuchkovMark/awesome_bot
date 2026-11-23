@@ -240,18 +240,30 @@ export function createParticipantRegistry(connection: Connection, lifecycle: Lif
             `WITH names AS (
           SELECT id,user_id,author_name,row_number() OVER (PARTITION BY user_id ORDER BY id DESC) AS position
           FROM personal_visible_messages WHERE chat_id=? AND id>? AND timestamp>? AND id<=? AND role='user'
-        ) SELECT p.user_id AS user,p.status,n.author_name AS name,n.id AS nameId FROM chat_participants p
-        LEFT JOIN names n ON n.user_id=p.user_id AND n.position=1 WHERE p.chat_id=?
-        AND NOT EXISTS (SELECT 1 FROM personal_deletions d WHERE d.chat_id=p.chat_id AND d.generation=? AND d.user_id=p.user_id AND d.confirmed_at IS NOT NULL)`,
+        ) SELECT p.user_id AS user,p.status,n.author_name AS name,n.id AS nameId,
+          coalesce(d.revision,0) AS participationRevision
+        FROM chat_participants p
+        LEFT JOIN names n ON n.user_id=p.user_id AND n.position=1
+        LEFT JOIN participant_departures d ON (d.chat_id,d.generation,d.user_id)=(p.chat_id,?,p.user_id)
+        WHERE p.chat_id=?
+        AND (d.revision IS NULL OR (d.returned_at IS NOT NULL AND d.needs_verification=0))
+        AND NOT EXISTS (SELECT 1 FROM personal_deletions e WHERE e.chat_id=p.chat_id AND e.generation=? AND e.user_id=p.user_id AND e.confirmed_at IS NOT NULL)`,
           )
           .all(
             scope.chatId,
             bounds.clearedThrough,
             bounds.expiredThrough,
             cutoff,
+            scope.generation,
             scope.chatId,
             scope.generation,
-          ) as { user: UserId; status: string; name: string | null; nameId: number | null }[];
+          ) as {
+          user: UserId;
+          status: string;
+          name: string | null;
+          nameId: number | null;
+          participationRevision: number;
+        }[];
         return { complete: meta.lastAttemptComplete === 1 && meta.needsSync === 0, rows };
       });
     },

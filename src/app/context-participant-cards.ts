@@ -16,12 +16,7 @@ export function contextParticipantCards(storage: Storage): ContextCardReader {
       const facts = refs.flatMap((ref) => (ref.kind === 'fact' ? [ref.value] : []));
       if (!profiles.cardFactsCurrent(scope, facts)) return false;
       try {
-        return refs.every((ref) => {
-          if (ref.kind === 'fact') return true;
-          const { userId, sourceTime, isGroupChat, revision } = ref.value;
-          const selected = addresses.resolveForCard(scope, userId, sourceTime, isGroupChat);
-          return selected?.reference.revision === revision && selected.sourceId === ref.sourceId;
-        });
+        return refs.every((ref) => ref.kind === 'fact' || addresses.current(scope, ref.value, ref));
       } catch {
         return false;
       }

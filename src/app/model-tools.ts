@@ -104,6 +104,7 @@ export function applicationTools(
           const address = addresses.resolve(scope, row.user, current.timestamp, group);
           return {
             user: row.user,
+            participationRevision: row.participationRevision,
             name: row.name ?? 'Участник',
             present: row.status === 'present',
             ...(address ? { address: address.text } : {}),

@@ -233,7 +233,7 @@ test('перечень источников F5.8 охватывает табли
       privateReminders:
         'personal_reminders personal_reminder_parts personal_reminder_inputs personal_reminder_timezones',
       erasureAndReplay:
-        'personal_deletions personal_hidden_messages history_deleted_inputs participant_events profile_command_events profile_fact_rejections',
+        'personal_deletions personal_hidden_messages history_deleted_inputs participant_departures participant_events profile_command_events profile_fact_rejections',
       sharedSettingsAndUsage:
         'chats chat_connections lifecycle_clock chat_token_budgets token_budget_attempts response_rate_clock response_rate_publications mention_flood_state history_retention_policy history_retention_boundaries autonomous_quota_reservations chat_controls disclosure_versions disclosure_publications connection_membership_signals notice_periods queue_turns queue_lease global_content_versions local_content_versions chat_content_selections global_prompt_selection bot_admin_controls participant_sync chat_passport_sections questionnaire_revisions questionnaire_default_boundary schema_migrations sqlite_sequence',
     };

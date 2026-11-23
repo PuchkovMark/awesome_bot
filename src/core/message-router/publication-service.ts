@@ -107,6 +107,7 @@ export function createPublicationService(options: {
       readonly authorLabels?: readonly string[];
       readonly addressPreference?: AddressPreferenceReference;
       readonly participantCards?: QueueCompletion['participantCards'];
+      readonly toolResultsCurrent?: QueueCompletion['toolResultsCurrent'];
     } = {},
   ): Promise<string> {
     const {
@@ -115,6 +116,7 @@ export function createPublicationService(options: {
       authorLabels = [],
       addressPreference,
       participantCards,
+      toolResultsCurrent,
     } = details;
     const jobId = work.jobId;
     if (!withoutJob && (jobId === undefined || active.has(jobId))) return 'silence';
@@ -135,14 +137,22 @@ export function createPublicationService(options: {
     const save = (pub: TracePublication): boolean => {
       if (withoutJob) return true;
       if (jobId === undefined) return false;
+      // Ревизия запрещает отправку. Итог допуска относится к тому же поколению.
+      let traceScope: ConnectionScope;
       try {
-        if (traces.publication(scope, jobId, pub)) return true;
+        traceScope = lifecycle.current(scope.chatId);
+        if (traceScope.generation !== scope.generation) return false;
+      } catch {
+        return false;
+      }
+      try {
+        if (traces.publication(traceScope, jobId, pub)) return true;
       } catch {
         /* Попытка минимальной формы ниже. */
       }
       traces.report('full_write_failed');
       try {
-        if (traces.publication(scope, jobId, pub, true)) {
+        if (traces.publication(traceScope, jobId, pub, true)) {
           traces.report('minimal_saved');
           return true;
         }
@@ -173,9 +183,25 @@ export function createPublicationService(options: {
       if (route.kind === 'initiative' && !budget?.confirmInitiative) return suppressed('guard');
       if (flood && !budget) return suppressed('guard');
       scope = lifecycle.transaction(work.scope, () => lifecycle.current(work.scope.chatId, true));
-      const addressCurrent = () =>
-        !addressPreference || options.addressCurrent?.(scope, addressPreference) === true;
-      const cardsCurrent = () => participantCards?.current() ?? true;
+      const addressCurrent = () => {
+        if (!addressPreference) return true;
+        try {
+          const current = lifecycle.current(scope.chatId);
+          return (
+            current.generation === scope.generation &&
+            options.addressCurrent?.(current, addressPreference) === true
+          );
+        } catch {
+          return false;
+        }
+      };
+      const profileContextCurrent = () => {
+        try {
+          return (participantCards?.current() ?? true) && (toolResultsCurrent?.() ?? true);
+        } catch {
+          return false;
+        }
+      };
       const guardReason = () =>
         addressCurrent() ? ('guard' as const) : ('address_preference_changed' as const);
       function isCurrent(): boolean {
@@ -190,7 +216,7 @@ export function createPublicationService(options: {
           return false;
         }
       }
-      const readyToSend = () => isCurrent() && addressCurrent() && cardsCurrent();
+      const readyToSend = () => isCurrent() && addressCurrent() && profileContextCurrent();
       const settings = await options.storage.chats.get(scope);
       if (!settings || !readyToSend()) return suppressed(guardReason());
       let decision = publicationDecision(route, settings, outcome);
@@ -199,12 +225,12 @@ export function createPublicationService(options: {
         signal: work.signal,
         isCurrent,
         async allow() {
-          if (!isCurrent() || !cardsCurrent()) return false;
+          if (!isCurrent() || !profileContextCurrent()) return false;
           const latest = await options.storage.chats.get(scope);
           return (
             !!latest &&
             isCurrent() &&
-            cardsCurrent() &&
+            profileContextCurrent() &&
             publicationDecision(
               route,
               latest,
@@ -284,7 +310,7 @@ export function createPublicationService(options: {
       }
       const beforeSend = () => {
         if (!isCurrent()) return false;
-        if (!cardsCurrent()) {
+        if (!profileContextCurrent()) {
           cardsDenied = true;
           return false;
         }
@@ -358,7 +384,14 @@ export function createPublicationService(options: {
                     ...(decision.kind === 'answer' ? (participantCards?.sourceIds ?? []) : []),
                   ]),
                 ],
-                decision.kind === 'answer' ? details.subjectIds : undefined,
+                decision.kind === 'answer'
+                  ? [
+                      ...new Set([
+                        ...(details.subjectIds ?? []),
+                        ...(addressPreference ? [addressPreference.userId] : []),
+                      ]),
+                    ]
+                  : undefined,
               );
             }
           });
@@ -378,7 +411,9 @@ export function createPublicationService(options: {
             text,
             ...replyFields,
             ...guard,
-            ...(meter || addressPreference || participantCards ? { beforeSend } : {}),
+            ...(meter || addressPreference || participantCards || toolResultsCurrent
+              ? { beforeSend }
+              : {}),
             confirmPart,
           }),
         );
@@ -398,8 +433,11 @@ export function createPublicationService(options: {
       if (parts.size > 0) meteredOutcome = 'delivered';
       else if (!journalFailed && result?.kind === 'failed') meteredOutcome = 'failed';
       if (denial.reason && !started) return suppressed(denial.reason);
-      if (parts.size === 0 && (cardsDenied || !cardsCurrent())) return suppressed('guard');
-      if (preferenceDenied && parts.size === 0 && result?.kind === 'failed')
+      if (parts.size === 0 && (cardsDenied || !profileContextCurrent())) return suppressed('guard');
+      if (
+        parts.size === 0 &&
+        (preferenceDenied || (result?.kind === 'failed' && !addressCurrent()))
+      )
         return suppressed('address_preference_changed');
       if (journalFailed) {
         report('journal_failed');
@@ -466,6 +504,9 @@ export function createPublicationService(options: {
         {
           subjectIds: completion.subjectIds ?? [],
           ...(completion.participantCards ? { participantCards: completion.participantCards } : {}),
+          ...(completion.toolResultsCurrent
+            ? { toolResultsCurrent: completion.toolResultsCurrent }
+            : {}),
           authorLabels: completion.authorLabels ?? [],
           ...(completion.addressPreference
             ? { addressPreference: completion.addressPreference }

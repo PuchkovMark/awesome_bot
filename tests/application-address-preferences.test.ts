@@ -2,9 +2,56 @@ import { expect, test } from 'vitest';
 import { answer, fixture, peer, until } from './helpers/application-response-fixture';
 import { addressPreferenceStore } from '../src/storage/address-preference-store';
 import { personalDataStore } from '../src/storage/personal-data-store';
+import { participantRegistryStore } from '../src/storage/participant-registry';
 
 const profileNotice = 'Тестовое уведомление о профиле';
 const user = 'vk:41';
+
+test('при выходе обращение скрыто, ранний возврат не оживляет старую отправку и запись', async () => {
+  const f = await fixture({ profileNotice, active: true, hold: true });
+  const store = addressPreferenceStore(f.storage);
+  const members = participantRegistryStore(f.storage);
+  const secret = 'ПроверочноеОбращение049';
+  try {
+    f.at(1000);
+    f.submit('Пенёк, называй меня ' + secret);
+    await until(() => expect(store.resolve(f.scope, user, Date.now(), true)?.text).toBe(secret));
+    const old = store.resolve(f.scope, user, Date.now(), true)!.reference;
+    f.complete.mockResolvedValueOnce({ ...answer, text: secret + ', готово.' });
+    const question = f.submit('[club314|Пенёк] Вопрос', 41);
+    await until(() => expect(f.holds).toHaveLength(1));
+    f.at(2000);
+    f.membership('chat_kick_user', 73, 41);
+    await until(() => expect(members.departure(f.scope, user)?.departedAt).toBe(f.start + 2000));
+    expect(store.resolve(f.scope, user, Date.now(), true)).toBeUndefined();
+    f.at(3000);
+    f.membership('chat_invite_user_by_link', 41);
+    await until(() => expect(members.departure(f.scope, user)?.returnedAt).toBe(f.start + 3000));
+    expect(store.resolve(f.scope, user, Date.now(), true)?.text).toBe(secret);
+    expect(store.current(f.scope, old)).toBe(false);
+    expect(
+      store.change(
+        f.scope,
+        user,
+        {
+          sequence: 999,
+          at: f.start + 1500,
+          isGroupChat: true,
+        },
+        { kind: 'reset' },
+        () => true,
+      ),
+    ).toBe('blocked');
+    f.holds[0]!.release();
+    expect((await f.trace(question)).payload.publication).toMatchObject({
+      status: 'suppressed',
+      reason: 'address_preference_changed',
+    });
+    expect(f.sends.every((row) => !row.text.includes(secret))).toBe(true);
+  } finally {
+    await f.close();
+  }
+});
 
 test('команда меняет выбор только автора, скрытая форма остаётся личной и не попадает в журнал контекста', async () => {
   const f = await fixture({ profileNotice, active: true });

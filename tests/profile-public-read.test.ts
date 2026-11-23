@@ -1,5 +1,6 @@
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { lifecycleBackend } from '../src/storage/lifecycle-store';
+import { participantRegistryStore } from '../src/storage/participant-registry';
 import {
   admin,
   alice,
@@ -124,6 +125,65 @@ test('публичное чтение выбирает действующее з
     lifecycle.apply(lifecycle.begin(group), { confidence: 'uncertain', bot: 'unknown' });
     expect(f.storage.profileFacts.isCurrent(scope, restored.reference)).toBe(false);
   } finally {
+    await f.close();
+  }
+});
+
+test('после ухода карточки и старые ссылки закрыты, ранний возврат сохраняет ограниченные поля', async () => {
+  const f = await profileFixture();
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(100);
+  try {
+    const scope = await f.chat();
+    const other = await f.chat(neighbor, [alice]);
+    const direct = await f.chat(alice, [alice]);
+    for (const target of [scope, other, direct]) {
+      f.deliver(target);
+      const message = await f.message(target, alice, '1', 20);
+      await f.change(target, alice, alice, message, set('interest', 'Шахматы'));
+    }
+    const privateSource = await f.message(scope, alice, '2', 21);
+    await f.change(scope, alice, alice, privateSource, set('city', 'Закрытый город'));
+    await f.change(scope, alice, alice, await f.message(scope, alice, '3', 22), {
+      kind: 'visibility',
+      fieldKey: 'city',
+      visibility: 'bot',
+    });
+    const pending = await f.message(scope, alice, '4', 24);
+    const facts = f.storage.profileFacts;
+    const initial = facts.read(scope, alice);
+    const proof = facts.cardFacts(scope, alice).map(({ reference }) => reference);
+    const interest = facts.searchInterests(scope, 'шахматы');
+    expect(proof).toHaveLength(1);
+    expect(interest.matches).toHaveLength(1);
+    const registry = participantRegistryStore(f.storage);
+    const membership = (change: 'removed' | 'joined', timestamp: number) =>
+      registry.observe(scope, {
+        kind: 'membership',
+        chatId: group,
+        change,
+        timestamp,
+        subjectId: alice,
+        actorId: change === 'joined' ? alice : admin,
+        eventId: change,
+      });
+    membership('removed', 25);
+    expect(facts.read(scope, alice).facts).toEqual([]);
+    expect(facts.cardFacts(scope, alice)).toEqual([]);
+    expect(facts.searchInterests(scope, 'шахматы').matches).toEqual([]);
+    expect(f.infer(scope, alice, pending, set('city', 'Отложенный вывод'))).toBe('blocked');
+    membership('joined', 26);
+    expect(facts.read(scope, alice).facts).toEqual(initial.facts);
+    expect(facts.isCurrent(scope, initial.reference)).toBe(false);
+    expect(facts.cardFactsCurrent(scope, proof)).toBe(false);
+    expect(facts.isCurrent(scope, interest.reference)).toBe(false);
+    expect(f.infer(scope, alice, pending, set('city', 'Отложенный вывод'))).toBe('blocked');
+    const current = await f.message(scope, alice, '5', 27);
+    expect(f.infer(scope, alice, current, set('city', 'Новый вывод'))).toBe('recorded');
+    expect(facts.read(scope, alice).facts).toEqual(initial.facts);
+    expect(facts.read(other, alice).facts).toEqual(initial.facts);
+    expect(facts.read(direct, alice).facts).toEqual(initial.facts);
+  } finally {
+    clock.mockRestore();
     await f.close();
   }
 });

@@ -109,6 +109,60 @@ test('удаление автора карточки во время финал�
   }
 });
 
+test.each(['модель', 'лимитер'] as const)(
+  'уход и быстрый возврат после чтения карточки блокируют прежнюю выдачу через %s',
+  async (stage) => {
+    const app = await fixture({ hold: stage === 'лимитер' });
+    const gate = Promise.withResolvers<void>();
+    const registry = participantRegistryStore(app.storage);
+    const user = 'vk:41';
+    try {
+      app.at(1000);
+      app.membership('chat_invite_user_by_link', 41);
+      await until(() =>
+        expect(registry.read(app.scope).participants).toContainEqual(
+          expect.objectContaining({ userId: user, status: 'present' }),
+        ),
+      );
+      app.complete
+        .mockResolvedValueOnce(calls(tool('participant_card', 'c', { ref: 'current' })))
+        .mockImplementationOnce(async (request) => {
+          const found = request.messages.find((m) => m.role === 'tool');
+          expect(JSON.parse(found!.text).participants).toHaveLength(1);
+          if (stage === 'модель') await gate.promise;
+          return answer;
+        });
+      const question = app.submit(mention);
+      if (stage === 'модель') await until(() => expect(app.complete).toHaveBeenCalledTimes(2));
+      else await until(() => expect(app.holds).toHaveLength(1));
+      app.at(2000);
+      app.membership('chat_kick_user', 41, 41);
+      await until(() =>
+        expect(registry.departure(app.scope, user)).toMatchObject({
+          departedAt: app.start + 2000,
+          returnedAt: null,
+        }),
+      );
+      app.at(3000);
+      app.membership('chat_invite_user_by_link', 41);
+      await until(() =>
+        expect(registry.departure(app.scope, user)?.returnedAt).toBe(app.start + 3000),
+      );
+      gate.resolve();
+      if (stage === 'модель') {
+        await app.interrupted(question);
+      } else {
+        app.holds[0]!.release();
+        await app.holds[0]!.finished;
+      }
+      expect(app.sends.filter((row) => row.text === answer.text)).toHaveLength(0);
+    } finally {
+      gate.resolve();
+      await app.close();
+    }
+  },
+);
+
 test('публичный интерес из профиля исчезает во время продолжения, ответ остаётся локальным', async () => {
   const app = await fixture({ profileNotice: 'Профиль используется в беседе.' });
   const auth = await createAuthorizationService({

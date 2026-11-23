@@ -8,6 +8,7 @@ import type {
 } from '../contracts/index';
 import type { Storage } from './types';
 import { personalDataStore } from './personal-data-store';
+import { participantProfileAvailable, readDeparture } from './participant-departures';
 import { requireInput, timestamp } from './validation';
 
 export type AddressPreferenceChange =
@@ -32,6 +33,14 @@ function read(db: Database, scope: ConnectionScope, user: UserId): StoredPrefere
 }
 
 export function createAddressPreferenceStore(privacy: ReturnType<typeof personalDataStore>) {
+  const references = new WeakMap<
+    AddressPreferenceReference,
+    {
+      readonly chatId: ConnectionScope['chatId'];
+      readonly generation: number;
+      readonly participation: number;
+    }
+  >();
   function resolve(
     scope: ConnectionScope,
     userId: UserId,
@@ -64,10 +73,21 @@ export function createAddressPreferenceStore(privacy: ReturnType<typeof personal
                 bounds.expiredThrough,
               ) as number | undefined)
           : undefined;
+      const reference = Object.freeze({
+        userId,
+        revision: saved.revision,
+        sourceTime,
+        isGroupChat,
+      });
+      references.set(reference, {
+        chatId: scope.chatId,
+        generation: scope.generation,
+        participation: readDeparture(db, scope, userId)?.revision ?? 0,
+      });
       return {
         text: saved.form,
         ...(sourceId === undefined ? {} : { sourceId }),
-        reference: { userId, revision: saved.revision, sourceTime, isGroupChat },
+        reference,
       };
     });
   }
@@ -88,9 +108,20 @@ export function createAddressPreferenceStore(privacy: ReturnType<typeof personal
     ) {
       return resolve(scope, userId, sourceTime, isGroupChat, true);
     },
-    current(scope: ConnectionScope, reference: AddressPreferenceReference): boolean {
+    current(
+      scope: ConnectionScope,
+      reference: AddressPreferenceReference,
+      card?: { readonly sourceId?: number },
+    ): boolean {
+      const saved = references.get(reference);
+      if (saved?.chatId !== scope.chatId || saved.generation !== scope.generation) return false;
       const { userId, sourceTime, isGroupChat, revision } = reference;
-      return resolve(scope, userId, sourceTime, isGroupChat)?.reference.revision === revision;
+      const latest = resolve(scope, userId, sourceTime, isGroupChat, !!card);
+      return (
+        latest?.reference.revision === revision &&
+        references.get(latest.reference)?.participation === saved.participation &&
+        (!card || latest.sourceId === card.sourceId)
+      );
     },
     change(
       scope: ConnectionScope,
@@ -107,6 +138,8 @@ export function createAddressPreferenceStore(privacy: ReturnType<typeof personal
         requireInput(!!change.form.trim() && !/[\p{Cc}\p{Zl}\p{Zp}]/u.test(change.form));
       return (
         privacy.withProfileAdmission(scope, user, at, (db) => {
+          if (!participantProfileAvailable(readDeparture(db, scope, user), at))
+            return 'blocked' as const;
           const settings = db
             .prepare('SELECT enabled,response_mode FROM chats WHERE chat_id=?')
             .get(scope.chatId) as { enabled: number; response_mode: string } | undefined;

@@ -3,6 +3,7 @@ import type { ConnectionScope, UserId } from '../src/contracts/index';
 import type { LlmRequest } from '../src/llm/types';
 import { lifecycleBackend } from '../src/storage/lifecycle-store';
 import { personalDataStore } from '../src/storage/personal-data-store';
+import { participantRegistryStore } from '../src/storage/participant-registry';
 import * as profileReader from '../src/storage/profile-fact-reader';
 import { answer, fixture, mention, until } from './helpers/application-response-fixture';
 
@@ -253,6 +254,49 @@ test('после скрытия между частями уже доставл�
     expect(app.db.prepare('SELECT user_id FROM tool_answer_subjects').pluck().all()).toEqual([
       alice,
     ]);
+  } finally {
+    await app.close();
+  }
+});
+
+test('скрытие карточки при выходе блокирует старый запрос, ранний возврат допускает только новую сборку', async () => {
+  const app = await fixture({ profileNotice: notice, hold: true });
+  try {
+    const registry = participantRegistryStore(app.storage);
+    app.at(1000);
+    app.membership('chat_invite_user_by_link', 41);
+    await until(() =>
+      expect(registry.read(app.scope).participants).toContainEqual(
+        expect.objectContaining({ userId: alice, status: 'present' }),
+      ),
+    );
+    app.at(2000);
+    await profile(app, app.scope, alice, 'visible', visible);
+    const pending = app.submit(mention);
+    await until(() => expect(app.holds).toHaveLength(1));
+    expect(facts(app.complete.mock.calls[0]![0])?.[0]?.facts?.[0]?.value).toBe(visible);
+    app.at(3000);
+    app.membership('chat_kick_user', 41, 41);
+    await until(() =>
+      expect(registry.departure(app.scope, alice)?.departedAt).toBe(app.start + 3000),
+    );
+    expect(app.storage.profileFacts.cardFacts(app.scope, alice)).toEqual([]);
+    app.at(4000);
+    app.membership('chat_invite_user_by_link', 41);
+    await until(() =>
+      expect(registry.departure(app.scope, alice)?.returnedAt).toBe(app.start + 4000),
+    );
+    app.holds[0]!.release();
+    expect((await app.trace(pending)).payload.publication).toMatchObject({
+      status: 'suppressed',
+      reason: 'guard',
+    });
+    expect(app.sends).toHaveLength(0);
+    const next = app.submit(mention);
+    await until(() => expect(app.holds).toHaveLength(2));
+    expect(facts(app.complete.mock.calls[1]![0])?.[0]?.facts?.[0]?.value).toBe(visible);
+    app.holds[1]!.release();
+    await app.published(next);
   } finally {
     await app.close();
   }

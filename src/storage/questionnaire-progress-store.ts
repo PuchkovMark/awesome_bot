@@ -10,6 +10,7 @@ import {
   questionnaireHour,
 } from './questionnaire-input';
 import { profileAdmitted } from './personal-data-store';
+import { participantProfileAvailable, readDeparture } from './participant-departures';
 import { questionnaireStore } from './questionnaire-store';
 import { timestamp } from './validation';
 
@@ -50,6 +51,7 @@ export function questionnaireProgressStore(storage: Storage) {
       current(now: number) {
         timestamp(now);
         return lifecycle.transaction(scope, (db) => {
+          if (!participantProfileAvailable(readDeparture(db, scope, user))) return null;
           const row = read(db);
           return row ? view(row, now) : null;
         });
@@ -179,14 +181,17 @@ export function questionnaireProgressStore(storage: Storage) {
   return {
     participant,
     completed(scope: ConnectionScope, user: UserId) {
-      return lifecycle.transaction(scope, (db) =>
-        Boolean(
-          db
-            .prepare(
-              'SELECT 1 FROM questionnaire_progress WHERE ' + subject + " AND state='completed'",
-            )
-            .get(scope.chatId, scope.generation, user),
-        ),
+      return lifecycle.transaction(
+        scope,
+        (db) =>
+          participantProfileAvailable(readDeparture(db, scope, user)) &&
+          Boolean(
+            db
+              .prepare(
+                'SELECT 1 FROM questionnaire_progress WHERE ' + subject + " AND state='completed'",
+              )
+              .get(scope.chatId, scope.generation, user),
+          ),
       );
     },
     owns(scope: ConnectionScope, id: number) {

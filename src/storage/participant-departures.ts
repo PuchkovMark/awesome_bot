@@ -44,8 +44,10 @@ export function startParticipantDeparture(
   user: UserId,
   at: number,
 ) {
-  db.prepare(
-    `INSERT INTO participant_departures(chat_id,generation,user_id,departed_at)
+  const args = { ...scope, user, at };
+  const changed = db
+    .prepare(
+      `INSERT INTO participant_departures(chat_id,generation,user_id,departed_at)
     VALUES(@chatId,@generation,@user,@at) ON CONFLICT(chat_id,generation,user_id) DO UPDATE SET
       revision=revision+1,
       departed_at=CASE WHEN returned_at IS NULL THEN coalesce(departed_at,excluded.departed_at)
@@ -53,7 +55,18 @@ export function startParticipantDeparture(
       purged_at=CASE WHEN returned_at IS NULL THEN purged_at ELSE NULL END,
       returned_at=NULL,needs_verification=0
     WHERE returned_at IS NOT NULL OR departed_at IS NULL OR needs_verification=1`,
-  ).run({ ...scope, user, at });
+    )
+    .run(args);
+  if (!changed.changes) return;
+  db.prepare(`DELETE FROM profile_command_lists WHERE ${subject}`).run(args);
+  db.prepare(
+    `DELETE FROM questionnaire_inputs WHERE chat_id=@chatId AND generation=@generation
+    AND message_id=(SELECT source_id FROM questionnaire_progress WHERE ${subject} AND state='processing')`,
+  ).run(args);
+  db.prepare(
+    `UPDATE questionnaire_progress SET state='paused',source_id=NULL
+    WHERE ${subject} AND state IN ('showing','dispatching','active','processing')`,
+  ).run(args);
 }
 
 /** Только данные профиля в заданном поколении, в транзакции ухода или сверки копии. */

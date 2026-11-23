@@ -199,8 +199,8 @@ export function createProfileFactStore(lifecycle: LifecycleBackend) {
       if (
         !source ||
         source.userId !== actorId ||
-        !profileAdmitted(db, scope, subjectId, source.at) ||
-        (actorId !== subjectId && !profileAdmitted(db, scope, actorId, source.at)) ||
+        !profileAdmitted(db, scope, subjectId, source.at, 'write') ||
+        (actorId !== subjectId && !profileAdmitted(db, scope, actorId, source.at, 'write')) ||
         !db.prepare('SELECT 1 FROM chats WHERE chat_id=? AND enabled=1').get(scope.chatId)
       )
         return 'blocked';

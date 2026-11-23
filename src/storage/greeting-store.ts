@@ -7,6 +7,7 @@ import type { Connection } from './connection';
 import { greetingsAllowed, invitationsAllowed } from './greeting-entry';
 import type { LifecycleBackend } from './lifecycle-store';
 import { createMessageStore } from './messages';
+import { participantProfileAvailable, readDeparture } from './participant-departures';
 import { profileAdmitted } from './personal-data-store';
 import {
   finishResponse,
@@ -81,13 +82,21 @@ export function createGreetingStore(
         confirmedAt: number;
         profile: number;
       }[];
-      if (!candidates.length) return null;
+      const members = candidates.flatMap(({ user, wasReturning, profile, confirmedAt }) => {
+        const departure = readDeparture(db, scope, user);
+        if (!participantProfileAvailable(departure)) return [];
+        return [
+          {
+            user,
+            confirmedAt,
+            participationRevision: departure?.revision ?? 0,
+            returning: wasReturning === 1 && profile === 1 && profileAdmitted(db, scope, user, now),
+          },
+        ];
+      });
+      if (!members.length) return null;
       return {
-        members: candidates.map(({ user, wasReturning, profile, confirmedAt }) => ({
-          user,
-          confirmedAt,
-          returning: wasReturning === 1 && profile === 1 && profileAdmitted(db, scope, user, now),
-        })),
+        members,
         disclosure: disclosure.version,
         revision: lifecycle.assertScope(db, scope).revision,
         template: versions.selected(scope, 'greeting_template'),
@@ -129,7 +138,15 @@ export function createGreetingStore(
         user: UserId;
         confirmedAt: number;
       }[];
-      return { recipients, disclosure: disclosure.version };
+      return {
+        recipients: recipients.flatMap((recipient) => {
+          const departure = readDeparture(db, scope, recipient.user);
+          return participantProfileAvailable(departure)
+            ? [{ ...recipient, participationRevision: departure?.revision ?? 0 }]
+            : [];
+        }),
+        disclosure: disclosure.version,
+      };
     });
   }
 

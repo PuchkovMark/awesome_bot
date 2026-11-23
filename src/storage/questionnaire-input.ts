@@ -19,7 +19,7 @@ export function questionnaireSource(
     )
     .get(id, scope.chatId, user, bounds.clearedThrough, bounds.expiredThrough) as
     { text: string; timestamp: number } | undefined;
-  return message && profileAdmitted(db, scope, user, message.timestamp) ? message : null;
+  return message && profileAdmitted(db, scope, user, message.timestamp, 'write') ? message : null;
 }
 
 /** В одной транзакции с допуском задания. Повтор, переполнение или чужое сообщение не занимают попытку. */

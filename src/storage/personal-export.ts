@@ -1,6 +1,7 @@
 import type { Database } from 'better-sqlite3';
 import type { ConnectionScope, UserId } from '../contracts/index';
 import { historyBounds } from './history-retention-store';
+import { departureGraceMs, readDeparture } from './participant-departures';
 import { requireInput } from './validation';
 
 export function readPersonalExport(
@@ -23,7 +24,15 @@ export function readPersonalExport(
       'SELECT disabled_at AS disabledAt FROM personal_profile_choices WHERE chat_id=? AND generation=? AND user_id=?',
     )
     .get(chat, generation, user) as { disabledAt: number } | undefined;
-  const visible = !choice || now - choice.disabledAt < 7 * 86_400_000;
+  const departure = readDeparture(db, scope, user);
+  const expired =
+    departure?.returnedAt === null &&
+    departure.departedAt !== null &&
+    departure.departedAt <= now - departureGraceMs;
+  const visible =
+    (!choice || now - choice.disabledAt < 7 * 86_400_000) &&
+    !departure?.needsVerification &&
+    !expired;
   const bounds = historyBounds(db, chat, now);
   const title = db.prepare('SELECT title FROM chats WHERE chat_id=?').get(chat) as
     { title: string | null } | undefined;

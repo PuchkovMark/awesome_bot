@@ -2,6 +2,7 @@ import type { Database } from 'better-sqlite3';
 import { historyBounds } from './history-retention-store';
 import type { ConnectionScope, UserId } from '../contracts/index';
 import { readDisclosureGate } from './chat-disclosure-store';
+import { readDeparture } from './participant-departures';
 import type { LifecycleBackend } from './lifecycle-store';
 import type {
   ContextCardFact,
@@ -60,6 +61,7 @@ export function createProfileFactReader(lifecycle: LifecycleBackend) {
       readonly generation: number;
       readonly revision: number;
       readonly disclosure: number | null;
+      readonly participation: number;
       readonly subject: UserId;
       readonly fact: number;
       readonly restriction: number | null;
@@ -70,9 +72,18 @@ export function createProfileFactReader(lifecycle: LifecycleBackend) {
     lifecycle.transaction(scope, (db) => {
       const revision = lifecycle.revision(scope);
       const facts = selectPublicFacts(db, scope, query, Date.now());
+      const participation = new Map<UserId, number>();
+      const factVersions = facts.map(({ row, restrictionId }) => {
+        let version = participation.get(row.userId);
+        if (version === undefined) {
+          version = readDeparture(db, scope, row.userId)?.revision ?? 0;
+          participation.set(row.userId, version);
+        }
+        return [row.id, restrictionId, version];
+      });
       const signature = JSON.stringify([
         facts.length === 0 ? null : readDisclosureGate(db, scope).version,
-        ...facts.map(({ row, restrictionId }) => [row.id, restrictionId]),
+        ...factVersions,
       ]);
       return { revision, facts, signature };
     });
@@ -110,6 +121,7 @@ export function createProfileFactReader(lifecycle: LifecycleBackend) {
         if (!selected.length) return [];
         const revision = lifecycle.assertScope(db, scope).revision;
         const disclosure = readDisclosureGate(db, scope).version;
+        const participation = readDeparture(db, scope, subjectId)?.revision ?? 0;
         return selected.map(({ row, restrictionId }) => {
           const source = sourceFor(db, scope, row, now);
           const reference = Object.freeze({}) as ContextCardFactReference;
@@ -118,6 +130,7 @@ export function createProfileFactReader(lifecycle: LifecycleBackend) {
             generation: scope.generation,
             revision,
             disclosure,
+            participation,
             subject: subjectId,
             fact: row.id,
             restriction: restrictionId,
@@ -146,7 +159,8 @@ export function createProfileFactReader(lifecycle: LifecycleBackend) {
               saved.chat !== scope.chatId ||
               saved.generation !== scope.generation ||
               saved.revision !== revision ||
-              saved.disclosure !== disclosure
+              saved.disclosure !== disclosure ||
+              saved.participation !== (readDeparture(db, scope, saved.subject)?.revision ?? 0)
             )
               return false;
             let facts = selected.get(saved.subject);
