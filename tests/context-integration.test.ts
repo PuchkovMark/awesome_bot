@@ -94,6 +94,10 @@ test('двое Саш различаются в фактических запр�
     ...f.options,
     storage: f.storage,
     config: { ...f.options.config, replyTextCodePoints: 9 },
+    addressForm: (scope, userId, sourceTime, isGroupChat) =>
+      scope.chatId === f.scope.chatId && userId === first && isGroupChat
+        ? { text: 'Рысь', reference: { userId, sourceTime, isGroupChat, revision: 1 } }
+        : undefined,
   });
   const complete = vi.fn<(input: LlmRequest) => Promise<LlmResult>>(async () => ({
     kind: 'complete',
@@ -101,6 +105,7 @@ test('двое Саш различаются в фактических запр�
     usage: { input: 1, output: 1 },
   }));
   const queue = createAgentLoopQueue({
+    addressCurrent: (scope, ref) => scope.chatId === f.scope.chatId && ref.userId === first,
     modelName: 'synthetic-model',
     tracing: { messageRetentionDays: 30 },
     storage: f.storage,
@@ -191,7 +196,11 @@ test('двое Саш различаются в фактических запр�
     for (const [index, text] of ['Я предложил фонтан', 'Предлагаю маяк'].entries()) {
       const block = data[index];
       const label = `u${index + 1}`;
-      expect(block.current).toMatchObject({ author, authorLabel: label });
+      expect(block.current).toMatchObject({
+        author,
+        authorLabel: label,
+        addressForm: index === 0 ? 'Рысь' : author,
+      });
       expect(block.history.find((entry: { text: string }) => entry.text === text)).toMatchObject({
         author,
         authorLabel: label,
@@ -199,6 +208,7 @@ test('двое Саш различаются в фактических запр�
     }
     expect(data[2].current).toMatchObject({
       author: requests[2].authorName,
+      addressForm: 'Рысь',
       text: requests[2].text,
       authorLabel: 'u1',
     });

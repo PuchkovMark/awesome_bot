@@ -14,6 +14,7 @@ export function createContextMessageFormatter(
   current: ContextMessage,
   group: boolean,
   timezone: string,
+  addressForm?: string,
 ) {
   const time = new Intl.DateTimeFormat('ru-RU', {
     timeZone: timezone,
@@ -34,9 +35,10 @@ export function createContextMessageFormatter(
     return undefined;
   }
 
-  function serializeEntry({ message, truncated }: ContextEntry): string {
+  function serializeEntry({ message, truncated }: ContextEntry, currentForm?: string): string {
     return JSON.stringify({
       author: message.authorName,
+      ...(currentForm === undefined ? {} : { addressForm: currentForm }),
       authorLabel: authorLabel(message),
       time: time.format(message.timestamp),
       bot: message.role === 'assistant',
@@ -51,7 +53,7 @@ export function createContextMessageFormatter(
 
   const prefix = group ? dataPrefix + '"history":[' : dataPrefix;
   const replyPrefix = group ? '],"reply":' : '"reply":';
-  const suffix = `,"current":${serializeEntry({ message: current })}}`;
+  const suffix = `,"current":${serializeEntry({ message: current }, addressForm)}}`;
   return {
     fixedLatestTextBytes: Buffer.byteLength(prefix + replyPrefix + suffix, 'utf8'),
     authorLabel,

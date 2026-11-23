@@ -1,3 +1,4 @@
+import type { AddressPreferenceReference } from '../../contracts/index';
 import type {
   RoutedQueueCallback,
   RoutedAdmission,
@@ -58,6 +59,7 @@ export interface QueueCompletion {
   readonly preparationFailure?: import('../context/types').PreparationFailure;
   readonly result?: import('../agent-loop/types').AgentLoopResult;
   readonly authorLabels?: readonly string[];
+  readonly addressPreference?: AddressPreferenceReference;
   readonly initiativeDenial?: import('../../storage/queue-types').InitiativeDenial;
 }
 export interface QueueSettlement extends Omit<

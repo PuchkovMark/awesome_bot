@@ -106,3 +106,116 @@ test('подтверждённое удаление и семидневная о
     await f.close();
   }
 });
+
+test('два полных тёзки получают свои формы, после сброса используется новая фамилия VK', async () => {
+  const f = await fixture({ profileNotice, active: true });
+  try {
+    f.name(41, 'Саша', 'Иванов');
+    f.name(42, 'Саша', 'Иванов');
+    f.at(1000);
+    await f.journaled(f.submit('Встречаемся у фонтана', 41));
+    await f.journaled(f.submit('Встречаемся у маяка', 42));
+    f.submit('Пенёк, называй меня Рысь «тест» [id29|ник]', 41);
+    await until(() =>
+      expect(
+        addressPreferenceStore(f.storage).resolve(f.scope, user, f.start + 1000, true)?.text,
+      ).toBe('Рысь «тест» [id29|ник]'),
+    );
+    const first = f.submit('[club314|Пенёк] Что я предложил?', 41);
+    const second = f.submit('[club314|Пенёк] Что я предложил?', 42);
+    await f.published(first);
+    await f.published(second);
+    const blocks = f.complete.mock.calls.map(([input]) => JSON.parse(input.messages.at(-1)!.text!));
+    expect(blocks[0].current).toMatchObject({
+      author: 'Саша Иванов',
+      addressForm: 'Рысь «тест» [id29|ник]',
+      authorLabel: 'u1',
+    });
+    expect(blocks[1].current).toMatchObject({
+      author: 'Саша Иванов',
+      addressForm: 'Саша Иванов',
+      authorLabel: 'u2',
+    });
+    expect(
+      blocks[0].history.find((entry: { text: string }) => entry.text.includes('маяка')),
+    ).toMatchObject({ author: 'Саша Иванов', authorLabel: 'u2' });
+    expect(blocks[0].history.every((entry: object) => !Object.hasOwn(entry, 'addressForm'))).toBe(
+      true,
+    );
+    f.name(41, 'Саша', 'Петров');
+    f.at(302_000);
+    f.submit('Пенёк, обращайся ко мне как в VK');
+    await until(() =>
+      expect(
+        addressPreferenceStore(f.storage).resolve(f.scope, user, f.start + 302000, true),
+      ).toBeUndefined(),
+    );
+    const after = f.submit('[club314|Пенёк] Что я предложил?', 41);
+    await f.published(after);
+    const latest = JSON.parse(f.complete.mock.lastCall![0].messages.at(-1)!.text!);
+    expect(latest.current).toMatchObject({
+      author: 'Саша Петров',
+      addressForm: 'Саша Петров',
+      authorLabel: 'u1',
+    });
+    expect(f.sends.filter((row) => row.reply_message).every((row) => row.peer_id === peer)).toBe(
+      true,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test.each(['скрытие', 'сброс', 'отключение'] as const)(
+  '%s во время генерации удерживает устаревшую публикацию',
+  async (change) => {
+    const f = await fixture({ profileNotice, active: true });
+    try {
+      f.name(41, 'Саша');
+      f.at(1000);
+      const secret = 'ЛичныйМаркерF52';
+      f.submit('Пенёк, называй меня ' + secret);
+      await until(() =>
+        expect(
+          addressPreferenceStore(f.storage).resolve(f.scope, user, f.start + 1000, true)?.text,
+        ).toBe(secret),
+      );
+      const entered = Promise.withResolvers<void>();
+      const finish = Promise.withResolvers<void>();
+      f.complete.mockImplementationOnce(async () => {
+        entered.resolve();
+        await finish.promise;
+        return { kind: 'complete', text: secret + ', ответ.', usage: { input: 1, output: 1 } };
+      });
+      const first = f.submit('[club314|Пенёк] Вопрос', 41);
+      await entered.promise;
+      if (change === 'отключение')
+        personalDataStore(f.storage).disable(f.scope, user, f.start + 1000);
+      else
+        f.submit(
+          change === 'скрытие' ? 'Пенёк, скрой моё обращение' : 'Пенёк, обращайся ко мне как в VK',
+        );
+      await until(() =>
+        expect(
+          addressPreferenceStore(f.storage).resolve(f.scope, user, f.start + 1000, true),
+        ).toBeUndefined(),
+      );
+      finish.resolve();
+      expect((await f.trace(first)).payload.publication).toMatchObject({
+        status: 'suppressed',
+        reason: 'address_preference_changed',
+      });
+      expect(f.sends.some((row) => row.text.includes(secret))).toBe(false);
+      const next = f.submit('[club314|Пенёк] Новый вопрос', 41);
+      await f.published(next);
+      const request = f.complete.mock.lastCall![0];
+      expect(JSON.parse(request.messages.at(-1)!.text!).current).toMatchObject({
+        addressForm: 'Саша',
+      });
+      expect(JSON.stringify(request)).not.toContain(secret);
+      expect(f.sends.some((row) => row.text.includes(secret))).toBe(false);
+    } finally {
+      await f.close();
+    }
+  },
+);

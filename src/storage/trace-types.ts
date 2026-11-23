@@ -16,6 +16,7 @@ export interface TracePublication {
     | 'response_rate'
     | 'trace_write_failed'
     | 'author_label_disclosure'
+    | 'address_preference_changed'
     | 'publication_failed'
     | 'journal_failed'
     | 'partial_delivery'

@@ -1,3 +1,4 @@
+import type { AddressPreferenceReference, ConnectionScope } from '../../contracts/index';
 import { messageInputCost, systemInputCost } from '../context/budget';
 import type { LlmClient, LlmRequest } from '../../llm/types';
 import type { AgentLoopInput, AgentLoopOptions } from '../agent-loop/types';
@@ -15,6 +16,7 @@ export type QueuePreparation =
       readonly input: Omit<AgentLoopInput, 'signal'>;
       readonly metadata?: import('../context/types').ContextMetadata;
       readonly authorLabels?: readonly string[];
+      readonly addressPreference?: AddressPreferenceReference;
     }
   | Exclude<PreparationResult, { kind: 'ready' }>;
 export interface AgentLoopQueueOptions extends Omit<ChatQueueOptions, 'handler' | 'config'> {
@@ -26,6 +28,10 @@ export interface AgentLoopQueueOptions extends Omit<ChatQueueOptions, 'handler' 
   readonly postPreparationMarginMs?: number;
   readonly signal?: AbortSignal;
   readonly prepare: (work: QueueHandlerInput) => Promise<QueuePreparation>;
+  readonly addressCurrent?: (
+    scope: ConnectionScope,
+    reference: AddressPreferenceReference,
+  ) => boolean;
   readonly disclosure?: (
     work: QueueHandlerInput,
   ) => import('../../storage/trace-types').TracePayload['disclosure'];
@@ -139,7 +145,12 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
           context: prepared.metadata ?? null,
         });
         const allowed = () => {
-          if (lifetime.aborted) return false;
+          if (
+            lifetime.aborted ||
+            (prepared.addressPreference &&
+              options.addressCurrent?.(work.scope, prepared.addressPreference) !== true)
+          )
+            return false;
           const checked = options.disclosure?.(work);
           if (checked) work.recordTrace({ disclosure: checked });
           return checked?.allowed ?? true;
@@ -193,6 +204,7 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
         return {
           outcome,
           result,
+          ...(prepared.addressPreference ? { addressPreference: prepared.addressPreference } : {}),
           ...(prepared.authorLabels?.length ? { authorLabels: prepared.authorLabels } : {}),
         };
       }

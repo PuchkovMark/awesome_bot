@@ -1,3 +1,5 @@
+import type { AddressForm, UserId } from '../../contracts/index';
+import { addressPrompt } from './address-prompt';
 import { setImmediate as yieldImmediate } from 'node:timers/promises';
 import type { ConnectionScope } from '../../contracts/lifecycle';
 import type { CapabilitySnapshot } from '../../contracts/capabilities';
@@ -40,11 +42,23 @@ export interface ContextBuilderOptions {
   ) => void;
   readonly sessionId: (scope: ConnectionScope) => string;
   readonly now?: () => number;
+  readonly addressForm?: (
+    scope: ConnectionScope,
+    userId: UserId,
+    sourceTime: number,
+    isGroupChat: boolean,
+  ) => AddressForm | undefined;
 }
 
 export function createContextBuilder(options: ContextBuilderOptions) {
   const config = contextConfig(options.config);
   const metrics = createContextMetrics();
+
+  function effectivePrompt(version: Parameters<typeof validateContextStartup>[0]) {
+    return version && options.addressForm
+      ? { ...version, text: version.text + '\n\n' + addressPrompt }
+      : version;
+  }
 
   const reportStats = () => {
     try {
@@ -70,7 +84,7 @@ export function createContextBuilder(options: ContextBuilderOptions) {
     if (!isWorkCurrent()) return { kind: 'cancelled' };
     if (!settings?.enabled || settings.responseMode === 'silent') return { kind: 'cancelled' };
 
-    const systemPrompt = await options.state.systemPrompt(scope);
+    const systemPrompt = effectivePrompt(await options.state.systemPrompt(scope));
     if (!isWorkCurrent()) return { kind: 'cancelled' };
     const startupFailure = validateContextStartup(systemPrompt, config);
     if (startupFailure) return { kind: 'failed', reason: startupFailure };
@@ -105,10 +119,18 @@ export function createContextBuilder(options: ContextBuilderOptions) {
     }
     const system = systemPrompt.text + contextSeparator + environment;
 
+    const address = options.addressForm?.(
+      scope,
+      currentMessage.userId,
+      currentMessage.timestamp,
+      route.isGroupChat,
+    );
+    if (!isWorkCurrent()) return { kind: 'cancelled' };
     const formatter = createContextMessageFormatter(
       currentMessage,
       route.isGroupChat,
       settings.timezone,
+      options.addressForm ? (address?.text ?? currentMessage.authorName) : undefined,
     );
     const authorLabels = new Set<string>();
     function includeAuthor(message: ContextMessage) {
@@ -308,6 +330,7 @@ export function createContextBuilder(options: ContextBuilderOptions) {
         sessionId: options.sessionId(scope),
       }),
       metadata,
+      ...(address ? { addressPreference: address.reference } : {}),
       ...(authorLabels.size ? { authorLabels: Object.freeze([...authorLabels]) } : {}),
     };
   }
@@ -316,7 +339,7 @@ export function createContextBuilder(options: ContextBuilderOptions) {
     config,
     stats: metrics.snapshot,
     checkStartup(version: Parameters<typeof validateContextStartup>[0]) {
-      const failure = validateContextStartup(version, config);
+      const failure = validateContextStartup(effectivePrompt(version), config);
       if (failure) metrics.record(failure);
       reportStats();
       return failure;

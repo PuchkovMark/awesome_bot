@@ -1,3 +1,5 @@
+import { addressPreferenceStore } from '../storage/address-preference-store';
+import type { AddressPreferenceReference } from '../contracts/index';
 import { createAddressPreferenceHandlers } from './address-preferences';
 import { createPersonalCommands, groupPersonalCommand } from './personal-data';
 import { personalDataStore } from '../storage/personal-data-store';
@@ -265,12 +267,21 @@ export async function runApplication(
         const current = onboarding.gate(work.scope);
         return { version, allowed: version !== null && current.version === version };
       }
+      const addressPreferences = addressPreferenceStore(storage);
+      const addressCurrent = (scope: ConnectionScope, reference: AddressPreferenceReference) => {
+        try {
+          return addressPreferences.current(scope, reference);
+        } catch {
+          return false;
+        }
+      };
       const preparation = createContextPreparation({
         storage,
         config: config.context,
         logger,
         sessionId: createLlmSessionId(config.sessionSecret),
         capabilities: ({ chatId }) => channel.capabilities({ chatId }),
+        addressForm: addressPreferences.resolve,
       });
       const contextFailure = preparation.checkStartup(
         await catalogAdministration(storage).systemPrompt(),
@@ -290,6 +301,7 @@ export async function runApplication(
       const publication = createPublicationService({
         storage,
         port: channel.publicationPort,
+        addressCurrent,
         responseBudget: () => queue?.responseBudget,
         disclosureCurrent: (work) =>
           work.jobId === undefined && group(work.scope.chatId)
@@ -307,6 +319,7 @@ export async function runApplication(
         responseRate: config.responseRate,
         client: dependencies.client ?? createLlmClient(config.llm),
         disclosure: checkDisclosure,
+        addressCurrent,
         platform: channel.platform,
         signal,
         preparationTimeoutMs: preparation.config.preparationTimeoutMs,

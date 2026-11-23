@@ -127,3 +127,45 @@ test('новое поле входит в точную стоимость и н�
     await f.storage.close();
   }
 });
+
+test('допустимая форма обращения входит в точную стоимость текущей реплики', async () => {
+  const f = await contextFixture();
+  try {
+    const trigger = await f.put('current', 'Текущая реплика', {
+      userId: 'vk:2',
+      isGroupChat: true,
+    });
+    const work = f.work(trigger.id, true);
+    const name = 'Рысь "' + 'Я😀'.repeat(180);
+    const prepare = (inputBudgetTokens: number) =>
+      createContextBuilder({
+        ...f.options,
+        config: { ...f.options.config, inputBudgetTokens },
+        addressForm: () => ({
+          text: name,
+          reference: {
+            userId: 'vk:2',
+            sourceTime: 100,
+            revision: 1,
+            isGroupChat: true,
+          },
+        }),
+      }).prepare(work);
+    const ready = await prepare(c.inputBudgetTokens);
+    if (ready.kind !== 'ready') throw Error(ready.kind);
+    expect(ready.addressPreference).toMatchObject({ userId: 'vk:2', revision: 1 });
+    const messages = ready.input.messages;
+    const budget =
+      ready.metadata.estimatedTokens +
+      c.environmentReserveTokens -
+      ready.metadata.layerBytes.environment;
+    expect(JSON.parse(messages.at(-1)!.text).current.addressForm).toBe(name);
+    expect(await prepare(budget)).toEqual(ready);
+    expect(await prepare(budget - 1)).toMatchObject({
+      kind: 'failed',
+      reason: 'current_message_too_large',
+    });
+  } finally {
+    await f.storage.close();
+  }
+});

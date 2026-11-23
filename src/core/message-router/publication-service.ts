@@ -1,3 +1,4 @@
+import type { AddressPreferenceReference } from '../../contracts/index';
 import { personalDataStore } from '../../storage/personal-data-store';
 import { isRateLimitedNotice } from '../../storage/notice-types';
 import type { ConnectionScope, PublishedPart } from '../../contracts/index';
@@ -69,6 +70,10 @@ export function createPublicationService(options: {
   readonly queueFullTimeoutMs?: number;
   readonly onFailure?: (code: PublicationFailure) => void;
   readonly disclosureCurrent?: (work: QueueSettlement) => boolean;
+  readonly addressCurrent?: (
+    scope: ConnectionScope,
+    reference: AddressPreferenceReference,
+  ) => boolean;
   readonly responseBudget?: () => ResponsePublicationBudget | undefined;
 }) {
   const fullTimeout = noticeInterval(options.queueFullTimeoutMs ?? 10000);
@@ -99,9 +104,10 @@ export function createPublicationService(options: {
       readonly withoutJob?: boolean;
       readonly flood?: FloodNotice;
       readonly authorLabels?: readonly string[];
+      readonly addressPreference?: AddressPreferenceReference;
     } = {},
   ): Promise<string> {
-    const { withoutJob = false, flood, authorLabels = [] } = details;
+    const { withoutJob = false, flood, authorLabels = [], addressPreference } = details;
     const jobId = work.jobId;
     if (!withoutJob && (jobId === undefined || active.has(jobId))) return 'silence';
     if (jobId !== undefined) active.add(jobId);
@@ -157,20 +163,25 @@ export function createPublicationService(options: {
       if (route.kind === 'initiative' && !budget?.confirmInitiative) return suppressed('guard');
       if (flood && !budget) return suppressed('guard');
       scope = lifecycle.transaction(work.scope, () => lifecycle.current(work.scope.chatId, true));
+      const addressCurrent = () =>
+        !addressPreference || options.addressCurrent?.(scope, addressPreference) === true;
+      const guardReason = () =>
+        addressCurrent() ? ('guard' as const) : ('address_preference_changed' as const);
       function isCurrent(): boolean {
         if (closed || work.signal.aborted || !work.isCurrent()) return false;
         try {
           lifecycle.revision(scope);
           return (
             (!withoutJob || notices.sourceVisible(scope, work.messageId)) &&
-            (options.disclosureCurrent?.(work) ?? true)
+            (options.disclosureCurrent?.(work) ?? true) &&
+            addressCurrent()
           );
         } catch {
           return false;
         }
       }
       const settings = await options.storage.chats.get(scope);
-      if (!settings || !isCurrent()) return suppressed('guard');
+      if (!settings || !isCurrent()) return suppressed(guardReason());
       let decision = publicationDecision(route, settings, outcome);
       if (decision.kind === 'silence') return suppressed('none');
       const guard: PublicationGuard = {
@@ -191,7 +202,7 @@ export function createPublicationService(options: {
         },
       };
       const source = await options.storage.messages.get(scope, work.messageId);
-      if (!source || !isCurrent()) return suppressed('guard');
+      if (!source || !isCurrent()) return suppressed(guardReason());
       if (
         decision.kind === 'answer' &&
         route.isGroupChat &&
@@ -202,14 +213,14 @@ export function createPublicationService(options: {
         work.signal,
         options.port.canReply(scope, work.signal, source.messageId, guard),
       );
-      if (!isCurrent()) return suppressed('guard');
+      if (!isCurrent()) return suppressed(guardReason());
       const current = await options.storage.chats.get(scope);
       if (
         !current ||
         publicationDecision(route, current, outcome).kind !== decision.kind ||
         !isCurrent()
       )
-        return suppressed('guard');
+        return suppressed(guardReason());
       // Проверка после await защищает и от второго экземпляра сервиса в одном процессе.
       if (!withoutJob && traces.get(scope, jobId)?.payload.publication.status !== 'pending_checks')
         return 'silence';
@@ -244,7 +255,7 @@ export function createPublicationService(options: {
             undefined;
         if (!permit) return 'silence';
       }
-      if (!(await guard.allow())) return suppressed('guard');
+      if (!(await guard.allow())) return suppressed(guardReason());
       const notice =
         decision.kind === 'notice' && isRateLimitedNotice(decision.template)
           ? { kind: decision.template, interval }
@@ -419,7 +430,12 @@ export function createPublicationService(options: {
         completion.preparationFailure
           ? { kind: completion.preparationFailure }
           : (completion.result ?? { kind: completion.outcome }),
-        { authorLabels: completion.authorLabels ?? [] },
+        {
+          authorLabels: completion.authorLabels ?? [],
+          ...(completion.addressPreference
+            ? { addressPreference: completion.addressPreference }
+            : {}),
+        },
       );
     },
     async flood(

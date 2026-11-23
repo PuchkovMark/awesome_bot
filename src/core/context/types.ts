@@ -1,3 +1,4 @@
+import type { AddressPreferenceReference } from '../../contracts/index';
 import type { GlobalVersionRef } from '../../contracts/versioning';
 import type { AgentLoopInput } from '../agent-loop/types';
 export type PreparationFailure =
@@ -22,6 +23,7 @@ export type PreparationResult =
       readonly input: Omit<AgentLoopInput, 'signal'>;
       readonly metadata: ContextMetadata;
       readonly authorLabels?: readonly string[];
+      readonly addressPreference?: AddressPreferenceReference;
     }
   | { readonly kind: 'failed'; readonly reason: PreparationFailure }
   | { readonly kind: 'cancelled' | 'unavailable' | 'deadline_exceeded' };

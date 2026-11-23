@@ -20,5 +20,6 @@ export function createContextPreparation(
       options.onStats?.(stats);
     },
     ...(options.now ? { now: options.now } : {}),
+    ...(options.addressForm ? { addressForm: options.addressForm } : {}),
   });
 }
