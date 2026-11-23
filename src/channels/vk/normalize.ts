@@ -276,6 +276,7 @@ export function normalizeVkIncoming(
     isMentioned: message.isMentioned,
     ...(message.soleBotMention === undefined ? {} : { soleBotMention: message.soleBotMention }),
     ...(message.hasOtherAddress ? { hasOtherAddress: true } : {}),
+    ...(message.hasForwarded ? { hasForwarded: true } : {}),
     timestamp: message.timestamp,
     attachments: message.attachments,
   };

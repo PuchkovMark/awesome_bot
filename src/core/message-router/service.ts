@@ -117,7 +117,9 @@ export function createMessageRouter(options: RouterOptions) {
           });
           return {
             reason: decision.reason,
-            ...(decision.kind === 'service' && command?.action === 'reminder.manage'
+            ...(decision.kind === 'service' &&
+            command &&
+            ['reminder.manage', 'profile.self.address'].includes(command.action)
               ? { privateCommand: true as const }
               : {}),
             route: decision.kind === 'ordinary' ? decision.route : null,

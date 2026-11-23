@@ -123,6 +123,11 @@ export function reconcileStagedPersonalData(staged: Database, newer: Database, n
             .prepare('DELETE FROM profile_facts WHERE chat_id=? AND user_id=?')
             .run(choice.chat_id, choice.user_id);
           staged
+            .prepare(
+              'DELETE FROM address_preferences WHERE chat_id=? AND generation=? AND user_id=?',
+            )
+            .run(choice.chat_id, choice.generation, choice.user_id);
+          staged
             .prepare('DELETE FROM participant_profiles WHERE chat_id=? AND user_id=?')
             .run(choice.chat_id, choice.user_id);
         }

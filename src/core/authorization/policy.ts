@@ -29,11 +29,13 @@ const minimum: Record<AuthorizationAction, BotRole> = {
   'consent.edit': 'owner',
   'profile.admin.add': 'admin',
   'profile.self.manage': 'member',
+  'profile.self.address': 'member',
   'persona.self.select': 'member',
   'onboarding.self.manage': 'member',
 };
 const ownActions = new Set<AuthorizationAction>([
   'profile.self.manage',
+  'profile.self.address',
   'persona.self.select',
   'onboarding.self.manage',
 ]);

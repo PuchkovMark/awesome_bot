@@ -24,6 +24,7 @@ export type AuthorizationAction =
   | 'consent.edit'
   | 'profile.admin.add'
   | 'profile.self.manage'
+  | 'profile.self.address'
   | 'persona.self.select'
   | 'onboarding.self.manage';
 export type AuthorizationDenial =

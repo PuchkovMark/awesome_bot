@@ -1,3 +1,4 @@
+import { createAddressPreferenceHandlers } from './address-preferences';
 import { createPersonalCommands, groupPersonalCommand } from './personal-data';
 import { personalDataStore } from '../storage/personal-data-store';
 import { createVkChannel } from '../channels/index';
@@ -376,6 +377,7 @@ export async function runApplication(
         authorization,
         storage,
       });
+      const address = createAddressPreferenceHandlers({ storage, channel, signal });
       const pausedChats = createPausedChatCommands({ channel, lifecycle, ownerId, signal });
       const router = createMessageRouter({
         storage,
@@ -397,6 +399,7 @@ export async function runApplication(
           history.recognize(message) ??
           chatControl.recognize(message, replyToOther) ??
           reminders.recognize(message) ??
+          address.recognize(message) ??
           (message.isGroupChat &&
           message.isBot === false &&
           parseTimezoneCommand(message.text) !== null
@@ -425,6 +428,7 @@ export async function runApplication(
             return history.execute(context, message, isCurrent, replayOnly);
           if (reminders.recognize(message))
             return reminders.execute(context.scope, message, isCurrent, replayOnly);
+          if (address.recognize(message)) return address.execute(context.scope, message, isCurrent);
           const input = parseTimezoneCommand(message.text);
           if (input === null) return chatControl.execute(context, message, isCurrent);
           const timezone = canonicalTimezone(input);

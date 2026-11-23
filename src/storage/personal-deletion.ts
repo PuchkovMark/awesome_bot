@@ -86,6 +86,11 @@ export function confirmDeletion(
   db.prepare(
     `DELETE FROM profile_facts WHERE chat_id=? AND (user_id=? OR source_user_id=? OR source_message_id IN (${inputs}))`,
   ).run(chat, user, user, chat, user);
+  db.prepare('DELETE FROM address_preferences WHERE chat_id=? AND generation=? AND user_id=?').run(
+    chat,
+    scope.generation,
+    user,
+  );
   db.prepare('DELETE FROM participant_profiles WHERE chat_id=? AND user_id=?').run(chat, user);
   db.prepare('DELETE FROM chat_participants WHERE chat_id=? AND user_id=?').run(chat, user);
   db.prepare(
@@ -159,6 +164,7 @@ export function confirmDeletion(
   const remaining = db
     .prepare(
       `SELECT 1 FROM chat_participants WHERE chat_id=@chat AND user_id=@user
+    UNION ALL SELECT 1 FROM address_preferences WHERE chat_id=@chat AND user_id=@user
     UNION ALL SELECT 1 FROM participant_profiles WHERE chat_id=@chat AND user_id=@user
     UNION ALL SELECT 1 FROM profile_facts WHERE chat_id=@chat AND (user_id=@user OR source_user_id=@user)
     UNION ALL SELECT 1 FROM personal_exports WHERE chat_id=@chat AND user_id=@user

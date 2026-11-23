@@ -24,6 +24,7 @@ export interface IncomingMessage {
   readonly replyAddress?: 'bot' | 'other' | 'unknown';
   readonly soleBotMention?: boolean;
   readonly hasOtherAddress?: boolean;
+  readonly hasForwarded?: boolean;
   readonly isMentioned: boolean;
   readonly timestamp: Timestamp;
   readonly attachments: readonly Attachment[];

@@ -2,11 +2,7 @@ import {
   createAddressPreferenceStore,
   registerAddressPreferences,
 } from './address-preference-store';
-import {
-  createPersonalDataStore,
-  registerPersonalData,
-  personalDataStore,
-} from './personal-data-store';
+import { createPersonalDataStore, registerPersonalData } from './personal-data-store';
 import { createTokenBudgetStore, registerTokenBudgets } from './token-budget-store';
 import { createHistoryClearStore, registerHistoryClear } from './history-retention-store';
 import { requireInput } from './validation';

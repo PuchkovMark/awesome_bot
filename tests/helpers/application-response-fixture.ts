@@ -116,8 +116,10 @@ export async function fixture(
     date: number;
     text: string;
     reply_message?: Message;
+    fwd_messages?: readonly unknown[];
   };
   const messages = new Map<number, Message>();
+  const names = new Map<number, { first_name: string; last_name: string }>();
   const sends: Message[] = [];
   const filesSent: { peer: number; attachment: string }[] = [];
   let serial = 0;
@@ -138,7 +140,7 @@ export async function fixture(
           return {
             response: String(args.user_ids)
               .split(',')
-              .map((id) => ({ id: Number(id), first_name: 'Тест' })),
+              .map((id) => ({ id: Number(id), first_name: 'Тест', ...names.get(Number(id)) })),
           };
         if (method === 'messages.getConversationsById')
           return {
@@ -277,7 +279,15 @@ export async function fixture(
         return result!;
       },
       close,
-      submit(text: string, from = 41, parent?: Message, destination = peer) {
+      name(from: number, first: string, last = '') {
+        names.set(from, { first_name: first, last_name: last });
+      },
+      replay(id: number) {
+        const message = messages.get(id);
+        if (message)
+          listener.onUpdates([{ type: 'message_new', group_id: group, object: { message } }]);
+      },
+      submit(text: string, from = 41, parent?: Message, destination = peer, forwarded = false) {
         const row: Message = {
           peer_id: destination,
           conversation_message_id: ++serial,
@@ -285,6 +295,7 @@ export async function fixture(
           date: Math.floor(Date.now() / 1000),
           text,
           ...(parent ? { reply_message: parent } : {}),
+          ...(forwarded ? { fwd_messages: [{}] } : {}),
         };
         messages.set(row.conversation_message_id, row);
         listener.onUpdates([{ type: 'message_new', group_id: group, object: { message: row } }]);

@@ -80,6 +80,7 @@ export function createPersonalDataStore(connection: Connection, lifecycle: Lifec
           UNION ALL SELECT 1 FROM active_admin_denials WHERE chat_id=@chat AND user_id=@user
           UNION ALL SELECT 1 FROM bot_admin_grants WHERE chat_id=@chat AND user_id=@user
           UNION ALL SELECT 1 FROM chat_author_labels WHERE ${subject}
+          UNION ALL SELECT 1 FROM address_preferences WHERE ${subject}
           UNION ALL SELECT 1 FROM personal_profile_choices WHERE ${subject}
           UNION ALL SELECT 1 FROM personal_deletions WHERE ${subject} LIMIT 1`,
               )
@@ -258,6 +259,9 @@ export function createPersonalDataStore(connection: Connection, lifecycle: Lifec
                 row.chat,
                 row.user,
               );
+              db.prepare(
+                'DELETE FROM address_preferences WHERE chat_id=? AND generation=? AND user_id=?',
+              ).run(row.chat, row.generation, row.user);
               db.prepare('DELETE FROM participant_profiles WHERE chat_id=? AND user_id=?').run(
                 row.chat,
                 row.user,

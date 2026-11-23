@@ -47,6 +47,14 @@ export function readPersonalExport(
           )
           .get(chat, user) ?? null)
       : null,
+    addressPreference: visible
+      ? (db
+          .prepare(
+            `SELECT form,visibility,form_message_id,changed_at,'self' AS source FROM address_preferences
+          WHERE chat_id=? AND generation=? AND user_id=? AND form IS NOT NULL`,
+          )
+          .get(chat, generation, user) ?? null)
+      : null,
     facts: visible
       ? db
           .prepare(

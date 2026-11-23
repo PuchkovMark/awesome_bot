@@ -10,6 +10,7 @@ export function validIncoming(message: IncomingMessage): boolean {
       ['bot', 'other', 'unknown'].includes(message.replyAddress)) &&
     (message.soleBotMention === undefined || typeof message.soleBotMention === 'boolean') &&
     (message.hasOtherAddress === undefined || typeof message.hasOtherAddress === 'boolean') &&
+    (message.hasForwarded === undefined || typeof message.hasForwarded === 'boolean') &&
     [true, false, 'unknown'].includes(message.isBot) &&
     typeof message.text === 'string' &&
     typeof message.chatId === 'string' &&
