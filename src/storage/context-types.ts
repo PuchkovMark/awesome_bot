@@ -3,7 +3,7 @@ import type { ConnectionScope } from '../contracts/lifecycle';
 import type { StoredMessage, HistoryQuery } from './types';
 /** Единственный reader, выдаваемый сборщику контекста и контекстному поиску. */
 export interface ContextMessageReader {
-  get(scope: ConnectionScope, id: number): Promise<StoredMessage | null>;
+  get(scope: ConnectionScope, id: number): Promise<ContextMessage | null>;
   page(scope: ConnectionScope, query: ContextPageQuery): Promise<readonly ContextRecord[]>;
   reply(
     scope: ConnectionScope,
@@ -13,7 +13,10 @@ export interface ContextMessageReader {
   ): Promise<ContextRecord | null>;
   list(scope: ConnectionScope, query: HistoryQuery): Promise<readonly StoredMessage[]>;
 }
-export interface ContextRecord extends StoredMessage {
+export interface ContextMessage extends StoredMessage {
+  readonly authorNumber?: number;
+}
+export interface ContextRecord extends ContextMessage {
   readonly truncated: boolean;
 }
 export interface ContextPageQuery {

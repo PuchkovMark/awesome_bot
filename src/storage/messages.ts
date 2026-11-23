@@ -133,14 +133,11 @@ export function readMessage(
   db: import('better-sqlite3').Database,
   chatId: string,
   id: number,
-  contextOnly = false,
 ): StoredMessage | null {
   requireInput(Number.isSafeInteger(id) && id > 0);
   const bounds = historyBounds(db, chatId);
   const row = db
-    .prepare(
-      `SELECT ${columns} FROM messages WHERE chat_id=? AND id=? AND id>? AND timestamp>? ${contextOnly ? "AND purpose='conversation'" : ''}`,
-    )
+    .prepare(`SELECT ${columns} FROM messages WHERE chat_id=? AND id=? AND id>? AND timestamp>?`)
     .get(chatId, id, bounds.clearedThrough, bounds.expiredThrough) as MessageRow | undefined;
   return row ? fromRow(row) : null;
 }

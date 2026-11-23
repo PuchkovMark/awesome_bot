@@ -105,6 +105,7 @@ export function checkContextBoundary(root = process.cwd()) {
                 [
                   'ContextMessageReader',
                   'ContextStateReader',
+                  'ContextMessage',
                   'ContextRecord',
                   'ContextPageQuery',
                 ].includes(statement.name.text) &&
@@ -119,6 +120,7 @@ export function checkContextBoundary(root = process.cwd()) {
                       'settings',
                       'systemPrompt',
                       'truncated',
+                      'authorNumber',
                       'cutoffId',
                       'beforeId',
                       'limit',
