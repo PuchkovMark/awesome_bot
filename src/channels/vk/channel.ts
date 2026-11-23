@@ -1,3 +1,4 @@
+import type { PublishedPart } from '../../contracts/index';
 import { randomInt } from 'node:crypto';
 import type {
   CapabilityState,
@@ -243,6 +244,27 @@ export function createVkChannel(
           confirmPart() {},
         });
       }
+    },
+    async sendGreeting(
+      scope: ConnectionScope,
+      text: string,
+      sendId: number,
+      guard: import('../../core/chat-onboarding/ports').IntroductionGuard & {
+        beforeSend(): boolean;
+      },
+      confirmPart: (part: PublishedPart) => void,
+    ) {
+      const id = vkLocalId(scope.chatId);
+      if (id === undefined || !isVkGroupChat(id)) return 'failed' as const;
+      const result = await outbound.send({
+        ...guard,
+        chatId: scope.chatId,
+        kind: 'service',
+        text,
+        sendId,
+        confirmPart,
+      });
+      return result.kind;
     },
     introduction: options.owner
       ? createVkIntroduction({ owner: options.owner, groupId: options.groupId, api, outbound })

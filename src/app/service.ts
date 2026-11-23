@@ -1,3 +1,5 @@
+import { createGreetingService } from '../core/greetings/service';
+import { greetingStore } from '../storage/greeting-store';
 import { addressPreferenceStore } from '../storage/address-preference-store';
 import type { AddressPreferenceReference } from '../contracts/index';
 import { createAddressPreferenceHandlers } from './address-preferences';
@@ -53,6 +55,8 @@ interface ApplicationDependencies {
   readonly onboardingIntervalMs?: number;
   readonly administrationIntervalMs?: number;
   readonly reminderIntervalMs?: number;
+  readonly greetingIntervalMs?: number;
+  readonly greetingRules?: (scope: ConnectionScope) => string | undefined;
   readonly membershipScanMs?: number;
   readonly membershipStaggerMs?: number;
   readonly chatLimits?: Partial<ChatLimits>;
@@ -76,6 +80,7 @@ export async function runApplication(
   let introductionWork: Promise<void> | undefined;
   let administrationWork: Promise<void> | undefined;
   let membershipWork: Promise<void> | undefined;
+  let greetingWork: Promise<void> | undefined;
   let reminderWork: Promise<void> | undefined;
   let readyTimer: ReturnType<typeof setTimeout> | undefined;
   let stopTimer: ReturnType<typeof setTimeout> | undefined;
@@ -158,7 +163,18 @@ export async function runApplication(
             return !onboarding.privatePending(scope) && current();
           },
           async onMembershipChanged(scope, event, identity) {
-            if (registry.observe(scope, event, identity)) membership.request(scope);
+            const user = event.subjectId && vkLocalId(event.subjectId);
+            if (
+              registry.observe(
+                scope,
+                event,
+                identity,
+                group(scope.chatId) && typeof user === 'number' && user > 0,
+              )
+            ) {
+              membership.request(scope);
+              wakeGreeting();
+            }
           },
           verifyFirstPrivate(message) {
             return (
@@ -178,6 +194,7 @@ export async function runApplication(
             introductionWork = onboarding.run().catch(() => stop('vk_failed'));
             membershipWork = membership.run().catch(() => stop('storage_failed'));
             administrationWork = checkAdministration().catch(() => stop('vk_failed'));
+            greetingWork = deliverGreetings().catch(() => stop('storage_failed'));
             reminderWork = deliverReminders().catch(() => stop('storage_failed'));
           },
         },
@@ -203,6 +220,7 @@ export async function runApplication(
         signal,
         activeGroups: () => lifecycle.activeChatIds('vk').filter(group),
         scopeFor: lifecycle.admissionScope,
+        confirmed: wakeGreeting,
         isCurrent: lifecycle.isAdmissionCurrent,
         refresh: createTokenBudgetMembership(storage, channel.humanMembership),
         scanMs: dependencies.membershipScanMs ?? dependencies.administrationIntervalMs ?? 1_000,
@@ -268,6 +286,47 @@ export async function runApplication(
         return { version, allowed: version !== null && current.version === version };
       }
       const addressPreferences = addressPreferenceStore(storage);
+      const greetings = createGreetingService({
+        store: greetingStore(storage),
+        profiles: storage.profileFacts,
+        address: addressPreferences,
+        scope: (window) => {
+          const scope = lifecycle.admissionScope(window.chatId);
+          if (scope.generation !== window.generation)
+            throw Error('Приветствие относится к прежнему подключению.');
+          return scope;
+        },
+        scopeCurrent: lifecycle.isAdmissionCurrent,
+        signal,
+        limit: config.responseRate.responsesPerMinute,
+        ...(dependencies.greetingRules ? { rules: dependencies.greetingRules } : {}),
+        port: {
+          writing: (scope, guard) => channel.introduction!.writing(scope, 'chat', guard),
+          name: channel.getUserName,
+          send: channel.sendGreeting,
+        },
+      });
+      let greetingWait: AbortController | undefined;
+      function wakeGreeting() {
+        greetingWait?.abort();
+      }
+      async function deliverGreetings() {
+        greetings.recover();
+        while (!signal.aborted) {
+          if (await greetings.due()) continue;
+          greetingWait = new AbortController();
+          try {
+            await delay(dependencies.greetingIntervalMs ?? 1000, undefined, {
+              signal: AbortSignal.any([signal, greetingWait.signal]),
+            });
+          } catch (error) {
+            if (!signal.aborted && !greetingWait.signal.aborted) throw error;
+          } finally {
+            greetingWait = undefined;
+          }
+        }
+      }
+
       const addressCurrent = (scope: ConnectionScope, reference: AddressPreferenceReference) => {
         try {
           return addressPreferences.current(scope, reference);
@@ -499,6 +558,7 @@ export async function runApplication(
       administrationWork,
       membershipWork,
       reminderWork,
+      greetingWork,
       ...typing,
       ...floodPublications,
     ]);

@@ -151,7 +151,8 @@ function parseMembership(
   platformEventId: unknown,
 ): ParseResult {
   const actor = vkId(row.from_id);
-  const subject = vkId(action.member_id);
+  const subject =
+    vkId(action.member_id) ?? (type === 'chat_invite_user_by_link' ? actor : undefined);
   const affectsConnection = subject === -groupId;
   const timestamp = toTimestamp(row.date);
   if (timestamp === undefined && !affectsConnection) return { kind: 'invalid' };

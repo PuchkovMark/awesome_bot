@@ -45,6 +45,7 @@ export async function fixture(
     hold?: boolean;
     userRequests?: number;
     active?: boolean;
+    greetings?: { readonly members?: readonly number[]; readonly rules?: string };
     quotas?: Partial<ChatLimits>;
   } = {},
 ) {
@@ -94,7 +95,7 @@ export async function fixture(
     },
     start,
   );
-  const ready = Promise.withResolvers<void>();
+  let ready = Promise.withResolvers<void>();
   let listener: Parameters<VkPollTransport['run']>[0];
   const transport: VkPollTransport = {
     async run(callbacks, signal) {
@@ -117,14 +118,17 @@ export async function fixture(
     text: string;
     reply_message?: Message;
     fwd_messages?: readonly unknown[];
+    action?: { type: string; member_id?: number };
   };
   const messages = new Map<number, Message>();
   const names = new Map<number, { first_name: string; last_name: string }>();
-  const sends: (Message & { readonly disableMentions: number })[] = [];
+  const sends: (Message & { readonly disableMentions: number; readonly sendId: number })[] = [];
+  let members: readonly number[] | null = options.greetings?.members ?? null;
   const filesSent: { peer: number; attachment: string }[] = [];
   let serial = 0;
   let tick = 0;
-  let sendFault: ((text: string) => number | 'unknown' | undefined) | undefined;
+  let sendFault:
+    ((text: string) => number | 'unknown' | 'unknownAfterDelivery' | undefined) | undefined;
   const holds: { release: () => void; finished: Promise<void> }[] = [];
   const limit = createVkRateLimiter({
     now: () => tick,
@@ -154,8 +158,13 @@ export async function fixture(
               ],
             },
           };
-        if (method === 'messages.getConversationMembers')
-          return { response: { items: [{ member_id: -group, is_admin: true }] } };
+        if (method === 'messages.getConversationMembers') {
+          const items = [
+            { member_id: -group, is_admin: true },
+            ...(members ?? []).map((member_id) => ({ member_id, is_admin: false })),
+          ];
+          return { response: { items, ...(members === null ? {} : { count: items.length }) } };
+        }
         if (method === 'messages.getByConversationMessageId')
           return {
             response: {
@@ -175,7 +184,7 @@ export async function fixture(
         if (method !== 'messages.send') throw new Error('Неожиданный метод тестового VK');
         const fault = sendFault?.(String(args.message));
         if (fault === 'unknown') throw Error('Синтетическая потеря квитанции');
-        if (fault !== undefined) return { error: { error_code: fault } };
+        if (typeof fault === 'number') return { error: { error_code: fault } };
         const forward =
           args.forward === undefined
             ? undefined
@@ -190,7 +199,13 @@ export async function fixture(
           ...(parent ? { reply_message: parent } : {}),
         };
         messages.set(row.conversation_message_id, row);
-        sends.push({ ...row, disableMentions: Number(args.disable_mentions) });
+        sends.push({
+          ...row,
+          disableMentions: Number(args.disable_mentions),
+          sendId: Number(args.random_id),
+        });
+        if (fault === 'unknownAfterDelivery')
+          throw Error('Синтетическая потеря квитанции после отправки');
         return { response: [row] };
       },
       async (call, guard) => {
@@ -207,17 +222,31 @@ export async function fixture(
       },
     ),
   );
-  const stop = new AbortController();
+  let stop = new AbortController();
   const complete = vi.fn<(request: LlmRequest) => Promise<LlmResult>>(async () => answer);
-  const running = runApplication(config, logger, stop.signal, {
-    vk: {
-      api: { ...api, ...(options.upload ? { uploadPrivateDocument: options.upload } : {}) },
-      transport,
-    },
-    client: { complete },
-    onboardingIntervalMs: 5,
-    chatLimits: { userRequests: options.userRequests ?? 100, chatRequests: 100, ...options.quotas },
-  });
+  const launch = () =>
+    runApplication(config, logger, stop.signal, {
+      vk: {
+        api: { ...api, ...(options.upload ? { uploadPrivateDocument: options.upload } : {}) },
+        transport,
+      },
+      client: { complete },
+      onboardingIntervalMs: 5,
+      ...(options.greetings
+        ? {
+            greetingIntervalMs: 5,
+            membershipScanMs: 10,
+            membershipStaggerMs: 0,
+            ...(options.greetings.rules ? { greetingRules: () => options.greetings!.rules } : {}),
+          }
+        : {}),
+      chatLimits: {
+        userRequests: options.userRequests ?? 100,
+        chatRequests: 100,
+        ...options.quotas,
+      },
+    });
+  let running = launch();
   async function close() {
     stop.abort();
     for (const hold of holds) hold.release();
@@ -240,7 +269,7 @@ export async function fixture(
     sends.length = 0;
     return {
       at(ms: number) {
-        if (options.active) {
+        if (options.active || options.greetings) {
           // Промежуточные продления аренды при скачке управляемых часов.
           db.prepare(
             'UPDATE queue_lease SET expires_at=max(expires_at,?) WHERE token IS NOT NULL',
@@ -250,6 +279,40 @@ export async function fixture(
         elapsed = ms;
       },
       sends,
+      setMembers(value: readonly number[] | null) {
+        members = value;
+      },
+      membership(type: string, actor: number, member?: number, destination = peer) {
+        const row: Message = {
+          peer_id: destination,
+          conversation_message_id: ++serial,
+          from_id: actor,
+          date: Math.floor(Date.now() / 1000),
+          text: '',
+          action: { type, ...(member === undefined ? {} : { member_id: member }) },
+        };
+        messages.set(row.conversation_message_id, row);
+        listener.onUpdates([{ type: 'message_new', group_id: group, object: { message: row } }]);
+        return row.conversation_message_id;
+      },
+      async restart(resume = false) {
+        stop.abort();
+        for (const hold of holds) hold.release();
+        expect(await running).toBeNull();
+        ready = Promise.withResolvers<void>();
+        stop = new AbortController();
+        running = launch();
+        await ready.promise;
+        if (resume)
+          await resolveApplicationChat({ databasePath: files.path, ownerId }, chat, 'continue');
+      },
+      async connectGroup(destination: number) {
+        const id = `vk:${destination}` as const;
+        await resolveApplicationChat({ databasePath: files.path, ownerId }, id, 'new');
+        const connected = lifecycleBackend(storage).current(id);
+        await until(() => expect(disclosure.gate(connected).version).toBe(version));
+        return connected;
+      },
       filesSent,
       holds,
       complete,
