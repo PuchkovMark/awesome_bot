@@ -3,6 +3,7 @@ import type { ChannelAdapter } from '../contracts/index';
 import { contextSeparator } from '../core/context/budget';
 import type { LlmClient, LlmRequest } from '../llm/types';
 import { isRecord } from '../llm/validation';
+import type { HistorySearchOutcome } from './types';
 
 export const historyEvaluationAdapter: ChannelAdapter = {
   platform: 'synthetic',
@@ -94,6 +95,12 @@ export const historySearchClient: LlmClient = {
   async complete(request) {
     if (request.messages.some(({ role }) => role === 'tool')) {
       const result = historySearchExchange(request)?.result;
+      if (result?.error === 'tool_failed')
+        return {
+          kind: 'complete',
+          text: 'Сейчас не удалось проверить переписку.',
+          usage: unknownUsage,
+        };
       const first: unknown = Array.isArray(result?.messages) ? result.messages[0] : undefined;
       const text =
         isRecord(first) && typeof first.text === 'string'
@@ -120,27 +127,31 @@ export const historySearchClient: LlmClient = {
 
 const fountainPlace = /(?:у|около|возле)\s+фонтана|рядом\s+с\s+фонтаном/iu;
 const unfoundedDoubt =
-  /возможно|вероятно|предполож|не\s+(?:уверен|знаю|удалось|смог|подтвержд|определил|выбрали)|неизвестн|нет\s+данных/iu;
-const availableHistory = /доступн[а-яё]+\s+(?:мне\s+)?(?:переписк|истори|журнал|сообщен)/iu;
+  /возможно|вероятно|предполож|не\s+(?:уверен|знаю|удалось|смог|подтвержд|определил|выбрали|решил|договорил)|неизвестн|нет\s+данных/iu;
+const availableHistory =
+  /доступн[а-яё]+\s+(?:мне\s+)?(?:части\s+)?(?:переписк|истори|журнал|сообщен)/iu;
 const noMatches =
-  /не\s+(?:наш[её]л|нашла|найден|обнаруж|вижу|видно|упомина)|(?:нет|отсутству[а-яё]+)\s+(?:совпаден|упоминан|сообщен)|не\s+дал[ао]?\s+(?:результат|совпаден)/iu;
+  /не\s+(?:наш[её]л|нашл[а-яё]+|найден|обнаруж|вижу|видно|упомина)|(?:нет|отсутству[а-яё]+)\s+(?:совпаден|упоминан|сообщен)|(?:совпадений|упоминаний|сообщений)(?:\s+(?:о|про|по)\s+[^.!?]{0,32})?\s+нет|не\s+(?:дал[ао]?|вернул[ао]?)\s+(?:результат|совпаден)/iu;
 const categoricalAbsence =
   /встреч[а-яё]*\s+(?:вчера\s+)?не\s+обсужда|не\s+обсужда[а-яё]*\s+(?:эту\s+)?встреч|обсуждени[а-яё]*\s+(?:встреч[а-яё]*\s+)?не\s+было/iu;
-const inventedPlace =
-  /фонтан|встреча\s+(?:у|возле|около)\s+[а-яё]|(?:встреча|место\s+встречи)\s*(?:[—–:-]\s*|(?:будет|пройд[её]т|состоится|назначена)\s+)(?:у|в|на|возле|около)\s+[а-яё]/iu;
+const assertedPlace =
+  /фонтан|(?:встреча|встретимся)\s+(?:у|в|на|возле|около)\s+(?!(?:доступн|переписк|истори|журнал|запис|сообщен))[а-яё]|(?:встреча|место\s+встречи)\s*(?:[—–:-]\s*|(?:будет|пройд[её]т|состоится|назначена)\s+)(?:у|в|на|возле|около)\s+[а-яё]/iu;
+const cannotReadHistory =
+  /не\s+(?:удалось|получилось|смог(?:ла)?|могу)\s+(?:сейчас\s+)?(?:проверить|прочитать|просмотреть|открыть|выполнить\s+поиск)|нет\s+доступа\s+к\s+(?:истори|переписк|журнал)/iu;
+const reportsHistoryError =
+  /(?:истори|переписк|журнал|поиск)[^.!?]{0,48}(?:недоступ|заверш[а-яё]+\s+(?:ошиб|со\s+сбо))|(?:сбой|ошибка)\s+(?:при|в)\s+(?:чтени|проверк|поиск)/iu;
 
-export function answersHistorySearch(outcome: 'found' | 'empty', text: string) {
+export function answersHistorySearch(outcome: HistorySearchOutcome, text: string) {
   if (outcome === 'found')
     return (
       fountainPlace.test(text) &&
       !/не\s+(?:у|около|возле|рядом)/iu.test(text) &&
       !/\?\s*$/u.test(text) &&
-      !unfoundedDoubt.test(text)
+      !unfoundedDoubt.test(text) &&
+      !categoricalAbsence.test(text)
     );
-  return (
-    availableHistory.test(text) &&
-    noMatches.test(text) &&
-    !categoricalAbsence.test(text) &&
-    !inventedPlace.test(text)
-  );
+  if (categoricalAbsence.test(text) || assertedPlace.test(text)) return false;
+  const unavailable = cannotReadHistory.test(text) || reportsHistoryError.test(text);
+  if (outcome === 'failed') return unavailable && !noMatches.test(text);
+  return availableHistory.test(text) && noMatches.test(text) && !unavailable;
 }

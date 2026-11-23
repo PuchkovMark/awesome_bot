@@ -683,6 +683,14 @@ const historySearchCases = [
     criterion:
       'Укажите отсутствие совпадений в доступной переписке. Утверждение «встречу не обсуждали» считается нарушением.',
   },
+  {
+    outcome: 'failed',
+    title: 'Чтение переписки завершилось ошибкой',
+    entry: meetingPlace,
+    answer: 'Сейчас не удалось проверить переписку.',
+    criterion:
+      'Объясните, что проверить переписку сейчас не удалось. Сообщение об отсутствии совпадений или вымышленном месте считается нарушением.',
+  },
 ] as const;
 
 export const historySearchScenarios: readonly Scenario[] = historySearchCases.map(
@@ -736,6 +744,8 @@ export const historySearchScenarios: readonly Scenario[] = historySearchCases.ma
           description: 'В продолжении передана фактическая выдача поиска.',
           check: ({ request }) => {
             const result = historySearchExchange(request)?.result;
+            if (outcome === 'failed')
+              return result?.error === 'tool_failed' && Object.keys(result).length === 1;
             const count = outcome === 'found' ? 1 : 0;
             return (
               result?.kind === 'untrusted_chat_data' &&
@@ -757,10 +767,15 @@ export const historySearchScenarios: readonly Scenario[] = historySearchCases.ma
           vk: criterion,
         },
       ],
-      vkSteps: [
-        `В отдельной тестовой беседе оставьте за вчера синтетическую реплику «${yesterdayEntry}». Вытесните её из недавнего окна нейтральными репликами.`,
-        `Сегодня адресуйте боту вопрос «${historySearchQuestion}».`,
-      ],
+      vkSteps:
+        outcome === 'failed'
+          ? [
+              `Вопрос «${historySearchQuestion}» при сбое чтения проверяется на синтетическом стенде. При ручной проверке через VK отметьте сценарий как непроверенный.`,
+            ]
+          : [
+              `В отдельной тестовой беседе оставьте за вчера синтетическую реплику «${yesterdayEntry}». Вытесните её из недавнего окна нейтральными репликами.`,
+              `Сегодня адресуйте боту вопрос «${historySearchQuestion}».`,
+            ],
     };
   },
 );

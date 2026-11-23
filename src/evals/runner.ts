@@ -117,6 +117,19 @@ export async function runScenario(
   try {
     const storage = await openStorage(':memory:');
     try {
+      if (scenario.historySearch === 'failed') {
+        const reader = storage.contextMessages;
+        // Остальные порты зарегистрированы на исходном объекте Storage.
+        Object.assign(storage, {
+          contextMessages: {
+            ...reader,
+            history(scope, selection) {
+              if (selection.kind === 'search') throw Error('Синтетический сбой чтения журнала.');
+              return reader.history(scope, selection);
+            },
+          } satisfies typeof reader,
+        });
+      }
       const lifecycle = createLifecycleService({
         storage,
         ownerId: 'synthetic:owner',
@@ -270,7 +283,11 @@ export async function runScenario(
         ...(addressPreferences ? { addressCurrent: addressPreferences.current } : {}),
         tracing: { messageRetentionDays: 30 },
         modelName: settings.modelName ?? model,
-        loopOptions: { timeoutMs, maxAttemptsPerStep: 1 },
+        loopOptions: {
+          timeoutMs,
+          maxAttemptsPerStep: 1,
+          ...(scenario.historySearch ? { maxSteps: 2 } : {}),
+        },
         config: { handlerMarginMs, stopTimeoutMs: 1_000 },
         prepare: preparation.prepare,
         ...(scenario.historyTimezone || scenario.passport?.tryGrant

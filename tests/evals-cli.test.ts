@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { expect, test } from 'vitest';
-import { profileUpdateCases, scenarios } from '../src/evals/scenarios';
+import { historySearchScenarios, profileUpdateCases, scenarios } from '../src/evals/scenarios';
 
 function cli(directory: string, args: string[], before = '') {
   const importHook = `data:text/javascript,${encodeURIComponent(before)}`;
@@ -136,3 +136,63 @@ test('отдельная оценка фиксирует качество мод
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test('оценка модели по истории делает два запроса на случай и сохраняет исходы с версией промпта', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'awesome-evals-history-model-'));
+  try {
+    const transport = `
+      process.env.LLM_MODEL = 'synthetic-history-model';
+      process.env.OPENCODE_API_KEY = 'synthetic-history-secret';
+      let requests = 0;
+      process.on('exit', () => { if (requests !== 6) process.exitCode = 2; });
+      function respond(message, finish_reason) {
+        return Response.json({ choices: [{ message: { role: 'assistant', ...message }, finish_reason }] });
+      }
+      globalThis.fetch = async (_url, { body }) => {
+        requests++;
+        const request = JSON.parse(body);
+        if (request.model !== 'synthetic-history-model') throw Error('WRONG_MODEL');
+        const feedback = request.messages.find(({ role }) => role === 'tool');
+        if (!feedback) {
+          if (!request.tools.some(({ function: tool }) => tool.name === 'history_search'))
+            throw Error('MISSING_SEARCH');
+          return respond({
+            content: null,
+            tool_calls: [{
+              type: 'function',
+              id: 'mock-search',
+              function: {
+                name: 'history_search',
+                arguments: JSON.stringify({
+                  query: 'встреча', from: '2026-11-23T00:00:00+03:00', to: '2026-11-24T00:00:00+03:00',
+                }),
+              },
+            }],
+          }, 'tool_calls');
+        }
+        if (feedback.tool_call_id !== 'mock-search') throw Error('WRONG_CALL');
+        const result = JSON.parse(feedback.content);
+        const content = result.error === 'tool_failed'
+          ? 'Сейчас не удалось проверить переписку.'
+          : result.messages[0]?.text ?? 'В доступном журнале за вчера совпадений нет.';
+        return respond({ content }, 'stop');
+      };
+    `;
+    const out = cli(directory, ['--history-model', '--out', 'history.json'], transport);
+    expect(out.status, out.stderr).toBe(0);
+    expect(out.stdout).toContain('Пройдено 3, нарушений 0, технических сбоев 0');
+    const contents = readFileSync(join(directory, 'history.json'), 'utf8');
+    expect(contents).not.toMatch(/synthetic-history-secret|фонтан|mock-search|tool_failed/);
+    expect(JSON.parse(contents)).toMatchObject({
+      kind: 'model',
+      runs: historySearchScenarios.map(({ id }) => ({
+        scenarioId: id,
+        model: 'synthetic-history-model',
+        prompt: { key: 'history-search-completeness', version: 1 },
+        outcome: 'passed',
+      })),
+    });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}, 20_000);

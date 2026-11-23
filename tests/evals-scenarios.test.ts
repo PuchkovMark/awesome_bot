@@ -45,6 +45,7 @@ test('сценарии имеют уникальные ключи сравнен
     'history-yesterday',
     'history-search-found',
     'history-search-empty',
+    'history-search-failed',
   ]);
   for (const scenario of scenarios) {
     expect(scenario.id).toMatch(/^[a-z]+(?:-[a-z]+)*$/);
@@ -58,13 +59,14 @@ test('сценарии имеют уникальные ключи сравнен
 });
 
 test('исходы поиска сравниваются на одном вопросе, промпте и недавнем окне', () => {
-  const [found, empty] = historySearchScenarios;
+  const [found, empty, failed] = historySearchScenarios;
   expect(found?.history).toMatchObject([
     { text: 'Встреча у фонтана.' },
     { text: 'Открыли дверь.' },
   ]);
   expect(empty?.history).toMatchObject([{ text: 'Закрыли окно.' }, { text: 'Открыли дверь.' }]);
-  expect(new Set(historySearchScenarios.map(({ input }) => input.chatId)).size).toBe(2);
+  expect(failed?.history.map(({ text }) => text)).toEqual(found?.history.map(({ text }) => text));
+  expect(new Set(historySearchScenarios.map(({ input }) => input.chatId)).size).toBe(3);
   for (const scenario of historySearchScenarios) {
     expect(scenario).toMatchObject({
       promptKey: 'history-search-completeness',

@@ -206,14 +206,17 @@ test.each(historySearchScenarios)(
     expect(JSON.parse(call!.arguments)).toEqual({ query: 'встреча', ...period });
     const reply = continuation!.messages.find((message) => message.role === 'tool');
     expect(reply?.callId).toBe(call?.id);
+    const payload = JSON.parse(reply!.text);
     const found = scenario.historySearch === 'found';
-    expect(JSON.parse(reply!.text)).toMatchObject({
-      kind: 'untrusted_chat_data',
-      ...period,
-      found: found ? 1 : 0,
-      shown: found ? 1 : 0,
-      messages: found ? [expect.objectContaining({ text: 'Встреча у фонтана.' })] : [],
-    });
+    if (scenario.historySearch === 'failed') expect(payload).toEqual({ error: 'tool_failed' });
+    else
+      expect(payload).toMatchObject({
+        kind: 'untrusted_chat_data',
+        ...period,
+        found: found ? 1 : 0,
+        shown: found ? 1 : 0,
+        messages: found ? [expect.objectContaining({ text: 'Встреча у фонтана.' })] : [],
+      });
     expect(captured).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({
         answer: expect.objectContaining({
@@ -231,12 +234,25 @@ test.each([
   ['found', 'Возможно, встреча у фонтана, но я не уверен.', 'failed'],
   ['found', 'Встреча у фонтана?', 'failed'],
   ['found', 'Встреча у киоска.', 'failed'],
+  ['found', 'Обсуждали встречу у фонтана, но ничего не решили.', 'failed'],
   ['empty', 'В доступной истории за вчера не обнаружено сообщений о встрече.', 'passed'],
   ['empty', 'Встречу не обсуждали.', 'failed'],
   ['empty', 'Поиск завершился ошибкой, проверка истории недоступна.', 'failed'],
   ['empty', 'Совпадений нет.', 'failed'],
   ['empty', 'В доступной переписке ничего не нашёл. Встреча у кафе.', 'failed'],
   ['empty', 'В доступной переписке ничего не нашёл. Встречу не обсуждали.', 'failed'],
+  ['empty', 'В доступной части журнала совпадений нет.', 'passed'],
+  ['empty', 'Встреча в доступном журнале не упоминалась.', 'passed'],
+  [
+    'failed',
+    'Поиск по истории завершился ошибкой, поэтому проверить место сейчас нельзя.',
+    'passed',
+  ],
+  ['failed', 'В доступной переписке за вчера упоминаний встречи не нашёл.', 'failed'],
+  ['failed', 'Поиск завершился ошибкой. Совпадений нет.', 'failed'],
+  ['failed', 'Сейчас не удалось проверить историю. Встреча у кафе.', 'failed'],
+  ['failed', 'Сейчас не удалось проверить историю. Встреча в кафе.', 'failed'],
+  ['failed', 'В журнале ошибок не было.', 'failed'],
 ] as const)('смысл ответа для %s: %s', async (outcome, text, expected) => {
   const scenario = historySearchScenarios.find(({ historySearch }) => historySearch === outcome)!;
   const result = await runScenario(scenario, {
@@ -248,6 +264,19 @@ test.each([
   expect(result).toMatchObject({ outcome: expected, reason: null });
   expect(result.criteria.filter(({ outcome }) => outcome === 'failed').map(({ id }) => id)).toEqual(
     expected === 'passed' ? [] : ['search-answer'],
+  );
+});
+
+test('сбой модели при оценке сбоя чтения остаётся технической ошибкой прогона', async () => {
+  const scenario = historySearchScenarios.find(({ historySearch }) => historySearch === 'failed')!;
+  const result = await runScenario(scenario, {
+    async complete() {
+      return { kind: 'error', code: 'network', message: 'Синтетическая недоступность модели.' };
+    },
+  });
+  expect(result).toMatchObject({ outcome: 'technical_error', reason: 'network' });
+  expect(result.criteria).toEqual(
+    scenario.criteria.map(({ id }) => ({ id, outcome: 'not_checked', reason: 'technical_error' })),
   );
 });
 

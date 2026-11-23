@@ -5,6 +5,8 @@ import type { PublicationRequest, QueueCompletion } from '../core/index';
 import type { LlmRequest } from '../llm/types';
 import type { MessageInput } from '../storage/index';
 
+export type HistorySearchOutcome = 'found' | 'empty' | 'failed';
+
 export interface Observation {
   readonly firstRequest?: LlmRequest;
   readonly request: LlmRequest | null;
@@ -49,7 +51,7 @@ export interface Scenario {
   readonly history: readonly MessageInput[];
   readonly historyLimit?: number;
   readonly historyTimezone?: string;
-  readonly historySearch?: 'found' | 'empty';
+  readonly historySearch?: HistorySearchOutcome;
   readonly input: IncomingMessage;
   readonly answer: string;
   readonly criteria: readonly Criterion[];

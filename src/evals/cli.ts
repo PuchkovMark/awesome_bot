@@ -4,7 +4,7 @@ import { runProfileUpdateMocks, runProfileUpdateModel } from './profile-updates'
 import { formatVkChecklist } from './checklist';
 import { writeLocalReport } from './report';
 import { runLocalChatSummary, runScenario } from './runner';
-import { scenarios } from './scenarios';
+import { historySearchScenarios, scenarios } from './scenarios';
 import type { EvaluationResult } from './types';
 
 async function main(args: readonly string[]): Promise<number> {
@@ -12,13 +12,15 @@ async function main(args: readonly string[]): Promise<number> {
     process.stdout.write(formatVkChecklist(scenarios));
     return 0;
   }
-  const modelRun = args[0] === '--profile-model';
-  const single = modelRun && args[1] === '--case';
+  const profileModel = args[0] === '--profile-model';
+  const historyModel = args[0] === '--history-model';
+  const modelRun = profileModel || historyModel;
+  const single = profileModel && args[1] === '--case';
   const caseId = single ? args[2] : undefined;
   const [flag, output, ...extra] = modelRun ? args.slice(single ? 3 : 1) : args;
   if (extra.length || flag !== '--out' || !output?.trim() || output.startsWith('--')) {
     process.stderr.write(
-      'Укажите --out <новый файл JSON>, --profile-model [--case <сценарий>] --out <новый файл JSON> или --checklist.\n',
+      'Укажите --out <новый файл JSON>, --profile-model [--case <сценарий>] --out <новый файл JSON>, --history-model --out <новый файл JSON> или --checklist.\n',
     );
     return 1;
   }
@@ -27,12 +29,14 @@ async function main(args: readonly string[]): Promise<number> {
   if (modelRun) {
     const { LLM_MODEL: model, OPENCODE_API_KEY: apiKey } = process.env;
     try {
-      if (!model || !apiKey) throw Error('profile_eval_config');
-      results = await runProfileUpdateModel(
-        createLlmClient({ provider: 'opencode', apiKey, model }),
-        model,
-        caseId,
-      );
+      if (!model || !apiKey) throw Error('model_eval_config');
+      const client = createLlmClient({ provider: 'opencode', apiKey, model });
+      if (profileModel) results = await runProfileUpdateModel(client, model, caseId);
+      else
+        for (const scenario of historySearchScenarios)
+          results.push(
+            await runScenario(scenario, client, { modelName: model, timeoutMs: 60_000 }),
+          );
     } catch {
       process.stderr.write(
         'Не удалось выполнить оценку модели. Проверьте настройки и лимит прогона.\n',
