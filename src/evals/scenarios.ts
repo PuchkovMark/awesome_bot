@@ -198,7 +198,8 @@ export const scenarios: readonly Scenario[] = [
         check: ({ answer }) => {
           const text = answer?.text.trim() ?? '';
           const body = text.startsWith(answerPrefix) ? text.slice(answerPrefix.length) : text;
-          return /^(?:по цитате,?\s+)?куб\s+(?:[–—-]\s*)?(?:зел[её]ный|зел[её]ного цвета)(?:$|[.!?](?:\s|$))/iu.test(body);
+          const statement = body.replace(/^(?:по цитате,?|в цитате (?:сказано|указано), что)\s+/iu, '');
+          return /^куб\s+(?:[–—-]\s*)?(?:зел[её]ный|зел[её]ного цвета)(?:$|[.!](?:\s|$))/iu.test(statement);
         },
         vk: 'Бот прямо сообщает, что куб зелёный по цитате. Упоминание слова с отказом определить цвет считается нарушением.',
       },
