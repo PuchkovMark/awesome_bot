@@ -1,5 +1,5 @@
 import type { LlmRequest, LlmResult, LlmToolCall, LlmToolDescription } from '../../llm/types';
-import { estimateRequestInput } from '../context/budget';
+import { estimateRequestInput, toolMessageInputCost } from '../context/budget';
 import type { ToolAccess } from '../../contracts/tool';
 
 const inputLimit = 2560;
@@ -37,7 +37,11 @@ export interface DelegationHost {
   readonly resolve: (ref: string) => Material | undefined;
   readonly visible: (messageIds: readonly number[]) => boolean;
   readonly allowedTools: () => readonly (LlmToolDescription & { access: ToolAccess })[];
-  readonly read: (call: LlmToolCall, signal: AbortSignal) => Promise<Material | undefined>;
+  readonly read: (
+    call: LlmToolCall,
+    signal: AbortSignal,
+    fits: (text: string, ceiling?: number) => boolean,
+  ) => Promise<Material | 'limit' | undefined>;
   /** Берёт общий шаг, сохраняя последний шаг для основной модели. */
   readonly takeHelperStep: () => boolean;
   /** До запроса проверяет итоговый резерв и учитывает попытку в F4.6. */
@@ -214,7 +218,12 @@ export function createDelegation(host: DelegationHost) {
           !readerSchemas(host, task.tools).some((t) => t.name === call.name)
         )
           return empty('unavailable', [...ids]);
-        const read = await host.read(call, host.signal);
+        const available = inputLimit - estimateRequestInput({ ...request, messages });
+        const read = await host.read(call, host.signal, (text, ceiling = Infinity) => {
+          const wrapped = JSON.stringify({ ref: 'read:' + call.id, text });
+          return toolMessageInputCost(call.id, wrapped) <= Math.min(available, ceiling);
+        });
+        if (read === 'limit') return empty('limit', [...ids]);
         if (!read || !host.visible(read.messageIds)) return empty('unavailable', [...ids]);
         const reply = {
           role: 'tool' as const,

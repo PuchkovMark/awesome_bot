@@ -39,6 +39,7 @@ export interface Scenario {
   };
   readonly history: readonly MessageInput[];
   readonly historyLimit?: number;
+  readonly historyTimezone?: string;
   readonly input: IncomingMessage;
   readonly answer: string;
   readonly criteria: readonly Criterion[];

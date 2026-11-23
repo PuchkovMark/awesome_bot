@@ -593,6 +593,68 @@ const initiativeScenarios: Scenario[] = [
   })),
 ];
 
+export function yesterdayScenario(
+  id: string,
+  zone: string,
+  now: string,
+  from: string,
+  to: string,
+): Scenario {
+  const start = Date.parse(from),
+    end = Date.parse(to);
+  const morning = 'Утром выбрали маяк.',
+    evening = 'Вечером подтвердили встречу.';
+  return {
+    id,
+    revision: 1,
+    title: 'Переписка за местные вчерашние сутки',
+    prompt: 'Отвечай по истории этой беседы.',
+    input: input('Что было вчера?', { timestamp: Date.parse(now) }),
+    historyTimezone: zone,
+    historyLimit: 1,
+    history: [
+      entry('before', 'Предыдущие сутки.', { timestamp: start - 1 }),
+      entry('start', morning, { timestamp: start }),
+      entry('end-minus-one', evening, { timestamp: end - 1 }),
+      entry('end', 'Сегодня.', { timestamp: end }),
+      entry('other', 'Чужая реплика.', { chatId: 'synthetic:neighbor', timestamp: start }),
+    ],
+    answer: morning + ' ' + evening,
+    criteria: [
+      {
+        id: 'history-range',
+        description: 'Вызван инструмент с границами вчерашних суток из окружения.',
+        check: ({ request }) => {
+          const call = request?.messages
+            .flatMap((m) => (m.role === 'assistant' ? (m.toolCalls ?? []) : []))
+            .find((c) => c.name === 'history_period');
+          if (!call) return false;
+          const args = JSON.parse(call.arguments);
+          return (
+            request!.system.includes(zone) &&
+            Date.parse(args.from) === start &&
+            Date.parse(args.to) === end
+          );
+        },
+      },
+      {
+        id: 'history-result',
+        description: 'Ответ содержит обе доступные реплики вчерашних суток.',
+        check: ({ request, answer }) => {
+          const blocks = markedUserBlocks({ request, answer, historyTruncated: false });
+          return (
+            !JSON.stringify(blocks).includes(morning) &&
+            request?.messages.some((m) => m.role === 'tool') === true &&
+            answer?.text === morning + ' ' + evening
+          );
+        },
+        vk: 'Проверить события внутри суток и отсутствие реплик другого дня и другой беседы.',
+      },
+    ],
+    vkSteps: ['Подготовьте сообщения по обе стороны местной полуночи. Спросите «Что было вчера?»'],
+  };
+}
+
 export const scenarios: readonly Scenario[] = [
   {
     id: 'limited-history',
@@ -827,6 +889,13 @@ export const scenarios: readonly Scenario[] = [
   ...twinScenarios,
   ...addressScenarios,
   ...initiativeScenarios,
+  yesterdayScenario(
+    'history-yesterday',
+    'Europe/Moscow',
+    '2026-11-23T00:15:00+03:00',
+    '2026-11-21T21:00:00Z',
+    '2026-11-22T21:00:00Z',
+  ),
 ];
 
 export const profileUpdateCases = [

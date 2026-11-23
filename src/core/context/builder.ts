@@ -373,6 +373,7 @@ export function createContextBuilder(options: ContextBuilderOptions) {
     });
     return {
       kind: 'ready',
+      timezone: settings.timezone,
       input: Object.freeze({
         system,
         messages,

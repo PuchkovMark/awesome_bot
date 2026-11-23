@@ -1,5 +1,6 @@
 import { expect, test } from 'vitest';
-import { scenarios } from '../src/evals/scenarios';
+import { runScenario } from '../src/evals/runner';
+import { scenarios, yesterdayScenario } from '../src/evals/scenarios';
 
 test('сценарии имеют уникальные ключи сравнения и шаги проверки в VK', () => {
   expect(scenarios.map((scenario) => scenario.id)).toEqual([
@@ -38,6 +39,7 @@ test('сценарии имеют уникальные ключи сравнен
     'initiative-unknown',
     'initiative-normal',
     'initiative-silent',
+    'history-yesterday',
   ]);
   for (const scenario of scenarios) {
     expect(scenario.id).toMatch(/^[a-z]+(?:-[a-z]+)*$/);
@@ -108,4 +110,13 @@ test('оценки обращений передают выбор только �
   expect(
     new Set(scenarios.filter(({ address }) => address).map(({ promptKey }) => promptKey)),
   ).toEqual(new Set(['f52-address-preferences']));
+});
+
+test.each([
+  ['2026-03-30T00:15:00+02:00', '2026-03-28T23:00:00Z', '2026-03-29T22:00:00Z', 23],
+  ['2026-10-26T00:15:00+01:00', '2026-10-24T22:00:00Z', '2026-10-25T23:00:00Z', 25],
+] as const)('вчерашний период учитывает смену смещения %s', async (now, from, to, hours) => {
+  expect(Date.parse(to) - Date.parse(from)).toBe(hours * 3600000);
+  const scenario = yesterdayScenario('history-dst', 'Europe/Berlin', now, from, to);
+  expect(await runScenario(scenario)).toMatchObject({ outcome: 'passed' });
 });

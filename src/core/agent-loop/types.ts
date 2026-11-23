@@ -73,6 +73,7 @@ export interface LoopTools {
     request: import('../../llm/types').LlmRequest,
   ): Promise<readonly import('../../llm/types').LlmToolDescription[]>;
   current(): boolean;
+  budgetExhausted?(): boolean;
   helperSteps(): number;
   beginBatch(
     request: import('../../llm/types').LlmRequest,

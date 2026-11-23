@@ -107,6 +107,7 @@ export function createPublicationService(options: {
       readonly authorLabels?: readonly string[];
       readonly addressPreference?: AddressPreferenceReference;
       readonly participantCards?: QueueCompletion['participantCards'];
+      readonly toolSourceIds?: readonly number[];
       readonly toolResultsCurrent?: QueueCompletion['toolResultsCurrent'];
     } = {},
   ): Promise<string> {
@@ -381,6 +382,7 @@ export function createPublicationService(options: {
                   ...new Set([
                     work.messageId,
                     ...ids,
+                    ...(decision.kind === 'answer' ? (details.toolSourceIds ?? []) : []),
                     ...(decision.kind === 'answer' ? (participantCards?.sourceIds ?? []) : []),
                   ]),
                 ],
@@ -502,6 +504,7 @@ export function createPublicationService(options: {
           ? { kind: completion.preparationFailure }
           : (completion.result ?? { kind: completion.outcome }),
         {
+          toolSourceIds: completion.toolSourceIds ?? [],
           subjectIds: completion.subjectIds ?? [],
           ...(completion.participantCards ? { participantCards: completion.participantCards } : {}),
           ...(completion.toolResultsCurrent
