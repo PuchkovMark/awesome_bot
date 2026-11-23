@@ -1,3 +1,4 @@
+import type { PassportReply, PassportReplyResult } from './chat-passport-types';
 import type { ProfileCommandEdit, ProfileCommandEditResult } from './profile-command-types';
 import { selectOwnProfile } from './profile-fact-selection';
 import { createProfileFactReader } from './profile-fact-reader';
@@ -29,6 +30,12 @@ export function createScopedStorage(
     input: ProfileCommandEdit,
     now: number,
   ) => ProfileCommandEditResult,
+  applyPassport: (
+    scope: ConnectionScope,
+    actor: UserId,
+    input: PassportReply,
+    now: number,
+  ) => PassportReplyResult,
 ): Omit<ScopedStorage, 'traces'> {
   const messages = createMessageStore(connection),
     chats = createChatStore(connection),
@@ -95,6 +102,11 @@ export function createScopedStorage(
             callback(
               Object.freeze<ScopedAuthorizationTransaction>({
                 ...tx,
+                applyPassportReply(actorId, input, now) {
+                  tx.revision();
+                  if (!tx.claimControlMessage(actorId, input.eventId)) return 'duplicate';
+                  return applyPassport(scope, actorId, input, now);
+                },
                 editOwnProfile(actorId, input, now) {
                   tx.revision();
                   return editProfile(scope, actorId, input, now);

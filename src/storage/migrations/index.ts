@@ -1,3 +1,4 @@
+import { chatPassport } from './034-chat-passport';
 import { profileCommands } from './032-profile-commands';
 import { questionnaireInvitations } from './033-questionnaire-invitations';
 import { memberGreetings } from './031-member-greetings';
@@ -70,4 +71,5 @@ export const migrations: readonly Migration[] = [
   memberGreetings,
   profileCommands,
   questionnaireInvitations,
+  chatPassport,
 ];

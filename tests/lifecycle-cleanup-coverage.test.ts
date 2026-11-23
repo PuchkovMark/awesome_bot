@@ -2,6 +2,8 @@ import Database from 'better-sqlite3';
 import { expect, test } from 'vitest';
 import { migrate } from '../src/storage/migrate';
 const tables = [
+  'chat_passport_sections',
+  'chat_passport_prompts',
   'profile_command_lists',
   'profile_command_positions',
   'profile_command_parts',
@@ -76,6 +78,7 @@ const tables = [
   'sqlite_sequence',
 ];
 const others = [
+  'chat_passport_prompt_expiry',
   'profile_command_expiry',
   'profile_command_event_expiry',
   'greeting_due',

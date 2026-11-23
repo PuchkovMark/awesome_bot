@@ -1,3 +1,4 @@
+import type { PassportReply, PassportReplyResult } from '../../storage/chat-passport-types';
 import type {
   ProfileCommandEdit,
   ProfileCommandEditResult,
@@ -123,6 +124,19 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
     ): Promise<AuthorizationDecision> {
       return guarded(context, action, subjectId, () => ({ allowed: true, value: undefined }), {
         allowInitialOwnerSettings: action === 'usage.read' || action === 'usage.configure',
+      });
+    },
+    async applyPassportReply(
+      context: AuthorizationContext,
+      input: PassportReply,
+      current: () => boolean,
+    ) {
+      if (disposed || !authority.contains(context)) return deny('invalid_context');
+      if (context.kind !== 'chat') return deny('wrong_scope');
+      return guarded<PassportReplyResult>(context, 'chat.passport.edit', undefined, (tx) => {
+        const state = tx.controlState();
+        if (!state.enabled || !current()) return deny('conflict');
+        return { allowed: true, value: tx.applyPassportReply(context.userId, input, now()) };
       });
     },
     async readOwnProfile(context: AuthorizationContext, subjectId: UserId) {

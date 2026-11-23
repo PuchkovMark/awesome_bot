@@ -127,6 +127,10 @@ export function confirmDeletion(
   db.prepare(
     'DELETE FROM profile_command_events WHERE chat_id=? AND generation=? AND user_id=?',
   ).run(chat, scope.generation, user);
+  db.prepare(
+    `UPDATE chat_passport_prompts SET actor_id=NULL,action=NULL,revision=NULL,expires_at=NULL
+    WHERE chat_id=? AND generation=? AND actor_id=?`,
+  ).run(chat, scope.generation, user);
   invalidateDependentData(db, chat, code);
   db.prepare(
     `DELETE FROM profile_facts WHERE chat_id=? AND (user_id=? OR source_user_id=? OR source_message_id IN (${inputs}))`,
@@ -212,6 +216,7 @@ export function confirmDeletion(
     UNION ALL SELECT 1 FROM address_preferences WHERE chat_id=@chat AND user_id=@user
     UNION ALL SELECT 1 FROM profile_command_lists WHERE user_id=@user AND (chat_id=@chat OR user_id=@chat)
     UNION ALL SELECT 1 FROM profile_command_events WHERE chat_id=@chat AND user_id=@user
+    UNION ALL SELECT 1 FROM chat_passport_prompts WHERE chat_id=@chat AND actor_id=@user
     UNION ALL SELECT 1 FROM greeting_candidates WHERE chat_id=@chat AND user_id=@user
     UNION ALL SELECT 1 FROM greeting_members g JOIN greeting_windows w ON w.id=g.window_id
       WHERE w.chat_id=@chat AND g.user_id=@user

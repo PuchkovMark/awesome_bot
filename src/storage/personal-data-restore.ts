@@ -38,6 +38,11 @@ export function reconcileStagedPersonalData(staged: Database, newer: Database, n
   staged
     .transaction(() => {
       staged.prepare('DELETE FROM profile_command_lists').run();
+      staged
+        .prepare(
+          'UPDATE chat_passport_prompts SET actor_id=NULL,action=NULL,revision=NULL,expires_at=NULL WHERE actor_id IS NOT NULL',
+        )
+        .run();
       for (const operation of deletions) {
         const existing = staged
           .prepare('SELECT generation FROM chat_connections WHERE chat_id=?')

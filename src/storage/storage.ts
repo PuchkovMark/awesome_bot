@@ -1,3 +1,4 @@
+import { createChatPassportStore, registerChatPassport } from './chat-passport-store';
 import { createProfileCommandStore, registerProfileCommands } from './profile-command-store';
 import { createGreetingStore, registerGreetings } from './greeting-store';
 import { createProfileFactStore, registerProfileInference } from './profile-fact-store';
@@ -60,6 +61,7 @@ export async function openStorage(
       backend,
       profileFacts.writePrivateFact,
     );
+    const passport = createChatPassportStore(connection, backend);
     const storage: Storage = {
       ...createScopedStorage(
         connection,
@@ -68,6 +70,7 @@ export async function openStorage(
         queue,
         profileFacts,
         profileCommands.edit,
+        passport.apply,
       ),
       traces: {
         async get(scope, id) {
@@ -85,6 +88,7 @@ export async function openStorage(
     registerPersonalData(storage, privacy);
     registerProfileInference(storage, profileFacts);
     registerProfileCommands(storage, profileCommands);
+    registerChatPassport(storage, passport);
     registerAddressPreferences(storage, createAddressPreferenceStore(privacy));
     registerParticipantRegistry(storage, createParticipantRegistry(connection, backend));
     registerReminders(storage, createReminderStore(connection, backend));
