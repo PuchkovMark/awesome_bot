@@ -57,6 +57,26 @@ export function checkCatalogBoundary(root = process.cwd()) {
             );
           if (!allowed) result.privileged = true;
         }
+        if (p === resolve(root, 'src/storage/lifecycle-store.ts')) {
+          const parent = node.parent;
+          const clause = ts.isImportDeclaration(parent) && parent.importClause;
+          const bindings = clause && !clause.name && clause.namedBindings;
+          const allowed =
+            (clause && clause.isTypeOnly) ||
+            (bindings &&
+              ts.isNamedImports(bindings) &&
+              bindings.elements.every((element) => {
+                const imported = (element.propertyName ?? element.name).text;
+                return (
+                  element.isTypeOnly ||
+                  (file === resolve(root, 'src/storage/storage.ts') &&
+                    ['createLifecycleBackend', 'registerLifecycle'].includes(imported)) ||
+                  (file === resolve(root, 'src/storage/chats.ts') &&
+                    imported === 'installAuthorities')
+                );
+              }));
+          if (!allowed) result.privileged = true;
+        }
         for (const [moduleName, factory] of [
           ['queue-registry.ts', 'registerQueue'],
           ['queue-store.ts', 'createQueueBackend'],

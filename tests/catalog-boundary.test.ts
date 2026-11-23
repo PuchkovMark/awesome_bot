@@ -153,7 +153,7 @@ test('единственное исключение реестра — реги�
   }
 });
 
-test.each(['queue-registry.ts', 'queue-store.ts', 'token-budget-store.ts'])(
+test.each(['queue-registry.ts', 'queue-store.ts', 'token-budget-store.ts', 'lifecycle-store.ts'])(
   'инфраструктура %s недоступна через транзитивный импорт',
   (module) => {
     const f = fixture();
@@ -167,3 +167,28 @@ test.each(['queue-registry.ts', 'queue-store.ts', 'token-budget-store.ts'])(
     }
   },
 );
+
+test('чтение через Storage не делает сервис решений владельца доступным инструментам', () => {
+  const f = fixture();
+  try {
+    f.put(
+      'src/storage/lifecycle-store.ts',
+      'export const createLifecycleBackend=1,registerLifecycle=1,lifecycleBackend=1,installAuthorities=1;',
+    );
+    f.put(
+      'src/storage/storage.ts',
+      "import {createLifecycleBackend,registerLifecycle} from './lifecycle-store'; import './chats';",
+    );
+    f.put('src/storage/chats.ts', "import {installAuthorities} from './lifecycle-store';");
+    f.put('src/tools/a.ts', "import '../storage/storage';");
+    expect(checkCatalogBoundary(f.directory)).toEqual([]);
+    f.put(
+      'src/core/lifecycle/service.ts',
+      "import {lifecycleBackend} from '../../storage/lifecycle-store';",
+    );
+    f.put('src/tools/a.ts', "import '../core/lifecycle/service';");
+    expect(checkCatalogBoundary(f.directory)).toHaveLength(1);
+  } finally {
+    f.cleanup();
+  }
+});

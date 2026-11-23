@@ -37,7 +37,15 @@ test('версия 7 сохраняет данные, FK и checksums; оба р
       'local_content_versions',
       'chat_content_selections',
     ];
-    const saved = savedTables.map((t) => db.prepare('SELECT * FROM ' + t).all());
+    const saved = savedTables.map((t) =>
+      db
+        .prepare(
+          t === 'chat_connections'
+            ? 'SELECT *,NULL AS pause_reason FROM chat_connections'
+            : 'SELECT * FROM ' + t,
+        )
+        .all(),
+    );
     const history = db.prepare('SELECT * FROM schema_migrations').all();
     const jobs = db.prepare('SELECT * FROM queue_jobs').all();
     migrate(db);

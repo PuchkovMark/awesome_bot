@@ -16,7 +16,7 @@ test('миграция 13 сохраняет поколения и связыв�
       "INSERT INTO chat_connections(chat_id,generation,revision,state) VALUES ('vk:1',1,0,'active'),('vk:2',2,0,'uncertain')",
     );
     const history = db.prepare('SELECT * FROM schema_migrations').all();
-    const connections = db.prepare('SELECT * FROM chat_connections').all();
+    const connections = db.prepare('SELECT *,NULL AS pause_reason FROM chat_connections').all();
     migrate(db);
     expect(db.prepare('SELECT * FROM schema_migrations WHERE version<=12').all()).toEqual(history);
     expect(db.prepare('SELECT * FROM chat_connections').all()).toEqual(connections);
