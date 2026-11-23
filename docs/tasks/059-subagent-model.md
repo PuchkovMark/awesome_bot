@@ -5,7 +5,7 @@
 - Статус: утверждено
 - Дата: 2026-11-23
 - Дата завершения: —
-- Связанные документы: [план реализации](../impl-plans/059-subagent-model.md), [план фичи](../plans/059-subagent-model.md), [дорожная карта](../roadmap.md#технические-задачи), [исходная задача делегирования 036](completed/036-universal-subagents.md), [план сводок 056](../plans/056-chat-history-summaries.md), [цикл ответа](../specs/agent-loop.md#делегирование-в-пользовательском-обращении), [клиент модели](../specs/architecture.md#клиент-модели-f21).
+- Связанные документы: [план реализации](../impl-plans/059-subagent-model.md), [план фичи](../plans/059-subagent-model.md), [дорожная карта](../roadmap.md#технические-задачи), [исходная задача делегирования 036](completed/036-universal-subagents.md), [план сводок 056](../plans/completed/056-chat-history-summaries.md), [цикл ответа](../specs/agent-loop.md#делегирование-в-пользовательском-обращении), [клиент модели](../specs/architecture.md#клиент-модели-f21).
 
 ## Проблема или цель
 

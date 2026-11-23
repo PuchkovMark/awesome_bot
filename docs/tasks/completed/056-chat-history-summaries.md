@@ -2,10 +2,10 @@
 
 - Номер: 056
 - Название: Сводки фрагментов, дня и последних дней
-- Статус: в работе
+- Статус: выполнено
 - Дата: 2026-11-23
-- Дата завершения: —
-- Связанные документы: [план фичи](../plans/056-chat-history-summaries.md), [план реализации](../impl-plans/056-chat-history-summaries.md), [F6.4 в дорожной карте](../roadmap.md#веха-6-знание-о-беседе), [Контекст](../specs/context.md), [Знание о беседе](../specs/chat-knowledge.md), [Хранилище](../specs/storage.md), [Приватность](../specs/privacy.md), [Оценки](../specs/evals.md)
+- Дата завершения: 2026-11-23
+- Связанные документы: [план фичи](../../plans/completed/056-chat-history-summaries.md), [план реализации](../../impl-plans/completed/056-chat-history-summaries.md), [F6.4 в дорожной карте](../../roadmap.md#веха-6-знание-о-беседе), [Контекст](../../specs/context.md), [Знание о беседе](../../specs/chat-knowledge.md), [Хранилище](../../specs/storage.md), [Приватность](../../specs/privacy.md), [Оценки](../../specs/evals.md)
 
 ## Проблема или цель
 
@@ -28,7 +28,7 @@
 
 ## Затрагиваемые спецификации
 
-[Контекст](../specs/context.md), [Знание о беседе](../specs/chat-knowledge.md), [Хранилище](../specs/storage.md), [Приватность](../specs/privacy.md), [Оценки](../specs/evals.md).
+[Контекст](../../specs/context.md), [Знание о беседе](../../specs/chat-knowledge.md), [Хранилище](../../specs/storage.md), [Приватность](../../specs/privacy.md), [Оценки](../../specs/evals.md).
 
 ## Открытые вопросы
 

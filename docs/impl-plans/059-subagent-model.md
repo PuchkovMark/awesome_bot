@@ -5,7 +5,7 @@
 - Статус: черновик
 - Дата: 2026-11-23
 - Дата завершения: —
-- Связанные документы: [задача](../tasks/059-subagent-model.md), [утверждённый план](../plans/059-subagent-model.md), [сводки 056](056-chat-history-summaries.md), [делегирование](../specs/agent-loop.md#делегирование-в-пользовательском-обращении), [оценки](../specs/evals.md).
+- Связанные документы: [задача](../tasks/059-subagent-model.md), [утверждённый план](../plans/059-subagent-model.md), [сводки 056](completed/056-chat-history-summaries.md), [делегирование](../specs/agent-loop.md#делегирование-в-пользовательском-обращении), [оценки](../specs/evals.md).
 
 ## Упорядоченные шаги
 
