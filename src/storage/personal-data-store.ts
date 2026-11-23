@@ -86,6 +86,9 @@ export function createPersonalDataStore(connection: Connection, lifecycle: Lifec
           UNION ALL SELECT 1 FROM bot_admin_grants WHERE chat_id=@chat AND user_id=@user
           UNION ALL SELECT 1 FROM chat_author_labels WHERE ${subject}
           UNION ALL SELECT 1 FROM address_preferences WHERE ${subject}
+          UNION ALL SELECT 1 FROM greeting_candidates WHERE ${subject}
+          UNION ALL SELECT 1 FROM greeting_members g JOIN greeting_windows w ON w.id=g.window_id
+            WHERE w.chat_id=@chat AND w.generation=@generation AND g.user_id=@user
           UNION ALL SELECT 1 FROM personal_profile_choices WHERE ${subject}
           UNION ALL SELECT 1 FROM personal_deletions WHERE ${subject} LIMIT 1`,
               )

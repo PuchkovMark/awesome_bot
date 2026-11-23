@@ -82,6 +82,25 @@ export function confirmDeletion(
   db.prepare(
     `UPDATE messages SET reply_to_message_id=NULL WHERE chat_id=? AND reply_to_message_id IN (${inputs})`,
   ).run(chat, chat, user);
+  db.prepare(
+    `INSERT OR IGNORE INTO personal_hidden_messages
+    SELECT w.message_id,?,0 FROM greeting_windows w JOIN greeting_members g ON g.window_id=w.id
+    WHERE w.chat_id=? AND w.generation=? AND g.user_id=? AND w.message_id IS NOT NULL`,
+  ).run(code, chat, scope.generation, user);
+  db.prepare('DELETE FROM greeting_candidates WHERE chat_id=? AND generation=? AND user_id=?').run(
+    chat,
+    scope.generation,
+    user,
+  );
+  db.prepare(
+    `DELETE FROM greeting_members WHERE user_id=? AND window_id IN (
+    SELECT id FROM greeting_windows WHERE chat_id=? AND generation=?
+  )`,
+  ).run(user, chat, scope.generation);
+  db.prepare(
+    `UPDATE greeting_windows SET state='skipped' WHERE chat_id=? AND generation=?
+    AND state='waiting' AND NOT EXISTS(SELECT 1 FROM greeting_members WHERE window_id=greeting_windows.id)`,
+  ).run(chat, scope.generation);
   invalidateDependentData(db, chat, code);
   db.prepare(
     `DELETE FROM profile_facts WHERE chat_id=? AND (user_id=? OR source_user_id=? OR source_message_id IN (${inputs}))`,
@@ -165,6 +184,9 @@ export function confirmDeletion(
     .prepare(
       `SELECT 1 FROM chat_participants WHERE chat_id=@chat AND user_id=@user
     UNION ALL SELECT 1 FROM address_preferences WHERE chat_id=@chat AND user_id=@user
+    UNION ALL SELECT 1 FROM greeting_candidates WHERE chat_id=@chat AND user_id=@user
+    UNION ALL SELECT 1 FROM greeting_members g JOIN greeting_windows w ON w.id=g.window_id
+      WHERE w.chat_id=@chat AND g.user_id=@user
     UNION ALL SELECT 1 FROM participant_profiles WHERE chat_id=@chat AND user_id=@user
     UNION ALL SELECT 1 FROM profile_facts WHERE chat_id=@chat AND (user_id=@user OR source_user_id=@user)
     UNION ALL SELECT 1 FROM personal_exports WHERE chat_id=@chat AND user_id=@user

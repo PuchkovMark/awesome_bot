@@ -82,6 +82,20 @@ export function readPersonalExport(
       )
       .all(chat, generation),
     serviceRecords: {
+      greetingEntries: db
+        .prepare(
+          `SELECT g.confirmed_at,w.due_at,w.state
+        FROM greeting_members g JOIN greeting_windows w ON w.id=g.window_id
+        WHERE w.chat_id=? AND w.generation=? AND g.user_id=? ORDER BY g.confirmed_at,w.id`,
+        )
+        .all(chat, generation, user),
+      greetingCandidate:
+        db
+          .prepare(
+            `SELECT source_at FROM greeting_candidates
+        WHERE chat_id=? AND generation=? AND user_id=?`,
+          )
+          .get(chat, generation, user) ?? null,
       authorLabel:
         db
           .prepare(

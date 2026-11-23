@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { reconcileStagedPersonalData } from '../src/storage/personal-data-restore';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
+import { greetingStore } from '../src/storage/greeting-store';
 import { openStorage, scopeFor } from './helpers/connection-scope';
 import { personalDataStore } from '../src/storage/personal-data-store';
 import { disclosureStore } from '../src/storage/chat-disclosure-store';
@@ -224,9 +225,9 @@ test('перечень источников F5.8 охватывает табли
     migrate(db);
     const categories = {
       personal:
-        'chat_participants participant_profiles profile_facts chat_author_labels messages request_quota_admissions chat_control_commands history_clear_requests personal_profile_choices personal_exports address_preferences',
+        'chat_participants participant_profiles profile_facts chat_author_labels messages request_quota_admissions chat_control_commands history_clear_requests personal_profile_choices personal_exports address_preferences greeting_candidates greeting_members',
       dependent:
-        'messages_fts messages_fts_config messages_fts_data messages_fts_docsize messages_fts_idx personal_answer_sources tool_answer_subjects queue_jobs response_traces mention_flood_inputs autonomous_questions autonomous_reply_parts',
+        'messages_fts messages_fts_config messages_fts_data messages_fts_docsize messages_fts_idx personal_answer_sources tool_answer_subjects greeting_windows queue_jobs response_traces mention_flood_inputs autonomous_questions autonomous_reply_parts',
       authority:
         'admin_presence admin_observations admin_recovery_operations bot_admin_grants bot_admin_revocations bot_admin_revocation_audit personal_retained_denials',
       privateReminders:
@@ -296,5 +297,106 @@ test('сверка, событие и отметка сообщения сохр
     expect(registry.read(neighbor).participants.map((row) => row.userId)).toEqual([user, 'vk:16']);
   } finally {
     await storage.close();
+  }
+});
+
+test('экспорт, удаление и сверка старой копии учитывают только связанные приветствия', async () => {
+  const files = storageFixture();
+  const backup = storageFixture();
+  const start = Date.UTC(2026, 10, 23, 12);
+  const now = vi.spyOn(Date, 'now').mockReturnValue(start);
+  const storage = await openStorage(files.path);
+  const live = new Database(files.path);
+  const user = 'vk:101' as const;
+  const other = 'vk:102' as const;
+  try {
+    const main = scopeFor(storage, 'vk:2000000045');
+    const neighbor = scopeFor(storage, 'vk:2000000046');
+    const registry = participantRegistryStore(storage);
+    for (const scope of [main, neighbor]) {
+      await storage.chats.create(scope, {
+        enabled: true,
+        responseMode: 'normal',
+        createdAt: start,
+      });
+      await storage.authorization.transaction(scope, (tx) => tx.writeGreeting(true, start));
+      for (const person of scope === main ? [user, other] : [user])
+        registry.observe(
+          scope,
+          {
+            kind: 'membership',
+            chatId: scope.chatId,
+            subjectId: person,
+            actorId: person,
+            timestamp: start,
+            change: 'joined',
+          },
+          person,
+          true,
+        );
+    }
+    const greeting = greetingStore(storage);
+    const due = greeting.due(start + 30_000)!;
+    const sendId = greeting.allocate();
+    expect(greeting.start(main, due.id, sendId, start + 30_000, 6, () => true)).toBe(true);
+    greeting.confirm(
+      main,
+      due.id,
+      sendId,
+      {
+        messageId: '100',
+        userId: 'vk:-314',
+        authorName: 'Пенёк',
+        timestamp: start + 30_000,
+        text: 'Добро пожаловать!',
+      },
+      [user, other],
+    );
+    const privacy = personalDataStore(storage);
+    const data = privacy.export(main, user, start + 30_001);
+    expect(data.serviceRecords.greetingEntries).toEqual([
+      { confirmed_at: start, due_at: start + 30_000, state: 'delivered' },
+    ]);
+    expect(JSON.stringify(data)).not.toContain(other);
+    await live.backup(backup.path);
+    const request = privacy.requestDeletion(main, user, 'test-delete', start + 30_002);
+    expect(privacy.confirmDeletion(main, user, request.code, start + 30_002)).toBe(true);
+    const greetingFor = (connection: Database.Database, scope: typeof main) =>
+      connection
+        .prepare(
+          `SELECT w.chat_id FROM greeting_members g JOIN greeting_windows w ON w.id=g.window_id
+        WHERE g.user_id=? AND w.chat_id=?`,
+        )
+        .all(user, scope.chatId);
+    expect(greetingFor(live, main)).toEqual([]);
+    expect(greetingFor(live, neighbor)).toEqual([{ chat_id: neighbor.chatId }]);
+    expect(
+      live
+        .prepare("SELECT id FROM personal_visible_messages WHERE platform_message_id='100'")
+        .get(),
+    ).toBeUndefined();
+    const staged = new Database(backup.path);
+    const readonly = new Database(files.path, { readonly: true });
+    try {
+      staged.pragma('foreign_keys=ON');
+      reconcileStagedPersonalData(staged, readonly, start + 30_003);
+      expect(greetingFor(staged, main)).toEqual([]);
+      expect(greetingFor(staged, neighbor)).toEqual([{ chat_id: neighbor.chatId }]);
+      expect(
+        staged
+          .prepare("SELECT id FROM personal_visible_messages WHERE platform_message_id='100'")
+          .get(),
+      ).toBeUndefined();
+      expect(staged.pragma('foreign_key_check')).toEqual([]);
+    } finally {
+      readonly.close();
+      staged.close();
+    }
+  } finally {
+    live.close();
+    await storage.close();
+    files.cleanup();
+    backup.cleanup();
+    now.mockRestore();
   }
 });
