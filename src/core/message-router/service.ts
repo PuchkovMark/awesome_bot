@@ -101,7 +101,7 @@ export function createMessageRouter(options: RouterOptions) {
         senderBot: message.isBot,
         role: 'user' as const,
         attachmentCount: message.attachments.length,
-        text: message.text,
+        text: command?.privateInput ? 'Личная команда профиля' : message.text,
         timestamp: message.timestamp,
         ...(message.replyToMessageId ? { replyToMessageId: message.replyToMessageId } : {}),
       };
@@ -129,6 +129,7 @@ export function createMessageRouter(options: RouterOptions) {
           };
         },
         disclosure,
+        command?.privateInput,
       );
       const decision = result.decision ? fromDecision(result.decision) : null;
       if (decision) {

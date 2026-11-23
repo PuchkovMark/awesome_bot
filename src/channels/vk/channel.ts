@@ -1,3 +1,4 @@
+import type { VkIncoming } from './normalize';
 import type { PublishedPart } from '../../contracts/index';
 import { randomInt } from 'node:crypto';
 import type {
@@ -234,6 +235,14 @@ export function createVkChannel(
         guard,
       );
       return typeof result === 'number' && result > 0;
+    },
+    async verifiedProfileReply(message: VkIncoming, guard: PublicationGuard) {
+      if (message.peerId !== message.authorId || isVkGroupChat(message.peerId) || !message.reply)
+        return null;
+      const reply = (await api.enrich(message, guard)).verifiedReply;
+      return reply?.authorId === -options.groupId && reply.cmid === message.reply.cmid
+        ? String(reply.cmid)
+        : null;
     },
     reminderDelivery(recipient: UserId) {
       return createVkAdministrationDelivery(api, outbound, recipient, options.groupId);

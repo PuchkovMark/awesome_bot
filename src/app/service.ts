@@ -1,3 +1,4 @@
+import { createProfileCommands } from './profile-commands';
 import { applicationTools } from './model-tools';
 import { createGreetingService } from '../core/greetings/service';
 import { greetingStore } from '../storage/greeting-store';
@@ -229,6 +230,7 @@ export async function runApplication(
       });
       async function checkAdministration() {
         while (!signal.aborted) {
+          profiles.prune(Date.now());
           const moreProfiles = privacy.purgeExpired(Date.now()) === 100;
           const moreMessages = privacy.cleanup(Date.now()) === 100;
           if (moreProfiles || moreMessages) {
@@ -452,6 +454,15 @@ export async function runApplication(
         authorization,
         storage,
       });
+      const profiles = createProfileCommands({
+        storage,
+        authorization,
+        privacy,
+        channel,
+        lifecycle,
+        onboarding,
+        signal,
+      });
       const address = createAddressPreferenceHandlers({ storage, channel, signal });
       const pausedChats = createPausedChatCommands({ channel, lifecycle, ownerId, signal });
       const router = createMessageRouter({
@@ -470,6 +481,7 @@ export async function runApplication(
           (isUsageCommand(message.text)
             ? ({ action: 'usage.read', minimumRole: 'owner' } as const)
             : null) ??
+          profiles.recognize(message) ??
           groupPersonalCommand(message) ??
           history.recognize(message) ??
           chatControl.recognize(message, replyToOther) ??
@@ -483,6 +495,7 @@ export async function runApplication(
         identity: (scope, message) =>
           commandAuthorization.context({ scope, userId: message.userId }),
         async executeCommand(context, message, isCurrent, replayOnly) {
+          if (profiles.recognize(message)) return profiles.group(context.scope, message, isCurrent);
           if (groupPersonalCommand(message)) {
             const peerId = vkLocalId(context.scope.chatId),
               authorId = vkLocalId(context.userId);
@@ -517,6 +530,8 @@ export async function runApplication(
             lifecycle.observeAdminMembership(scope, userId, present, messageId, at);
           },
           command(message, isCurrent) {
+            const profileAction = profiles.private(message, isCurrent);
+            if (profileAction) return profileAction;
             const personalAction = !isVkGroupChat(message.peerId) && personal(message, isCurrent);
             if (personalAction) return personalAction;
             const command = parseAdminRecoveryCommand(message.text);

@@ -6,6 +6,7 @@ export interface ServiceCommand {
   readonly action: AuthorizationAction;
   readonly minimumRole: BotRole;
   readonly replayRequest?: boolean;
+  readonly privateInput?: true;
 }
 export interface RoutingInput {
   readonly message: IncomingMessage;

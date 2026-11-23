@@ -125,6 +125,7 @@ export async function fixture(
   const sends: (Message & { readonly disableMentions: number; readonly sendId: number })[] = [];
   let members: readonly number[] | null = options.greetings?.members ?? null;
   const filesSent: { peer: number; attachment: string }[] = [];
+  let privateAllowed = true;
   let serial = 0;
   let tick = 0;
   let sendFault:
@@ -175,7 +176,7 @@ export async function fixture(
             },
           };
         if (method === 'messages.isMessagesFromGroupAllowed')
-          return { response: { is_allowed: 1 } };
+          return { response: { is_allowed: Number(privateAllowed) } };
         if (method === 'messages.send' && args.attachment) {
           filesSent.push({ peer: Number(args.peer_id), attachment: String(args.attachment) });
           return { response: ++serial };
@@ -279,6 +280,9 @@ export async function fixture(
         elapsed = ms;
       },
       sends,
+      setPrivateAllowed(value: boolean) {
+        privateAllowed = value;
+      },
       setMembers(value: readonly number[] | null) {
         members = value;
       },

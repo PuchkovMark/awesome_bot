@@ -26,6 +26,7 @@ export function routeMessage(input: RoutingInput): RoutingDecision {
         privatePreference);
     if (
       !service.allowed ||
+      (service.command.privateInput && message.isBot !== false) ||
       (privatePreference &&
         (!settings.enabled || settings.responseMode === 'silent' || message.isBot !== false)) ||
       (service.role === 'member' && !participantCommand) ||
