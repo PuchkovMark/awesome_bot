@@ -35,6 +35,7 @@ import { createHistoryHandlers } from './history-retention';
 import type { ChatLimits } from '../core/chat-limits/config';
 import { createTokenBudgetMembership } from '../core/chat-limits/token-budget-membership';
 import { createUsageCommand, isUsageCommand } from './token-budget';
+import { createPausedChatCommands } from './paused-chats';
 
 interface ApplicationDependencies {
   readonly vk?: Parameters<typeof createVkChannel>[1];
@@ -300,6 +301,7 @@ export async function runApplication(
         signal,
         budget: createTokenBudgetAdministration({ storage, authorization, isGroupChat: group }),
       });
+      const pausedChats = createPausedChatCommands({ channel, lifecycle, ownerId, signal });
       const router = createMessageRouter({
         storage,
         queue,
@@ -344,6 +346,7 @@ export async function runApplication(
             const command = parseAdminRecoveryCommand(message.text);
             if (!command)
               return (
+                pausedChats(message, isCurrent) ??
                 usage(message, isCurrent) ??
                 history.privateCommand(message, isCurrent) ??
                 chatControl.privateCommand(message, isCurrent)

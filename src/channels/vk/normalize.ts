@@ -47,6 +47,7 @@ export interface VkIncoming {
   readonly isMentioned: boolean;
   readonly soleBotMention?: boolean;
   readonly hasReply?: boolean;
+  readonly hasForwarded?: boolean;
   readonly attachments: readonly Attachment[];
   readonly reply: VkReply | undefined;
 }
@@ -221,6 +222,8 @@ export function parseVkIncoming(update: unknown, groupId: number): ParseResult {
   );
   const isMentioned = recipients.has(-groupId);
   const reply = parseReply(row.reply_message);
+  const forwarded = row.fwd_messages;
+  const hasForwarded = forwarded != null && (!Array.isArray(forwarded) || forwarded.length > 0);
   return {
     kind: 'message',
     message: {
@@ -231,6 +234,7 @@ export function parseVkIncoming(update: unknown, groupId: number): ParseResult {
       isMentioned,
       soleBotMention: isMentioned && recipients.size === 1,
       ...(row.reply_message !== undefined ? { hasReply: true } : {}),
+      ...(hasForwarded ? { hasForwarded: true } : {}),
       text: isMentioned ? withoutMention.trim() : row.text,
       attachments: parseAttachments(row.attachments),
       reply: reply && reply.cmid < cmid ? reply : undefined,
