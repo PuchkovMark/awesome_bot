@@ -51,3 +51,30 @@ test('роутер журналирует до решения, дубли не �
     await storage.close();
   }
 });
+
+test('роутер различает прямой адрес и кандидата после записи, дубль не даёт решения', async () => {
+  const storage = await openStorage(':memory:');
+  const scope = scopeFor(storage, 'vk:a');
+  const handler = vi.fn(async () => 'completed' as const);
+  const queue = createChatQueue({ storage, handler, tracing: { messageRetentionDays: 30 } });
+  const router = createMessageRouter({ storage, queue: { ...queue, autonomousReplies: true } });
+  try {
+    await storage.chats.create(scope, { enabled: true, responseMode: 'active', createdAt: 0 });
+    await queue.start();
+    const event = { ...incoming, text: 'Обсуждали, как работает Пенёк' };
+    expect((await router.receive(scope, event)).decision).toMatchObject({
+      initiative: 'free_mention',
+    });
+    expect((await router.receive(scope, event)).admission?.status).toBe('duplicate');
+    expect(
+      (await router.receive(scope, { ...incoming, messageId: 'direct', text: 'Пенёк, подскажи' }))
+        .decision,
+    ).toMatchObject({ kind: 'ordinary', reason: 'name' });
+    await flushQueue();
+    expect(handler).toHaveBeenCalledOnce();
+    expect(await storage.messages.list(scope, { limit: 5 })).toHaveLength(2);
+  } finally {
+    await queue.stop();
+    await storage.close();
+  }
+});

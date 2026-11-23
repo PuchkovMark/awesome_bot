@@ -9,9 +9,13 @@ const requests = new Set([
   'ответь',
 ]);
 /** Консервативная грамматика; цитаты и неоднозначность не дают обычного обращения. */
-export function directlyAddressesName(text: string): boolean {
+export function ownNameText(text: string) {
   const normalized = text.normalize('NFC').toLocaleLowerCase('ru').replaceAll('ё', 'е');
-  const visible = normalized.replace(/«[^»]*»|“[^”]*”|"[^"\n]*"|`[^`]*`/gu, ' ');
+  return normalized.replace(/«[^»]*»|“[^”]*”|"[^"\n]*"|\x60[^\x60]*\x60/gu, ' ');
+}
+
+export function directlyAddressesName(text: string): boolean {
+  const visible = ownNameText(text);
   const words: string[] = visible.match(/[\p{L}\p{N}_]+/gu) ?? [];
   if (!words.includes(name)) return false;
   const nameIndex = words.indexOf(name);

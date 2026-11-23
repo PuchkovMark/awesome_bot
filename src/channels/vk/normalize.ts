@@ -46,6 +46,7 @@ export interface VkIncoming {
   readonly text: string;
   readonly isMentioned: boolean;
   readonly soleBotMention?: boolean;
+  readonly hasOtherAddress?: boolean;
   readonly hasReply?: boolean;
   readonly hasForwarded?: boolean;
   readonly attachments: readonly Attachment[];
@@ -233,6 +234,7 @@ export function parseVkIncoming(update: unknown, groupId: number): ParseResult {
       timestamp,
       isMentioned,
       soleBotMention: isMentioned && recipients.size === 1,
+      ...(recipients.size > Number(isMentioned) ? { hasOtherAddress: true } : {}),
       ...(row.reply_message !== undefined ? { hasReply: true } : {}),
       ...(hasForwarded ? { hasForwarded: true } : {}),
       text: isMentioned ? withoutMention.trim() : row.text,
@@ -273,6 +275,7 @@ export function normalizeVkIncoming(
       : {}),
     isMentioned: message.isMentioned,
     ...(message.soleBotMention === undefined ? {} : { soleBotMention: message.soleBotMention }),
+    ...(message.hasOtherAddress ? { hasOtherAddress: true } : {}),
     timestamp: message.timestamp,
     attachments: message.attachments,
   };

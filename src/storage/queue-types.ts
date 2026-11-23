@@ -69,6 +69,7 @@ export interface RouteMetadata {
 }
 
 export interface RoutedQueueDecision {
+  readonly initiative?: import('../core/message-router/autonomous-rules').InitiativeCause;
   readonly route: RouteMetadata | null;
   readonly reason:
     | 'direct_message'

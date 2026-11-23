@@ -1,12 +1,14 @@
 import type { IncomingMessage, AuthorizationAction, BotRole } from '../../contracts/index';
 import type { ChatSettings } from '../../storage/types';
 import type { RouteMetadata } from '../../storage/queue-types';
+import type { InitiativeCause } from './autonomous-rules';
 export interface ServiceCommand {
   readonly action: AuthorizationAction;
   readonly minimumRole: BotRole;
   readonly replayRequest?: boolean;
 }
 export interface RoutingInput {
+  readonly considerInitiative?: boolean;
   readonly message: IncomingMessage;
   readonly settings: Pick<ChatSettings, 'enabled' | 'responseMode'>;
   readonly service?: {
@@ -24,6 +26,7 @@ export type RoutingDecision =
   | { readonly kind: 'service'; readonly reason: 'service' }
   | {
       readonly kind: 'silence';
+      readonly initiative?: InitiativeCause;
       readonly reason:
         | 'disabled'
         | 'silent'

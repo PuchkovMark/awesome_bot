@@ -19,6 +19,7 @@ function fromDecision(value: RoutedQueueDecision): RoutingDecision {
   return {
     kind: 'silence',
     reason: value.reason as Extract<RoutingDecision, { kind: 'silence' }>['reason'],
+    ...(value.initiative ? { initiative: value.initiative } : {}),
   };
 }
 export interface RouterOptions {
@@ -110,11 +111,15 @@ export function createMessageRouter(options: RouterOptions) {
           const decision = routeMessage({
             message,
             settings: snapshot.settings,
+            considerInitiative: options.queue.autonomousReplies === true,
             ...(service ? { service } : {}),
           });
           return {
             reason: decision.reason,
             route: decision.kind === 'ordinary' ? decision.route : null,
+            ...(decision.kind === 'silence' && decision.initiative
+              ? { initiative: decision.initiative }
+              : {}),
           };
         },
         disclosure,

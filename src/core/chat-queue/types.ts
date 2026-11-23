@@ -81,6 +81,7 @@ export interface ChatQueueOptions {
   readonly platform?: string;
 }
 export interface ChatQueue {
+  readonly autonomousReplies?: boolean;
   readonly signal: AbortSignal;
   isRunning(): boolean;
   readonly responseBudget?: import('../../storage/queue-types').ResponsePublicationBudget;

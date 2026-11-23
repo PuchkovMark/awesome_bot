@@ -18,6 +18,43 @@ export const incoming: IncomingMessage = {
   timestamp: 0,
   attachments: [],
 };
+test('прямой вход предшествует трём закрытым поводам; неоднозначные реплики молчат', () => {
+  const detect = (
+    text: string,
+    extra: Partial<IncomingMessage> = {},
+    responseMode: 'active' | 'normal' | 'silent' = 'active',
+  ) =>
+    routeMessage({
+      message: { ...incoming, text, ...extra },
+      settings: { enabled: true, responseMode },
+      considerInitiative: true,
+    });
+  expect(detect('Пенёк, подскажи')).toMatchObject({ kind: 'ordinary', reason: 'name' });
+  expect(detect('Обсуждали, как работает Пенёк')).toMatchObject({ initiative: 'free_mention' });
+  expect(detect('Кто-нибудь, помогите разобраться с расписанием')).toMatchObject({
+    initiative: 'help',
+  });
+  expect(detect('Во сколько встречаемся у фонтана?')).toMatchObject({ initiative: 'unanswered' });
+  for (const text of [
+    'Маша, помоги с расписанием',
+    'Он сказал «Обсуждали, как работает Пенёк»',
+    'Почему Пенёк молчит?',
+    'Кто-нибудь, помогите разобраться с угрозой',
+    'Где встречаемся?',
+  ])
+    expect(detect(text)).not.toHaveProperty('initiative');
+  for (const extra of [
+    { hasOtherAddress: true },
+    { replyAddress: 'other' },
+    { replyAddress: 'unknown' },
+    { isBot: true },
+    { isBot: 'unknown' },
+    { isGroupChat: false },
+  ] as const)
+    expect(detect('Кто-нибудь, помогите с расписанием', extra)).not.toHaveProperty('initiative');
+  for (const mode of ['normal', 'silent'] as const)
+    expect(detect('Кто-нибудь, помогите с расписанием', {}, mode)).not.toHaveProperty('initiative');
+});
 for (const mode of ['silent', 'normal', 'active'] as const)
   for (const isBot of [false, true, 'unknown'] as const)
     test(`${mode} ${isBot}`, () => {

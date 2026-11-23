@@ -187,6 +187,12 @@ export function createQueueBackend(
                     routed.reason === routed.route.kind,
                 );
               }
+              if (routed.initiative !== undefined)
+                requireInput(
+                  routed.route === null &&
+                    routed.reason === 'not_addressed' &&
+                    ['help', 'free_mention', 'unanswered'].includes(routed.initiative),
+                );
               const result: import('./queue-types').RoutedQueueDecision =
                 gate?.ordinary === false && routed.route
                   ? { route: null, reason: 'silent' }
@@ -220,6 +226,9 @@ export function createQueueBackend(
               chosen = Object.freeze({
                 reason: result.reason,
                 route: route === null ? null : Object.freeze({ ...route }),
+                ...(gate?.ordinary !== false && result.initiative
+                  ? { initiative: result.initiative }
+                  : {}),
               });
               return chosen.route !== null;
             },

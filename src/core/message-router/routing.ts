@@ -1,12 +1,13 @@
 import type { RoutingInput, RoutingDecision } from './types';
 import { directlyAddressesName } from './name-address';
 import { validIncoming } from './validation';
+import { autonomousCause } from './autonomous-rules';
 export function routeMessage(input: RoutingInput): RoutingDecision {
   if (!input || typeof input !== 'object') return { kind: 'silence', reason: 'invalid_input' };
   const { message, settings, service } = input;
   const silent = (
     reason: Extract<RoutingDecision, { kind: 'silence' }>['reason'],
-  ): RoutingDecision => ({ kind: 'silence', reason });
+  ): Extract<RoutingDecision, { kind: 'silence' }> => ({ kind: 'silence', reason });
   if (
     !validIncoming(message) ||
     !settings ||
@@ -51,7 +52,13 @@ export function routeMessage(input: RoutingInput): RoutingDecision {
         : directlyAddressesName(message.text)
           ? 'name'
           : null;
-  if (!kind) return silent('not_addressed');
+  if (!kind) {
+    const initiative =
+      input.considerInitiative && settings.responseMode === 'active'
+        ? autonomousCause(message)
+        : undefined;
+    return initiative ? { ...silent('not_addressed'), initiative } : silent('not_addressed');
+  }
   const mode = !message.isGroupChat ? 'normal' : settings.responseMode;
   return {
     kind: 'ordinary',
