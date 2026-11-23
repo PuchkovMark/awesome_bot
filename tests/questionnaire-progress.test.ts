@@ -8,16 +8,85 @@ import {
   questionnaireAnswerHandler,
 } from '../src/core/questionnaire/answer';
 import { questionnaireProgressStore } from '../src/storage/questionnaire-progress-store';
+import { questionnaireStore } from '../src/storage/questionnaire-store';
 import { personalDataStore } from '../src/storage/personal-data-store';
 import { questionnaireQuestions } from '../src/core/questionnaires/legacy-template';
 import { assessQuestionnaire, questionnaireCases } from '../src/evals/questionnaire';
 import type { QueueHandlerInput } from '../src/core/chat-queue/types';
 import type { LlmClient } from '../src/llm/types';
 import { alice, twin, group, neighbor, profileFixture } from './helpers/profile-fact-fixture';
-import { scopeFor } from './helpers/connection-scope';
+import { openStorage, scopeFor } from './helpers/connection-scope';
+import { seedBeforeQuestionnaires } from './helpers/questionnaire-upgrade';
+import { storageFixture } from './helpers/storage-fixture';
 
 const sample = questionnaireCases[0];
 const output = '{"1":"Аня","2":null,"3":"походы и настольные игры"}';
+
+test('редакции двух бесед и лички одного участника закрепляются независимо', async () => {
+  const f = await profileFixture();
+  try {
+    const first = await f.chat(group);
+    const second = await f.chat(neighbor);
+    const direct = await f.chat(alice, [alice]);
+    for (const scope of [first, second, direct]) f.deliver(scope);
+    const progress = createQuestionnaireProgress(f.storage);
+    const groupActor = progress.participant(first, alice);
+    const before = groupActor.open(20)!;
+    const other = progress.participant(second, alice).open(20)!;
+    const privateAttempt = progress.participant(direct, alice).open(20)!;
+    expect(new Set([before.attempt, other.attempt, privateAttempt.attempt]).size).toBe(3);
+    expect(before.template.questions).toHaveLength(16);
+    expect(other.template.questions).toEqual(before.template.questions);
+    expect(privateAttempt.template.questions.map((q) => q.text)).toEqual([
+      'Как к тебе обращаться?',
+      'Из какого ты города?',
+      'Чем увлекаешься?',
+    ]);
+    expect(privateAttempt.template.ref).toMatchObject({
+      chatId: direct.chatId,
+      key: 'private-introduction',
+    });
+    const templates = questionnaireStore(f.storage);
+    expect(
+      templates.recordPrompt(first, twin, before.template.ref.revision, {
+        messageId: '800',
+        userId: 'vk:-314',
+        authorName: 'Пенёк',
+        timestamp: 25,
+        text: 'Редактор',
+      }),
+    ).toBe(true);
+    expect(
+      templates.replace(first, twin, { eventId: 801, receipt: '800', text: 'Новый вопрос?' }, 26),
+    ).toMatchObject({ status: 'applied' });
+    expect(groupActor.pause(before.attempt)).toBe(true);
+    expect(groupActor.resume(before.attempt, 27)?.template).toEqual(before.template);
+    expect(
+      progress
+        .participant(first, twin)
+        .open(27)
+        ?.template.questions.map((q) => q.text),
+    ).toEqual(['Новый вопрос?']);
+    expect(progress.revision(second, alice)).toEqual(other.template);
+    expect(progress.revision(direct, alice)).toEqual(privateAttempt.template);
+  } finally {
+    await f.close();
+  }
+});
+
+test('у подключённой до редактора группы без назначенной редакции нет анкеты', async () => {
+  const files = storageFixture();
+  seedBeforeQuestionnaires(files.path, [group]);
+  const storage = await openStorage(files.path);
+  try {
+    const scope = scopeFor(storage, group);
+    expect(createQuestionnaireProgress(storage).revision(scope, alice)).toBeNull();
+  } finally {
+    await storage.close();
+    files.cleanup();
+  }
+});
+
 async function setup() {
   const f = await profileFixture();
   const scope = await f.chat();
