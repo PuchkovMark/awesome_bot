@@ -2,10 +2,10 @@
 
 - Номер: 048
 - Название: Автообновление профилей из переписки
-- Статус: в работе
+- Статус: выполнено
 - Дата: 2026-11-23
-- Дата завершения: —
-- Связанные документы: [план реализации](../impl-plans/048-automatic-profile-updates.md), [план фичи](../plans/048-automatic-profile-updates.md), [F5.7 в дорожной карте](../roadmap.md#веха-5-участники-и-профили).
+- Дата завершения: 2026-11-23
+- Связанные документы: [план реализации](../../impl-plans/completed/048-automatic-profile-updates.md), [план фичи](../../plans/completed/048-automatic-profile-updates.md), [F5.7 в дорожной карте](../../roadmap.md#веха-5-участники-и-профили).
 
 ## Проблема или цель
 
@@ -30,7 +30,7 @@
 
 ## Затрагиваемые спецификации
 
-[Профили](../specs/profiles.md), [приватность](../specs/privacy.md), [хранилище](../specs/storage.md), [лимиты](../specs/commands-and-limits.md).
+[Профили](../../specs/profiles.md), [приватность](../../specs/privacy.md), [хранилище](../../specs/storage.md), [лимиты](../../specs/commands-and-limits.md).
 
 ## Открытые вопросы
 
