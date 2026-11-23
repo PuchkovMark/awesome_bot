@@ -1,3 +1,4 @@
+export type { AddressForm, AddressPreferenceReference } from './addressing';
 export type { PlatformId, ChatId, UserId, PlatformMessageId, Timestamp } from './identifiers';
 export type {
   KnownBoolean,

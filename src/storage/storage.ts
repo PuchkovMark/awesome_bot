@@ -1,4 +1,12 @@
-import { createPersonalDataStore, registerPersonalData } from './personal-data-store';
+import {
+  createAddressPreferenceStore,
+  registerAddressPreferences,
+} from './address-preference-store';
+import {
+  createPersonalDataStore,
+  registerPersonalData,
+  personalDataStore,
+} from './personal-data-store';
 import { createTokenBudgetStore, registerTokenBudgets } from './token-budget-store';
 import { createHistoryClearStore, registerHistoryClear } from './history-retention-store';
 import { requireInput } from './validation';
@@ -61,7 +69,9 @@ export async function openStorage(
         connection.close();
       },
     };
-    registerPersonalData(storage, createPersonalDataStore(connection, backend));
+    const privacy = createPersonalDataStore(connection, backend);
+    registerPersonalData(storage, privacy);
+    registerAddressPreferences(storage, createAddressPreferenceStore(privacy));
     registerParticipantRegistry(storage, createParticipantRegistry(connection, backend));
     registerReminders(storage, createReminderStore(connection, backend));
     registerHistoryClear(storage, createHistoryClearStore(connection, backend));

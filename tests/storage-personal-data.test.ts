@@ -224,7 +224,7 @@ test('перечень источников F5.8 охватывает табли
     migrate(db);
     const categories = {
       personal:
-        'chat_participants participant_profiles profile_facts chat_author_labels messages request_quota_admissions chat_control_commands history_clear_requests personal_profile_choices personal_exports',
+        'chat_participants participant_profiles profile_facts chat_author_labels messages request_quota_admissions chat_control_commands history_clear_requests personal_profile_choices personal_exports address_preferences',
       dependent:
         'messages_fts messages_fts_config messages_fts_data messages_fts_docsize messages_fts_idx personal_answer_sources queue_jobs response_traces mention_flood_inputs autonomous_questions autonomous_reply_parts',
       authority:

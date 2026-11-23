@@ -1,3 +1,4 @@
+import { addressPreferences } from './027-address-preferences';
 import { participantRegistry } from './026-participant-registry';
 import { personalReminders } from './024-personal-reminders';
 import { personalData } from './025-personal-data';
@@ -56,4 +57,5 @@ export const migrations: readonly Migration[] = [
   personalReminders,
   personalData,
   participantRegistry,
+  addressPreferences,
 ];
