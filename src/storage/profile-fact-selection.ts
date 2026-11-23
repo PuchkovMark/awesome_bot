@@ -28,6 +28,9 @@ export type ProfileQuery =
 interface FactRow {
   readonly id: number;
   readonly messageRowId: number | null;
+  readonly sourceMessageId: string | null;
+  readonly sourceAt: number | null;
+  readonly eventKey: string | null;
   readonly userId: UserId;
   readonly fieldKey: string;
   readonly interest: string;
@@ -39,7 +42,7 @@ interface FactRow {
   readonly legacy: number;
   readonly rejected: number;
 }
-const sourcePriority = { self: 3, admin: 2, inferred: 1 } as const;
+export const sourcePriority = { self: 3, admin: 2, inferred: 1 } as const;
 
 interface Slot {
   fact?: FactRow;
@@ -60,7 +63,8 @@ function selectSlots(db: Database, scope: ConnectionScope, query: ProfileQuery, 
     .prepare(
       `SELECT f.id, f.user_id AS userId, f.field_key AS fieldKey, f.interest_key AS interest,
       f.change_kind AS kind, f.source_kind AS sourceKind, f.value, f.visibility, f.reliability,
-      f.generation IS NULL AS legacy, r.fact_id IS NOT NULL AS rejected,
+      f.source_message_id AS sourceMessageId,f.source_at AS sourceAt,f.event_key AS eventKey,
+    f.generation IS NULL AS legacy, r.fact_id IS NOT NULL AS rejected,
       CASE WHEN f.source_kind <> 'self' THEN (SELECT m.id FROM messages m
         WHERE m.chat_id=f.chat_id AND m.platform_message_id=f.source_message_id) END AS messageRowId
     FROM profile_facts f JOIN chat_participants p USING(chat_id,user_id)

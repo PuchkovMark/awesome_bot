@@ -1,11 +1,20 @@
+import type {
+  FactReliability,
+  FactSourceKind,
+  PublicProfileFact,
+} from '../contracts/profile-facts';
+export type {
+  FactReliability,
+  FactSourceKind,
+  PublicProfileFact,
+  ContextCardFact,
+  ContextCardFactReference,
+} from '../contracts/profile-facts';
 import type { ChatId, HumanMember, UserId, Timestamp, PlatformMessageId } from '../contracts/index';
 
 /** Сохранённые платформенные сведения, не роль и не разрешение харнеса. */
 export type ParticipantRole = HumanMember['role'];
 export type ParticipantStatus = 'present' | 'left' | 'removed' | 'absent' | 'unknown';
-export type FactSourceKind = 'self' | 'inferred' | 'admin';
-/** Метка записи, не доказательство истинности и не приоритет источника. */
-export type FactReliability = 'unknown' | 'unverified' | 'confirmed';
 /** Намерение использования; не разрешает публикацию или доступ автоматически. */
 export type FactVisibility = 'unknown' | 'bot' | 'chat';
 
@@ -61,13 +70,6 @@ export interface ProfileFactInput {
 }
 
 export type ProfileFactWriteResult = 'recorded' | 'duplicate' | 'blocked';
-
-export interface PublicProfileFact {
-  readonly fieldKey: string;
-  readonly value: string;
-  readonly sourceKind: FactSourceKind;
-  readonly reliability: FactReliability;
-}
 
 /** Только для личной выдачи. Внутренние ключи служат для проверки актуальности. */
 export interface OwnProfileFact extends PublicProfileFact {

@@ -15,6 +15,8 @@ import type {
 } from './types';
 import type { AuthorizationTransaction } from './authorization-types';
 import type {
+  ContextCardFact,
+  ContextCardFactReference,
   OwnProfileFact,
   ProfileFactInput,
   ProfileFactWriteResult,
@@ -52,6 +54,8 @@ export interface ScopedStorage {
   /** Только сведения, разрешённые аудитории чата. Личная выгрузка относится к F5.8. */
   readonly profileFacts: {
     read(scope: ConnectionScope, subjectId: UserId): PublicProfile;
+    cardFacts(scope: ConnectionScope, subjectId: UserId): readonly ContextCardFact[];
+    cardFactsCurrent(scope: ConnectionScope, refs: readonly ContextCardFactReference[]): boolean;
     searchInterests(scope: ConnectionScope, interest: string): PublicInterestMatches;
     isCurrent(scope: ConnectionScope, reference: ProfileReadReference): boolean;
   };

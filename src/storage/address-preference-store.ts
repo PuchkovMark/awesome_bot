@@ -1,3 +1,4 @@
+import { historyBounds } from './history-retention-store';
 import type { Database } from 'better-sqlite3';
 import type {
   AddressForm,
@@ -36,7 +37,8 @@ export function createAddressPreferenceStore(privacy: ReturnType<typeof personal
     userId: UserId,
     sourceTime: number,
     isGroupChat: boolean,
-  ): AddressForm | undefined {
+    includeSource = false,
+  ): (AddressForm & { readonly sourceId?: number }) | undefined {
     if (!isGroupChat && scope.chatId !== userId) return undefined;
     return privacy.withProfileAdmission(scope, userId, sourceTime, (db) => {
       const saved = read(db, scope, userId);
@@ -46,14 +48,46 @@ export function createAddressPreferenceStore(privacy: ReturnType<typeof personal
         (isGroupChat && saved.visibility !== 'chat')
       )
         return undefined;
+      const bounds = includeSource ? historyBounds(db, scope.chatId) : undefined;
+      const sourceId =
+        bounds && saved.form_message_id !== null
+          ? (db
+              .prepare(
+                `SELECT id FROM personal_visible_messages WHERE chat_id=? AND platform_message_id=?
+            AND id>? AND timestamp>?`,
+              )
+              .pluck()
+              .get(
+                scope.chatId,
+                String(saved.form_message_id),
+                bounds.clearedThrough,
+                bounds.expiredThrough,
+              ) as number | undefined)
+          : undefined;
       return {
         text: saved.form,
+        ...(sourceId === undefined ? {} : { sourceId }),
         reference: { userId, revision: saved.revision, sourceTime, isGroupChat },
       };
     });
   }
   return {
-    resolve,
+    resolve(
+      scope: ConnectionScope,
+      userId: UserId,
+      sourceTime: number,
+      isGroupChat: boolean,
+    ): AddressForm | undefined {
+      return resolve(scope, userId, sourceTime, isGroupChat);
+    },
+    resolveForCard(
+      scope: ConnectionScope,
+      userId: UserId,
+      sourceTime: number,
+      isGroupChat: boolean,
+    ) {
+      return resolve(scope, userId, sourceTime, isGroupChat, true);
+    },
     current(scope: ConnectionScope, reference: AddressPreferenceReference): boolean {
       const { userId, sourceTime, isGroupChat, revision } = reference;
       return resolve(scope, userId, sourceTime, isGroupChat)?.reference.revision === revision;
