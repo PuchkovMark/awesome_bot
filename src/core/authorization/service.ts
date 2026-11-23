@@ -169,7 +169,15 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
           ) {
             return { allowed: true, value: { status: 'duplicate', state } };
           }
-          return { allowed: true, value: applyChatControl(tx, command, now()) };
+          return {
+            allowed: true,
+            value: applyChatControl(
+              tx,
+              command,
+              now(),
+              context.kind === 'chat' ? messageId : undefined,
+            ),
+          };
         },
         { allowInitialOwnerSettings: true },
       );

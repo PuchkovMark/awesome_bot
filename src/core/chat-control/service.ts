@@ -15,11 +15,15 @@ export function applyChatControl(
   tx: AuthorizationTransaction,
   command: ChatControlCommand,
   now: number,
+  sequence?: number,
 ): ChatControlResult {
   const state = tx.controlState();
   switch (command.kind) {
     case 'settings':
       return { status: 'applied', state };
+    case 'greeting':
+      tx.writeGreeting(command.enabled, now, sequence);
+      break;
     case 'quietHours':
       tx.writeQuietHours(command.hours);
       break;
@@ -66,6 +70,8 @@ export function formatChatControl(
 ): string | undefined {
   const { state } = result;
   if (result.status === 'duplicate' || result.status === 'waiting') return undefined;
+  if (command.kind === 'greeting')
+    return state.greetingEnabledAt === null ? 'Приветствия выключены.' : 'Приветствия включены.';
   if (result.status === 'permanent') return 'Самостоятельные реплики отключены.';
   if (result.status === 'expired') return 'Действующей паузы для продления нет.';
   if (result.status === 'inactive') return 'Команда «помолчи» доступна в активном режиме.';

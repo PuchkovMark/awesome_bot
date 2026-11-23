@@ -1,3 +1,4 @@
+import { memberGreetings } from './031-member-greetings';
 import { toolAnswerSubjects } from './030-tool-answer-subjects';
 import { profileFactEvents } from './029-profile-fact-events';
 import { delegationFinalBudget } from './028-delegation-final-budget';
@@ -64,4 +65,5 @@ export const migrations: readonly Migration[] = [
   delegationFinalBudget,
   profileFactEvents,
   toolAnswerSubjects,
+  memberGreetings,
 ];

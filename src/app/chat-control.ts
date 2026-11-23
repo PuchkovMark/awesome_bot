@@ -33,6 +33,8 @@ export function createChatControlHandlers(options: {
       if (typeof request.command === 'string')
         return { action: 'chat.configure', minimumRole: 'admin' } as const;
       if (request.command.kind === 'pause' && replyToOther) return null;
+      if (request.command.kind === 'greeting' && (replyToOther || message.hasForwarded))
+        return null;
       return chatControlAction(request.command);
     },
     async execute(
@@ -43,7 +45,15 @@ export function createChatControlHandlers(options: {
       const request = parseChatControl(message.text, 'group');
       if (!request || typeof request.command === 'string') return;
       const command = request.command;
-      const result = await authorization.controlChat(context, command, isCurrent);
+      const messageId = command.kind === 'greeting' ? Number(message.messageId) : undefined;
+      if (
+        messageId !== undefined &&
+        (!Number.isSafeInteger(messageId) ||
+          messageId < 1 ||
+          String(messageId) !== message.messageId)
+      )
+        return;
+      const result = await authorization.controlChat(context, command, isCurrent, messageId);
       if (!result.allowed || !result.value.state.enabled) return;
       const reply = formatChatControl(context.scope, command, result.value, Date.now());
       if (reply)

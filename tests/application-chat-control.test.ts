@@ -228,6 +228,34 @@ test('команды VK сохраняют паузу, выключение от
       ).toBe(true),
     );
     expect(controls.read(scope).quietHours).toBeNull();
+    event(205, '/приветствие вкл', member);
+    await vi.waitFor(async () =>
+      expect(
+        (await storage.messages.list(scope, { limit: 20 })).some((row) => row.messageId === '205'),
+      ).toBe(true),
+    );
+    expect(controls.read(scope).greetingEnabledAt).toBeNull();
+    event(206, '/приветствие вкл', administrator);
+    await vi.waitFor(() => expect(controls.read(scope).greetingEnabledAt).not.toBeNull());
+    const reopened = await openStorage(files.path);
+    try {
+      const registry = (await import('../src/storage/lifecycle-store')).lifecycleBackend(reopened);
+      expect(chatControlStore(reopened).read(registry.current(chat)).greetingEnabledAt).toBe(
+        controls.read(scope).greetingEnabledAt,
+      );
+    } finally {
+      await reopened.close();
+    }
+    event(207, '/приветствие выкл', administrator);
+    await vi.waitFor(() => expect(controls.read(scope).greetingEnabledAt).toBeNull());
+    event(206, '/приветствие вкл', administrator);
+    event(208, 'Маркер после повтора', administrator);
+    await vi.waitFor(async () =>
+      expect(
+        (await storage.messages.list(scope, { limit: 20 })).some((row) => row.messageId === '208'),
+      ).toBe(true),
+    );
+    expect(controls.read(scope).greetingEnabledAt).toBeNull();
     event(202, '/тихие-часы 23:00–07:00', administrator);
     await vi.waitFor(() =>
       expect(controls.read(scope).quietHours).toEqual({ start: 1380, end: 420 }),

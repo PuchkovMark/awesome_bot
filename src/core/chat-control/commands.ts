@@ -6,6 +6,7 @@ import type { QuietHours } from '../../storage/chat-control-store';
 export type ChatControlCommand =
   | { readonly kind: 'settings' | 'on' | 'off' | 'pause' | 'disableAutonomous' }
   | { readonly kind: 'mode'; readonly mode: ResponseMode }
+  | { readonly kind: 'greeting'; readonly enabled: boolean }
   | { readonly kind: 'quietHours'; readonly hours: QuietHours | null }
   | { readonly kind: 'extend'; readonly minutes: number };
 export type ChatControlRequest = {
@@ -66,13 +67,19 @@ export function parseChatControl(
   const [name, ...args] = clean.split(/\s+/u);
   if (!name || (name === 'помолчи' && (location === 'private' || args.length))) return undefined;
   const kind = simple.get(name);
-  if (!kind && name !== '/режим' && name !== '/продлить-паузу' && name !== '/тихие-часы')
+  if (!kind && !['/режим', '/продлить-паузу', '/тихие-часы', '/приветствие'].includes(name))
     return undefined;
   if (location === 'group' && kind === 'on') return { command: 'invalid' };
   const target = location === 'private' ? parseChatBinding(args.shift()) : undefined;
   if (location === 'private' && !target) return { command: 'invalid' };
   let command: ChatControlRequest['command'] = 'invalid';
   if (name === '/тихие-часы') command = quietHours(args);
+  else if (
+    name === '/приветствие' &&
+    args.length === 1 &&
+    (args[0] === 'вкл' || args[0] === 'выкл')
+  )
+    command = { kind: 'greeting', enabled: args[0] === 'вкл' };
   else if (name === '/режим' && args.length === 1) {
     const mode = modes.get(args[0]!);
     if (mode) command = { kind: 'mode', mode };
@@ -84,6 +91,7 @@ export function parseChatControl(
     kind !== 'mode' &&
     kind !== 'extend' &&
     kind !== 'quietHours' &&
+    kind !== 'greeting' &&
     args.length === 0
   )
     command = { kind };
