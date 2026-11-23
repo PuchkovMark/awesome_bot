@@ -7,7 +7,8 @@
 - Дата завершения: —
 - Утверждение: владелец подтвердил задачу 2026-11-23 после уточнения правил флуда, лимита и адресации. [Решение](../decisions.md#утверждение-задачи-о-частоте-ответов-f45)
 - Связанные документы: [F4.5](../roadmap.md#веха-4-управление-и-защита), [маршрутизация F2.4](completed/014-message-router.md), [приём VK F3.1](completed/020-vk-inbound-messages.md), [режимы и команды F4.2](completed/027-chat-control-commands.md), [квоты F4.3](completed/028-user-and-chat-limits.md).
-- План фичи: [черновик](../plans/030-response-rate-and-loop-protection.md).
+- План фичи: [утверждён](../plans/030-response-rate-and-loop-protection.md).
+- План реализации: [черновик](../impl-plans/030-response-rate-and-loop-protection.md).
 
 ## Проблема или цель
 
