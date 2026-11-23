@@ -6,6 +6,7 @@
 - Дата: 2026-11-21
 - Дата завершения: —
 - Результат документальной части: [исследование](../research/go-model-validation.md); полная проверка ещё не завершена.
+- [Протокол оставшегося прогона](../research/go-model-run-protocol.md) подготовлен для согласования владельцем.
 - Связанные документы: [F2.9](../roadmap.md#веха-2-ядро-без-платформы), [завершённый клиент F2.1](completed/010-llm-client.md), [его план](../plans/completed/010-llm-client.md), [архитектура](../specs/architecture.md#клиент-модели-f21), [цикл](../specs/agent-loop.md), [evals](../specs/evals.md), [privacy](../specs/privacy.md#согласие-и-внешний-провайдер), [решения](../decisions.md).
 
 ## Проблема или цель
