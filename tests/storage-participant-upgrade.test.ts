@@ -87,6 +87,7 @@ test('F1.4 → версия 3 сохраняет историю, настрой�
             { version: 19 },
             { version: 20 },
             { version: 21 },
+            { version: 22 },
           ]);
           expect(db.prepare('SELECT * FROM chat_participants').all()).toEqual([]);
           expect(db.prepare('SELECT * FROM participant_profiles').all()).toEqual([]);
@@ -137,7 +138,7 @@ test('F1.4 → версия 3 сохраняет историю, настрой�
             db.prepare('SELECT * FROM schema_migrations WHERE version <= 2 ORDER BY version').all(),
           ).toEqual(previous);
           expect(db.prepare('SELECT count(*) AS n FROM schema_migrations').get()).toEqual({
-            n: 21,
+            n: 22,
           });
           expect(db.pragma('foreign_key_check')).toEqual([]);
         });

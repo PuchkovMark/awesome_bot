@@ -9,6 +9,7 @@ export interface MessageInput {
   readonly role: 'user' | 'assistant';
   readonly text: string;
   readonly attachmentCount?: number | null;
+  readonly isGroupChat?: boolean;
   readonly replyToMessageId?: PlatformMessageId;
   readonly timestamp: Timestamp;
 }

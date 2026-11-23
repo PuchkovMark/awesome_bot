@@ -1,3 +1,4 @@
+import { chatAuthorLabels } from './022-chat-author-labels';
 import { connectionPauseReason } from './021-connection-pause-reason';
 import { chatTokenBudget } from './020-chat-token-budget';
 import { responseRateAndFlood } from './019-response-rate-and-flood';
@@ -46,4 +47,5 @@ export const migrations: readonly Migration[] = [
   responseRateAndFlood,
   chatTokenBudget,
   connectionPauseReason,
+  chatAuthorLabels,
 ];

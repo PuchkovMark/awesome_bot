@@ -14,6 +14,7 @@ const fields = [
   'replyToMessageId',
   'timestamp',
   'attachmentCount',
+  'isGroupChat',
 ];
 export function validateMessage(message: MessageInput): void {
   object(message, fields);
@@ -27,6 +28,7 @@ export function validateMessage(message: MessageInput): void {
   string(message.authorName);
   string(message.text);
   requireInput(message.role === 'user' || message.role === 'assistant');
+  if (message.isGroupChat !== undefined) requireInput(typeof message.isGroupChat === 'boolean');
   timestamp(message.timestamp);
   if (message.attachmentCount !== undefined && message.attachmentCount !== null)
     requireInput(Number.isSafeInteger(message.attachmentCount) && message.attachmentCount >= 0);
@@ -40,6 +42,21 @@ function fromRow(row: MessageRow): StoredMessage {
   const { replyToMessageId, ...message } = row;
   return replyToMessageId === null ? message : { ...message, replyToMessageId };
 }
+
+function assignAuthorNumber(db: import('better-sqlite3').Database, message: MessageInput) {
+  db.prepare(
+    `INSERT INTO chat_author_labels(chat_id,generation,user_id,author_number)
+    SELECT c.chat_id,c.generation,@userId,(
+      SELECT coalesce(max(a.author_number),0)+1 FROM chat_author_labels a
+      WHERE a.chat_id=c.chat_id AND a.generation=c.generation
+    )
+    FROM chat_connections c WHERE c.chat_id=@chatId AND NOT EXISTS (
+      SELECT 1 FROM chat_author_labels a
+      WHERE a.chat_id=c.chat_id AND a.generation=c.generation AND a.user_id=@userId
+    )`,
+  ).run({ chatId: message.chatId, userId: message.userId });
+}
+
 export function createMessageStore(
   connection: Connection,
   contextOnly = false,
@@ -66,7 +83,13 @@ export function createMessageStore(
             message.timestamp,
             message.attachmentCount ?? null,
           ) as { id: number } | undefined;
-        if (inserted) return { status: 'inserted', id: inserted.id };
+        if (inserted) {
+          if (message.isGroupChat && message.role === 'user') {
+            requireInput(db.inTransaction);
+            assignAuthorNumber(db, message);
+          }
+          return { status: 'inserted', id: inserted.id };
+        }
         const existing = db
           .prepare('SELECT id FROM messages WHERE chat_id = ? AND platform_message_id = ?')
           .get(message.chatId, message.messageId) as { id: number };

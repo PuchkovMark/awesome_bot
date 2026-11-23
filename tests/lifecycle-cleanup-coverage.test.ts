@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import { expect, test } from 'vitest';
 import { migrate } from '../src/storage/migrate';
 const tables = [
+  'chat_author_labels',
   'chat_token_budgets',
   'token_budget_attempts',
   'response_rate_clock',
