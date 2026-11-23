@@ -285,9 +285,12 @@ export async function runScenario(
         prepare: preparation.prepare,
         ...(scenario.historyTimezone || scenario.passport?.tryGrant
           ? {
-              tools: applicationTools(storage, historyEvaluationAdapter, {
-                context: createContextAuthority('synthetic:owner').create,
-              }),
+              tools: applicationTools(
+                storage,
+                historyEvaluationAdapter,
+                { context: createContextAuthority('synthetic:owner').create },
+                client,
+              ),
               modelInputLimit: 16000 - preparation.config.maxOutputTokens,
             }
           : {}),

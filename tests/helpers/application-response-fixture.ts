@@ -8,7 +8,7 @@ import { createVkApi, createVkApiCall } from '../../src/channels/vk/api';
 import type { VkPollTransport } from '../../src/channels/vk/long-poll';
 import { createVkRateLimiter } from '../../src/channels/vk/rate-limit';
 import { loadApplicationConfig } from '../../src/config/application';
-import type { LlmRequest, LlmResult } from '../../src/llm/types';
+import type { LlmClient, LlmRequest, LlmResult } from '../../src/llm/types';
 import type { TraceRecord } from '../../src/storage/trace-types';
 import type { SafeLogger } from '../../src/logger/index';
 import { disclosureStore } from '../../src/storage/chat-disclosure-store';
@@ -44,6 +44,9 @@ export async function fixture(
     summaryIntervalMs?: number;
     summaryFragmentSize?: number;
     modelContextTokens?: number;
+    model?: string;
+    auxiliaryModel?: string;
+    modelClients?: { client?: LlmClient; auxiliaryClient?: LlmClient };
     upload?: (peer: number, data: Buffer) => Promise<string>;
     threshold?: number;
     window?: number;
@@ -81,7 +84,8 @@ export async function fixture(
       BOT_OWNER_ID: ownerId,
       DATABASE_PATH: files.path,
       OPENCODE_API_KEY: 'synthetic-go',
-      LLM_MODEL: 'synthetic-model',
+      LLM_MODEL: options.model ?? 'synthetic-model',
+      LLM_AUX_MODEL: options.auxiliaryModel,
       SUMMARY_INTERVAL_MS: String(options.summaryIntervalMs ?? 300000),
       SUMMARY_FRAGMENT_SIZE: String(options.summaryFragmentSize ?? 250),
       MODEL_CONTEXT_TOKENS: String(options.modelContextTokens ?? 16000),
@@ -261,8 +265,7 @@ export async function fixture(
         api: { ...api, ...(options.upload ? { uploadPrivateDocument: options.upload } : {}) },
         transport,
       },
-      client: { complete },
-      auxiliaryClient: { complete },
+      ...(options.modelClients ?? { client: { complete }, auxiliaryClient: { complete } }),
       onboardingIntervalMs: 5,
       ...(options.administrationIntervalMs === undefined
         ? {}

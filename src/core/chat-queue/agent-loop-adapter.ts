@@ -42,7 +42,6 @@ export interface AgentLoopQueueOptions extends Omit<ChatQueueOptions, 'handler' 
     modelInputLimit?: number;
     work: QueueHandlerInput;
     prepared: Extract<QueuePreparation, { kind: 'ready' }>;
-    client: LlmClient;
     attempts: ReturnType<typeof createJobModelAttempts>;
     settings: Required<AgentLoopOptions>;
   }) => Promise<LoopTools | undefined>;
@@ -225,7 +224,6 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
         const session: LoopTools | undefined = await options.tools?.({
           work,
           prepared,
-          client,
           ...(options.modelInputLimit ? { modelInputLimit: options.modelInputLimit } : {}),
           attempts: jobAttempts,
           settings,

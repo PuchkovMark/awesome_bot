@@ -1,5 +1,5 @@
 import type { ChannelAdapter, UserId, ToolContext } from '../contracts/index';
-import type { LlmRequest, LlmToolDescription, LlmUsage } from '../llm/types';
+import type { LlmClient, LlmRequest, LlmToolDescription, LlmUsage } from '../llm/types';
 import type { LoopTools } from '../core/agent-loop/types';
 import { estimateRequestInput, toolMessageInputCost } from '../core/context/budget';
 import { delegateDescription } from '../core/agent-loop/delegation';
@@ -53,10 +53,11 @@ export function applicationTools(
   storage: Storage,
   adapter: ChannelAdapter,
   authorization: Pick<Awaited<ReturnType<typeof createAuthorizationService>>, 'context'>,
+  auxiliaryClient: LlmClient,
 ): NonNullable<AgentLoopQueueOptions['tools']> {
   const members = participantRegistryStore(storage),
     addresses = addressPreferenceStore(storage);
-  return async ({ work, prepared, client, attempts, settings, modelInputLimit }) => {
+  return async ({ work, prepared, attempts, settings, modelInputLimit }) => {
     if (!work.route || !prepared.metadata || work.route.kind === 'initiative') return;
     const scope = work.scope,
       ids = new Set<number>(),
@@ -204,7 +205,7 @@ export function applicationTools(
           work,
           principal: context,
           attempts,
-          client,
+          client: auxiliaryClient,
           signal: request.signal ?? work.signal,
           maxSteps: settings.maxSteps,
           parentSteps: () => parentSteps,
