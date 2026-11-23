@@ -95,6 +95,7 @@ export function createPersonalDataStore(connection: Connection, lifecycle: Lifec
           UNION ALL SELECT 1 FROM greeting_candidates WHERE ${subject}
           UNION ALL SELECT 1 FROM greeting_members g JOIN greeting_windows w ON w.id=g.window_id
             WHERE w.chat_id=@chat AND w.generation=@generation AND g.user_id=@user
+          UNION ALL SELECT 1 FROM questionnaire_progress WHERE ${subject}
           UNION ALL SELECT 1 FROM personal_profile_choices WHERE ${subject}
           UNION ALL SELECT 1 FROM personal_deletions WHERE ${subject} LIMIT 1`,
               )
@@ -269,6 +270,9 @@ export function createPersonalDataStore(connection: Connection, lifecycle: Lifec
               )
               .all(now - week) as { chat: string; generation: number; user: string }[];
             for (const row of rows) {
+              db.prepare(
+                'DELETE FROM questionnaire_progress WHERE chat_id=? AND generation=? AND user_id=?',
+              ).run(row.chat, row.generation, row.user);
               db.prepare('DELETE FROM profile_facts WHERE chat_id=? AND user_id=?').run(
                 row.chat,
                 row.user,

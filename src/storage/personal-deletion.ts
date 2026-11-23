@@ -62,6 +62,12 @@ export function confirmDeletion(
     .run(now, chat, chat, scope.generation, user, code, now, now);
   if (!changed.changes) return false;
   db.prepare(
+    'DELETE FROM questionnaire_inputs WHERE chat_id=? AND generation=? AND message_id IN (SELECT id FROM messages WHERE chat_id=? AND user_id=?)',
+  ).run(chat, scope.generation, chat, user);
+  db.prepare(
+    'DELETE FROM questionnaire_progress WHERE chat_id=? AND generation=? AND user_id=?',
+  ).run(chat, scope.generation, user);
+  db.prepare(
     `INSERT OR IGNORE INTO personal_hidden_messages SELECT id,?,0 FROM messages WHERE chat_id=? AND user_id=? AND role='user'`,
   ).run(code, chat, user);
   db.prepare(
@@ -221,6 +227,7 @@ export function confirmDeletion(
     UNION ALL SELECT 1 FROM profile_command_lists WHERE user_id=@user AND (chat_id=@chat OR user_id=@chat)
     UNION ALL SELECT 1 FROM profile_command_events WHERE chat_id=@chat AND user_id=@user
     UNION ALL SELECT 1 FROM chat_passport_prompts WHERE chat_id=@chat AND actor_id=@user
+    UNION ALL SELECT 1 FROM questionnaire_progress WHERE chat_id=@chat AND user_id=@user
     UNION ALL SELECT 1 FROM questionnaire_editor_prompts WHERE chat_id=@chat AND actor_id=@user
     UNION ALL SELECT 1 FROM greeting_candidates WHERE chat_id=@chat AND user_id=@user
     UNION ALL SELECT 1 FROM greeting_members g JOIN greeting_windows w ON w.id=g.window_id

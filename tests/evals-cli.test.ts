@@ -1,3 +1,4 @@
+import { questionnaireCases } from '../src/evals/questionnaire';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -31,10 +32,10 @@ test('собранная команда запускает набор, а чек
       `globalThis.fetch=()=>{throw Error('NETWORK');};`,
     );
     expect(out.status, out.stderr).toBe(0);
-    expect(out.stdout).toContain(`Пройдено ${scenarios.length}`);
+    expect(out.stdout).toContain(`Пройдено ${scenarios.length + questionnaireCases.length}`);
     const report = JSON.parse(readFileSync(join(directory, 'results.json'), 'utf8'));
     expect(report).toMatchObject({ kind: 'local', schemaVersion: 1 });
-    expect(report.runs).toHaveLength(scenarios.length);
+    expect(report.runs).toHaveLength(scenarios.length + questionnaireCases.length);
     const checklist = cli(
       directory,
       ['--checklist'],

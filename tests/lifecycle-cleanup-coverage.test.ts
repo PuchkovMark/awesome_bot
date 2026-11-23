@@ -2,6 +2,8 @@ import Database from 'better-sqlite3';
 import { expect, test } from 'vitest';
 import { migrate } from '../src/storage/migrate';
 const tables = [
+  'questionnaire_progress',
+  'questionnaire_inputs',
   'questionnaire_revisions',
   'questionnaire_editor_prompts',
   'questionnaire_default_boundary',
@@ -81,6 +83,8 @@ const tables = [
   'sqlite_sequence',
 ];
 const others = [
+  'questionnaire_release_job',
+  'questionnaire_removed_input',
   'chat_passport_prompt_expiry',
   'profile_command_expiry',
   'profile_command_event_expiry',

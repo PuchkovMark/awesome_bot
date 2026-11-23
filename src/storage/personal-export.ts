@@ -81,6 +81,7 @@ export function readPersonalExport(
         "SELECT version,delivered_at FROM disclosure_publications WHERE chat_id=? AND generation=? AND state='delivered' AND kind<>'owner' ORDER BY id",
       )
       .all(chat, generation),
+    questionnaire: visible ? questionnaireExport(db, scope, user, now) : null,
     serviceRecords: {
       greetingEntries: db
         .prepare(
@@ -162,5 +163,32 @@ export function readPersonalExport(
       .get(chat, user)
       ? 'Сохраняется запрет автоматического возврата административных прав.'
       : null,
+  };
+}
+
+function questionnaireExport(db: Database, scope: ConnectionScope, user: UserId, now: number) {
+  const row = db
+    .prepare(
+      'SELECT state,template,answers,shown_at FROM questionnaire_progress WHERE chat_id=? AND generation=? AND user_id=?',
+    )
+    .get(scope.chatId, scope.generation, user) as
+    | { state: string; template: string; answers: string | null; shown_at: number | null }
+    | undefined;
+  if (!row) return null;
+  const template = JSON.parse(
+    row.template,
+  ) as import('../contracts/questionnaire').QuestionnaireRevision;
+  const answers = JSON.parse(row.answers ?? '{}') as Record<string, string>;
+  return {
+    state:
+      row.state === 'active' && row.shown_at !== null && now - row.shown_at >= 3_600_000
+        ? 'paused'
+        : row.state,
+    revision: template.ref.revision,
+    shownAt: row.shown_at,
+    questions: template.questions.map((q) => ({
+      question: q.text,
+      answer: answers[q.position] ?? null,
+    })),
   };
 }

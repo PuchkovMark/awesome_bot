@@ -131,6 +131,11 @@ export function reconcileStagedPersonalData(staged: Database, newer: Database, n
           (choice.purged_at !== null || now - choice.disabled_at >= 7 * 86400000)
         ) {
           staged
+            .prepare(
+              'DELETE FROM questionnaire_progress WHERE chat_id=? AND generation=? AND user_id=?',
+            )
+            .run(choice.chat_id, choice.generation, choice.user_id);
+          staged
             .prepare('DELETE FROM profile_facts WHERE chat_id=? AND user_id=?')
             .run(choice.chat_id, choice.user_id);
           staged

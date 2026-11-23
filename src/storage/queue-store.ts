@@ -1,3 +1,4 @@
+import { acceptQuestionnaireInput } from './questionnaire-input';
 import { noteParticipantMessage } from './participant-registry';
 import {
   acceptsHistoryInput,
@@ -236,12 +237,14 @@ export function createQueueBackend(
           const gate = guard?.();
           if (gate && !gate.journal) return { admission: { status: 'paused' }, decision: null };
           let chosen: import('./queue-types').RoutedQueueDecision | null = null;
+          let receivedAt = 0;
           let floodNotice: FloodNotice | undefined;
           const admission = this.admit(
             token,
             scope,
             message,
             (snapshot) => {
+              receivedAt = snapshot.receivedAt;
               const settings = createChatStore(connection).get(scope.chatId);
               requireInput(settings);
               if (
@@ -363,6 +366,7 @@ export function createQueueBackend(
           const routed = chosen as import('./queue-types').RoutedQueueDecision | null;
           const route = routed?.route;
           if (admission.status === 'queued' && route) {
+            acceptQuestionnaireInput(db, scope, message.userId, admission.messageId, receivedAt);
             const revision = readChatControl(db, scope.chatId).responseRevision;
             db.prepare(
               'UPDATE queue_jobs SET route_kind=?,route_mode=?,route_group=?,disclosure_version=?,control_revision=? WHERE id=?',

@@ -1,3 +1,4 @@
+import { assessQuestionnaire, questionnaireCases } from './questionnaire';
 import { formatVkChecklist } from './checklist';
 import { writeLocalReport } from './report';
 import { runScenario } from './runner';
@@ -17,6 +18,8 @@ async function main(args: readonly string[]): Promise<number> {
 
   const results: EvaluationResult[] = [];
   for (const scenario of scenarios) results.push(await runScenario(scenario));
+  for (const sample of questionnaireCases)
+    results.push(assessQuestionnaire(sample, sample.mockOutput));
   try {
     await writeLocalReport(output, results);
   } catch (error) {

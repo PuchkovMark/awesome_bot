@@ -1,3 +1,6 @@
+import { createQuestionnaireProgress } from '../core/questionnaire/progress';
+import { questionnaireAnswerHandler } from '../core/questionnaire/answer';
+import { questionnaireProgressStore } from '../storage/questionnaire-progress-store';
 import { createProfileCommands } from './profile-commands';
 import { applicationTools } from './model-tools';
 import { contextParticipantCards } from './context-participant-cards';
@@ -308,9 +311,9 @@ export async function runApplication(
         signal,
         limit: config.responseRate.responsesPerMinute,
         ...(dependencies.greetingRules ? { rules: dependencies.greetingRules } : {}),
-        ...(dependencies.questionnaireInvitations
-          ? { questionnaire: dependencies.questionnaireInvitations }
-          : {}),
+        questionnaire: createQuestionnaireProgress(storage).invitations(
+          dependencies.questionnaireInvitations,
+        ),
         port: {
           writing: (scope, guard) => channel.introduction!.writing(scope, 'chat', guard),
           name: channel.getUserName,
@@ -380,7 +383,17 @@ export async function runApplication(
             ? onboarding.gate(work.scope).version !== null
             : (checkDisclosure(work)?.allowed ?? true),
       });
+      const modelClient = dependencies.client ?? createLlmClient(config.llm);
       queue = createAgentLoopQueue({
+        questionnaireAnswer: questionnaireAnswerHandler({
+          store: questionnaireProgressStore(storage),
+          client: modelClient,
+          sessionId: createLlmSessionId(config.sessionSecret),
+          maxOutputTokens: preparation.config.maxOutputTokens,
+          inputLimit: config.context.modelContextTokens - preparation.config.maxOutputTokens,
+          modelName: config.llm.model,
+          disclosed: (work) => checkDisclosure(work)?.allowed ?? true,
+        }),
         storage,
         logger,
         modelName: config.llm.model,
@@ -391,7 +404,7 @@ export async function runApplication(
         tokenBudget: true,
         autonomousReplies: true,
         responseRate: config.responseRate,
-        client: dependencies.client ?? createLlmClient(config.llm),
+        client: modelClient,
         disclosure: checkDisclosure,
         addressCurrent,
         platform: channel.platform,

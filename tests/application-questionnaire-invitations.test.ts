@@ -1,3 +1,4 @@
+import { createQuestionnaireProgress } from '../src/core/questionnaire/progress';
 import { expect, test } from 'vitest';
 import { fixture, peer, until } from './helpers/application-response-fixture';
 import { chatControlStore } from '../src/storage/chat-control-store';
@@ -348,6 +349,60 @@ test('выключение бота убирает ожидающее пригл
     app.at(31000);
     await until(() => expect(states(app)).toEqual([{ state: 'skipped', invitation: 'skipped' }]));
     expect(welcomes(app)).toEqual([]);
+  } finally {
+    await app.close();
+  }
+});
+
+test('завершение движком 052 исключает участника из следующего приглашения 050', async () => {
+  const { source } = engine();
+  const app = await fixture({
+    profileNotice: 'Обработка анкеты и профиля.',
+    greetings: { members: [73], questionnaire: source },
+  });
+  try {
+    await configure(app, false, true);
+    enter(app);
+    await open(app);
+    app.at(31_000);
+    await until(() => expect(invitations(app)).toHaveLength(1));
+    const participant = createQuestionnaireProgress(app.storage).participant(app.scope, 'vk:101');
+    const opened = participant.open(Date.now())!;
+    expect(opened.template.questions).toHaveLength(16);
+    const presentation = participant.takePresentation(Date.now())!;
+    expect(presentation.text.split('\n')).toHaveLength(16);
+    participant.shown(presentation.presentation, Date.now());
+    app.complete.mockResolvedValueOnce({
+      kind: 'complete',
+      text: JSON.stringify(
+        Object.fromEntries(
+          opened.template.questions.map((q) => [q.position, q.position === 2 ? 'Аня' : null]),
+        ),
+      ),
+      usage: { input: 20, output: 10 },
+    });
+    app.at(32_000);
+    app.submit('[club314|Пенёк], я Аня. Остальное пропущу.', 101);
+    await until(() =>
+      expect(app.sends.some((s) => s.text === 'Спасибо! Анкета заполнена.')).toBe(true),
+    );
+    expect(participant.current(Date.now())?.state).toBe('completed');
+    app.at(33_000);
+    app.setMembers([73]);
+    app.membership('chat_kick_user', 101, 101);
+    await until(() =>
+      expect(
+        participantRegistryStore(app.storage)
+          .read(app.scope)
+          .participants.find((p) => p.userId === 'vk:101')?.status,
+      ).not.toBe('present'),
+    );
+    enter(app, 101, [73, 101], 34_000);
+    await open(app, 2);
+    app.at(64_000);
+    await until(() => expect(states(app)[1]).toMatchObject({ invitation: 'skipped' }));
+    expect(invitations(app)).toHaveLength(1);
+    expect(app.complete).toHaveBeenCalledTimes(1);
   } finally {
     await app.close();
   }
