@@ -161,9 +161,15 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
         if (prepared.kind !== 'ready') return 'failed';
         // Финальная синхронная проверка выполняется непосредственно перед запуском цикла.
         if (!work.isCurrent() || lifetime.aborted) return 'interrupted';
+        const baseContext = prepared.metadata && { ...prepared.metadata };
+        const persona = baseContext?.persona;
+        if (baseContext && persona) {
+          delete baseContext.persona;
+          baseContext.absentLayers = [...baseContext.absentLayers, 'persona'];
+        }
         work.recordTrace({
           prompt: prepared.metadata?.version ?? null,
-          context: prepared.metadata ?? null,
+          context: baseContext ?? null,
         });
         const cards = prepared.participantCards;
         const compose = cards
@@ -186,7 +192,7 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
         let passportBase: LlmMessage | undefined;
         let passportTokens = 0;
         let addedBytes = 0;
-        let context = prepared.metadata;
+        let context = baseContext;
         let staleContext = false;
         let attempted = false;
         const cardsCurrent = () => cards?.current([...usedRefs.values()]) ?? true;
@@ -296,13 +302,13 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
                 usedPassport.set(revision.section, revision);
               if (
                 context &&
-                prepared.metadata &&
+                baseContext &&
                 (candidateCards.length ||
                   candidatePassport?.used.length ||
                   candidateSummaries.length)
               ) {
                 const index = messageIndex;
-                const original = prepared.metadata;
+                const original = baseContext;
                 addedBytes = Math.max(
                   addedBytes,
                   Buffer.byteLength(request.messages[index]?.text ?? '') -
@@ -381,11 +387,21 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
         );
         const result = await loop.run({ ...prepared.input, signal: lifetime });
         if (staleContext && result.summary.attempts === 0) continue;
+        const appliedContext =
+          persona && context && result.summary.attempts > 0
+            ? {
+                ...context,
+                persona,
+                absentLayers: context.absentLayers.filter((layer) => layer !== 'persona'),
+                messageIds: [...new Set([...context.messageIds, ...(session?.sourceIds() ?? [])])],
+              }
+            : undefined;
         work.recordTrace({
           model: {
             name: result.summary.attempts ? modelName : null,
             invoked: result.summary.attempts ? 'yes' : 'no',
           },
+          ...(appliedContext ? { context: appliedContext } : {}),
           ...(session ? { tools: session.trace() } : {}),
           summary: result.summary,
           resultKind: result.kind,

@@ -23,5 +23,8 @@ export function createContextStateReader(
     async systemPrompt(scope) {
       return versions.systemPrompt(scope);
     },
+    async persona(scope) {
+      return lifecycle.transaction(scope, (db) => versions.persona(db, scope));
+    },
   } satisfies ContextStateReader);
 }

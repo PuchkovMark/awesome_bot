@@ -21,6 +21,11 @@ export interface ContentVersion {
   readonly text: string;
   readonly createdAt: number;
 }
+export interface PersonaSnapshot {
+  readonly ref: VersionRef;
+  readonly text: string;
+  readonly starterId: string | null;
+}
 export interface VersionLimits {
   readonly textMaxLength: number;
   readonly maxPerEntity: number;

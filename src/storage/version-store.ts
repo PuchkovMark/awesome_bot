@@ -1,5 +1,6 @@
 import type { Database } from 'better-sqlite3';
 import type { ConnectionScope } from '../contracts/lifecycle';
+import { defaultPersonaId } from '../core/personas/catalog';
 import type {
   ContentKind,
   LocalContentKind,
@@ -10,6 +11,7 @@ import type {
   VersionLimits,
   AppendVersionResult,
   SelectionResult,
+  PersonaSnapshot,
 } from '../contracts/versioning';
 import type { Connection } from './connection';
 import type { LifecycleBackend } from './lifecycle-store';
@@ -182,6 +184,34 @@ export function createVersionBackend(
     );
     return value(ref, row);
   }
+  function starterPersonaRef(db: Database, id: string): GlobalVersionRef | null {
+    const row = db
+      .prepare('SELECT entity_key AS key,version FROM starter_persona_versions WHERE persona_id=?')
+      .get(id) as { key: string; version: number } | undefined;
+    return row ? Object.freeze({ area: 'global', kind: 'persona', ...row }) : null;
+  }
+  function persona(db: Database, scope: ConnectionScope): PersonaSnapshot | null {
+    const selected = localSelected(db, scope, 'persona');
+    if (selected) {
+      const { ref, text } = selected;
+      const starterId =
+        ref.area === 'global'
+          ? (db
+              .prepare(
+                'SELECT persona_id FROM starter_persona_versions WHERE entity_key=? AND version=?',
+              )
+              .pluck()
+              .get(ref.key, ref.version) as string | undefined)
+          : undefined;
+      return Object.freeze({ ref, text, starterId: starterId ?? null });
+    }
+    const ref = starterPersonaRef(db, defaultPersonaId);
+    const fallback = ref && get(db, ref);
+    return (
+      fallback &&
+      Object.freeze({ ref: fallback.ref, text: fallback.text, starterId: defaultPersonaId })
+    );
+  }
   function select(
     db: Database,
     input: VersionRef | null,
@@ -223,6 +253,7 @@ export function createVersionBackend(
     return { status: 'selected' };
   }
   return {
+    persona,
     installStarterPersonas(cards: readonly { id: string; text: string }[], createdAt: number) {
       admin((db) => {
         timestamp(createdAt);

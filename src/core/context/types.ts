@@ -2,7 +2,7 @@ import type { PassportSection } from '../../contracts/chat-passport';
 import type { PreparedPassport } from './passport';
 import type { PreparedCards } from './participant-cards';
 import type { AddressPreferenceReference } from '../../contracts/index';
-import type { GlobalVersionRef } from '../../contracts/versioning';
+import type { GlobalVersionRef, VersionRef } from '../../contracts/versioning';
 import type { AgentLoopInput } from '../agent-loop/types';
 export type PreparationFailure =
   | 'missing_system_prompt'
@@ -15,6 +15,7 @@ export interface ContextMetadata {
   readonly messageIds: readonly number[];
   readonly layerBytes: Readonly<{ system: number; environment: number; messages: number }>;
   readonly estimatedTokens: number;
+  readonly persona?: { readonly version: VersionRef; readonly bytes: number };
   readonly summaries?: readonly { id: number; level: string; bytes: number }[];
   readonly passport?: {
     readonly sections: readonly PassportSection[];

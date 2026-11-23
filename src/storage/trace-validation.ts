@@ -184,8 +184,38 @@ export function validateTrace(value: unknown): asserts value is TracePayload {
         'reply',
         'absentLayers',
       ],
-      ['passport', 'summaries'],
+      ['passport', 'summaries', 'persona'],
     );
+    if (Object.hasOwn(c, 'persona')) {
+      const persona = plain(c.persona, ['version', 'bytes']);
+      const version = plain(
+        persona.version,
+        ['area', 'kind', 'key', 'version'],
+        ['chatId', 'generation'],
+      );
+      one(version.area, ['global', 'local']);
+      one(version.kind, ['persona']);
+      text(version.key);
+      requireInput(
+        typeof version.version === 'number' &&
+          Number.isSafeInteger(version.version) &&
+          version.version > 0,
+      );
+      requireInput(
+        typeof persona.bytes === 'number' &&
+          Number.isSafeInteger(persona.bytes) &&
+          persona.bytes > 0,
+      );
+      if (version.area === 'local') {
+        text(version.chatId);
+        requireInput(
+          typeof version.generation === 'number' &&
+            Number.isSafeInteger(version.generation) &&
+            version.generation > 0,
+        );
+      } else
+        requireInput(!Object.hasOwn(version, 'chatId') && !Object.hasOwn(version, 'generation'));
+    }
     if (Object.hasOwn(c, 'summaries'))
       list(c.summaries, 4, (value) => {
         const s = plain(value, ['level', 'id', 'bytes']);

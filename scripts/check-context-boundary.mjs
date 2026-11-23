@@ -119,6 +119,7 @@ export function checkContextBoundary(root = process.cwd()) {
                       'reply',
                       'settings',
                       'systemPrompt',
+                      'persona',
                       'truncated',
                       'authorNumber',
                       'cutoffId',
@@ -135,9 +136,13 @@ export function checkContextBoundary(root = process.cwd()) {
                 statement.importClause.namedBindings &&
                 ts.isNamedImports(statement.importClause.namedBindings) &&
                 statement.importClause.namedBindings.elements.every((e) =>
-                  ['ConnectionScope', 'StoredMessage', 'HistoryQuery', 'ContentVersion'].includes(
-                    (e.propertyName ?? e.name).text,
-                  ),
+                  [
+                    'ConnectionScope',
+                    'StoredMessage',
+                    'HistoryQuery',
+                    'ContentVersion',
+                    'PersonaSnapshot',
+                  ].includes((e.propertyName ?? e.name).text),
                 )
               )
                 continue;

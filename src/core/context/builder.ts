@@ -20,7 +20,7 @@ import {
 } from './budget';
 import { validateContextStartup } from './startup';
 import { formatEnvironment, type ContextRoute } from './environment';
-import { createContextMessageFormatter } from './format';
+import { createContextMessageFormatter, personaPrompt, serializePersonaField } from './format';
 import type { AgentLoopMessage } from '../agent-loop/types';
 import type { ContextMetadata, PreparationResult } from './types';
 import { createContextMetrics } from './metrics';
@@ -64,10 +64,12 @@ export function createContextBuilder(options: ContextBuilderOptions) {
   const config = contextConfig(options.config);
   const metrics = createContextMetrics();
 
-  function effectivePrompt(version: Parameters<typeof validateContextStartup>[0]) {
-    return version && options.addressForm
-      ? { ...version, text: version.text + '\n\n' + addressPrompt }
-      : version;
+  function effectivePrompt(version: Parameters<typeof validateContextStartup>[0], persona = false) {
+    if (!version) return version;
+    const text = [version.text];
+    if (options.addressForm) text.push(addressPrompt);
+    if (persona) text.push(personaPrompt);
+    return { ...version, text: text.join('\n\n') };
   }
 
   const reportStats = () => {
@@ -96,7 +98,11 @@ export function createContextBuilder(options: ContextBuilderOptions) {
     if (!isWorkCurrent()) return { kind: 'cancelled' };
     if (!settings?.enabled || settings.responseMode === 'silent') return { kind: 'cancelled' };
 
-    const systemPrompt = effectivePrompt(await options.state.systemPrompt(scope));
+    const persona = await options.state.persona(scope);
+    if (!isWorkCurrent()) return { kind: 'cancelled' };
+    const personaField = persona ? serializePersonaField(persona) : '';
+    const personaBytes = Buffer.byteLength(personaField, 'utf8');
+    const systemPrompt = effectivePrompt(await options.state.systemPrompt(scope), persona !== null);
     if (!isWorkCurrent()) return { kind: 'cancelled' };
     const startupFailure = validateContextStartup(systemPrompt, config);
     if (startupFailure) return { kind: 'failed', reason: startupFailure };
@@ -198,6 +204,7 @@ export function createContextBuilder(options: ContextBuilderOptions) {
       systemInputCost(system) +
       messageInputCost(formatter.fixedLatestTextBytes) +
       Buffer.byteLength(evidenceField) +
+      personaBytes +
       config.environmentReserveTokens -
       environmentBytes;
     const inputCostWithReply = (replyJson: string) =>
@@ -337,7 +344,7 @@ export function createContextBuilder(options: ContextBuilderOptions) {
         .messages(
           history.map((entry) => entry.serialized),
           replyJson,
-          evidenceField,
+          personaField + evidenceField,
         )
         .map((message) => Object.freeze(message)),
     );
@@ -384,10 +391,17 @@ export function createContextBuilder(options: ContextBuilderOptions) {
         messages: messages.reduce((bytes, message) => bytes + Buffer.byteLength(message.text), 0),
       }),
       estimatedTokens,
+      ...(persona ? { persona: Object.freeze({ version: persona.ref, bytes: personaBytes }) } : {}),
       scanned: scannedMessages,
       historyTruncated,
       reply: replyState,
-      absentLayers: Object.freeze(['persona', 'passport', 'profiles', 'memory', 'summaries']),
+      absentLayers: Object.freeze([
+        ...(persona ? [] : ['persona']),
+        'passport',
+        'profiles',
+        'memory',
+        'summaries',
+      ]),
     });
     return {
       kind: 'ready',

@@ -1,4 +1,4 @@
-import type { ContentVersion } from '../contracts/versioning';
+import type { ContentVersion, PersonaSnapshot } from '../contracts/versioning';
 import type { ConnectionScope } from '../contracts/lifecycle';
 import type { StoredMessage, HistoryQuery } from './types';
 /** Единственный reader, выдаваемый сборщику контекста и контекстному поиску. */
@@ -32,5 +32,6 @@ export interface ContextStateReader {
     readonly timezone: string;
   } | null>;
   systemPrompt(scope: ConnectionScope): Promise<ContentVersion | null>;
+  persona(scope: ConnectionScope): Promise<PersonaSnapshot | null>;
 }
 export type { StoredMessage } from './types';
