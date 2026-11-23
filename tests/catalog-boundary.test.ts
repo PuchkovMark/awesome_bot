@@ -159,6 +159,7 @@ test.each([
   'token-budget-store.ts',
   'lifecycle-store.ts',
   'autonomous-questions.ts',
+  'reminder-store.ts',
 ])('инфраструктура %s недоступна через транзитивный импорт', (module) => {
   const f = fixture();
   try {

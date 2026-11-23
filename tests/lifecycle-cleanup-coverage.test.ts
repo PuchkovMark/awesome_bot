@@ -2,6 +2,10 @@ import Database from 'better-sqlite3';
 import { expect, test } from 'vitest';
 import { migrate } from '../src/storage/migrate';
 const tables = [
+  'personal_reminder_timezones',
+  'personal_reminders',
+  'personal_reminder_inputs',
+  'personal_reminder_parts',
   'autonomous_reply_parts',
   'autonomous_questions',
   'chat_author_labels',
@@ -54,6 +58,11 @@ const tables = [
   'sqlite_sequence',
 ];
 const others = [
+  'personal_reminders_scope',
+  'personal_reminders_due',
+  'personal_reminders_expiry',
+  'personal_reminders_drafts',
+  'personal_reminder_inputs_target',
   'autonomous_parts_reservation',
   'autonomous_questions_due',
   'messages_initiative_bots',

@@ -15,6 +15,7 @@ import { createLifecycleBackend, registerLifecycle } from './lifecycle-store';
 import { createDisclosureStore, registerDisclosureStore } from './chat-disclosure-store';
 import { createAdminRecoveryStore, registerAdminRecovery } from './admin-recovery-store';
 import { createChatControlStore, registerChatControl } from './chat-control-store';
+import { createReminderStore, registerReminders } from './reminder-store';
 import { createScopedStorage } from './scoped-storage';
 import { openConnection } from './connection';
 import { migrate } from './migrate';
@@ -58,6 +59,7 @@ export async function openStorage(
         connection.close();
       },
     };
+    registerReminders(storage, createReminderStore(connection, backend));
     registerHistoryClear(storage, createHistoryClearStore(connection, backend));
     registerDisclosureStore(storage, createDisclosureStore(connection, backend));
     registerAdminRecovery(storage, createAdminRecoveryStore(connection, backend));

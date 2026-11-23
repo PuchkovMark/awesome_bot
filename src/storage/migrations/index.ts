@@ -1,3 +1,4 @@
+import { personalReminders } from './024-personal-reminders';
 import { autonomousReplies } from './023-autonomous-replies';
 import { chatAuthorLabels } from './022-chat-author-labels';
 import { connectionPauseReason } from './021-connection-pause-reason';
@@ -50,4 +51,5 @@ export const migrations: readonly Migration[] = [
   connectionPauseReason,
   chatAuthorLabels,
   autonomousReplies,
+  personalReminders,
 ];
