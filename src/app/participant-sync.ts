@@ -14,6 +14,7 @@ interface RefreshOptions {
   ) => Promise<boolean>;
   readonly scanMs: number;
   readonly staggerMs: number;
+  readonly confirmed?: () => void;
 }
 
 interface ChatRefresh {
@@ -48,6 +49,9 @@ export function createParticipantSync(options: RefreshOptions) {
     cell.controller = controller;
     const operation = options
       .refresh(scope, combined, () => !combined.aborted && isCurrent(scope))
+      .then((complete) => {
+        if (complete && !combined.aborted && isCurrent(scope)) options.confirmed?.();
+      })
       .catch(() => {
         /* Сведения прежней сверки сохраняются. Новый запрос начинается по одному из триггеров. */
       })

@@ -309,7 +309,7 @@ export function createTokenBudgetStore(connection: Connection, lifecycle: Lifecy
         const at = Math.max(now, observation.startedAt);
         if (membership.people > 0 && !chats.get(scope.chatId))
           chats.create(scope.chatId, { responseMode: 'normal', enabled: true, createdAt: at });
-        applyParticipantSnapshot(db, scope, membership.members, at);
+        applyParticipantSnapshot(db, scope, membership.members, at, observation.startedAt);
         db.prepare('UPDATE chat_token_budgets SET people=? WHERE chat_id=? AND generation=?').run(
           membership.people,
           scope.chatId,

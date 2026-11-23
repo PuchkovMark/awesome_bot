@@ -1,3 +1,4 @@
+import { createGreetingStore, registerGreetings } from './greeting-store';
 import { createProfileFactStore, registerProfileInference } from './profile-fact-store';
 import {
   createAddressPreferenceStore,
@@ -76,6 +77,7 @@ export async function openStorage(
     registerHistoryClear(storage, createHistoryClearStore(connection, backend));
     registerDisclosureStore(storage, createDisclosureStore(connection, backend));
     registerAdminRecovery(storage, createAdminRecoveryStore(connection, backend));
+    registerGreetings(storage, createGreetingStore(connection, backend, versions));
     registerChatControl(storage, createChatControlStore(connection, backend));
     registerTraces(storage, traces);
     registerTokenBudgets(storage, createTokenBudgetStore(connection, backend));

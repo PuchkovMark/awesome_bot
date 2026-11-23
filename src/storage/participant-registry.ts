@@ -1,3 +1,10 @@
+import {
+  confirmGreetingCandidates,
+  forgetGreetingEntry,
+  hasPriorDeparture,
+  recordGreetingEntry,
+  rememberGreetingCandidate,
+} from './greeting-entry';
 import type { Database } from 'better-sqlite3';
 import type { ConnectionScope, HumanMember, MembershipEvent, UserId } from '../contracts/index';
 import type { LifecycleBackend } from './lifecycle-store';
@@ -91,6 +98,7 @@ export function applyParticipantSnapshot(
   scope: ConnectionScope,
   members: readonly HumanMember[],
   at: number,
+  startedAt = at,
 ) {
   const erased = new Set(
     db
@@ -100,7 +108,9 @@ export function applyParticipantSnapshot(
       .pluck()
       .all(scope.chatId, scope.generation),
   );
-  const data = JSON.stringify(members.filter(({ userId }) => !erased.has(userId)));
+  const visible = members.filter(({ userId }) => !erased.has(userId));
+  confirmGreetingCandidates(db, scope, visible, startedAt, at);
+  const data = JSON.stringify(visible);
   db.prepare(
     `INSERT INTO chat_participants(chat_id,user_id,role,role_observed_at,status,status_observed_at)
     SELECT ?,json_extract(value,'$.userId'),json_extract(value,'$.role'),
@@ -123,7 +133,7 @@ export function applyParticipantSnapshot(
 export function createParticipantRegistry(connection: Connection, lifecycle: LifecycleBackend) {
   const chats = createChatStore(connection);
   return {
-    observe(scope: ConnectionScope, event: MembershipEvent, identity?: string) {
+    observe(scope: ConnectionScope, event: MembershipEvent, identity?: string, greeting = false) {
       requireInput(event.chatId === scope.chatId);
       timestamp(event.timestamp);
       if (event.subjectId !== null) compositeId(event.subjectId);
@@ -141,14 +151,7 @@ export function createParticipantRegistry(connection: Connection, lifecycle: Lif
         )
           return false;
         const user = event.subjectId;
-        const status = event.change === 'joined' ? 'present' : event.change;
-        if (
-          !user ||
-          !key ||
-          status === 'invited' ||
-          status === 'unknown' ||
-          participantErased(db, scope, user)
-        ) {
+        if (!user || !key || participantErased(db, scope, user)) {
           invalidateSnapshot(db, scope);
           return true;
         }
@@ -160,6 +163,27 @@ export function createParticipantRegistry(connection: Connection, lifecycle: Lif
           { status: ParticipantRecord['status']; at: number | null } | undefined;
         const meta = participantSync(db, scope);
         const at = event.timestamp;
+        const number = Number(identity);
+        const sequence =
+          Number.isSafeInteger(number) && number > 0 && String(number) === identity
+            ? number
+            : undefined;
+        const status = event.change === 'joined' ? 'present' : event.change;
+        if (
+          status === 'invited' ||
+          status === 'unknown' ||
+          (greeting && status === 'present' && event.actorId !== user)
+        ) {
+          if (
+            greeting &&
+            prior?.status !== 'present' &&
+            (meta.lastCompleteStartedAt === null || at >= meta.lastCompleteStartedAt) &&
+            (prior?.at == null || at > prior.at)
+          )
+            rememberGreetingCandidate(db, scope, user, at, Date.now(), sequence);
+          invalidateSnapshot(db, scope);
+          return true;
+        }
         if (meta.lastCompleteStartedAt !== null && at < meta.lastCompleteStartedAt) return false;
         if (prior?.at !== null && prior?.at !== undefined && prior.at >= at) {
           const overlapsSnapshot =
@@ -176,6 +200,18 @@ export function createParticipantRegistry(connection: Connection, lifecycle: Lif
         }
         chats.create(scope.chatId, { enabled: true, responseMode: 'normal', createdAt: at });
         updateStatus(db, scope, user, status, at);
+        if (status === 'present') {
+          if (greeting && prior?.status !== 'present')
+            recordGreetingEntry(
+              db,
+              scope,
+              user,
+              hasPriorDeparture(prior?.status),
+              at,
+              Date.now(),
+              sequence,
+            );
+        } else forgetGreetingEntry(db, scope, user);
         invalidateSnapshot(db, scope);
         return true;
       });
