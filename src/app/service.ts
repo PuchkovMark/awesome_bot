@@ -18,13 +18,12 @@ import type { ApplicationFailure } from '../logger/types';
 import { catalogAdministration } from '../storage/catalog-admin';
 import { openStorage } from '../storage/index';
 import type { Storage } from '../storage/index';
-import { unconfirmedLifecycleSource } from './setup';
 import { createChatOnboarding } from '../core/chat-onboarding/service';
 import { canonicalTimezone, parseTimezoneCommand } from '../core/chat-onboarding/timezone';
 import { vkLocalId } from '../channels/vk/outbound';
 import { describeVkRights, vkIntroductionReplayWindowMs } from '../channels/vk/introduction';
 import { isVkGroupChat } from '../channels/vk/normalize';
-import type { ConnectionScope } from '../contracts/index';
+import type { ChatId, ConnectionScope } from '../contracts/index';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createAdminRecoveryService } from '../core/admin-recovery/service';
 import { parseAdminRecoveryCommand } from '../core/admin-recovery/commands';
@@ -36,6 +35,8 @@ import type { ChatLimits } from '../core/chat-limits/config';
 import { createTokenBudgetMembership } from '../core/chat-limits/token-budget-membership';
 import { createUsageCommand, isUsageCommand } from './token-budget';
 import { createPausedChatCommands } from './paused-chats';
+import { createReminderHandlers } from './reminders';
+import { parseReminderCommand } from '../core/reminders/commands';
 
 interface ApplicationDependencies {
   readonly vk?: Parameters<typeof createVkChannel>[1];
@@ -44,6 +45,7 @@ interface ApplicationDependencies {
   readonly stopTimeoutMs?: number;
   readonly onboardingIntervalMs?: number;
   readonly administrationIntervalMs?: number;
+  readonly reminderIntervalMs?: number;
   readonly chatLimits?: Partial<ChatLimits>;
 }
 
@@ -64,6 +66,7 @@ export async function runApplication(
   let poll: Promise<void> | undefined;
   let introductionWork: Promise<void> | undefined;
   let administrationWork: Promise<void> | undefined;
+  let reminderWork: Promise<void> | undefined;
   let readyTimer: ReturnType<typeof setTimeout> | undefined;
   let stopTimer: ReturnType<typeof setTimeout> | undefined;
   const typing = new Set<Promise<void>>();
@@ -94,10 +97,17 @@ export async function runApplication(
         messageRetentionDays: config.tracing.messageRetentionDays,
       });
       if (signal.aborted) return;
+      let canWritePrivate: (chatId: ChatId) => Promise<boolean> = async () => false;
       const lifecycle = createLifecycleService({
         storage,
         ownerId: config.authorization.ownerId,
-        source: unconfirmedLifecycleSource,
+        source: {
+          async observe({ chatId }) {
+            return (await canWritePrivate(chatId))
+              ? { confidence: 'confirmed', bot: 'present' }
+              : { confidence: 'unavailable', bot: 'unknown' };
+          },
+        },
       });
       const controls = chatControlStore(storage);
       let ready = false;
@@ -127,6 +137,16 @@ export async function runApplication(
             }
           },
           onMembershipChanged: refreshBudgetMembership,
+          verifyFirstPrivate(message) {
+            return (
+              message.peerId > 0 &&
+              !isVkGroupChat(message.peerId) &&
+              message.authorId === message.peerId &&
+              !message.hasReply &&
+              !message.hasForwarded &&
+              !!parseReminderCommand(message.text, false)
+            );
+          },
           onReady() {
             if (signal.aborted || ready) return;
             ready = true;
@@ -134,10 +154,23 @@ export async function runApplication(
             logger.event({ event: 'application_ready' }, 'info');
             introductionWork = onboarding.run().catch(() => stop('vk_failed'));
             administrationWork = checkAdministration().catch(() => stop('vk_failed'));
+            reminderWork = deliverReminders().catch(() => stop('storage_failed'));
           },
         },
         dependencies.vk,
       );
+      canWritePrivate = (chatId) => channel.reminderDelivery(chatId).canWrite({ signal });
+      const reminders = createReminderHandlers({ storage, channel, lifecycle, signal });
+      async function deliverReminders() {
+        while (!signal.aborted) {
+          if (await reminders.due()) continue;
+          try {
+            await delay(dependencies.reminderIntervalMs ?? 1_000, undefined, { signal });
+          } catch {
+            return;
+          }
+        }
+      }
       const group = (chatId: ConnectionScope['chatId']) => {
         const local = vkLocalId(chatId);
         return local !== undefined && isVkGroupChat(local);
@@ -322,6 +355,7 @@ export async function runApplication(
             : null) ??
           history.recognize(message) ??
           chatControl.recognize(message, replyToOther) ??
+          reminders.recognize(message) ??
           (message.isGroupChat &&
           message.isBot === false &&
           parseTimezoneCommand(message.text) !== null
@@ -332,6 +366,8 @@ export async function runApplication(
         async executeCommand(context, message, isCurrent, replayOnly) {
           if (history.recognize(message))
             return history.execute(context, message, isCurrent, replayOnly);
+          if (reminders.recognize(message))
+            return reminders.execute(context.scope, message, isCurrent, replayOnly);
           const input = parseTimezoneCommand(message.text);
           if (input === null) return chatControl.execute(context, message, isCurrent);
           const timezone = canonicalTimezone(input);
@@ -385,6 +421,7 @@ export async function runApplication(
       poll,
       introductionWork,
       administrationWork,
+      reminderWork,
       ...typing,
       ...floodPublications,
     ]);

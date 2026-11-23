@@ -13,14 +13,16 @@ export async function commandAccess(
   command: ServiceCommand,
 ): Promise<NonNullable<RoutingInput['service']>> {
   const denied = { command, role: 'member', allowed: false } as const;
-  const participantPause = command.minimumRole === 'member' && command.action === 'chat.pause';
+  const participantCommand =
+    command.minimumRole === 'member' &&
+    (command.action === 'chat.pause' || command.action === 'reminder.manage');
   if (
     !auth ||
     !context ||
     context.scope !== scope ||
     context.userId !== message.userId ||
     context.chatId !== message.chatId ||
-    (!participantPause && !['admin', 'owner'].includes(command.minimumRole))
+    (!participantCommand && !['admin', 'owner'].includes(command.minimumRole))
   )
     return denied;
   const role = await auth.role(context);

@@ -20,6 +20,7 @@ export interface ReminderDraft {
   readonly schedule?: ReminderSchedule | undefined;
   readonly explicitTimezone?: string | undefined;
   readonly choices?: readonly [number, number] | undefined;
+  readonly chosenAt?: number | undefined;
 }
 
 export type ReminderFields =
@@ -44,6 +45,7 @@ interface ReminderRecord {
   readonly due_at: number | null;
   readonly timezone: string | null;
   readonly finished_at: number | null;
+  readonly delivery_unknown?: 0 | 1;
 }
 
 interface Source {
@@ -62,6 +64,7 @@ interface Lease {
   readonly chatId: ChatId;
   readonly generation: number;
   readonly dueAt: number;
+  readonly leaseUntil: number;
 }
 interface Part {
   readonly part: number;
@@ -89,6 +92,7 @@ function view(row: ReminderRecord) {
     dueAt: row.due_at,
     timezone: row.timezone,
     finishedAt: row.finished_at,
+    deliveryUnknown: row.delivery_unknown === 1,
   };
 }
 
@@ -163,6 +167,7 @@ function leaseRow(db: Database, row: ReminderRecord, stage: ReminderStage, now: 
     chatId: row.chat_id,
     generation: row.generation,
     dueAt: row.due_at!,
+    leaseUntil: now + leaseMs,
   };
 }
 
@@ -332,7 +337,11 @@ export function createReminderStore(connection: Connection, lifecycle: Lifecycle
         return (
           db
             .prepare(
-              'SELECT * FROM personal_reminders WHERE chat_id=? AND generation=? ORDER BY coalesce(due_at,origin_at),id',
+              `SELECT r.*, EXISTS(
+              SELECT 1 FROM personal_reminder_parts p WHERE p.reminder_id=r.id
+              AND p.stage='delivery' AND p.state='unknown'
+            ) AS delivery_unknown FROM personal_reminders r
+            WHERE r.chat_id=? AND r.generation=? ORDER BY coalesce(r.due_at,r.origin_at),r.id`,
             )
             .all(recipient.scope.chatId, recipient.scope.generation) as ReminderRecord[]
         ).map(view);
@@ -351,11 +360,11 @@ export function createReminderStore(connection: Connection, lifecycle: Lifecycle
         if (row.state !== 'pending' && row.state !== 'draft') return row.state;
         const sent = db
           .prepare(
-            `SELECT 1 FROM personal_reminder_parts WHERE reminder_id=? AND stage='delivery'
-          AND state!='ready' LIMIT 1`,
+            `SELECT state FROM personal_reminder_parts WHERE reminder_id=? AND stage='delivery'
+          AND state!='ready' ORDER BY state='unknown' DESC,part LIMIT 1`,
           )
-          .get(id);
-        if (sent) return 'sending' as const;
+          .get(id) as { state: string } | undefined;
+        if (sent) return sent.state === 'unknown' ? ('unknown' as const) : ('sending' as const);
         finish(db, id, 'cancelled', now);
         return 'cancelled' as const;
       });
@@ -404,10 +413,9 @@ export function createReminderStore(connection: Connection, lifecycle: Lifecycle
           db
             .prepare(
               `UPDATE personal_reminder_parts SET state='sending',attempted_at=?
-          WHERE reminder_id=? AND stage=? AND part=? AND state IN ('ready','sending') AND receipt IS NULL
-          AND (state='ready' OR attempted_at=?)`,
+          WHERE reminder_id=? AND stage=? AND part=? AND state='ready' AND receipt IS NULL`,
             )
-            .run(now, lease.id, lease.stage, part.part, part.attempted_at).changes === 1
+            .run(now, lease.id, lease.stage, part.part).changes === 1
         );
       });
     },

@@ -58,6 +58,7 @@ export interface VkInboundOptions {
   readonly onReady?: () => void;
   readonly onMembershipChanged?: (scope: ConnectionScope) => Promise<void>;
   readonly captureDisclosure?: (scope: ConnectionScope) => RoutedAdmissionGuard;
+  readonly verifyFirstPrivate?: (message: VkIncoming) => boolean;
 }
 
 interface VkInboundDependencies {
@@ -257,38 +258,50 @@ export function createVkInbound(
           pending.add(work);
           continue;
         }
-        let scope: ConnectionScope;
+        let scope: ConnectionScope | undefined;
         try {
           scope = lifecycle.admissionScope(chatId);
         } catch (error) {
           if (error instanceof StorageError && error.code === 'stale_scope') {
-            counters.paused++;
-            void pause(chatId, 'first_seen').catch(() => {
-              counters.failed++;
-            });
+            if (!options.verifyFirstPrivate?.(message)) {
+              counters.paused++;
+              void pause(chatId, 'first_seen').catch(() => {
+                counters.failed++;
+              });
+              continue;
+            }
+          } else {
+            if (error instanceof StorageError && error.code === 'uncertain_connection')
+              counters.paused++;
+            else counters.failed++;
             continue;
           }
-          if (error instanceof StorageError && error.code === 'uncertain_connection') {
-            counters.paused++;
-            continue;
-          }
-          counters.failed++;
-          continue;
         }
-        function isCurrent() {
-          return (
-            !signal.aborted && receivedIn === subscription && lifecycle.isAdmissionCurrent(scope)
-          );
-        }
-        const disclosure = isVkGroupChat(message.peerId)
-          ? options.captureDisclosure?.(scope)
-          : undefined;
+        const observingEvent = () => !signal.aborted && receivedIn === subscription;
+        const disclosure =
+          scope && isVkGroupChat(message.peerId) ? options.captureDisclosure?.(scope) : undefined;
         if (disclosure && !disclosure().journal) {
           counters.paused++;
           continue;
         }
         const task = (tails.get(chatId) ?? Promise.resolve())
           .then(async () => {
+            if (!scope && observingEvent()) {
+              try {
+                scope = lifecycle.admissionScope(chatId);
+              } catch (error) {
+                if (error instanceof StorageError && error.code === 'stale_scope') {
+                  const verified = await lifecycle.verify(chatId);
+                  if (verified.scope && observingEvent()) scope = lifecycle.admissionScope(chatId);
+                }
+              }
+            }
+            if (!scope) {
+              counters.paused++;
+              return;
+            }
+            const admittedScope = scope;
+            const isCurrent = () => observingEvent() && lifecycle.isAdmissionCurrent(admittedScope);
             if (!isCurrent()) {
               counters.paused++;
               return;
@@ -302,7 +315,7 @@ export function createVkInbound(
             const normalized = normalizeVkIncoming(message, groupId, enrichment);
             await dispatch(
               normalized,
-              scope,
+              admittedScope,
               isCurrent,
               disclosure,
               normalized.replyAddress === 'other' || normalized.replyAddress === 'unknown',

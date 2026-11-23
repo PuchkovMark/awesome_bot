@@ -190,6 +190,9 @@ export function createVkChannel(
     administrationDelivery: options.owner
       ? createVkAdministrationDelivery(api, outbound, options.owner, options.groupId)
       : undefined,
+    reminderDelivery(recipient: UserId) {
+      return createVkAdministrationDelivery(api, outbound, recipient, options.groupId);
+    },
     replyPrivateControl(sender: UserId, text: string, guard: PublicationGuard) {
       return createVkAdministrationDelivery(api, outbound, sender, options.groupId).reply(
         text,

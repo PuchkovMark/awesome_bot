@@ -119,6 +119,9 @@ export function createMessageRouter(options: RouterOptions) {
           });
           return {
             reason: decision.reason,
+            ...(decision.kind === 'service' && command?.action === 'reminder.manage'
+              ? { privateCommand: true as const }
+              : {}),
             route: decision.kind === 'ordinary' ? decision.route : null,
             ...(decision.kind === 'silence' && decision.initiative
               ? { initiative: decision.initiative }

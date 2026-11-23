@@ -39,7 +39,7 @@ export function reminderTimezone(value: string): string | null {
 interface ReminderTimeInput {
   readonly originAt: number;
   readonly schedule?: ReminderSchedule | undefined;
-  readonly timezone?: string;
+  readonly timezone?: string | undefined;
   readonly explicitTimezone?: string | undefined;
 }
 
@@ -148,7 +148,7 @@ export function extractReminderTime(text: string) {
     content = content.slice(0, part.index) + ' ' + content.slice(part.index! + part[0].length);
   return {
     schedule,
-    date: vagueTime?.[1]?.toLowerCase(),
+    date: (local?.[1] ?? vagueTime?.[1])?.toLowerCase(),
     explicitTimezone: zones.length > 1 ? 'неоднозначно' : zones[0]?.[0],
     content: content.replace(/^[\s,.:;–—-]+|[\s,;–—-]+$/gu, '').replace(/[ \t]{2,}/gu, ' '),
   };

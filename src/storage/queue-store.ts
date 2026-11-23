@@ -292,6 +292,12 @@ export function createQueueBackend(
                     routed.reason === 'not_addressed' &&
                     ['help', 'free_mention', 'unanswered'].includes(routed.initiative),
                 );
+              if (routed.privateCommand === true) {
+                requireInput(routed.reason === 'service' && routed.route === null);
+                db.prepare(
+                  "UPDATE messages SET purpose='service_notice' WHERE chat_id=? AND id=?",
+                ).run(scope.chatId, snapshot.message.id);
+              }
               const result: import('./queue-types').RoutedQueueDecision =
                 gate?.ordinary === false && routed.route
                   ? { route: null, reason: 'silent' }

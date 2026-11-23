@@ -7,10 +7,10 @@ import type { VkRequestGuard } from './rate-limit';
 export function createVkAdministrationDelivery(
   api: Pick<VkApi, 'request'>,
   outbound: ReturnType<typeof createVkOutbound>,
-  owner: UserId,
+  recipient: UserId,
   groupId: number,
 ) {
-  const peer = vkLocalId(owner);
+  const peer = vkLocalId(recipient);
   const chatId =
     peer !== undefined && peer > 0 && !isVkGroupChat(peer) ? (`vk:${peer}` as const) : undefined;
   async function canWrite(guard: VkRequestGuard) {
@@ -37,6 +37,7 @@ export function createVkAdministrationDelivery(
     }
   }
   return Object.freeze({
+    canWrite,
     async reply(text: string, guard: VkRequestGuard) {
       if (chatId !== undefined && (await canWrite(guard))) {
         await outbound.send({
@@ -55,6 +56,7 @@ export function createVkAdministrationDelivery(
       sendId: number,
       receivedId: (messageId: string) => void,
       guard: VkRequestGuard,
+      replayUntil?: number,
     ) {
       if (chatId === undefined || !(await canWrite(guard))) return 'failed' as const;
       return (
@@ -64,6 +66,7 @@ export function createVkAdministrationDelivery(
           text,
           kind: 'service',
           sendId,
+          ...(replayUntil === undefined ? {} : { replayUntil }),
           receivedId,
           confirmPart() {},
         })

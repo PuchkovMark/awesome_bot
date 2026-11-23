@@ -16,11 +16,15 @@ export function routeMessage(input: RoutingInput): RoutingDecision {
   )
     return silent('invalid_input');
   if (service) {
-    const participantPause =
-      service.command.minimumRole === 'member' && service.command.action === 'chat.pause';
+    const reminder = service.command.action === 'reminder.manage';
+    const participantCommand =
+      service.command.minimumRole === 'member' &&
+      (service.command.action === 'chat.pause' || reminder);
     if (
       !service.allowed ||
-      (service.role === 'member' && !participantPause) ||
+      (reminder &&
+        (!settings.enabled || settings.responseMode === 'silent' || message.isBot !== false)) ||
+      (service.role === 'member' && !participantCommand) ||
       (service.command.minimumRole === 'owner' && service.role !== 'owner') ||
       (!settings.enabled && service.role !== 'owner')
     )

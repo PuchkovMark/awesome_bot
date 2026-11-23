@@ -92,6 +92,7 @@ export type RouteMetadata =
     };
 
 export interface RoutedQueueDecision {
+  readonly privateCommand?: true;
   readonly initiative?: InitiativeCause;
   readonly route: DirectRoute | null;
   readonly reason:

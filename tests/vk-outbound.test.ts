@@ -266,3 +266,24 @@ describe('отправитель VK', () => {
     expect(f.sent()).toHaveLength(1);
   });
 });
+
+it('сверяет полученную квитанцию служебной части без ещё одного запроса отправки', async () => {
+  const f = fixture(161);
+  const receipt = vi.fn<(id: string) => void>();
+  const text = 'Напоминание. Подготовить документы';
+  expect(
+    await f.outbound.send({
+      chatId: f.chatId,
+      kind: 'service',
+      text,
+      sendId: 7523,
+      receivedId: receipt,
+      confirmPart: f.keep,
+    }),
+  ).toMatchObject({ kind: 'delivered', confirmedParts: 1 });
+  expect(receipt).toHaveBeenCalledWith('8');
+  expect(await f.outbound.confirmService(f.chatId, text, '8', date * 1000, {})).toBe(true);
+  expect(await f.outbound.confirmService('vk:162', text, '8', date * 1000, {})).toBe(false);
+  expect(f.sent()).toHaveLength(1);
+  expect(f.sent()[0]?.[1]).toMatchObject({ peer_ids: '161', random_id: 7523 });
+});

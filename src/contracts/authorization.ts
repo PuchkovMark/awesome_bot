@@ -11,6 +11,7 @@ export type AuthorizationAction =
   | 'chat.onboarding.configure'
   | 'chat.pause'
   | 'chat.pause.extend'
+  | 'reminder.manage'
   | 'admin.grant'
   | 'admin.remove'
   | 'admin.revoke'

@@ -16,6 +16,7 @@ const minimum: Record<AuthorizationAction, BotRole> = {
   'chat.onboarding.configure': 'admin',
   'chat.pause': 'member',
   'chat.pause.extend': 'admin',
+  'reminder.manage': 'member',
   'admin.grant': 'admin',
   'admin.remove': 'admin',
   'admin.revoke': 'owner',
