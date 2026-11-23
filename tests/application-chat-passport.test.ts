@@ -1,7 +1,8 @@
 import { expect, test } from 'vitest';
-import { fixture, peer, until } from './helpers/application-response-fixture';
+import { answer, fixture, peer, until } from './helpers/application-response-fixture';
 import { chatPassportStore } from '../src/storage/chat-passport-store';
 import { passportPromptLifetime, type PassportSection } from '../src/storage/chat-passport-types';
+import { passportCandidates } from '../src/core/context/passport';
 import { chatControlStore } from '../src/storage/chat-control-store';
 
 type App = Awaited<ReturnType<typeof fixture>>;
@@ -260,4 +261,66 @@ test('смена роли, истечение срока, потеря квит�
   } finally {
     await app.close();
   }
+});
+
+test('показ раздела учитывает адресацию и повторы, а цитата остаётся обычным запросом', async () => {
+  const app = await fixture();
+  try {
+    const mention = '[club314|Пенёк]';
+    const empty = await delivered(
+      app,
+      owner,
+      mention + ' Покажи правила беседы.',
+      'Раздел пока пуст.',
+    );
+    expect(empty.text).toBe('Правила\nРаздел пока пуст.');
+    const prompt = await delivered(app, owner, '/правила', editor);
+    await apply(app, owner, prompt, 'Рекламу согласуют заранее.');
+    const start = app.sends.length;
+
+    const phrase = 'Покажи правила беседы';
+    const cmid = app.submit(phrase, member);
+    await app.journaled(cmid);
+    expect(app.sends).toHaveLength(start);
+    const request = app.submit('Пенёк, покажи правила этой беседы целиком.', member);
+    await until(() =>
+      expect(app.sends.slice(start).map(({ text }) => text)).toEqual([
+        'Правила\nРекламу согласуют заранее.',
+      ]),
+    );
+    expect(app.complete).not.toHaveBeenCalled();
+    app.replay(request);
+
+    const quote = {
+      peer_id: peer,
+      conversation_message_id: cmid,
+      from_id: member,
+      date: app.start / 1000,
+      text: phrase,
+    };
+    const question = app.submit(mention + ' Что сказано в цитате?', owner, quote);
+    await app.published(question);
+    expect(app.complete).toHaveBeenCalledOnce();
+    expect(app.sends.slice(start).map(({ text }) => text)).toEqual([
+      'Правила\nРекламу согласуют заранее.',
+      answer.text,
+    ]);
+    const questionAboutRules = app.submit(mention + ' А можно сюда кинуть рекламу?', member);
+    await app.published(questionAboutRules);
+    expect(app.complete).toHaveBeenCalledTimes(2);
+  } finally {
+    await app.close();
+  }
+});
+
+test('кандидаты определяются по текущему вопросу и возвращаются в утверждённом порядке', () => {
+  expect(passportCandidates('Можно сюда кинуть рекламу?')).toEqual(['rules']);
+  expect(passportCandidates('Что значит «маяк»?')).toEqual(['glossary']);
+  expect(passportCandidates('Как дела?')).toEqual([]);
+  expect(
+    passportCandidates(
+      'Назови важные события и традиции. О чём этот чат, что значит «маяк» и можно ли в беседе публиковать рекламу?',
+    ),
+  ).toEqual(['rules', 'glossary', 'topic', 'traditions', 'events']);
+  expect(passportCandidates('Она пересказала «Можно сюда кинуть рекламу?»')).toEqual([]);
 });

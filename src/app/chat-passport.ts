@@ -4,6 +4,7 @@ import type { createVkChannel } from '../channels/vk/channel';
 import { vkMessageLength } from '../channels/vk/outbound-text';
 import type { createAuthorizationService } from '../core/authorization/service';
 import type { createLifecycleService } from '../core/lifecycle/service';
+import { ordinaryGroupRoute } from '../core/message-router/routing';
 import { chatControlStore } from '../storage/chat-control-store';
 import { chatPassportStore } from '../storage/chat-passport-store';
 import {
@@ -55,6 +56,36 @@ function parse(text: string): Request | null {
   return ['/паспорт', '/правила', '/традиции', '/события'].includes(tokens[0]!)
     ? { kind: 'invalid' }
     : null;
+}
+
+const sectionNames = new Map<string, PassportSection>([
+  ['тему', 'topic'],
+  ['правила', 'rules'],
+  ['глоссарий', 'glossary'],
+  ['традиции', 'traditions'],
+  ['события', 'events'],
+  ['важные события', 'events'],
+]);
+
+function requestedSection(message: IncomingMessage) {
+  if (message.isBot !== false || message.hasForwarded) return undefined;
+  const route = ordinaryGroupRoute(message);
+  if (route !== 'mention' && route !== 'reply' && route !== 'name') return undefined;
+  const request = message.text
+    .normalize('NFC')
+    .trim()
+    .toLowerCase()
+    .replace(/^пен[её]к(?:\s*[,!]\s*|\s+)/u, '')
+    .replace(/\s*,\s*пен[её]к[.!?]*$/u, '')
+    .replace(/^пожалуйста[ ,]+/u, '')
+    .replace(/,\s*пожалуйста[.!?]*$/u, '')
+    .replace(/[.!?]+$/u, '')
+    .trim();
+  const selected =
+    /^(?:покажи|покажите|выведи|пришли) (?:мне |нам )?(правила|глоссарий|тему|традиции|(?:важные )?события)(?: (?:этой |этого )?(?:беседы|чата))?(?: целиком)?$/u.exec(
+      request.replace(/\s+/gu, ' '),
+    )?.[1];
+  return selected === undefined ? undefined : sectionNames.get(selected);
 }
 
 function view(entry: PassportEntry) {
@@ -143,7 +174,8 @@ export function createChatPassport(options: {
       if (!message.isGroupChat) return null;
       if (sectionForReply(scope, message)) return edit;
       const request = parse(message.text);
-      return request ? (request.kind === 'clear' ? edit : read) : null;
+      if (request) return request.kind === 'clear' ? edit : read;
+      return requestedSection(message) ? read : null;
     },
     async execute(
       context: AuthorizationContext,
@@ -185,6 +217,12 @@ export function createChatPassport(options: {
         return;
       }
 
+      const selected = requestedSection(message);
+      if (selected) {
+        const entry = passport.read(scope).find(({ section }) => section === selected)!;
+        await reply(view(entry));
+        return;
+      }
       const request = parse(message.text);
       if (!request || message.replyAddress || message.replyToMessageId) return;
       if (request.kind === 'invalid') {

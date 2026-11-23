@@ -1,7 +1,20 @@
+import type { IncomingMessage } from '../../contracts/index';
 import type { RoutingInput, RoutingDecision } from './types';
 import { directlyAddressesName } from './name-address';
 import { validIncoming } from './validation';
 import { autonomousCause } from './autonomous-rules';
+export function ordinaryGroupRoute(message: IncomingMessage, questionnaireName = false) {
+  const address =
+    message.replyAddress ??
+    (message.isReplyToBot ? 'bot' : message.replyToMessageId !== undefined ? 'unknown' : undefined);
+  if (address === 'unknown') return 'reply_unknown';
+  if (address === 'other' && (!message.isMentioned || message.soleBotMention !== true))
+    return 'reply_other';
+  if (message.isMentioned) return 'mention';
+  if (message.isReplyToBot) return 'reply';
+  return questionnaireName || directlyAddressesName(message.text) ? 'name' : null;
+}
+
 export function routeMessage(input: RoutingInput): RoutingDecision {
   if (!input || typeof input !== 'object') return { kind: 'silence', reason: 'invalid_input' };
   const { message, settings, service } = input;
@@ -47,27 +60,10 @@ export function routeMessage(input: RoutingInput): RoutingDecision {
   if (message.isBot === 'unknown') return silent('sender_unknown');
   if (message.isBot) return silent('sender_bot');
   if (settings.responseMode === 'silent') return silent('silent');
-  if (message.isGroupChat) {
-    const address =
-      message.replyAddress ??
-      (message.isReplyToBot
-        ? 'bot'
-        : message.replyToMessageId !== undefined
-          ? 'unknown'
-          : undefined);
-    if (address === 'unknown') return silent('reply_unknown');
-    if (address === 'other' && (!message.isMentioned || message.soleBotMention !== true))
-      return silent('reply_other');
-  }
-  const kind = !message.isGroupChat
-    ? 'direct_message'
-    : message.isMentioned
-      ? 'mention'
-      : message.isReplyToBot
-        ? 'reply'
-        : input.questionnaireName || directlyAddressesName(message.text)
-          ? 'name'
-          : null;
+  const kind = message.isGroupChat
+    ? ordinaryGroupRoute(message, input.questionnaireName)
+    : 'direct_message';
+  if (kind === 'reply_unknown' || kind === 'reply_other') return silent(kind);
   if (!kind) {
     const initiative =
       input.considerInitiative && settings.responseMode === 'active'
