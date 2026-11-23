@@ -1,5 +1,5 @@
 import type { ChannelAdapter, UserId, ToolContext } from '../contracts/index';
-import type { LlmClient, LlmRequest, LlmToolDescription, LlmUsage } from '../llm/types';
+import type { LlmClient, LlmRequest, LlmToolDescription } from '../llm/types';
 import type { LoopTools } from '../core/agent-loop/types';
 import { estimateRequestInput, toolMessageInputCost } from '../core/context/budget';
 import { delegateDescription } from '../core/agent-loop/delegation';
@@ -131,8 +131,7 @@ export function applicationTools(
       pending: readonly string[] = [],
       parentSteps = 0;
     let helper: ReturnType<typeof createJobDelegation> | undefined;
-    const usage: LlmUsage[] = [],
-      traces: ReturnType<LoopTools['trace']>[number][] = [];
+    const traces: ReturnType<LoopTools['trace']>[number][] = [];
     const remember = (result: ToolExecution) => {
       for (const user of result.subjectIds ?? []) subjects.add(user);
       for (const id of result.sourceIds ?? []) ids.add(id);
@@ -196,8 +195,8 @@ export function applicationTools(
       current: valid,
       budgetExhausted: () => budgetExhausted,
       helperSteps: () => helper?.helperSteps() ?? 0,
-      helperSummary: () => usage,
-      beginBatch(request, remaining, steps) {
+      helperSummary: attempts.helperSummary,
+      beginBatch(request, remaining, steps, isLoopCurrent) {
         frame = request;
         pending = remaining;
         parentSteps = steps;
@@ -207,15 +206,10 @@ export function applicationTools(
           attempts,
           client: auxiliaryClient,
           signal: request.signal ?? work.signal,
-          maxSteps: settings.maxSteps,
+          settings,
+          isLoopCurrent,
           parentSteps: () => parentSteps,
           finalRequest: () => ({ request: frame, pending }),
-          startUsage() {
-            const slot = usage.push({ input: null, output: null }) - 1;
-            return (value) => {
-              usage[slot] = value;
-            };
-          },
           materials: {
             resolve: (ref) => material.get(ref),
             visible: (received) => members.sourcesVisible(scope, received) && valid(),

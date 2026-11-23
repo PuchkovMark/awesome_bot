@@ -79,6 +79,7 @@ export interface LoopTools {
     request: import('../../llm/types').LlmRequest,
     pending: readonly string[],
     parentSteps: number,
+    isLoopCurrent: () => boolean,
   ): void;
   execute(
     call: import('../../llm/types').LlmToolCall,
@@ -93,5 +94,5 @@ export interface LoopTools {
     durationMs: number;
   }[];
   labels(): readonly string[];
-  helperSummary?(): readonly import('../../llm/types').LlmUsage[];
+  helperSummary?(): ReadonlyArray<readonly import('../../llm/types').LlmUsage[]>;
 }

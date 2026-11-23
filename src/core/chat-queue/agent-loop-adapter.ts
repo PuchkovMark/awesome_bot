@@ -236,12 +236,18 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
                   session.current() && cardsCurrent() && passportCurrent() && summaryCurrent(),
                 ...(passport || summaries
                   ? {
-                      beginBatch(request, remaining, steps) {
+                      beginBatch(request, remaining, steps, isLoopCurrent) {
                         // Результат инструмента использует место до добавления необязательных разделов.
-                        if (!passportBase) return session.beginBatch(request, remaining, steps);
+                        if (!passportBase)
+                          return session.beginBatch(request, remaining, steps, isLoopCurrent);
                         const messages = request.messages.slice();
                         messages[messageIndex] = passportBase;
-                        session.beginBatch({ ...request, messages }, remaining, steps);
+                        session.beginBatch(
+                          { ...request, messages },
+                          remaining,
+                          steps,
+                          isLoopCurrent,
+                        );
                       },
                     }
                   : {}),
