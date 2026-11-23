@@ -258,7 +258,7 @@ test.each([
   }
 });
 
-test.each(['место', 'удаление'] as const)(
+test.each(['место', 'удаление', 'выход'] as const)(
   'проверка перед сетевой отправкой отменяет приветствие для условия «%s»',
   async (reason) => {
     const f = await fixture({ hold: true, limit: 1, greetings: { members: [73] } });
@@ -271,7 +271,18 @@ test.each(['место', 'удаление'] as const)(
       f.at(31_000);
       await until(() => expect(f.holds).toHaveLength(1));
       if (reason === 'место') startResponse(f.db, f.scope, 'synthetic-ordinary', f.start + 31_000);
-      else {
+      else if (reason === 'выход') {
+        f.at(32_000);
+        f.setMembers([73]);
+        f.membership('chat_kick_user', 101, 101);
+        await until(() =>
+          expect(
+            participantRegistryStore(f.storage)
+              .read(f.scope)
+              .participants.find(({ userId }) => userId === 'vk:101')?.status,
+          ).toBe('left'),
+        );
+      } else {
         const privacy = personalDataStore(f.storage);
         const request = privacy.requestDeletion(f.scope, 'vk:101', 'erase', f.start + 31_000);
         expect(privacy.confirmDeletion(f.scope, 'vk:101', request.code, f.start + 31_000)).toBe(
