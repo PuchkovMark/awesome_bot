@@ -56,6 +56,8 @@ async function fixture(
     readonly beforeFirstConfirmation?: () => Promise<void>;
     readonly retryWait?: () => Promise<void>;
     readonly beforeModel?: () => Promise<void>;
+    readonly answer?: string;
+    readonly authorLabels?: readonly string[];
   } = {},
 ) {
   const storage = await openStorage(':memory:');
@@ -152,6 +154,7 @@ async function fixture(
     modelName: 'synthetic-model',
     prepare: async () => ({
       kind: 'ready',
+      ...(options.authorLabels ? { authorLabels: options.authorLabels } : {}),
       input: {
         system: '',
         messages: [{ role: 'user', text: 'Тестовый вопрос' }],
@@ -164,7 +167,7 @@ async function fixture(
         await options.beforeModel?.();
         return options.empty
           ? { kind: 'empty', usage }
-          : { kind: 'complete', text: longAnswer, usage };
+          : { kind: 'complete', text: options.answer ?? longAnswer, usage };
       },
     },
     onSettled: publication.onSettled,
@@ -232,6 +235,24 @@ async function fixture(
 }
 
 describe('публикация VK через очередь и журнал', () => {
+  it('метка в конце длинного ответа останавливает отправку всех частей VK', async () => {
+    const f = await fixture({ answer: longAnswer + ' Автор — «U1».', authorLabels: ['u1'] });
+    try {
+      f.submit(peer);
+      await vi.waitFor(async () =>
+        expect((await f.storage.traces.get(f.scopes[0], 1))?.payload.publication).toMatchObject({
+          status: 'suppressed',
+          reason: 'author_label_disclosure',
+        }),
+      );
+      expect(f.sends()).toHaveLength(0);
+      expect(await f.storage.messages.list(f.scopes[0], { limit: 5 })).toMatchObject([
+        { role: 'user' },
+      ]);
+    } finally {
+      await f.close();
+    }
+  });
   it('проводит два чата с одинаковым ID источника через штатный роутер и общий лимитер', async () => {
     const f = await fixture();
     try {

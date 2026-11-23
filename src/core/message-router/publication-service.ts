@@ -16,6 +16,7 @@ import { noticeBackend } from '../../storage/notice-store';
 import { lifecycleBackend } from '../../storage/lifecycle-store';
 import { noticeInterval } from './notice-config';
 import { publicationDecision, publicationRow, noticeTemplate } from './publication';
+import { disclosesAuthorLabel } from './author-label-disclosure';
 export interface PublicationGuard {
   readonly signal: AbortSignal;
   readonly isCurrent: () => boolean;
@@ -93,9 +94,13 @@ export function createPublicationService(options: {
   async function publish(
     work: QueueSettlement,
     outcome: unknown,
-    withoutJob = false,
-    flood?: FloodNotice,
+    details: {
+      readonly withoutJob?: boolean;
+      readonly flood?: FloodNotice;
+      readonly authorLabels?: readonly string[];
+    } = {},
   ): Promise<string> {
+    const { withoutJob = false, flood, authorLabels = [] } = details;
     const jobId = work.jobId;
     if (!withoutJob && (jobId === undefined || active.has(jobId))) return 'silence';
     if (jobId !== undefined) active.add(jobId);
@@ -185,6 +190,12 @@ export function createPublicationService(options: {
       };
       const source = await options.storage.messages.get(scope, work.messageId);
       if (!source || !isCurrent()) return suppressed('guard');
+      if (
+        decision.kind === 'answer' &&
+        route.isGroupChat &&
+        disclosesAuthorLabel(decision.text, source.text, authorLabels)
+      )
+        return suppressed('author_label_disclosure');
       const reply = await bounded(
         work.signal,
         options.port.canReply(scope, work.signal, source.messageId, guard),
@@ -388,6 +399,7 @@ export function createPublicationService(options: {
         completion.preparationFailure
           ? { kind: completion.preparationFailure }
           : (completion.result ?? { kind: completion.outcome }),
+        { authorLabels: completion.authorLabels ?? [] },
       );
     },
     async flood(
@@ -412,8 +424,7 @@ export function createPublicationService(options: {
           ...(disclosureVersion === null ? {} : { disclosureVersion }),
         },
         { kind: 'mention_flood' },
-        true,
-        candidate,
+        { withoutJob: true, flood: candidate },
       );
     },
     async queueFull(
@@ -426,7 +437,7 @@ export function createPublicationService(options: {
       await publish(
         { scope, messageId, route, signal, isCurrent: () => !signal.aborted && guard.isCurrent() },
         { kind: 'queue_full' },
-        true,
+        { withoutJob: true },
       );
     },
   });

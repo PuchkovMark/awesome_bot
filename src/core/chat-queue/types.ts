@@ -56,6 +56,7 @@ export interface QueueCompletion {
   readonly outcome: QueueOutcome;
   readonly preparationFailure?: import('../context/types').PreparationFailure;
   readonly result?: import('../agent-loop/types').AgentLoopResult;
+  readonly authorLabels?: readonly string[];
 }
 export interface QueueSettlement extends Omit<
   QueueHandlerInput,

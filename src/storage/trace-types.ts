@@ -15,6 +15,7 @@ export interface TracePublication {
     | 'notice_period'
     | 'response_rate'
     | 'trace_write_failed'
+    | 'author_label_disclosure'
     | 'publication_failed'
     | 'journal_failed'
     | 'partial_delivery';

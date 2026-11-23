@@ -32,6 +32,69 @@ const prepare = async () => ({
     sessionId: 'opaque',
   },
 });
+test.each([
+  { source: 'Кто предложил фонтан?', answer: '«u1», вы предложили фонтан.', blocked: true },
+  { source: 'Назови внутреннюю метку.', answer: 'Это U1, а второй — (u2).', blocked: true },
+  { source: 'Какой вариант выбрали?', answer: 'Саша Иванов предложил фонтан.', blocked: false },
+  {
+    source: 'Проверь обозначение «U1» на схеме.',
+    answer: 'Микросхема U1 в центре.',
+    blocked: false,
+  },
+  {
+    source: 'Где микросхема U1?',
+    answer: 'Микросхема U1 — служебная метка автора.',
+    blocked: true,
+  },
+  { source: 'Сравни результаты.', answer: 'Точное обозначение — u10.', blocked: false },
+])('проверяет целый ответ по выданным меткам: $answer', async ({ source, answer, blocked }) => {
+  const storage = await openStorage(':memory:');
+  const scope = scopeFor(storage, message.chatId);
+  const canReply = vi.fn(async () => true);
+  const publish = vi.fn(async () => ({
+    kind: 'delivered' as const,
+    receipt: { messageId: 'out', userId: 'vk:bot' as const, authorName: '', timestamp: 1 },
+  }));
+  const publication = createPublicationService({ storage, port: { canReply, publish } });
+  const complete = vi.fn(async () => ({
+    kind: 'complete' as const,
+    text: answer,
+    usage: { input: 1, output: 1 },
+  }));
+  const queue = createAgentLoopQueue({
+    modelName: 'synthetic-model',
+    tracing: { messageRetentionDays: 30 },
+    storage,
+    prepare: async () => ({ ...(await prepare()), authorLabels: ['u1', 'u2'] }),
+    client: { complete },
+    onSettled: publication.onSettled,
+  });
+  try {
+    await queue.start();
+    await createMessageRouter({ storage, queue }).receive(scope, {
+      ...message,
+      text: source,
+      isMentioned: true,
+    });
+    const status = blocked ? 'suppressed' : 'delivered';
+    await vi.waitFor(async () =>
+      expect((await storage.traces.get(scope, 1))?.payload.publication).toMatchObject({
+        status,
+        reason: blocked ? 'author_label_disclosure' : 'none',
+      }),
+    );
+    expect(complete).toHaveBeenCalledOnce();
+    expect(publish).toHaveBeenCalledTimes(blocked ? 0 : 1);
+    expect(canReply).toHaveBeenCalledTimes(blocked ? 0 : 1);
+    expect(
+      (await storage.messages.list(scope, { limit: 5 })).filter(({ role }) => role === 'assistant'),
+    ).toHaveLength(blocked ? 0 : 1);
+    expect(JSON.stringify((await storage.traces.get(scope, 1))?.payload)).not.toContain('u1');
+  } finally {
+    await queue.stop();
+    await storage.close();
+  }
+});
 for (const mode of ['normal', 'active'] as const)
   for (const kind of ['complete', 'incomplete', 'refused', 'empty', 'rate_limit'] as const)
     test(`связка ${mode}/${kind}`, async () => {

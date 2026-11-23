@@ -14,6 +14,7 @@ export type QueuePreparation =
       readonly kind: 'ready';
       readonly input: Omit<AgentLoopInput, 'signal'>;
       readonly metadata?: import('../context/types').ContextMetadata;
+      readonly authorLabels?: readonly string[];
     }
   | Exclude<PreparationResult, { kind: 'ready' }>;
 export interface AgentLoopQueueOptions extends Omit<ChatQueueOptions, 'handler' | 'config'> {
@@ -185,7 +186,11 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
                 : result.kind === 'cancelled'
                   ? 'interrupted'
                   : 'failed';
-        return { outcome, result };
+        return {
+          outcome,
+          result,
+          ...(prepared.authorLabels?.length ? { authorLabels: prepared.authorLabels } : {}),
+        };
       }
     },
   });
