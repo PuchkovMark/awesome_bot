@@ -5,9 +5,78 @@ import { openStorage } from '../../src/storage/index';
 import { scopeFor } from '../helpers/connection-scope';
 import { storageFixture } from '../helpers/storage-fixture';
 import { catalogAdministration } from '../../src/storage/catalog-admin';
-import { contextCapabilities } from '../helpers/context';
+import { contextCapabilities, contextFixture } from '../helpers/context';
 import { createContextBuilder } from '../../src/core/context/index';
-import { recordQueueLoad } from '../helpers/queue-load-fixture';
+import { recordQueueLoad, summarizeDurations } from '../helpers/queue-load-fixture';
+
+const nowMs = Date.parse('2026-11-23T00:00:00Z');
+
+test.each([false, true])('замер подготовки истории, беседа=%s', async (isGroupChat) => {
+  const warmupRuns = 5;
+  const measuredRuns = 30;
+  const modelContextTokens = 64000;
+  for (const historySize of [5, 50, 100]) {
+    const fixture = await contextFixture();
+    try {
+      const historyIds: number[] = [];
+      for (let index = 0; index < historySize; index++) {
+        const row = await fixture.put(`history-${index}`, 'Короткая предыдущая реплика.');
+        historyIds.push(row.id);
+      }
+      const trigger = await fixture.put('trigger', 'Что было раньше?');
+      const work = fixture.work(trigger.id, isGroupChat);
+      for (const limited of [false, true]) {
+        const inputBudgetTokens = limited ? (isGroupChat ? 1788 : 1992) : 32000;
+        const selectedHistory = limited ? 3 : historySize;
+        const builder = createContextBuilder({
+          ...fixture.options,
+          config: { modelContextTokens, inputBudgetTokens },
+          now: () => nowMs,
+        });
+        const expected = await builder.prepare(work);
+        if (expected.kind !== 'ready') throw Error(`Исход подготовки: ${expected.kind}`);
+        expect(expected.metadata.messageIds).toEqual([
+          ...historyIds.slice(-selectedHistory),
+          trigger.id,
+        ]);
+        const snapshot = JSON.stringify(expected);
+        for (let series = 1; series <= 3; series++) {
+          globalThis.gc?.();
+          const samplesMs: number[] = [];
+          for (let run = 0; run < warmupRuns + measuredRuns; run++) {
+            const start = performance.now();
+            const result = await builder.prepare(work);
+            const elapsedMs = performance.now() - start;
+            if (result.kind !== 'ready') throw Error(`Исход подготовки: ${result.kind}`);
+            expect(JSON.stringify(result)).toBe(snapshot);
+            if (run >= warmupRuns) samplesMs.push(elapsedMs);
+            // На исходной версии это ограничивает накопление экземпляров Intl между вызовами.
+            globalThis.gc?.();
+          }
+          await recordQueueLoad({
+            benchmark: 'contextPreparation',
+            revision: process.env.AWESOME_CONTEXT_BENCHMARK_REVISION ?? 'working-tree',
+            node: process.version,
+            nowMs,
+            isGroupChat,
+            historySize,
+            selectedHistory,
+            inputBudgetTokens,
+            modelContextTokens,
+            gcOutsideMeasurement: !!globalThis.gc,
+            series,
+            warmupRuns,
+            measuredRuns,
+            ...summarizeDurations(samplesMs),
+          });
+        }
+      }
+    } finally {
+      await fixture.storage.close();
+    }
+  }
+});
+
 test('50000 записей: индекс, ограниченные SQL-проекции и срок подготовки', async () => {
   const f = storageFixture(),
     s = await openStorage(f.path),
@@ -66,6 +135,7 @@ test('50000 записей: индекс, ограниченные SQL-прое�
       config: { modelContextTokens: 16000 },
       capabilities: async () => contextCapabilities(scope.chatId),
       sessionId: () => 'opaque',
+      now: () => nowMs,
     });
     const start = performance.now();
     const result = await builder.prepare({

@@ -46,3 +46,12 @@ export async function recordQueueLoad(result: Record<string, unknown>) {
     JSON.stringify({ at: Date.now(), ...result }) + '\n',
   );
 }
+
+export function summarizeDurations(samplesMs: readonly number[]) {
+  const sorted = [...samplesMs].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return {
+    medianMs: (sorted[Math.ceil(sorted.length / 2) - 1]! + sorted[middle]!) / 2,
+    p95Ms: sorted[Math.ceil(sorted.length * 0.95) - 1]!,
+  };
+}
