@@ -2,6 +2,9 @@ import Database from 'better-sqlite3';
 import { expect, test } from 'vitest';
 import { migrate } from '../src/storage/migrate';
 const tables = [
+  'questionnaire_revisions',
+  'questionnaire_editor_prompts',
+  'questionnaire_default_boundary',
   'chat_passport_sections',
   'chat_passport_prompts',
   'profile_command_lists',

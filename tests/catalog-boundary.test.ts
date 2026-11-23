@@ -166,6 +166,7 @@ test.each([
   'greeting-store.ts',
   'profile-command-store.ts',
   'chat-passport-store.ts',
+  'questionnaire-store.ts',
 ])('инфраструктура %s недоступна через транзитивный импорт', (module) => {
   const f = fixture();
   try {

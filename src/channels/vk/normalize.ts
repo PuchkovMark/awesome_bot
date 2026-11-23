@@ -103,6 +103,12 @@ export function isVkGroupChat(peerId: number): boolean {
   return peerId >= chatPeerStart;
 }
 
+export function isVkGroupChatId(chatId: string): boolean {
+  if (!chatId.startsWith('vk:')) return false;
+  const id = vkId(Number(chatId.slice(3)));
+  return id !== undefined && chatId === `vk:${id}` && isVkGroupChat(id);
+}
+
 export function vkChatId(peerId: number): `vk:${number}` {
   return `vk:${peerId}`;
 }

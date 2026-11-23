@@ -1,3 +1,4 @@
+import type { QuestionnaireReply, QuestionnaireReplyResult } from './questionnaire-types';
 import type { PassportReply, PassportReplyResult } from './chat-passport-types';
 import type { ProfileCommandEdit, ProfileCommandEditResult } from './profile-command-types';
 import { selectOwnProfile } from './profile-fact-selection';
@@ -36,6 +37,12 @@ export function createScopedStorage(
     input: PassportReply,
     now: number,
   ) => PassportReplyResult,
+  replaceQuestionnaire: (
+    scope: ConnectionScope,
+    actor: UserId,
+    input: QuestionnaireReply,
+    now: number,
+  ) => QuestionnaireReplyResult,
 ): Omit<ScopedStorage, 'traces'> {
   const messages = createMessageStore(connection),
     chats = createChatStore(connection),
@@ -102,6 +109,12 @@ export function createScopedStorage(
             callback(
               Object.freeze<ScopedAuthorizationTransaction>({
                 ...tx,
+                applyQuestionnaireReply(actorId, input, now) {
+                  tx.revision();
+                  if (!tx.claimControlMessage(actorId, input.eventId))
+                    return { status: 'duplicate' };
+                  return replaceQuestionnaire(scope, actorId, input, now);
+                },
                 applyPassportReply(actorId, input, now) {
                   tx.revision();
                   if (!tx.claimControlMessage(actorId, input.eventId)) return 'duplicate';

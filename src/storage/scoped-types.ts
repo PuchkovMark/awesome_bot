@@ -1,3 +1,4 @@
+import type { QuestionnaireReply, QuestionnaireReplyResult } from './questionnaire-types';
 import type { PassportReply, PassportReplyResult } from './chat-passport-types';
 import type { ProfileCommandEdit, ProfileCommandEditResult } from './profile-command-types';
 import type { VersionStore } from './version-types';
@@ -23,6 +24,11 @@ import type {
 } from './participant-types';
 
 export interface ScopedAuthorizationTransaction extends AuthorizationTransaction {
+  applyQuestionnaireReply(
+    actorId: UserId,
+    input: QuestionnaireReply,
+    now: number,
+  ): QuestionnaireReplyResult;
   applyPassportReply(actorId: UserId, input: PassportReply, now: number): PassportReplyResult;
   editOwnProfile(actorId: UserId, input: ProfileCommandEdit, now: number): ProfileCommandEditResult;
   readOwnProfile(actorId: UserId, now: number): readonly OwnProfileFact[];

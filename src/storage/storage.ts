@@ -1,3 +1,7 @@
+import { isVkGroupChatId } from '../channels/vk/normalize';
+import { vkMessageLength } from '../channels/vk/outbound-text';
+import { legacyQuestionnaire } from '../core/questionnaires/legacy-template';
+import { createQuestionnaireStore, registerQuestionnaires } from './questionnaire-store';
 import { createChatPassportStore, registerChatPassport } from './chat-passport-store';
 import { createProfileCommandStore, registerProfileCommands } from './profile-command-store';
 import { createGreetingStore, registerGreetings } from './greeting-store';
@@ -62,6 +66,11 @@ export async function openStorage(
       profileFacts.writePrivateFact,
     );
     const passport = createChatPassportStore(connection, backend);
+    const questionnaires = createQuestionnaireStore(connection, backend, {
+      builtIn: legacyQuestionnaire,
+      supports: isVkGroupChatId,
+      maxBytes: vkMessageLength.value,
+    });
     const storage: Storage = {
       ...createScopedStorage(
         connection,
@@ -71,6 +80,7 @@ export async function openStorage(
         profileFacts,
         profileCommands.edit,
         passport.apply,
+        questionnaires.replace,
       ),
       traces: {
         async get(scope, id) {
@@ -89,6 +99,7 @@ export async function openStorage(
     registerProfileInference(storage, profileFacts);
     registerProfileCommands(storage, profileCommands);
     registerChatPassport(storage, passport);
+    registerQuestionnaires(storage, questionnaires);
     registerAddressPreferences(storage, createAddressPreferenceStore(privacy));
     registerParticipantRegistry(storage, createParticipantRegistry(connection, backend));
     registerReminders(storage, createReminderStore(connection, backend));

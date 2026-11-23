@@ -114,6 +114,7 @@ export function checkCatalogBoundary(root = process.cwd()) {
           ['greeting-store.ts', 'registerGreetings'],
           ['profile-command-store.ts', 'registerProfileCommands'],
           ['chat-passport-store.ts', 'registerChatPassport'],
+          ['questionnaire-store.ts', 'registerQuestionnaires'],
         ]) {
           if (p === resolve(root, 'src/storage/' + moduleName)) {
             const parent = node.parent;
@@ -145,7 +146,9 @@ export function checkCatalogBoundary(root = process.cwd()) {
                   (moduleName === 'profile-command-store.ts' &&
                     (e.propertyName ?? e.name).text === 'createProfileCommandStore') ||
                   (moduleName === 'chat-passport-store.ts' &&
-                    (e.propertyName ?? e.name).text === 'createChatPassportStore'),
+                    (e.propertyName ?? e.name).text === 'createChatPassportStore') ||
+                  (moduleName === 'questionnaire-store.ts' &&
+                    (e.propertyName ?? e.name).text === 'createQuestionnaireStore'),
               );
             const registryType =
               moduleName === 'queue-store.ts' &&

@@ -40,6 +40,11 @@ export function reconcileStagedPersonalData(staged: Database, newer: Database, n
       staged.prepare('DELETE FROM profile_command_lists').run();
       staged
         .prepare(
+          'UPDATE questionnaire_editor_prompts SET actor_id=NULL,shown_revision=NULL WHERE actor_id IS NOT NULL',
+        )
+        .run();
+      staged
+        .prepare(
           'UPDATE chat_passport_prompts SET actor_id=NULL,action=NULL,revision=NULL,expires_at=NULL WHERE actor_id IS NOT NULL',
         )
         .run();

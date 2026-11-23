@@ -89,6 +89,12 @@ export function readPersonalExport(
         WHERE w.chat_id=? AND w.generation=? AND g.user_id=? ORDER BY g.confirmed_at,w.id`,
         )
         .all(chat, generation, user),
+      questionnairePrompts: db
+        .prepare(
+          `SELECT shown_revision FROM questionnaire_editor_prompts
+        WHERE chat_id=? AND generation=? AND actor_id=? ORDER BY message_id`,
+        )
+        .all(chat, generation, user),
       passportPrompts: db
         .prepare(
           `SELECT section,action,revision,expires_at

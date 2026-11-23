@@ -1,3 +1,4 @@
+import { questionnaireTemplate } from './035-questionnaire-template';
 import { chatPassport } from './034-chat-passport';
 import { profileCommands } from './032-profile-commands';
 import { questionnaireInvitations } from './033-questionnaire-invitations';
@@ -72,4 +73,5 @@ export const migrations: readonly Migration[] = [
   profileCommands,
   questionnaireInvitations,
   chatPassport,
+  questionnaireTemplate,
 ];

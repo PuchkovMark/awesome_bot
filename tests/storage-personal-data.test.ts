@@ -225,7 +225,7 @@ test('перечень источников F5.8 охватывает табли
     migrate(db);
     const categories = {
       personal:
-        'chat_participants participant_profiles profile_facts chat_author_labels messages request_quota_admissions chat_control_commands history_clear_requests personal_profile_choices personal_exports address_preferences greeting_candidates greeting_members profile_command_lists profile_command_positions profile_command_parts chat_passport_prompts',
+        'chat_participants participant_profiles profile_facts chat_author_labels messages request_quota_admissions chat_control_commands history_clear_requests personal_profile_choices personal_exports address_preferences greeting_candidates greeting_members profile_command_lists profile_command_positions profile_command_parts chat_passport_prompts questionnaire_editor_prompts',
       dependent:
         'messages_fts messages_fts_config messages_fts_data messages_fts_docsize messages_fts_idx personal_answer_sources tool_answer_subjects greeting_windows queue_jobs response_traces mention_flood_inputs autonomous_questions autonomous_reply_parts',
       authority:
@@ -235,7 +235,7 @@ test('перечень источников F5.8 охватывает табли
       erasureAndReplay:
         'personal_deletions personal_hidden_messages history_deleted_inputs participant_events profile_command_events profile_fact_rejections',
       sharedSettingsAndUsage:
-        'chats chat_connections lifecycle_clock chat_token_budgets token_budget_attempts response_rate_clock response_rate_publications mention_flood_state history_retention_policy history_retention_boundaries autonomous_quota_reservations chat_controls disclosure_versions disclosure_publications connection_membership_signals notice_periods queue_turns queue_lease global_content_versions local_content_versions chat_content_selections global_prompt_selection bot_admin_controls participant_sync chat_passport_sections schema_migrations sqlite_sequence',
+        'chats chat_connections lifecycle_clock chat_token_budgets token_budget_attempts response_rate_clock response_rate_publications mention_flood_state history_retention_policy history_retention_boundaries autonomous_quota_reservations chat_controls disclosure_versions disclosure_publications connection_membership_signals notice_periods queue_turns queue_lease global_content_versions local_content_versions chat_content_selections global_prompt_selection bot_admin_controls participant_sync chat_passport_sections questionnaire_revisions questionnaire_default_boundary schema_migrations sqlite_sequence',
     };
     const actual = db
       .prepare("SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name")

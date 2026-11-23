@@ -1,3 +1,7 @@
+import type {
+  QuestionnaireReply,
+  QuestionnaireReplyResult,
+} from '../../storage/questionnaire-types';
 import type { PassportReply, PassportReplyResult } from '../../storage/chat-passport-types';
 import type {
   ProfileCommandEdit,
@@ -125,6 +129,23 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
       return guarded(context, action, subjectId, () => ({ allowed: true, value: undefined }), {
         allowInitialOwnerSettings: action === 'usage.read' || action === 'usage.configure',
       });
+    },
+    async applyQuestionnaireReply(
+      context: AuthorizationContext,
+      input: QuestionnaireReply,
+      current: () => boolean,
+    ) {
+      if (disposed || !authority.contains(context)) return deny('invalid_context');
+      if (context.kind !== 'chat') return deny('wrong_scope');
+      return guarded<QuestionnaireReplyResult>(
+        context,
+        'chat.onboarding.configure',
+        undefined,
+        (tx) => {
+          if (!tx.controlState().enabled || !current()) return deny('conflict');
+          return { allowed: true, value: tx.applyQuestionnaireReply(context.userId, input, now()) };
+        },
+      );
     },
     async applyPassportReply(
       context: AuthorizationContext,
