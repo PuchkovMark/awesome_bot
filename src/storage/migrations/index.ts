@@ -1,4 +1,6 @@
+import { participantRegistry } from './026-participant-registry';
 import { personalReminders } from './024-personal-reminders';
+import { personalData } from './025-personal-data';
 import { autonomousReplies } from './023-autonomous-replies';
 import { chatAuthorLabels } from './022-chat-author-labels';
 import { connectionPauseReason } from './021-connection-pause-reason';
@@ -52,4 +54,6 @@ export const migrations: readonly Migration[] = [
   chatAuthorLabels,
   autonomousReplies,
   personalReminders,
+  personalData,
+  participantRegistry,
 ];

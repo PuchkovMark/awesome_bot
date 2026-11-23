@@ -1,3 +1,4 @@
+import { personalDataStore } from '../../storage/personal-data-store';
 import { isRateLimitedNotice } from '../../storage/notice-types';
 import type { ConnectionScope, PublishedPart } from '../../contracts/index';
 import type { Storage } from '../../storage/index';
@@ -295,21 +296,31 @@ export function createPublicationService(options: {
             (part.replyToMessageId !== replyToMessageId || (!samePart && parts.size > 0))
           )
             throw new Error('Publication: invalid reply');
-          if (permit) {
-            if (
-              part.replyToMessageId !== replyToMessageId ||
-              replyToMessageId === undefined ||
-              (!samePart && parts.size > 0)
-            )
-              throw new Error('Publication: invalid notice');
-            notices.confirm(scope, permit, receipt, part.text, isCurrent);
-          } else if (route.kind === 'initiative') {
-            if (!meter || !budget?.confirmInitiative)
-              throw new Error('Publication: missing initiative admission');
-            budget.confirmInitiative(meter, receipt, part.text, part.replyToMessageId, isCurrent);
-          } else {
-            notices.recordAnswer(scope, receipt, part.text, part.replyToMessageId, isCurrent);
-          }
+          lifecycle.transaction(scope, (db) => {
+            if (permit) {
+              if (
+                part.replyToMessageId !== replyToMessageId ||
+                replyToMessageId === undefined ||
+                (!samePart && parts.size > 0)
+              )
+                throw new Error('Publication: invalid notice');
+              notices.confirm(scope, permit, receipt, part.text, isCurrent);
+            } else if (route.kind === 'initiative') {
+              if (!meter || !budget?.confirmInitiative)
+                throw new Error('Publication: missing initiative admission');
+              budget.confirmInitiative(meter, receipt, part.text, part.replyToMessageId, isCurrent);
+            } else {
+              notices.recordAnswer(scope, receipt, part.text, part.replyToMessageId, isCurrent);
+            }
+            if (!permit) {
+              const ids =
+                (!withoutJob && traces.get(scope, jobId)?.payload.context?.messageIds) || [];
+              personalDataStore(options.storage).recordAnswerSources(db, scope, messageId, [
+                work.messageId,
+                ...ids,
+              ]);
+            }
+          });
           parts.add(messageId);
         } catch {
           journalFailed = true;

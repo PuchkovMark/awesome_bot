@@ -2,10 +2,18 @@ import Database from 'better-sqlite3';
 import { expect, test } from 'vitest';
 import { migrate } from '../src/storage/migrate';
 const tables = [
+  'participant_sync',
+  'participant_events',
   'personal_reminder_timezones',
   'personal_reminders',
   'personal_reminder_inputs',
   'personal_reminder_parts',
+  'personal_profile_choices',
+  'personal_deletions',
+  'personal_exports',
+  'personal_retained_denials',
+  'personal_hidden_messages',
+  'personal_answer_sources',
   'autonomous_reply_parts',
   'autonomous_questions',
   'chat_author_labels',
@@ -58,6 +66,8 @@ const tables = [
   'sqlite_sequence',
 ];
 const others = [
+  'personal_visible_messages',
+  'active_admin_denials',
   'personal_reminders_scope',
   'personal_reminders_due',
   'personal_reminders_expiry',

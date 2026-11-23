@@ -160,6 +160,7 @@ test.each([
   'lifecycle-store.ts',
   'autonomous-questions.ts',
   'reminder-store.ts',
+  'participant-registry.ts',
 ])('инфраструктура %s недоступна через транзитивный импорт', (module) => {
   const f = fixture();
   try {

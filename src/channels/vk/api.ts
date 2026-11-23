@@ -1,5 +1,5 @@
-import { API, APIRequest } from 'vk-io';
-import type { HumanMembership, KnownBoolean } from '../../contracts/index';
+import { API, APIRequest, Upload } from 'vk-io';
+import type { HumanMember, HumanMembership, KnownBoolean } from '../../contracts/index';
 import { isVkGroupChat, vkId, vkRecord } from './normalize';
 import type { VkEnrichment, VkIncoming } from './normalize';
 import { createVkRateLimiter, VkRequestCancelled, waitForVkRetry } from './rate-limit';
@@ -101,9 +101,9 @@ export async function readVkHumanMembership(
   const incomplete = { complete: false } as const;
   if (!isVkGroupChat(peer)) return incomplete;
   const count = 1000;
-  const members = new Set<number>();
+  const seen = new Set<number>();
+  const members: HumanMember[] = [];
   let total: number | undefined;
-  let people = 0;
   try {
     for (let offset = 0; ;) {
       if (guard.signal?.aborted || guard.isCurrent?.() === false) return incomplete;
@@ -121,16 +121,23 @@ export async function readVkHumanMembership(
       )
         return incomplete;
       total = page.count;
+      if (offset + page.items.length > total) return incomplete;
       for (const entry of page.items) {
-        const member = vkId(vkRecord(entry)?.member_id);
-        if (member === undefined) return incomplete;
-        if (!members.has(member)) {
-          members.add(member);
-          if (member > 0) people++;
-        }
+        const row = vkRecord(entry);
+        const member = vkId(row?.member_id);
+        if (member === undefined || seen.has(member)) return incomplete;
+        seen.add(member);
+        if (member < 0) continue;
+        const role =
+          row?.is_owner === true || row?.is_admin === true
+            ? 'admin'
+            : row?.is_admin === false
+              ? 'member'
+              : 'unknown';
+        members.push({ userId: `vk:${member}`, role });
       }
       offset += page.items.length;
-      if (offset >= total) return members.size === total ? { complete: true, people } : incomplete;
+      if (offset === total) return { complete: true, people: members.length, members };
       if (page.items.length === 0) return incomplete;
     }
   } catch {
@@ -344,14 +351,28 @@ export function createVkApi(groupId: number, call: VkApiCall, signal?: AbortSign
   });
 }
 
-export type VkApi = ReturnType<typeof createVkApi>;
+export type VkApi = ReturnType<typeof createVkApi> & {
+  uploadPrivateDocument?: (peer: number, data: Buffer) => Promise<string>;
+};
 export type VkInboundApi = Pick<VkApi, 'getLongPollServer' | 'enrich'>;
 
 export function createVkSdkApi(groupId: number, token: string, signal?: AbortSignal): VkApi {
   const sdk = new API({ token, apiBaseUrl: 'https://api.vk.ru/method', apiVersion: '5.199' });
-  return createVkApi(
+  const client = createVkApi(
     groupId,
     createVkApiCall((method, params) => new APIRequest({ api: sdk, method, params }).make()),
     signal,
   );
+  const upload = new Upload({ api: sdk });
+  return {
+    ...client,
+    async uploadPrivateDocument(peer, data) {
+      const doc = await upload.messageDocument({
+        peer_id: peer,
+        title: 'Мои данные',
+        source: { value: data, filename: 'my-data.json', contentType: 'application/json' },
+      });
+      return doc.toString();
+    },
+  };
 }

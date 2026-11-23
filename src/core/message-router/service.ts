@@ -98,9 +98,7 @@ export function createMessageRouter(options: RouterOptions) {
         userId: message.userId,
         authorName: message.authorName,
         isGroupChat: message.isGroupChat,
-        ...(options.queue.autonomousReplies && message.isGroupChat
-          ? { senderBot: message.isBot }
-          : {}),
+        ...(message.isGroupChat ? { senderBot: message.isBot } : {}),
         role: 'user' as const,
         attachmentCount: message.attachments.length,
         text: message.text,

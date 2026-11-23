@@ -1,8 +1,8 @@
-import type { ChatId, UserId, Timestamp, PlatformMessageId } from '../contracts/index';
+import type { ChatId, HumanMember, UserId, Timestamp, PlatformMessageId } from '../contracts/index';
 
 /** Сохранённые платформенные сведения, не роль и не разрешение харнеса. */
-export type ParticipantRole = 'member' | 'admin' | 'unknown';
-export type ParticipantStatus = 'present' | 'left' | 'removed' | 'unknown';
+export type ParticipantRole = HumanMember['role'];
+export type ParticipantStatus = 'present' | 'left' | 'removed' | 'absent' | 'unknown';
 export type FactSourceKind = 'self' | 'inferred' | 'admin';
 /** Метка записи, не доказательство истинности и не приоритет источника. */
 export type FactReliability = 'unknown' | 'unverified' | 'confirmed';

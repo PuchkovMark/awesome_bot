@@ -65,7 +65,7 @@ export function createContextReader(
         const row = db
           .prepare(
             `SELECT ${columns},m.text,m.author_name AS authorName,a.author_number AS authorNumber
-            FROM messages m ${authorJoin} WHERE ${visible} AND m.id=?`,
+            FROM personal_visible_messages m ${authorJoin} WHERE ${visible} AND m.id=?`,
           )
           .get(scope.generation, scope.chatId, bounds.clearedThrough, bounds.expiredThrough, id) as
           MessageRow | undefined;
@@ -84,7 +84,7 @@ export function createContextReader(
         const bounds = historyBounds(db, scope.chatId);
         const rows = db
           .prepare(
-            `SELECT ${projection},a.author_number AS authorNumber FROM messages m ${authorJoin}
+            `SELECT ${projection},a.author_number AS authorNumber FROM personal_visible_messages m ${authorJoin}
             WHERE ${visible} AND m.id<=? AND m.id<? ORDER BY m.id DESC LIMIT ?`,
           )
           .all(
@@ -109,7 +109,7 @@ export function createContextReader(
         const bounds = historyBounds(db, scope.chatId);
         const row = db
           .prepare(
-            `SELECT ${projection},a.author_number AS authorNumber FROM messages m ${authorJoin}
+            `SELECT ${projection},a.author_number AS authorNumber FROM personal_visible_messages m ${authorJoin}
             WHERE ${visible} AND m.platform_message_id=? AND m.id<=?`,
           )
           .get(
@@ -134,8 +134,8 @@ export function createContextReader(
         const phrase = '"' + query.replaceAll('"', '""') + '"';
         const rows = db
           .prepare(
-            `SELECT ${projection},NULL AS authorNumber FROM messages m WHERE m.id IN (
-     SELECT messages_fts.rowid FROM messages_fts JOIN messages m ON m.id=messages_fts.rowid
+            `SELECT ${projection},NULL AS authorNumber FROM personal_visible_messages m WHERE m.id IN (
+     SELECT messages_fts.rowid FROM messages_fts JOIN personal_visible_messages m ON m.id=messages_fts.rowid
      WHERE messages_fts MATCH ? AND m.chat_id=? AND m.purpose='conversation' AND m.id>? AND m.timestamp>?
      ORDER BY messages_fts.rowid DESC LIMIT ?
    ) ORDER BY m.id DESC`,

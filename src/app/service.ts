@@ -1,3 +1,5 @@
+import { createPersonalCommands, groupPersonalCommand } from './personal-data';
+import { personalDataStore } from '../storage/personal-data-store';
 import { createVkChannel } from '../channels/index';
 import type { ApplicationConfig } from '../config/application';
 import {
@@ -35,6 +37,8 @@ import type { ChatLimits } from '../core/chat-limits/config';
 import { createTokenBudgetMembership } from '../core/chat-limits/token-budget-membership';
 import { createUsageCommand, isUsageCommand } from './token-budget';
 import { createPausedChatCommands } from './paused-chats';
+import { participantRegistryStore } from '../storage/participant-registry';
+import { createParticipantSync } from './participant-sync';
 import { createReminderHandlers } from './reminders';
 import { parseReminderCommand } from '../core/reminders/commands';
 
@@ -46,6 +50,8 @@ interface ApplicationDependencies {
   readonly onboardingIntervalMs?: number;
   readonly administrationIntervalMs?: number;
   readonly reminderIntervalMs?: number;
+  readonly membershipScanMs?: number;
+  readonly membershipStaggerMs?: number;
   readonly chatLimits?: Partial<ChatLimits>;
 }
 
@@ -66,6 +72,7 @@ export async function runApplication(
   let poll: Promise<void> | undefined;
   let introductionWork: Promise<void> | undefined;
   let administrationWork: Promise<void> | undefined;
+  let membershipWork: Promise<void> | undefined;
   let reminderWork: Promise<void> | undefined;
   let readyTimer: ReturnType<typeof setTimeout> | undefined;
   let stopTimer: ReturnType<typeof setTimeout> | undefined;
@@ -109,9 +116,13 @@ export async function runApplication(
           },
         },
       });
+      const privacy = personalDataStore(storage);
+      privacy.purgeExpired(Date.now());
+      privacy.cleanup(Date.now());
       const controls = chatControlStore(storage);
       let ready = false;
-      const checkedMembership = new Map<ConnectionScope['chatId'], ConnectionScope>();
+      const registry = participantRegistryStore(storage);
+      const adminStore = adminRecoveryStore(storage);
       const channel = createVkChannel(
         {
           ...config.vk,
@@ -136,7 +147,16 @@ export async function runApplication(
               return () => ({ journal: false, respond: false, version: null, ordinary: false });
             }
           },
-          onMembershipChanged: refreshBudgetMembership,
+          capturePrivateDisclosure: (scope) =>
+            onboarding.configuredForProfiles() ? onboarding.capture(scope) : undefined,
+          notifyPrivate: async (scope, current) => {
+            if (!onboarding.configuredForProfiles()) return true;
+            if (onboarding.privatePending(scope)) await onboarding.notifyPrivate(scope, current);
+            return !onboarding.privatePending(scope) && current();
+          },
+          async onMembershipChanged(scope, event, identity) {
+            if (registry.observe(scope, event, identity)) membership.request(scope);
+          },
           verifyFirstPrivate(message) {
             return (
               message.peerId > 0 &&
@@ -144,7 +164,7 @@ export async function runApplication(
               message.authorId === message.peerId &&
               !message.hasReply &&
               !message.hasForwarded &&
-              !!parseReminderCommand(message.text, false)
+              (onboarding.configuredForProfiles() || !!parseReminderCommand(message.text, false))
             );
           },
           onReady() {
@@ -153,6 +173,7 @@ export async function runApplication(
             clearTimeout(readyTimer);
             logger.event({ event: 'application_ready' }, 'info');
             introductionWork = onboarding.run().catch(() => stop('vk_failed'));
+            membershipWork = membership.run().catch(() => stop('storage_failed'));
             administrationWork = checkAdministration().catch(() => stop('vk_failed'));
             reminderWork = deliverReminders().catch(() => stop('storage_failed'));
           },
@@ -175,28 +196,28 @@ export async function runApplication(
         const local = vkLocalId(chatId);
         return local !== undefined && isVkGroupChat(local);
       };
-      const observeBudgetMembership = createTokenBudgetMembership(storage, channel.humanMembership);
-      async function refreshBudgetMembership(scope: ConnectionScope) {
-        if (!group(scope.chatId)) return;
-        const current = () => !signal.aborted && lifecycle.isAdmissionCurrent(scope);
-        if (await observeBudgetMembership(scope, signal, current)) {
-          checkedMembership.set(scope.chatId, scope);
-        }
-      }
+      const membership = createParticipantSync({
+        signal,
+        activeGroups: () => lifecycle.activeChatIds('vk').filter(group),
+        scopeFor: lifecycle.admissionScope,
+        isCurrent: lifecycle.isAdmissionCurrent,
+        refresh: createTokenBudgetMembership(storage, channel.humanMembership),
+        scanMs: dependencies.membershipScanMs ?? dependencies.administrationIntervalMs ?? 1_000,
+        staggerMs: dependencies.membershipStaggerMs ?? 5 * 60_000,
+      });
       async function checkAdministration() {
         while (!signal.aborted) {
-          const active = new Set(lifecycle.activeChatIds('vk').filter(group));
-          for (const chatId of checkedMembership.keys()) {
-            if (!active.has(chatId)) checkedMembership.delete(chatId);
+          const moreProfiles = privacy.purgeExpired(Date.now()) === 100;
+          const moreMessages = privacy.cleanup(Date.now()) === 100;
+          if (moreProfiles || moreMessages) {
+            await delay(0);
+            continue;
           }
-          for (const chatId of active) {
+          for (const chatId of lifecycle.activeChatIds('vk').filter(group)) {
             if (signal.aborted) return;
             try {
               const scope = lifecycle.admissionScope(chatId);
-              const checked = checkedMembership.get(chatId);
-              if (!checked || !lifecycle.isAdmissionCurrent(checked)) {
-                await refreshBudgetMembership(scope);
-              }
+              const role = adminStore.communityRole(chatId);
               const guard = {
                 signal,
                 isCurrent: () => !signal.aborted && lifecycle.isAdmissionCurrent(scope),
@@ -204,6 +225,10 @@ export async function runApplication(
               await lifecycle.refreshAdministration(scope, (input) =>
                 channel.administrationEvidence.observe(scope, input, guard),
               );
+              if (role !== true && adminStore.communityRole(chatId) === true) {
+                const active = lifecycle.admissionScope(chatId);
+                if (registry.lastAttemptIncomplete(active)) membership.request(active);
+              }
             } catch {
               /* Подключение и сведения будут проверены в следующем цикле. */
             }
@@ -229,7 +254,12 @@ export async function runApplication(
           : { intervalMs: dependencies.onboardingIntervalMs }),
       });
       function checkDisclosure(work: { scope: ConnectionScope; disclosureVersion?: number }) {
-        if (!group(work.scope.chatId)) return undefined;
+        if (
+          !group(work.scope.chatId) &&
+          !onboarding.configuredForProfiles() &&
+          work.disclosureVersion === undefined
+        )
+          return undefined;
         const version = work.disclosureVersion ?? null;
         const current = onboarding.gate(work.scope);
         return { version, allowed: version !== null && current.version === version };
@@ -336,6 +366,16 @@ export async function runApplication(
         signal,
         budget: createTokenBudgetAdministration({ storage, authorization, isGroupChat: group }),
       });
+      const personal = createPersonalCommands({
+        privacy,
+        channel,
+        lifecycle,
+        onboarding,
+        signal,
+        ownerId,
+        authorization,
+        storage,
+      });
       const pausedChats = createPausedChatCommands({ channel, lifecycle, ownerId, signal });
       const router = createMessageRouter({
         storage,
@@ -353,6 +393,7 @@ export async function runApplication(
           (isUsageCommand(message.text)
             ? ({ action: 'usage.read', minimumRole: 'owner' } as const)
             : null) ??
+          groupPersonalCommand(message) ??
           history.recognize(message) ??
           chatControl.recognize(message, replyToOther) ??
           reminders.recognize(message) ??
@@ -364,6 +405,22 @@ export async function runApplication(
         identity: (scope, message) =>
           commandAuthorization.context({ scope, userId: message.userId }),
         async executeCommand(context, message, isCurrent, replayOnly) {
+          if (groupPersonalCommand(message)) {
+            const peerId = vkLocalId(context.scope.chatId),
+              authorId = vkLocalId(context.userId);
+            if (peerId !== undefined && authorId !== undefined)
+              await personal(
+                {
+                  peerId,
+                  authorId,
+                  text: message.text,
+                  cmid: Number(message.messageId),
+                  reply: undefined,
+                },
+                () => isCurrent() && lifecycle.isAdmissionCurrent(context.scope),
+              );
+            return;
+          }
           if (history.recognize(message))
             return history.execute(context, message, isCurrent, replayOnly);
           if (reminders.recognize(message))
@@ -381,6 +438,8 @@ export async function runApplication(
             lifecycle.observeAdminMembership(scope, userId, present, messageId, at);
           },
           command(message, isCurrent) {
+            const personalAction = !isVkGroupChat(message.peerId) && personal(message, isCurrent);
+            if (personalAction) return personalAction;
             const command = parseAdminRecoveryCommand(message.text);
             if (!command)
               return (
@@ -421,6 +480,7 @@ export async function runApplication(
       poll,
       introductionWork,
       administrationWork,
+      membershipWork,
       reminderWork,
       ...typing,
       ...floodPublications,

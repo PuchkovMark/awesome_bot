@@ -263,7 +263,11 @@ test('изменение обоих лимитов доступно владел
       expect(administration.overview(context.userId).allowed).toBe(false);
     }
     const store = tokenBudgetStore(storage);
-    store.confirmPeople(scope, store.beginObservation(scope), 5);
+    store.finishObservation(scope, store.beginObservation(scope), {
+      complete: true,
+      people: 5,
+      members: Array.from({ length: 5 }, (_, i) => ({ userId: `vk:${i + 1}`, role: 'unknown' })),
+    });
     expect(
       store.reserve(scope, true, { key: 'i', purpose: 'initiative', input: 15, output: 7 }, at),
     ).toBe(true);

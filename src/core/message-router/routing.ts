@@ -19,7 +19,9 @@ export function routeMessage(input: RoutingInput): RoutingDecision {
     const reminder = service.command.action === 'reminder.manage';
     const participantCommand =
       service.command.minimumRole === 'member' &&
-      (service.command.action === 'chat.pause' || reminder);
+      (service.command.action === 'chat.pause' ||
+        service.command.action === 'profile.self.manage' ||
+        reminder);
     if (
       !service.allowed ||
       (reminder &&

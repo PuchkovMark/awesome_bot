@@ -108,6 +108,7 @@ export function checkCatalogBoundary(root = process.cwd()) {
           ['notice-store.ts', 'registerNotices'],
           ['token-budget-store.ts', 'registerTokenBudgets'],
           ['reminder-store.ts', 'registerReminders'],
+          ['participant-registry.ts', 'registerParticipantRegistry'],
         ]) {
           if (p === resolve(root, 'src/storage/' + moduleName)) {
             const parent = node.parent;
@@ -127,7 +128,9 @@ export function checkCatalogBoundary(root = process.cwd()) {
                   (moduleName === 'token-budget-store.ts' &&
                     (e.propertyName ?? e.name).text === 'createTokenBudgetStore') ||
                   (moduleName === 'reminder-store.ts' &&
-                    (e.propertyName ?? e.name).text === 'createReminderStore'),
+                    (e.propertyName ?? e.name).text === 'createReminderStore') ||
+                  (moduleName === 'participant-registry.ts' &&
+                    (e.propertyName ?? e.name).text === 'createParticipantRegistry'),
               );
             const registryType =
               moduleName === 'queue-store.ts' &&
@@ -149,7 +152,21 @@ export function checkCatalogBoundary(root = process.cwd()) {
                   'TokenReservation',
                 ].includes((e.propertyName ?? e.name).text),
               );
-            if (!storageFactory && !registryType && !queueBudget) result.privileged = true;
+            const membership =
+              moduleName === 'participant-registry.ts' &&
+              bindings &&
+              ts.isNamedImports(bindings) &&
+              bindings.elements.every((element) => {
+                const name = (element.propertyName ?? element.name).text;
+                return (
+                  (file === resolve(root, 'src/storage/queue-store.ts') &&
+                    name === 'noteParticipantMessage') ||
+                  (file === resolve(root, 'src/storage/token-budget-store.ts') &&
+                    ['participantSync', 'applyParticipantSnapshot'].includes(name))
+                );
+              });
+            if (!storageFactory && !registryType && !queueBudget && !membership)
+              result.privileged = true;
           }
         }
         if (!p.split(sep).includes('node_modules')) result.edges.push(p);

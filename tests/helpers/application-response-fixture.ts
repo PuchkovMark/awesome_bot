@@ -38,6 +38,8 @@ export function until(check: () => void | Promise<void>) {
 export async function fixture(
   options: {
     limit?: number;
+    profileNotice?: string;
+    upload?: (peer: number, data: Buffer) => Promise<string>;
     threshold?: number;
     window?: number;
     hold?: boolean;
@@ -81,6 +83,7 @@ export async function fixture(
   const disclosure = disclosureStore(storage);
   const version = disclosure.register(
     {
+      ...(options.profileNotice ? { profileNotice: options.profileNotice } : {}),
       provider: 'OpenCode Go',
       dataPolicy: 'history',
       storagePolicy: 'test',
@@ -116,6 +119,7 @@ export async function fixture(
   };
   const messages = new Map<number, Message>();
   const sends: Message[] = [];
+  const filesSent: { peer: number; attachment: string }[] = [];
   let serial = 0;
   let tick = 0;
   let sendFault: ((text: string) => number | 'unknown' | undefined) | undefined;
@@ -159,6 +163,12 @@ export async function fixture(
                 .filter(Boolean),
             },
           };
+        if (method === 'messages.isMessagesFromGroupAllowed')
+          return { response: { is_allowed: 1 } };
+        if (method === 'messages.send' && args.attachment) {
+          filesSent.push({ peer: Number(args.peer_id), attachment: String(args.attachment) });
+          return { response: ++serial };
+        }
         if (method === 'messages.setActivity') return { response: 1 };
         if (method !== 'messages.send') throw new Error('Неожиданный метод тестового VK');
         const fault = sendFault?.(String(args.message));
@@ -198,7 +208,10 @@ export async function fixture(
   const stop = new AbortController();
   const complete = vi.fn<(request: LlmRequest) => Promise<LlmResult>>(async () => answer);
   const running = runApplication(config, logger, stop.signal, {
-    vk: { api, transport },
+    vk: {
+      api: { ...api, ...(options.upload ? { uploadPrivateDocument: options.upload } : {}) },
+      transport,
+    },
     client: { complete },
     onboardingIntervalMs: 5,
     chatLimits: { userRequests: options.userRequests ?? 100, chatRequests: 100, ...options.quotas },
@@ -235,6 +248,7 @@ export async function fixture(
         elapsed = ms;
       },
       sends,
+      filesSent,
       holds,
       complete,
       db,
@@ -263,9 +277,9 @@ export async function fixture(
         return result!;
       },
       close,
-      submit(text: string, from = 41, parent?: Message) {
+      submit(text: string, from = 41, parent?: Message, destination = peer) {
         const row: Message = {
-          peer_id: peer,
+          peer_id: destination,
           conversation_message_id: ++serial,
           from_id: from,
           date: Math.floor(Date.now() / 1000),

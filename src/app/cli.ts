@@ -117,7 +117,7 @@ export async function runCli(args: readonly string[], options: CliOptions = {}):
       args[1] &&
       args[2]
     ) {
-      const target = applicationGroupId(args[1]);
+      const target = applicationChatId(args[1]);
       const receipt = args[2];
       const version = args[3] === undefined ? undefined : Number(args[3]);
       if (

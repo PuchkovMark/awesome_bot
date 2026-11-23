@@ -124,7 +124,7 @@ export function createAuthorizationStore(connection: Connection): SyncAuthorizat
               isRevoked(userId: UserId) {
                 check(userId);
                 return !!db
-                  .prepare('SELECT 1 FROM bot_admin_revocations WHERE chat_id=? AND user_id=?')
+                  .prepare('SELECT 1 FROM active_admin_denials WHERE chat_id=? AND user_id=?')
                   .get(chatId, userId);
               },
               grant(grant: AdminGrant) {
@@ -175,6 +175,11 @@ export function createAuthorizationStore(connection: Connection): SyncAuthorizat
               },
               restore(userId: UserId) {
                 check(userId);
+                touch(
+                  db
+                    .prepare('DELETE FROM personal_retained_denials WHERE chat_id=? AND user_id=?')
+                    .run(chatId, userId).changes,
+                );
                 db.prepare(
                   'DELETE FROM bot_admin_revocation_audit WHERE chat_id=? AND user_id=?',
                 ).run(chatId, userId);

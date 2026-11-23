@@ -55,6 +55,11 @@ export function acceptsHistoryInput(
     message.timestamp > historyBounds(db, scope.chatId, now).expiredThrough &&
     !db
       .prepare(
+        'SELECT 1 FROM personal_deletions WHERE chat_id=? AND generation=? AND user_id=? AND confirmed_at>=? LIMIT 1',
+      )
+      .get(scope.chatId, scope.generation, message.userId, message.timestamp) &&
+    !db
+      .prepare(
         'SELECT 1 FROM history_deleted_inputs WHERE chat_id=? AND generation=? AND platform_message_id=?',
       )
       .get(scope.chatId, scope.generation, message.messageId)
@@ -70,7 +75,7 @@ export function historySourcesVisible(
   const boundary = historyBounds(db, chatId, now);
   const { count } = db
     .prepare(
-      `SELECT count(*) AS count FROM messages
+      `SELECT count(*) AS count FROM personal_visible_messages
     WHERE chat_id=? AND id>? AND timestamp>? AND id IN (SELECT value FROM json_each(?))`,
     )
     .get(chatId, boundary.clearedThrough, boundary.expiredThrough, JSON.stringify(ids)) as {

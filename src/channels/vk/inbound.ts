@@ -55,8 +55,14 @@ export interface VkInboundOptions {
   readonly token: string;
   readonly lifecycle: Lifecycle;
   readonly signal?: AbortSignal;
+  readonly capturePrivateDisclosure?: (scope: ConnectionScope) => RoutedAdmissionGuard | undefined;
+  readonly notifyPrivate?: (scope: ConnectionScope, current: () => boolean) => Promise<boolean>;
   readonly onReady?: () => void;
-  readonly onMembershipChanged?: (scope: ConnectionScope) => Promise<void>;
+  readonly onMembershipChanged?: (
+    scope: ConnectionScope,
+    event: MembershipEvent,
+    membershipMessageId?: string,
+  ) => Promise<void>;
   readonly captureDisclosure?: (scope: ConnectionScope) => RoutedAdmissionGuard;
   readonly verifyFirstPrivate?: (message: VkIncoming) => boolean;
 }
@@ -214,9 +220,14 @@ export function createVkInbound(
             }
             observeMembership(chatId);
             const scope = membershipObservations.get(chatId);
-            if (scope && options.onMembershipChanged && event.change !== 'unknown') {
+            if (
+              scope &&
+              options.onMembershipChanged &&
+              !parsed.affectsConnection &&
+              (subject === null || /^vk:[1-9]\d*$/u.test(subject))
+            ) {
               const task = options
-                .onMembershipChanged(scope)
+                .onMembershipChanged(scope, event, parsed.signalKey)
                 .catch(() => {
                   counters.failed++;
                 })
@@ -306,6 +317,13 @@ export function createVkInbound(
               counters.paused++;
               return;
             }
+            if (
+              message.authorId === message.peerId &&
+              !isVkGroupChat(message.peerId) &&
+              options.notifyPrivate &&
+              !(await options.notifyPrivate(admittedScope, isCurrent))
+            )
+              return;
             const enrichment = await api.enrich(message, { signal, isCurrent });
             if (!isCurrent()) {
               counters.paused++;
@@ -317,7 +335,10 @@ export function createVkInbound(
               normalized,
               admittedScope,
               isCurrent,
-              disclosure,
+              disclosure ??
+                (!normalized.isGroupChat
+                  ? options.capturePrivateDisclosure?.(admittedScope)
+                  : undefined),
               normalized.replyAddress === 'other' || normalized.replyAddress === 'unknown',
             );
           })

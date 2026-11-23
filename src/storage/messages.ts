@@ -50,7 +50,7 @@ function assignAuthorNumber(db: import('better-sqlite3').Database, message: Mess
   db.prepare(
     `INSERT INTO chat_author_labels(chat_id,generation,user_id,author_number)
     SELECT c.chat_id,c.generation,@userId,(
-      SELECT coalesce(max(a.author_number),0)+1 FROM chat_author_labels a
+      SELECT max(c.erased_author_number,coalesce(max(a.author_number),0))+1 FROM chat_author_labels a
       WHERE a.chat_id=c.chat_id AND a.generation=c.generation
     )
     FROM chat_connections c WHERE c.chat_id=@chatId AND NOT EXISTS (
@@ -111,7 +111,7 @@ export function createMessageStore(
         const bounds = historyBounds(db, chatId);
         const rows = db
           .prepare(
-            `SELECT ${columns} FROM messages WHERE chat_id = ? ${contextOnly ? "AND purpose='conversation'" : ''}
+            `SELECT ${columns} FROM personal_visible_messages WHERE chat_id = ? ${contextOnly ? "AND purpose='conversation'" : ''}
           AND id > ? AND timestamp > ?
           AND (? IS NULL OR timestamp >= ?) AND (? IS NULL OR timestamp < ?)
           ORDER BY timestamp DESC, id DESC LIMIT ?`,
@@ -141,7 +141,9 @@ export function readMessage(
   requireInput(Number.isSafeInteger(id) && id > 0);
   const bounds = historyBounds(db, chatId);
   const row = db
-    .prepare(`SELECT ${columns} FROM messages WHERE chat_id=? AND id=? AND id>? AND timestamp>?`)
+    .prepare(
+      `SELECT ${columns} FROM personal_visible_messages WHERE chat_id=? AND id=? AND id>? AND timestamp>?`,
+    )
     .get(chatId, id, bounds.clearedThrough, bounds.expiredThrough) as MessageRow | undefined;
   return row ? fromRow(row) : null;
 }

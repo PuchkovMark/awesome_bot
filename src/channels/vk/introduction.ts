@@ -28,8 +28,9 @@ export function createVkIntroduction(options: {
 }): IntroductionPort {
   function address(scope: ConnectionScope, target: 'chat' | 'owner'): ChatId | undefined {
     const group = vkLocalId(scope.chatId);
-    if (group === undefined || !isVkGroupChat(group)) return undefined;
+    if (group === undefined || group <= 0) return undefined;
     if (target === 'chat') return scope.chatId;
+    if (!isVkGroupChat(group)) return undefined;
     const owner = vkLocalId(options.owner);
     return owner !== undefined && owner > 0 && !isVkGroupChat(owner)
       ? (options.owner as unknown as ChatId)

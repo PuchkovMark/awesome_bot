@@ -54,7 +54,7 @@ test('все согласованные словари представимы б
     f.chat('a:c');
     let index = 0;
     for (const role of ['member', 'admin', 'unknown']) {
-      for (const status of ['present', 'left', 'removed', 'unknown']) {
+      for (const status of ['present', 'left', 'removed', 'absent', 'unknown']) {
         const user = `a:${index++}`;
         f.participant('a:c', user, {
           role,

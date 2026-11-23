@@ -1,3 +1,4 @@
+import { noteParticipantMessage } from './participant-registry';
 import {
   acceptsHistoryInput,
   applyHistoryRetention,
@@ -412,6 +413,12 @@ export function createQueueBackend(
           const appended = messages.append(snapshotMessage);
           if (appended.status === 'duplicate')
             return { status: 'duplicate', messageId: appended.id };
+          if (
+            snapshotMessage.isGroupChat &&
+            snapshotMessage.role === 'user' &&
+            snapshotMessage.senderBot === false
+          )
+            noteParticipantMessage(db, scope, snapshotMessage.userId, snapshotMessage.timestamp);
           const now = Date.now();
           const expires = now + config.maxQueueAgeMs;
           timestamp(expires);

@@ -1,3 +1,4 @@
+import { randomInt } from 'node:crypto';
 import type {
   CapabilityState,
   ChannelAdapter,
@@ -190,6 +191,39 @@ export function createVkChannel(
     administrationDelivery: options.owner
       ? createVkAdministrationDelivery(api, outbound, options.owner, options.groupId)
       : undefined,
+    async sendPersonalFile(sender: UserId, data: Buffer, guard: PublicationGuard) {
+      const peer = vkLocalId(sender);
+      if (
+        !api.uploadPrivateDocument ||
+        !peer ||
+        peer <= 0 ||
+        isVkGroupChat(peer) ||
+        !guard.isCurrent() ||
+        !(await guard.allow?.())
+      )
+        return false;
+      if (
+        !(await createVkAdministrationDelivery(api, outbound, sender, options.groupId).canWrite(
+          guard,
+        )) ||
+        !(await guard.allow()) ||
+        !guard.isCurrent()
+      )
+        return false;
+      const attachment = await api.uploadPrivateDocument(peer, data);
+      if (
+        !/^doc-?\d+_\d+(?:_[a-zA-Z0-9]+)?$/u.test(attachment) ||
+        !guard.isCurrent() ||
+        !(await guard.allow?.())
+      )
+        return false;
+      const result = await api.request(
+        'messages.send',
+        { peer_id: peer, attachment, random_id: randomInt(1, 0x80000000) },
+        guard,
+      );
+      return typeof result === 'number' && result > 0;
+    },
     reminderDelivery(recipient: UserId) {
       return createVkAdministrationDelivery(api, outbound, recipient, options.groupId);
     },

@@ -19,6 +19,7 @@ export type {
 } from './capabilities';
 export type {
   ChannelAdapter,
+  HumanMember,
   HumanMembership,
   EventHandler,
   PublishedPart,

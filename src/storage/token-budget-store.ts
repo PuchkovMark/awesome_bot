@@ -1,11 +1,13 @@
 import type { Database } from 'better-sqlite3';
-import type { ChatId, ConnectionScope } from '../contracts/index';
+import type { ChatId, ConnectionScope, HumanMembership } from '../contracts/index';
 import type { LlmUsage } from '../llm/types';
 import type { LifecycleBackend } from './lifecycle-store';
 import type { Connection } from './connection';
 type BudgetScope = Pick<ConnectionScope, 'chatId' | 'generation'>;
 import { StorageError } from './errors';
-import { object, requireInput, timestamp } from './validation';
+import { compositeId, object, requireInput, timestamp } from './validation';
+import { createChatStore } from './chats';
+import { applyParticipantSnapshot, participantSync } from './participant-registry';
 
 export const tokenBudgetWindowMs = 86_400_000;
 const tokensPerPerson = 15_000;
@@ -183,7 +185,15 @@ export function pruneTokenBudget(db: Database, now: number) {
     .run(now - tokenBudgetWindowMs).changes;
 }
 
+interface MembershipObservation extends BudgetScope {
+  readonly number: number;
+  readonly revision: number;
+  readonly startedAt: number;
+  readonly connectionRevision: number;
+}
+
 export function createTokenBudgetStore(connection: Connection, lifecycle: LifecycleBackend) {
+  const chats = createChatStore(connection);
   return {
     overview(isGroupChat: (chatId: ChatId) => boolean, now: number) {
       timestamp(now);
@@ -223,7 +233,8 @@ export function createTokenBudgetStore(connection: Connection, lifecycle: Lifecy
         return readBudget(db, scope, group, now);
       });
     },
-    beginObservation(scope: ConnectionScope): number {
+    beginObservation(scope: ConnectionScope, now = Date.now()): MembershipObservation {
+      timestamp(now);
       return lifecycle.transaction(scope, (db) => {
         const row = db
           .prepare(
@@ -233,21 +244,83 @@ export function createTokenBudgetStore(connection: Connection, lifecycle: Lifecy
           )
           .get(scope.chatId, scope.generation) as { observation: number } | undefined;
         if (!row) throw new StorageError('operation_failed');
-        return row.observation;
+        db.prepare(
+          `INSERT INTO participant_sync(chat_id,generation,last_attempt_at) VALUES(?,?,?)
+          ON CONFLICT(chat_id,generation) DO UPDATE SET
+          last_attempt_at=excluded.last_attempt_at,last_attempt_complete=NULL`,
+        ).run(scope.chatId, scope.generation, now);
+        return {
+          chatId: scope.chatId,
+          generation: scope.generation,
+          number: row.observation,
+          startedAt: now,
+          revision: participantSync(db, scope).revision,
+          connectionRevision: lifecycle.assertScope(db, scope).revision,
+        };
       });
     },
-    confirmPeople(scope: ConnectionScope, observation: number, people: number) {
-      timestamp(people);
-      requireInput(Number.isSafeInteger(people * tokensPerPerson));
-      return lifecycle.transaction(
-        scope,
-        (db) =>
-          db
-            .prepare(
-              `UPDATE chat_token_budgets SET people=? WHERE chat_id=? AND generation=? AND observation=?`,
-            )
-            .run(people, scope.chatId, scope.generation, observation).changes === 1,
-      );
+    finishObservation(
+      scope: ConnectionScope,
+      observation: MembershipObservation,
+      membership: HumanMembership,
+      now = Date.now(),
+    ) {
+      timestamp(now);
+      if (membership.complete) {
+        const { people, members } = membership;
+        timestamp(people);
+        requireInput(Number.isSafeInteger(people * tokensPerPerson) && people === members.length);
+        const platform = scope.chatId.split(':')[0];
+        const users = new Set(
+          members.map(({ userId, role }) => {
+            compositeId(userId);
+            requireInput(
+              userId.split(':')[0] === platform && ['member', 'admin', 'unknown'].includes(role),
+            );
+            return userId;
+          }),
+        );
+        requireInput(users.size === people);
+      }
+      return lifecycle.transaction(scope, (db) => {
+        if (
+          observation.chatId !== scope.chatId ||
+          observation.generation !== scope.generation ||
+          lifecycle.assertScope(db, scope).revision !== observation.connectionRevision
+        )
+          return false;
+        const current = db
+          .prepare('SELECT observation FROM chat_token_budgets WHERE chat_id=? AND generation=?')
+          .get(scope.chatId, scope.generation) as { observation: number } | undefined;
+        const sync = participantSync(db, scope);
+        if (
+          current?.observation !== observation.number ||
+          sync.lastAttemptAt !== observation.startedAt ||
+          sync.lastAttemptComplete !== null
+        )
+          return false;
+        if (!membership.complete || sync.revision !== observation.revision) {
+          db.prepare(
+            'UPDATE participant_sync SET last_attempt_complete=0,needs_sync=1 WHERE chat_id=? AND generation=?',
+          ).run(scope.chatId, scope.generation);
+          return false;
+        }
+
+        const at = Math.max(now, observation.startedAt);
+        if (membership.people > 0 && !chats.get(scope.chatId))
+          chats.create(scope.chatId, { responseMode: 'normal', enabled: true, createdAt: at });
+        applyParticipantSnapshot(db, scope, membership.members, at);
+        db.prepare('UPDATE chat_token_budgets SET people=? WHERE chat_id=? AND generation=?').run(
+          membership.people,
+          scope.chatId,
+          scope.generation,
+        );
+        db.prepare(
+          `UPDATE participant_sync SET last_attempt_complete=1,last_complete_started_at=?,
+          last_complete_at=?,needs_sync=0 WHERE chat_id=? AND generation=?`,
+        ).run(observation.startedAt, at, scope.chatId, scope.generation);
+        return true;
+      });
     },
     reserve(scope: ConnectionScope, group: boolean, attempt: TokenReservation, now: number) {
       return lifecycle.transaction(scope, (db) => {

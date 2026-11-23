@@ -1,3 +1,4 @@
+import { createPersonalDataStore, registerPersonalData } from './personal-data-store';
 import { createTokenBudgetStore, registerTokenBudgets } from './token-budget-store';
 import { createHistoryClearStore, registerHistoryClear } from './history-retention-store';
 import { requireInput } from './validation';
@@ -16,6 +17,7 @@ import { createDisclosureStore, registerDisclosureStore } from './chat-disclosur
 import { createAdminRecoveryStore, registerAdminRecovery } from './admin-recovery-store';
 import { createChatControlStore, registerChatControl } from './chat-control-store';
 import { createReminderStore, registerReminders } from './reminder-store';
+import { createParticipantRegistry, registerParticipantRegistry } from './participant-registry';
 import { createScopedStorage } from './scoped-storage';
 import { openConnection } from './connection';
 import { migrate } from './migrate';
@@ -59,6 +61,8 @@ export async function openStorage(
         connection.close();
       },
     };
+    registerPersonalData(storage, createPersonalDataStore(connection, backend));
+    registerParticipantRegistry(storage, createParticipantRegistry(connection, backend));
     registerReminders(storage, createReminderStore(connection, backend));
     registerHistoryClear(storage, createHistoryClearStore(connection, backend));
     registerDisclosureStore(storage, createDisclosureStore(connection, backend));

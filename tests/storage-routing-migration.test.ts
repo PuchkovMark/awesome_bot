@@ -41,7 +41,7 @@ test('версия 7 сохраняет данные, FK и checksums; оба р
       db
         .prepare(
           t === 'chat_connections'
-            ? 'SELECT *,NULL AS pause_reason FROM chat_connections'
+            ? 'SELECT *,NULL AS pause_reason,0 AS erased_author_number FROM chat_connections'
             : 'SELECT * FROM ' + t,
         )
         .all(),

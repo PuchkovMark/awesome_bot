@@ -6,6 +6,8 @@ import { migrate } from '../src/storage/migrate';
 import { migrations } from '../src/storage/migrations/index';
 import { storageFixture } from './helpers/storage-fixture';
 import { participantFixture } from './helpers/participant-fixture';
+import { participantRegistryStore } from '../src/storage/participant-registry';
+import { lifecycleBackend } from '../src/storage/lifecycle-store';
 
 const oldMessage = {
   chatId: 'a:old',
@@ -90,6 +92,8 @@ test('F1.4 → версия 3 сохраняет историю, настрой�
             { version: 22 },
             { version: 23 },
             { version: 24 },
+            { version: 25 },
+            { version: 26 },
           ]);
           expect(db.prepare('SELECT * FROM chat_participants').all()).toEqual([]);
           expect(db.prepare('SELECT * FROM participant_profiles').all()).toEqual([]);
@@ -140,7 +144,7 @@ test('F1.4 → версия 3 сохраняет историю, настрой�
             db.prepare('SELECT * FROM schema_migrations WHERE version <= 2 ORDER BY version').all(),
           ).toEqual(previous);
           expect(db.prepare('SELECT count(*) AS n FROM schema_migrations').get()).toEqual({
-            n: 24,
+            n: migrations.length,
           });
           expect(db.pragma('foreign_key_check')).toEqual([]);
         });
@@ -152,6 +156,95 @@ test('F1.4 → версия 3 сохраняет историю, настрой�
       ).toMatchObject({ status: 'duplicate' });
     } finally {
       await reopened.close();
+    }
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('миграция реестра сохраняет заполненные профили, ссылки, счётчик фактов и область очистки', async () => {
+  const fixture = storageFixture();
+  const seed = await openConnection(fixture.path, (db) => migrate(db, migrations.slice(0, -1)));
+  let deleted = 0;
+  try {
+    seed.run((db) => {
+      const f = participantFixture(db);
+      for (const [generation, chat] of ['vk:2000000001', 'vk:2000000002'].entries()) {
+        f.chat(chat);
+        db.prepare(
+          "INSERT INTO chat_connections(chat_id,generation,revision,state) VALUES (?,?,0,'active')",
+        ).run(chat, generation + 1);
+        f.participant(chat, 'vk:42', {
+          role: 'admin',
+          status: 'present',
+          joinedAt: 10,
+          lastSeenAt: 30,
+        });
+        f.profile(chat, 'vk:42', { createdAt: 12, updatedAt: 18 });
+        f.fact(chat, 'vk:42', { value: 'Сохранённый', sourceMessageId: '1' });
+      }
+      const last = f.fact('vk:2000000001', 'vk:42', { value: 'Удалённый' });
+      deleted = Number(last.lastInsertRowid);
+      db.prepare('DELETE FROM profile_facts WHERE id=?').run(deleted);
+      db.exec('UPDATE lifecycle_clock SET value=2 WHERE singleton=1');
+    });
+  } finally {
+    seed.close();
+  }
+  try {
+    for (let phase = 0; phase < 2; phase++) {
+      const storage = await openStorage(fixture.path);
+      const inspection = await openConnection(fixture.path);
+      try {
+        const registry = participantRegistryStore(storage);
+        const first = scopeFor(storage, 'vk:2000000001');
+        const second = scopeFor(storage, 'vk:2000000002');
+        expect(registry.read(second).participants).toEqual([
+          expect.objectContaining({
+            userId: 'vk:42',
+            role: 'admin',
+            status: 'present',
+            joinedAt: 10,
+            lastSeenAt: 30,
+          }),
+        ]);
+        inspection.run((db) => {
+          const f = participantFixture(db);
+          expect(f.profiles(second.chatId, 'vk:42')).toMatchObject([
+            { created_at: 12, updated_at: 18 },
+          ]);
+          expect(f.facts(second.chatId, 'vk:42')).toMatchObject([
+            { value: 'Сохранённый', source_message_id: '1' },
+          ]);
+          expect(db.pragma('foreign_key_check')).toEqual([]);
+          if (phase === 1) return;
+          expect(Number(f.fact(first.chatId, 'vk:42').lastInsertRowid)).toBeGreaterThan(deleted);
+          db.prepare('INSERT INTO participant_sync(chat_id,generation,revision) VALUES(?,?,1)').run(
+            first.chatId,
+            first.generation,
+          );
+          db.prepare('INSERT INTO participant_events VALUES(?,?,?)').run(
+            first.chatId,
+            first.generation,
+            'vk:test',
+          );
+        });
+        if (phase === 0) {
+          const life = lifecycleBackend(storage);
+          life.ownerDelete(life.begin(first.chatId), first.generation);
+        } else {
+          expect(registry.read(first).participants).toEqual([]);
+          expect(
+            inspection.run((db) => db.prepare('SELECT * FROM participant_sync').all()),
+          ).toEqual([]);
+          expect(
+            inspection.run((db) => db.prepare('SELECT * FROM participant_events').all()),
+          ).toEqual([]);
+        }
+      } finally {
+        inspection.close();
+        await storage.close();
+      }
     }
   } finally {
     fixture.cleanup();

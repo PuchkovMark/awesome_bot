@@ -7,6 +7,7 @@ import type { Storage } from './types';
 import { object, requireInput, timestamp } from './validation';
 
 export interface DisclosureInput {
+  readonly profileNotice?: string | null;
   readonly provider: string;
   readonly dataPolicy: string;
   readonly storagePolicy: string;
@@ -46,7 +47,7 @@ export interface DisclosureGate {
 }
 
 const versionColumns =
-  'version, required_version AS requiredVersion, provider, data_policy AS dataPolicy, storage_policy AS storagePolicy, details_text AS detailsText, details_url AS detailsUrl, owner_contact AS ownerContact';
+  'profile_notice AS profileNotice, version, required_version AS requiredVersion, provider, data_policy AS dataPolicy, storage_policy AS storagePolicy, details_text AS detailsText, details_url AS detailsUrl, owner_contact AS ownerContact';
 const publicationColumns =
   'id, version, kind, state, reason, text, send_id AS sendId, attempt, replayed, attempted_at AS attemptedAt, receipt';
 
@@ -85,6 +86,7 @@ export function readDisclosureGate(db: Database, scope: ConnectionScope): Disclo
 
 function validateDisclosure(input: DisclosureInput) {
   object(input, [
+    'profileNotice',
     'provider',
     'dataPolicy',
     'storagePolicy',
@@ -93,6 +95,13 @@ function validateDisclosure(input: DisclosureInput) {
     'ownerContact',
     'change',
   ]);
+  requireInput(
+    input.profileNotice == null ||
+      (typeof input.profileNotice === 'string' &&
+        input.profileNotice.trim().length > 0 &&
+        Buffer.byteLength(input.profileNotice) <= 2048 &&
+        !input.profileNotice.includes('\0')),
+  );
   requireInput(input.change === 'material' || input.change === 'editorial');
   for (const value of [
     input.provider,
@@ -159,6 +168,7 @@ export function createDisclosureStore(connection: Connection, lifecycle: Lifecyc
             if (
               previous &&
               (previous.version === previous.requiredVersion) === material &&
+              previous.profileNotice === (input.profileNotice ?? null) &&
               fields.every((field) => input[field] === previous[field])
             )
               return previous.version;
@@ -167,12 +177,15 @@ export function createDisclosureStore(connection: Connection, lifecycle: Lifecyc
                 previous &&
                   previous.provider === input.provider &&
                   previous.dataPolicy === input.dataPolicy &&
-                  previous.storagePolicy === input.storagePolicy,
+                  previous.storagePolicy === input.storagePolicy &&
+                  previous.profileNotice === (input.profileNotice ?? null),
               );
             }
             const id = (previous?.version ?? 0) + 1;
             requireInput(Number.isSafeInteger(id));
-            db.prepare(`INSERT INTO disclosure_versions VALUES (?,?,?,?,?,?,?,?,?)`).run(
+            db.prepare(
+              `INSERT INTO disclosure_versions (version,required_version,provider,data_policy,storage_policy,details_text,details_url,owner_contact,created_at,profile_notice) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+            ).run(
               id,
               input.change === 'editorial' ? previous!.requiredVersion : id,
               input.provider,
@@ -182,6 +195,7 @@ export function createDisclosureStore(connection: Connection, lifecycle: Lifecyc
               input.detailsUrl,
               input.ownerContact,
               now,
+              input.profileNotice ?? null,
             );
             return id;
           })

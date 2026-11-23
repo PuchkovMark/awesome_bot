@@ -23,6 +23,7 @@ export function createChatOnboarding(options: {
   replayWindowMs?: number;
 }) {
   const store = disclosureStore(options.storage);
+  const recoveringPrivate = new Set<number>();
   const closed: DisclosureGate = { journal: false, version: null, provider: null };
   function gate(scope: ConnectionScope) {
     try {
@@ -164,6 +165,44 @@ export function createChatOnboarding(options: {
   return {
     gate,
     capture,
+    privatePending(scope: ConnectionScope) {
+      const latest = store.latest();
+      return Boolean(latest?.profileNotice && gate(scope).version === null);
+    },
+    configuredForProfiles() {
+      return Boolean(store.latest()?.profileNotice);
+    },
+    async notifyPrivate(scope: ConnectionScope, current: () => boolean) {
+      const latest = store.latest();
+      if (!latest?.profileNotice || latest.provider !== options.provider) return;
+      const guard = {
+        signal: options.signal,
+        isCurrent: () =>
+          current() &&
+          !options.signal.aborted &&
+          options.lifecycle.isAdmissionCurrent(scope) &&
+          store.latest()?.requiredVersion === latest.requiredVersion,
+      };
+      if (!guard.isCurrent()) return;
+      const { settings } = await options.storage.chats.create(scope, {
+        responseMode: 'normal',
+        enabled: true,
+        createdAt: Date.now(),
+      });
+      if (!settings.enabled || !guard.isCurrent()) return;
+      if (!recoveringPrivate.has(scope.generation)) {
+        store.recover(scope);
+        recoveringPrivate.add(scope.generation);
+      }
+      const intro = store.ensure(scope, 'introduction', latest.version);
+      const row =
+        intro.version === latest.version ? intro : store.ensure(scope, 'update', latest.version);
+      const text = [
+        latest.profileNotice,
+        `Провайдер: ${latest.provider}. Подробности: ${latest.detailsUrl}`,
+      ].join('\n');
+      await send(scope, row, 'chat', text, guard, 'unavailable');
+    },
     async run() {
       while (!options.signal.aborted) {
         for (const chatId of options.groups()) {
