@@ -16,6 +16,8 @@ export function formatVkChecklist(scenarios: readonly Scenario[]): string {
       `Выберите тестовый промпт: «${scenario.prompt}»`,
       '',
     );
+    if (scenario.promptKey)
+      lines.push(`Запишите ключ версии стенда ${scenario.promptKey} из каталога.`, '');
     scenario.vkSteps.forEach((step, index) => lines.push(`${index + 1}. ${step}`));
     lines.push('', 'Критерии для отчёта', '');
     for (const criterion of scenario.criteria) {

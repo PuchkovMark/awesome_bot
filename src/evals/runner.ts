@@ -67,11 +67,12 @@ function classify(
 
 async function waitForSettlement(
   settled: Promise<QueueCompletion>,
+  timeoutMs: number,
 ): Promise<QueueCompletion | null> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const timeout = new Promise<null>((resolve) => {
-      timer = setTimeout(resolve, loopTimeoutMs + handlerMarginMs + 500, null);
+      timer = setTimeout(resolve, timeoutMs + handlerMarginMs + 500, null);
     });
     return await Promise.race([settled, timeout]);
   } finally {
@@ -86,7 +87,9 @@ export async function runScenario(
       return { kind: 'complete', text: scenario.answer, usage: { input: null, output: null } };
     },
   },
+  settings: { readonly modelName?: string; readonly timeoutMs?: number } = {},
 ): Promise<EvaluationResult> {
+  const timeoutMs = settings.timeoutMs ?? loopTimeoutMs;
   let request: LlmRequest | null = null;
   let answer: PublicationRequest | null = null;
   let trace: TraceRecord | null = null;
@@ -96,6 +99,7 @@ export async function runScenario(
       request,
       answer: trace?.payload.publication.status === 'delivered' ? answer : null,
       historyTruncated: trace?.payload.context?.historyTruncated ?? false,
+      publicationReason: trace?.payload.publication.reason ?? 'none',
     });
 
   try {
@@ -124,11 +128,16 @@ export async function runScenario(
       const scope = await startChat(scenario.input.chatId);
       for (const message of scenario.history) {
         const target = message.chatId === scope.chatId ? scope : await startChat(message.chatId);
-        await storage.messages.append(target, message);
+        await storage.messages.append(
+          target,
+          message.chatId === scope.chatId
+            ? { ...message, isGroupChat: scenario.input.isGroupChat }
+            : message,
+        );
       }
       const catalog = catalogAdministration(storage);
       const created = await catalog.append({
-        key: 'eval',
+        key: scenario.promptKey ?? 'eval',
         kind: 'system_prompt',
         text: scenario.prompt,
         createdAt: 0,
@@ -189,8 +198,8 @@ export async function runScenario(
       const queue = createAgentLoopQueue({
         storage,
         tracing: { messageRetentionDays: 30 },
-        modelName: model,
-        loopOptions: { timeoutMs: loopTimeoutMs, maxAttemptsPerStep: 1 },
+        modelName: settings.modelName ?? model,
+        loopOptions: { timeoutMs, maxAttemptsPerStep: 1 },
         config: { handlerMarginMs, stopTimeoutMs: 1_000 },
         prepare: preparation.prepare,
         client: {
@@ -213,7 +222,7 @@ export async function runScenario(
         const router = createMessageRouter({ storage, queue });
         const routed = await router.receive(scope, scenario.input);
         if (routed.admission?.status !== 'queued') return evaluate('not_queued');
-        const completion = await waitForSettlement(settlement.promise);
+        const completion = await waitForSettlement(settlement.promise, timeoutMs);
         trace = await storage.traces.get(scope, routed.admission.jobId);
         if (!completion) return evaluate('settlement_timeout');
         if (!trace) return evaluate('trace_missing');

@@ -8,6 +8,7 @@ export interface Observation {
   readonly request: LlmRequest | null;
   readonly answer: PublicationRequest | null;
   readonly historyTruncated: boolean;
+  readonly publicationReason?: import('../storage/trace-types').TracePublication['reason'];
 }
 
 interface Criterion {
@@ -22,6 +23,7 @@ export interface Scenario {
   readonly revision: number;
   readonly title: string;
   readonly prompt: string;
+  readonly promptKey?: string;
   readonly history: readonly MessageInput[];
   readonly historyLimit?: number;
   readonly input: IncomingMessage;
