@@ -123,9 +123,8 @@ export async function runScenario(
         Object.assign(storage, {
           contextMessages: {
             ...reader,
-            history(scope, selection) {
-              if (selection.kind === 'search') throw Error('Синтетический сбой чтения журнала.');
-              return reader.history(scope, selection);
+            history() {
+              throw Error('Синтетический сбой чтения журнала.');
             },
           } satisfies typeof reader,
         });
@@ -283,11 +282,7 @@ export async function runScenario(
         ...(addressPreferences ? { addressCurrent: addressPreferences.current } : {}),
         tracing: { messageRetentionDays: 30 },
         modelName: settings.modelName ?? model,
-        loopOptions: {
-          timeoutMs,
-          maxAttemptsPerStep: 1,
-          ...(scenario.historySearch ? { maxSteps: 2 } : {}),
-        },
+        loopOptions: { timeoutMs, maxAttemptsPerStep: 1 },
         config: { handlerMarginMs, stopTimeoutMs: 1_000 },
         prepare: preparation.prepare,
         ...(scenario.historyTimezone || scenario.passport?.tryGrant

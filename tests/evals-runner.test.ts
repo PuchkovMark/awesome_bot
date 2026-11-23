@@ -280,6 +280,45 @@ test('сбой модели при оценке сбоя чтения остаё
   );
 });
 
+test.each(['history_search', 'history_period'])(
+  'модель сообщает о сбое чтения после повторного вызова %s',
+  async (name) => {
+    const scenario = historySearchScenarios.find(
+      ({ historySearch }) => historySearch === 'failed',
+    )!;
+    const period = { from: '2026-11-22T21:00:00Z', to: '2026-11-23T21:00:00Z' };
+    const complete = vi.fn(async (request: LlmRequest) => {
+      const results = request.messages.filter((message) => message.role === 'tool');
+      if (results.length !== 1) return historySearchClient.complete(request);
+      expect(JSON.parse(results[0]!.text)).toEqual({ error: 'tool_failed' });
+      return {
+        kind: 'tool_calls' as const,
+        text: null,
+        usage: { input: null, output: null },
+        calls: [
+          {
+            id: 'retry-history',
+            name,
+            arguments: JSON.stringify(
+              name === 'history_search' ? { query: 'встреча', ...period } : period,
+            ),
+          },
+        ],
+      };
+    });
+    const result = await runScenario(scenario, { complete });
+    expect(complete).toHaveBeenCalledTimes(3);
+    const retries = complete.mock.calls[2]![0].messages.filter(
+      (message) => message.role === 'tool',
+    );
+    expect(retries.map(({ callId, text }) => [callId, JSON.parse(text)])).toEqual([
+      ['meeting-search', { error: 'tool_failed' }],
+      ['retry-history', { error: 'tool_failed' }],
+    ]);
+    expect(result).toMatchObject({ outcome: 'passed', reason: null });
+  },
+);
+
 test('неверный период поиска проваливает критерий даже при правдоподобном ответе', async () => {
   const scenario = historySearchScenarios.find(({ historySearch }) => historySearch === 'found')!;
   const result = await runScenario(scenario, {

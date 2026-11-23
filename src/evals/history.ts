@@ -73,11 +73,10 @@ export const yesterdayClient: LlmClient = {
 
 export function historySearchExchange(request: LlmRequest | null) {
   if (!request) return;
-  const calls = request.messages.flatMap((message) =>
-    message.role === 'assistant' ? (message.toolCalls ?? []) : [],
-  );
-  const [call] = calls;
-  if (calls.length !== 1 || call?.name !== 'history_search') return;
+  const call = request.messages
+    .flatMap((message) => (message.role === 'assistant' ? (message.toolCalls ?? []) : []))
+    .find(({ name }) => name === 'history_search');
+  if (!call) return;
   const response = request.messages.find(
     (message) => message.role === 'tool' && message.callId === call.id,
   );
