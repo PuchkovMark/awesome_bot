@@ -80,6 +80,33 @@ function readySources(db: Database, scope: ConnectionScope, now: number) {
   return sources.map(({ id, user, text, at }): ProfileUpdateSource => ({ id, user, text, at }));
 }
 
+function batchStillAdmitted(
+  db: Database,
+  scope: ConnectionScope,
+  ids: readonly number[],
+  now: number,
+) {
+  if (!enabled(db, scope)) return false;
+  const bounds = historyBounds(db, scope.chatId, now);
+  const sources = db
+    .prepare(
+      `SELECT m.id,m.user_id AS user,m.text,m.timestamp AS at
+      FROM profile_update_waiting w JOIN personal_visible_messages m ON m.id=w.message_id AND m.chat_id=w.chat_id
+      WHERE w.chat_id=? AND w.generation=? AND m.id>? AND m.timestamp>? AND ${actualMessage}
+       AND m.id IN (SELECT value FROM json_each(?))`,
+    )
+    .all(
+      scope.chatId,
+      scope.generation,
+      bounds.clearedThrough,
+      bounds.expiredThrough,
+      JSON.stringify(ids),
+    ) as ProfileUpdateSource[];
+  return (
+    sources.length === ids.length && sources.every((source) => sourceAdmitted(db, scope, source))
+  );
+}
+
 export function createProfileUpdateStore(connection: Connection, lifecycle: LifecycleBackend) {
   return {
     schedule(now: number) {
@@ -147,7 +174,7 @@ export function createProfileUpdateStore(connection: Connection, lifecycle: Life
     reconcile({ scope, key }: ProfileUpdateAttempt, usage: LlmUsage) {
       return connection.run((db) => reconcileTokenReservation(db, scope, key, usage));
     },
-    finish(attempt: ProfileUpdateAttempt, now: number, consumed: boolean) {
+    finish(attempt: ProfileUpdateAttempt, now: number, consumed: boolean, apply?: () => void) {
       timestamp(now);
       const { scope, key, ids } = attempt;
       return lifecycle.transaction(scope, (db) => {
@@ -157,8 +184,10 @@ export function createProfileUpdateStore(connection: Connection, lifecycle: Life
           scope.chatId,
           scope.generation,
         );
+        const admitted = !apply || (consumed && batchStillAdmitted(db, scope, ids, now));
+        if (admitted) apply?.();
         if (consumed) forgetWaiting(db, scope, ids);
-        return true;
+        return admitted;
       });
     },
   };

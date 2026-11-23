@@ -8,6 +8,7 @@ import { questionnaireAnswerHandler } from '../core/questionnaire/answer';
 import { questionnaireProgressStore } from '../storage/questionnaire-progress-store';
 import { questionnaireStore } from '../storage/questionnaire-store';
 import { createProfileCommands } from './profile-commands';
+import { createProfileUpdates } from '../core/profile-updates/service';
 import { applicationTools } from './model-tools';
 import { contextParticipantCards } from './context-participant-cards';
 import { createGreetingService } from '../core/greetings/service';
@@ -98,6 +99,7 @@ export async function runApplication(
   let membershipWork: Promise<void> | undefined;
   let greetingWork: Promise<void> | undefined;
   let reminderWork: Promise<void> | undefined;
+  let profileUpdateWork: Promise<void> | undefined;
   let readyTimer: ReturnType<typeof setTimeout> | undefined;
   let stopTimer: ReturnType<typeof setTimeout> | undefined;
   const typing = new Set<Promise<void>>();
@@ -232,6 +234,7 @@ export async function runApplication(
             administrationWork = checkAdministration().catch(() => stop('vk_failed'));
             greetingWork = deliverGreetings().catch(() => stop('storage_failed'));
             reminderWork = deliverReminders().catch(() => stop('storage_failed'));
+            profileUpdateWork = profileUpdates.run().catch(() => stop('storage_failed'));
           },
         },
         dependencies.vk,
@@ -422,6 +425,17 @@ export async function runApplication(
             : (checkDisclosure(work)?.allowed ?? true),
       });
       const modelClient = dependencies.client ?? createLlmClient(config.llm);
+      const profileUpdates = createProfileUpdates({
+        storage,
+        logger,
+        client: modelClient,
+        sessionId: createLlmSessionId('profile-update:' + config.sessionSecret),
+        scope: lifecycle.admissionScope,
+        group,
+        signal,
+        modelContextTokens: config.context.modelContextTokens,
+        maxOutputTokens: preparation.config.maxOutputTokens,
+      });
       const questionnaireAttempts = questionnaireProgressStore(storage);
       queue = createAgentLoopQueue({
         questionnaireAnswer: questionnaireAnswerHandler({
@@ -543,6 +557,7 @@ export async function runApplication(
         authorization,
         canAnswerQuestionnaire: questionnaireAttempts.canAnswer,
         onQueueFull: publication.queueFull,
+        onDecision: profileUpdates.wake,
         onFlood(scope, candidate, isCurrent) {
           const operation = publication
             .flood(scope, candidate, { signal, isCurrent })
@@ -665,6 +680,7 @@ export async function runApplication(
       membershipWork,
       reminderWork,
       greetingWork,
+      profileUpdateWork,
       ...typing,
       ...floodPublications,
     ]);

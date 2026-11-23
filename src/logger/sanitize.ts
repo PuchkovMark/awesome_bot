@@ -72,6 +72,24 @@ export function safeEvent(input: unknown): LogEvent | undefined {
       return { event, window: 'run', ...fields } as LogEvent;
     }
   }
+  if (event === 'profile_update_stats') {
+    const messages = ownData(input, 'messages'),
+      attempts = ownData(input, 'attempts'),
+      recorded = ownData(input, 'recorded'),
+      outcome = ownData(input, 'outcome');
+    if (
+      typeof messages === 'number' &&
+      Number.isSafeInteger(messages) &&
+      messages > 0 &&
+      attempts === 1 &&
+      typeof recorded === 'number' &&
+      Number.isSafeInteger(recorded) &&
+      recorded >= 0 &&
+      recorded <= messages &&
+      (outcome === 'processed' || outcome === 'discarded')
+    )
+      return { event, messages, attempts, recorded, outcome };
+  }
   if (event === 'config_loaded') return { event };
   if (
     event === 'application_ready' ||
