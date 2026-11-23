@@ -1,5 +1,6 @@
 import type { ConnectionScope, UserId } from '../contracts/index';
 import type { Database } from 'better-sqlite3';
+import type { QuestionnaireRevision } from '../contracts/questionnaire';
 import type { LifecycleBackend } from './lifecycle-store';
 import type {
   FactSourceKind,
@@ -10,7 +11,12 @@ import type {
   ProfileFactWriteResult,
 } from './participant-types';
 import { historyBounds } from './history-retention-store';
-import { interestKey, ownInterestRestriction, selectOwnProfile } from './profile-fact-selection';
+import {
+  interestKey,
+  ownInterestRestriction,
+  questionnaireFieldPrefix,
+  selectOwnProfile,
+} from './profile-fact-selection';
 import type {
   ProfileCommandChange,
   ProfileCommandEvent,
@@ -65,6 +71,79 @@ type Origin = {
   readonly at: number;
   readonly text: string;
 };
+
+function ensureProfile(
+  db: Database,
+  chatId: ConnectionScope['chatId'],
+  userId: UserId,
+  seenAt: number,
+  now: number,
+) {
+  db.prepare(
+    `INSERT INTO chat_participants(chat_id,user_id,role,status,last_seen_at)
+    VALUES(?,?,'unknown','unknown',?) ON CONFLICT DO NOTHING`,
+  ).run(chatId, userId, seenAt);
+  db.prepare(
+    `INSERT INTO participant_profiles(chat_id,user_id,created_at,updated_at)
+    VALUES(?,?,?,?) ON CONFLICT DO NOTHING`,
+  ).run(chatId, userId, now, now);
+}
+
+export function recordQuestionnaireFacts(
+  db: Database,
+  scope: ConnectionScope,
+  attempt: string,
+  template: QuestionnaireRevision,
+  source: Origin,
+  answers: Readonly<Record<string, string>>,
+  now: number,
+) {
+  requireInput(db.inTransaction);
+  const { chatId, generation } = scope;
+  const { userId, messageId, at } = source;
+  const { key, revision } = template.ref;
+  if (!Object.keys(answers).length) return;
+  ensureProfile(db, chatId, userId, at, now);
+  const fact = db.prepare(
+    `INSERT INTO profile_facts(chat_id,user_id,field_key,value,source_kind,source_user_id,
+    source_message_id,reliability,visibility,created_at,updated_at,generation,source_at,event_key)
+    VALUES(?,?,?,?,'self',?,?,'confirmed',?,?,?,?,?,?)`,
+  );
+  const bind = db.prepare('INSERT INTO questionnaire_answer_facts VALUES(?,?,?,?,?,?,?,?,?,?)');
+  for (const { position, text } of template.questions) {
+    if (!Object.hasOwn(answers, position)) continue;
+    const fieldKey = questionnaireFieldPrefix + JSON.stringify([key, revision, position]);
+    const { lastInsertRowid } = fact.run(
+      chatId,
+      userId,
+      fieldKey,
+      answers[position],
+      userId,
+      messageId,
+      chatId === userId ? 'bot' : 'chat',
+      now,
+      now,
+      generation,
+      at,
+      questionnaireFieldPrefix + attempt,
+    );
+    bind.run(
+      chatId,
+      generation,
+      userId,
+      attempt,
+      key,
+      revision,
+      position,
+      text,
+      fieldKey,
+      lastInsertRowid,
+    );
+  }
+  db.prepare(
+    'UPDATE participant_profiles SET updated_at=max(updated_at,?) WHERE chat_id=? AND user_id=?',
+  ).run(now, chatId, userId);
+}
 
 function origin(
   db: Database,
@@ -199,6 +278,7 @@ export function createProfileFactStore(lifecycle: LifecycleBackend) {
     requireInput(subjectId.split(':')[0] === platform && actorId.split(':')[0] === platform);
     requireInput(Number.isSafeInteger(messageId) && messageId > 0);
     const slot = validate(change);
+    if (slot.fieldKey.startsWith(questionnaireFieldPrefix)) return 'blocked';
     if (sourceKind === 'admin' ? actorId === subjectId : actorId !== subjectId) return 'blocked';
     if (sourceKind !== 'self' && change.kind !== 'set') return 'blocked';
     return lifecycle.transaction(scope, (db) => {
@@ -228,14 +308,7 @@ export function createProfileFactStore(lifecycle: LifecycleBackend) {
       )
         return 'blocked';
 
-      db.prepare(
-        `INSERT INTO chat_participants(chat_id,user_id,role,status,last_seen_at)
-        VALUES(?,?,'unknown','unknown',?) ON CONFLICT DO NOTHING`,
-      ).run(scope.chatId, subjectId, source.at);
-      db.prepare(
-        `INSERT INTO participant_profiles(chat_id,user_id,created_at,updated_at)
-        VALUES(?,?,?,?) ON CONFLICT DO NOTHING`,
-      ).run(scope.chatId, subjectId, now, now);
+      ensureProfile(db, scope.chatId, subjectId, source.at, now);
 
       const write = db
         .prepare(

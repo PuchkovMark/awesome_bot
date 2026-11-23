@@ -16,6 +16,7 @@ import { questionnaireStore } from './questionnaire-store';
 import { claimControlMessage, readChatControl } from './chat-control-store';
 import { requireInput, timestamp } from './validation';
 import { appendMessage } from './messages';
+import { recordQuestionnaireFacts } from './profile-fact-store';
 
 const subject = 'chat_id=? AND generation=? AND user_id=?';
 
@@ -296,7 +297,9 @@ export function questionnaireProgressStore(storage: Storage) {
       .get(scope.chatId, scope.generation, id) as (Row & { user_id: UserId }) | undefined;
     if (!row) return null;
     const msg = questionnaireSource(db, scope, row.user_id, id, now);
-    return msg && { template: view(row, now).template, text: msg.text, user: row.user_id };
+    return (
+      msg && { ...msg, attempt: row.attempt, template: view(row, now).template, user: row.user_id }
+    );
   }
   function completionRevision(scope: ConnectionScope, user: UserId) {
     return lifecycle.transaction(scope, (db) => {
@@ -357,16 +360,35 @@ export function questionnaireProgressStore(storage: Storage) {
           )
         )
           return false;
-        return (
-          db
-            .prepare(
-              "UPDATE questionnaire_progress SET state='completed',answers=? WHERE " +
-                subject +
-                " AND state='processing' AND source_id=?",
-            )
-            .run(JSON.stringify(answers), scope.chatId, scope.generation, input.user, id)
-            .changes === 1
+        const { user, attempt, template, platformMessageId, timestamp: sourceAt, text } = input;
+        const completed = db
+          .prepare(
+            "UPDATE questionnaire_progress SET state='completed',answers=NULL WHERE " +
+              subject +
+              " AND state='processing' AND source_id=?",
+          )
+          .run(scope.chatId, scope.generation, user, id);
+        if (completed.changes !== 1) return false;
+        recordQuestionnaireFacts(
+          db,
+          scope,
+          attempt,
+          template,
+          { userId: user, messageId: platformMessageId, at: sourceAt, text },
+          answers,
+          now,
         );
+        if (scope.chatId !== user) {
+          const sequence = Number(platformMessageId);
+          const responseMessageId =
+            Number.isSafeInteger(sequence) && sequence > 0 && String(sequence) === platformMessageId
+              ? sequence
+              : null;
+          db.prepare(
+            'INSERT INTO questionnaire_access(chat_id,generation,user_id,attempt,response_message_id) VALUES(?,?,?,?,?)',
+          ).run(scope.chatId, scope.generation, user, attempt, responseMessageId);
+        }
+        return true;
       });
     },
   };

@@ -201,6 +201,16 @@ function questionnaireExport(db: Database, scope: ConnectionScope, user: UserId,
     row.template,
   ) as import('../contracts/questionnaire').QuestionnaireRevision;
   const answers = JSON.parse(row.answers ?? '{}') as Record<string, string>;
+  const linked = db
+    .prepare(
+      `SELECT q.position, (SELECT f.value FROM profile_facts f
+      WHERE (f.chat_id,f.generation,f.user_id,f.field_key)=(q.chat_id,q.generation,q.user_id,q.field_key)
+        AND f.source_kind='self' AND f.change_kind='set'
+      ORDER BY f.source_at DESC,f.event_key DESC,f.id LIMIT 1) AS value
+    FROM questionnaire_answer_facts q WHERE q.chat_id=? AND q.generation=? AND q.user_id=?`,
+    )
+    .all(scope.chatId, scope.generation, user) as { position: number; value: string }[];
+  for (const { position, value } of linked) answers[position] = value;
   return {
     state:
       row.state === 'active' && row.shown_at !== null && now - row.shown_at >= 3_600_000

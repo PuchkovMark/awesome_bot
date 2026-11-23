@@ -25,6 +25,9 @@ export type ProfileQuery =
   | { readonly kind: 'profile'; readonly subjectId: UserId }
   | { readonly kind: 'interest'; readonly interest: string };
 
+export const questionnaireFieldPrefix = 'questionnaire:';
+export const questionnaireReviewDelayMs = 15 * 60_000;
+
 interface FactRow {
   readonly id: number;
   readonly messageRowId: number | null;
@@ -41,6 +44,11 @@ interface FactRow {
   readonly reliability: FactReliability;
   readonly legacy: number;
   readonly rejected: number;
+  readonly question: string | null;
+  readonly questionPosition: number | null;
+  readonly questionnaireAttempt: string | null;
+  readonly questionnaireOpen: number;
+  readonly questionnaireDecision: number | null;
 }
 export const inferenceFreshnessMs = 90 * 86_400_000;
 export const sourcePriority = { self: 3, admin: 2, inferred: 1 } as const;
@@ -58,34 +66,44 @@ function selectSlots(db: Database, scope: ConnectionScope, query: ProfileQuery, 
   const bounds = historyBounds(db, scope.chatId, now);
   const profile = query.kind === 'profile';
   const condition = profile
-    ? 'f.user_id=?'
-    : "f.field_key='interest' AND (f.interest_key=? OR f.generation IS NULL)";
+    ? 'f.user_id=@subject'
+    : "f.field_key='interest' AND (f.interest_key=@subject OR f.generation IS NULL)";
   const rows = db
     .prepare(
       `SELECT f.id, f.user_id AS userId, f.field_key AS fieldKey, f.interest_key AS interest,
       f.change_kind AS kind, f.source_kind AS sourceKind, f.value, f.visibility, f.reliability,
       f.source_message_id AS sourceMessageId,f.source_at AS sourceAt,f.event_key AS eventKey,
-    f.generation IS NULL AS legacy, r.fact_id IS NOT NULL AS rejected,
-      CASE WHEN f.source_kind <> 'self' THEN (SELECT m.id FROM messages m
-        WHERE m.chat_id=f.chat_id AND m.platform_message_id=f.source_message_id) END AS messageRowId
+      f.generation IS NULL AS legacy, r.fact_id IS NOT NULL AS rejected,
+      q.question, q.position AS questionPosition, q.attempt AS questionnaireAttempt,
+      a.decision_message_id AS questionnaireDecision,
+      (p.status='present' AND coalesce(a.decision='open' OR
+        (a.decision IS NULL AND a.prompt_delivered_at<=@autoOpenThrough),0)) AS questionnaireOpen,
+      CASE WHEN f.source_kind<>'self' OR q.fact_id IS NOT NULL THEN (SELECT m.id FROM personal_visible_messages m
+        WHERE m.chat_id=f.chat_id AND m.platform_message_id=f.source_message_id
+        AND m.id>@clearedThrough AND m.timestamp>@expiredThrough) END AS messageRowId
     FROM profile_facts f JOIN chat_participants p USING(chat_id,user_id)
     LEFT JOIN profile_fact_rejections r ON r.fact_id=f.id
-    WHERE f.chat_id=? AND (f.generation=? OR (f.generation IS NULL AND f.visibility<>'chat'))
+    LEFT JOIN questionnaire_answer_facts q
+      ON (q.chat_id,q.generation,q.user_id,q.field_key)=(f.chat_id,f.generation,f.user_id,f.field_key)
+    LEFT JOIN questionnaire_access a
+      ON (a.chat_id,a.generation,a.user_id,a.attempt)=(q.chat_id,q.generation,q.user_id,q.attempt)
+    WHERE f.chat_id=@chat AND (f.generation=@generation OR (f.generation IS NULL AND f.visibility<>'chat'))
       AND ${profile ? "p.status IN ('present','unknown')" : "p.status='present'"} AND ${condition}
+      AND (f.field_key NOT GLOB '${questionnaireFieldPrefix}*' OR (q.fact_id IS NOT NULL AND f.source_kind='self'))
       AND (f.source_kind='self' OR f.generation IS NULL OR EXISTS (
         SELECT 1 FROM personal_visible_messages m
         WHERE m.chat_id=f.chat_id AND m.platform_message_id=f.source_message_id
-          AND m.id>? AND m.timestamp>?
+          AND m.id>@clearedThrough AND m.timestamp>@expiredThrough
       ))
     ORDER BY f.source_at DESC, f.event_key COLLATE BINARY DESC, (f.change_kind='withdraw') DESC, f.id`,
     )
-    .all(
-      scope.chatId,
-      scope.generation,
-      profile ? query.subjectId : query.interest,
-      bounds.clearedThrough,
-      bounds.expiredThrough,
-    ) as FactRow[];
+    .all({
+      chat: scope.chatId,
+      generation: scope.generation,
+      subject: profile ? query.subjectId : query.interest,
+      ...bounds,
+      autoOpenThrough: now - questionnaireReviewDelayMs,
+    }) as FactRow[];
 
   const byUser = new Map<UserId, Map<string, Slot>>();
   for (const row of rows) {
@@ -164,8 +182,17 @@ export function selectPublicFacts(
   now: number,
 ) {
   return selectCurrentFacts(db, scope, query, now).filter(
-    ({ row, visibility }) =>
-      visibility === 'chat' && (query.kind === 'profile' || row.sourceKind === 'self'),
+    (fact) =>
+      publiclyVisibleFact(fact) && (query.kind === 'profile' || fact.row.sourceKind === 'self'),
+  );
+}
+
+export function publiclyVisibleFact({
+  row,
+  visibility,
+}: ReturnType<typeof selectCurrentFacts>[number]) {
+  return (
+    visibility === 'chat' && (row.questionnaireAttempt === null || row.questionnaireOpen === 1)
   );
 }
 
@@ -177,7 +204,17 @@ export function selectOwnProfile(
 ): readonly OwnProfileFact[] {
   return selectCurrentFacts(db, scope, { kind: 'profile', subjectId: actor }, now).map(
     ({
-      row: { id, fieldKey, value, sourceKind, reliability, interest, sourceAt },
+      row: {
+        id,
+        fieldKey,
+        value,
+        sourceKind,
+        reliability,
+        interest,
+        sourceAt,
+        question,
+        questionnaireOpen,
+      },
       stale,
       restrictionId,
       visibility,
@@ -188,6 +225,7 @@ export function selectOwnProfile(
       reliability,
       ...(sourceKind === 'inferred' && sourceAt !== null ? { evidenceAt: sourceAt } : {}),
       ...(stale ? { stale: true as const } : {}),
+      ...(question !== null ? { question, questionnaireOpen: questionnaireOpen === 1 } : {}),
       interest,
       factId: id,
       restrictionId,
