@@ -53,6 +53,7 @@ import { adminRecoveryStore } from '../storage/admin-recovery-store';
 import { chatControlStore } from '../storage/chat-control-store';
 import { createChatControlHandlers } from './chat-control';
 import { createChatPassport } from './chat-passport';
+import { chatPassportStore } from '../storage/chat-passport-store';
 import { createHistoryHandlers } from './history-retention';
 import type { ChatLimits } from '../core/chat-limits/config';
 import { createTokenBudgetMembership } from '../core/chat-limits/token-budget-membership';
@@ -398,6 +399,7 @@ export async function runApplication(
         capabilities: ({ chatId }) => channel.capabilities({ chatId }),
         addressForm: addressPreferences.resolve,
         participantCards: contextParticipantCards(storage),
+        passport: chatPassportStore(storage),
       });
       const contextFailure = preparation.checkStartup(
         await catalogAdministration(storage).systemPrompt(),

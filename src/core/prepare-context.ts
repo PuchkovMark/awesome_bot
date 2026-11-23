@@ -20,6 +20,7 @@ export function createContextPreparation(
       options.onStats?.(stats);
     },
     ...(options.now ? { now: options.now } : {}),
+    ...(options.passport ? { passport: options.passport } : {}),
     ...(options.participantCards ? { participantCards: options.participantCards } : {}),
     ...(options.addressForm ? { addressForm: options.addressForm } : {}),
   });

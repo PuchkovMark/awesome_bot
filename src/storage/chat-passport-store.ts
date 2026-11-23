@@ -1,3 +1,4 @@
+import type { PassportRevision } from '../contracts/chat-passport';
 import type { ConnectionScope, PublishedPart, UserId } from '../contracts/index';
 import type { Connection } from './connection';
 import type { LifecycleBackend } from './lifecycle-store';
@@ -45,6 +46,19 @@ export function createChatPassportStore(connection: Connection, lifecycle: Lifec
               revision: 0,
               text: null,
             },
+        );
+      });
+    },
+    current(scope: ConnectionScope, revisions: readonly PassportRevision[]) {
+      if (!revisions.length) return true;
+      return lifecycle.transaction(scope, (db) => {
+        const read = db
+          .prepare(
+            `SELECT revision FROM chat_passport_sections WHERE ${sectionScope} AND text IS NOT NULL`,
+          )
+          .pluck();
+        return revisions.every(
+          ({ section, revision }) => read.get(scope.chatId, scope.generation, section) === revision,
         );
       });
     },

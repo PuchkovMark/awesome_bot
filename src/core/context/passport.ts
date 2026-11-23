@@ -1,4 +1,13 @@
-import type { PassportSection } from '../../contracts/chat-passport';
+import type { ConnectionScope } from '../../contracts/lifecycle';
+import type { LlmRequest } from '../../llm/types';
+import { estimateRequestInput } from './budget';
+import type { ContextConfig } from './config';
+import { appendPassport } from './format';
+import type {
+  PassportEntry,
+  PassportRevision,
+  PassportSection,
+} from '../../contracts/chat-passport';
 import { ownNameText } from '../message-router/name-address';
 
 const signs = [
@@ -30,4 +39,81 @@ export function passportCandidates(text: string): readonly PassportSection[] {
       .match(/[\p{L}\p{N}]+/gu)
       ?.join(' ') ?? '';
   return signs.filter(([, match]) => match.test(words)).map(([section]) => section);
+}
+
+export interface PassportContextReader {
+  read(scope: ConnectionScope): readonly PassportEntry[];
+  current(scope: ConnectionScope, revisions: readonly PassportRevision[]): boolean;
+}
+
+interface PassportText extends PassportRevision {
+  readonly text: string;
+}
+
+export interface PreparedPassport {
+  readonly entries: readonly PassportText[];
+  readonly messageIndex: number;
+  readonly inputBudgetTokens: number;
+  readonly modelContextTokens: number;
+  current(revisions: readonly PassportRevision[]): boolean;
+}
+
+export function preparePassport(
+  reader: PassportContextReader,
+  scope: ConnectionScope,
+  text: string,
+  messageIndex: number,
+  config: ContextConfig,
+): PreparedPassport | undefined {
+  const candidates = passportCandidates(text);
+  if (!candidates.length) return undefined;
+  const snapshot = reader.read(scope);
+  const entries = candidates.flatMap((key) => {
+    const entry = snapshot.find(({ section }) => section === key);
+    return entry?.text ? [{ section: key, revision: entry.revision, text: entry.text }] : [];
+  });
+  if (!entries.length) return undefined;
+  return {
+    entries,
+    messageIndex,
+    inputBudgetTokens: config.inputBudgetTokens,
+    modelContextTokens: config.modelContextTokens,
+    current: (revisions) => reader.current(scope, revisions),
+  };
+}
+
+export function composePassport(
+  plan: PreparedPassport,
+  request: LlmRequest,
+  modelInputLimit = Number.POSITIVE_INFINITY,
+): { request: LlmRequest; used: readonly PassportRevision[]; estimatedTokens: number } {
+  const empty = { request, used: [], estimatedTokens: 0 };
+  const target = request.messages[plan.messageIndex];
+  if (target?.role !== 'user') return empty;
+  const base = estimateRequestInput(request);
+  const allowance = Math.min(
+    Math.floor(plan.inputBudgetTokens / 10),
+    1024,
+    Math.min(modelInputLimit, plan.modelContextTokens - request.maxOutputTokens) - base,
+  );
+  if (allowance <= 0) return empty;
+  const used: PassportRevision[] = [];
+  let blocks: Partial<Record<PassportSection, string>> = {};
+  let composed = request;
+  let estimatedTokens = 0;
+  for (const { section, revision, text } of plan.entries) {
+    const candidate = { ...blocks, [section]: text };
+    const combined = appendPassport(target.text, candidate);
+    if (combined === undefined) return empty;
+    const messages = request.messages.slice();
+    messages[plan.messageIndex] = { ...target, text: combined };
+    const tentative = { ...request, messages };
+    const added = estimateRequestInput(tentative) - base;
+    if (added > allowance) continue;
+    blocks = candidate;
+    composed = tentative;
+    estimatedTokens = added;
+    used.push({ section, revision });
+  }
+  return { request: composed, used, estimatedTokens };
 }

@@ -1,3 +1,4 @@
+import { composePassport, type PreparedPassport } from '../context/passport';
 import {
   createParticipantCardComposer,
   type PreparedCards,
@@ -26,6 +27,7 @@ export type QueuePreparation =
       readonly authorLabels?: readonly string[];
       readonly addressPreference?: AddressPreferenceReference;
       readonly participantCards?: PreparedCards;
+      readonly passport?: PreparedPassport;
     }
   | Exclude<PreparationResult, { kind: 'ready' }>;
 export interface AgentLoopQueueOptions extends Omit<ChatQueueOptions, 'handler' | 'config'> {
@@ -157,6 +159,7 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
         const compose = cards
           ? createParticipantCardComposer(cards, options.modelInputLimit)
           : undefined;
+        const passport = prepared.passport;
         const usedRefs = new Map<CardReference['value'], CardReference>();
         const cardSubjects = new Set<UserId>();
         const cardSources = new Set<number>();
@@ -256,12 +259,16 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
           session && cards
             ? { ...session, current: () => session.current() && cardsCurrent() }
             : session,
-          compose &&
-            ((request) => {
-              const result = compose(request);
-              candidateCards = result.used;
-              return result.request;
-            }),
+          compose || passport
+            ? (request) => {
+                const result = compose?.(request);
+                candidateCards = result?.used ?? [];
+                const withCards = result?.request ?? request;
+                return passport
+                  ? composePassport(passport, withCards, options.modelInputLimit).request
+                  : withCards;
+              }
+            : undefined,
         );
         const result = await loop.run({ ...prepared.input, signal: lifetime });
         if (staleContext && result.summary.attempts === 0) continue;

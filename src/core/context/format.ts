@@ -1,3 +1,4 @@
+import type { PassportSection } from '../../contracts/chat-passport';
 import type { PublicProfileFact } from '../../contracts/profile-facts';
 import type { ContextMessage } from '../../storage/context-types';
 import type { AgentLoopMessage } from '../agent-loop/types';
@@ -112,4 +113,9 @@ export function serializeParticipantCard(card: {
 
 export function appendParticipantCards(text: string, parts: readonly string[]) {
   return text.slice(0, -1) + ',"participantCards":[' + parts.join(',') + ']}';
+}
+
+export function appendPassport(text: string, sections: Partial<Record<PassportSection, string>>) {
+  if (!text.startsWith(dataPrefix) || !text.endsWith('}')) return undefined;
+  return text.slice(0, -1) + ',"chatPassport":' + JSON.stringify(sections) + '}';
 }

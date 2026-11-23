@@ -1,3 +1,4 @@
+import type { PreparedPassport } from './passport';
 import type { PreparedCards } from './participant-cards';
 import type { AddressPreferenceReference } from '../../contracts/index';
 import type { GlobalVersionRef } from '../../contracts/versioning';
@@ -27,6 +28,7 @@ export type PreparationResult =
       readonly authorLabels?: readonly string[];
       readonly addressPreference?: AddressPreferenceReference;
       readonly participantCards?: PreparedCards;
+      readonly passport?: PreparedPassport;
     }
   | { readonly kind: 'failed'; readonly reason: PreparationFailure }
   | { readonly kind: 'cancelled' | 'unavailable' | 'deadline_exceeded' };

@@ -1,3 +1,4 @@
+import { preparePassport, type PassportContextReader } from './passport';
 import type { CardCandidate, ContextCardReader, PreparedCards } from './participant-cards';
 import type { AddressForm, UserId } from '../../contracts/index';
 import { addressPrompt } from './address-prompt';
@@ -44,6 +45,7 @@ export interface ContextBuilderOptions {
   readonly sessionId: (scope: ConnectionScope) => string;
   readonly now?: () => number;
   readonly participantCards?: ContextCardReader;
+  readonly passport?: PassportContextReader;
   readonly addressForm?: (
     scope: ConnectionScope,
     userId: UserId,
@@ -351,6 +353,10 @@ export function createContextBuilder(options: ContextBuilderOptions) {
             current: (refs) => cardReader.current(scope, refs),
           }
         : undefined;
+    const passport =
+      options.passport && isGroupChat && route.kind !== 'initiative'
+        ? preparePassport(options.passport, scope, currentMessage.text, messages.length - 1, config)
+        : undefined;
     const metadata = Object.freeze({
       version: Object.freeze({ ...systemPrompt.ref }),
       cutoffId: currentJournalId,
@@ -382,6 +388,7 @@ export function createContextBuilder(options: ContextBuilderOptions) {
       }),
       metadata,
       ...(participantCards ? { participantCards } : {}),
+      ...(passport ? { passport } : {}),
       ...(address ? { addressPreference: address.reference } : {}),
       ...(authorLabels.size ? { authorLabels: Object.freeze([...authorLabels]) } : {}),
     };
