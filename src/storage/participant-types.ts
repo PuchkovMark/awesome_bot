@@ -73,6 +73,7 @@ export type ProfileFactWriteResult = 'recorded' | 'duplicate' | 'blocked';
 
 /** Только для личной выдачи. Внутренние ключи служат для проверки актуальности. */
 export interface OwnProfileFact extends PublicProfileFact {
+  readonly evidenceAt?: number;
   readonly interest: string;
   readonly factId: number;
   readonly restrictionId: number | null;

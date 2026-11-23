@@ -42,6 +42,7 @@ interface FactRow {
   readonly legacy: number;
   readonly rejected: number;
 }
+export const inferenceFreshnessMs = 90 * 86_400_000;
 export const sourcePriority = { self: 3, admin: 2, inferred: 1 } as const;
 
 interface Slot {
@@ -130,7 +131,12 @@ export function selectCurrentFacts(
   now: number,
 ) {
   const byUser = selectSlots(db, scope, query, now);
-  const selected: { row: FactRow; restrictionId: number | null; visibility: FactVisibility }[] = [];
+  const selected: {
+    row: FactRow;
+    restrictionId: number | null;
+    visibility: FactVisibility;
+    stale: boolean;
+  }[] = [];
   for (const [user, slots] of byUser) {
     if (!profileAdmitted(db, scope, user, now)) continue;
     for (const slot of slots.values()) {
@@ -140,6 +146,10 @@ export function selectCurrentFacts(
           row: fact,
           restrictionId: restriction?.id ?? null,
           visibility: slotVisibility(slot),
+          stale:
+            fact.sourceKind === 'inferred' &&
+            fact.sourceAt !== null &&
+            now - fact.sourceAt >= inferenceFreshnessMs,
         });
     }
   }
@@ -167,7 +177,8 @@ export function selectOwnProfile(
 ): readonly OwnProfileFact[] {
   return selectCurrentFacts(db, scope, { kind: 'profile', subjectId: actor }, now).map(
     ({
-      row: { id, fieldKey, value, sourceKind, reliability, interest },
+      row: { id, fieldKey, value, sourceKind, reliability, interest, sourceAt },
+      stale,
       restrictionId,
       visibility,
     }) => ({
@@ -175,6 +186,8 @@ export function selectOwnProfile(
       value,
       sourceKind,
       reliability,
+      ...(sourceKind === 'inferred' && sourceAt !== null ? { evidenceAt: sourceAt } : {}),
+      ...(stale ? { stale: true as const } : {}),
       interest,
       factId: id,
       restrictionId,

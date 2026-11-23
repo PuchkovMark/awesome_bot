@@ -1,4 +1,5 @@
 import { expect, test, vi } from 'vitest';
+import { inferenceFreshnessMs } from '../src/storage/profile-fact-selection';
 import { lifecycleBackend } from '../src/storage/lifecycle-store';
 import { participantRegistryStore } from '../src/storage/participant-registry';
 import {
@@ -182,6 +183,58 @@ test('после ухода карточки и старые ссылки зак
     expect(facts.read(scope, alice).facts).toEqual(initial.facts);
     expect(facts.read(other, alice).facts).toEqual(initial.facts);
     expect(facts.read(direct, alice).facts).toEqual(initial.facts);
+  } finally {
+    clock.mockRestore();
+    await f.close();
+  }
+});
+
+test('вывод стареет ровно через 90 суток, отметка и ссылка зависят от времени свидетельства', async () => {
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(200);
+  const f = await profileFixture();
+  try {
+    const scope = await f.chat();
+    f.deliver(scope);
+    await f.auth.applyTrustedInitialAuthorities(scope, { creatorId: admin });
+    const evidence = await f.message(scope, alice, '1', 30);
+    const newer = await f.message(scope, alice, '2', 31);
+    const authoritative = await f.message(scope, admin, '3', 15);
+    f.infer(scope, alice, evidence, set('interest', 'Шахматы'));
+    f.infer(scope, alice, newer, set('interest', 'Бег'));
+    await f.change(scope, admin, alice, authoritative, set('city', 'Уфа'));
+    clock.mockReturnValue(30 + inferenceFreshnessMs - 1);
+    const fresh = f.storage.profileFacts.read(scope, alice);
+    const cards = f.storage.profileFacts.cardFacts(scope, alice);
+    expect(cards.map(({ value }) => value.value)).toEqual(['Уфа', 'Бег']);
+    expect(fresh.facts.find((fact) => fact.value === 'Шахматы')).not.toHaveProperty('stale');
+    clock.mockReturnValue(30 + inferenceFreshnessMs);
+    expect(f.storage.profileFacts.isCurrent(scope, fresh.reference)).toBe(false);
+    expect(
+      f.storage.profileFacts.cardFactsCurrent(
+        scope,
+        cards.map(({ reference }) => reference),
+      ),
+    ).toBe(true);
+    const old = f.storage.profileFacts.read(scope, alice);
+    expect(old.facts.find((fact) => fact.value === 'Шахматы')).toMatchObject({ stale: true });
+    expect(old.facts.find((fact) => fact.value === 'Бег')).not.toHaveProperty('stale');
+    expect(f.infer(scope, alice, evidence, set('interest', 'Шахматы'))).toBe('duplicate');
+    expect(f.storage.profileFacts.isCurrent(scope, old.reference)).toBe(true);
+
+    clock.mockReturnValue(31 + inferenceFreshnessMs);
+    expect(
+      f.storage.profileFacts.cardFactsCurrent(
+        scope,
+        cards.map(({ reference }) => reference),
+      ),
+    ).toBe(false);
+    const later = await f.message(scope, alice, '4', Date.now());
+    expect(f.infer(scope, alice, later, set('interest', 'Шахматы'))).toBe('recorded');
+    expect(f.storage.profileFacts.cardFacts(scope, alice).map(({ value }) => value.value)).toEqual([
+      'Уфа',
+      'Шахматы',
+    ]);
+    expect(f.storage.profileFacts.cardFacts(scope, alice)[1]?.value).not.toHaveProperty('stale');
   } finally {
     clock.mockRestore();
     await f.close();

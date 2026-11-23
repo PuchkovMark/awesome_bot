@@ -39,6 +39,10 @@ export function invalidateDependentData(db: Database, chat: string, code: string
     EXISTS(SELECT 1 FROM json_each(payload,'$.context.messageIds') j JOIN personal_hidden_messages h ON h.message_id=j.value)))`,
   ).run(chat);
   db.prepare(
+    `DELETE FROM profile_update_waiting WHERE chat_id=? AND message_id IN (
+    SELECT message_id FROM personal_hidden_messages WHERE code=?)`,
+  ).run(chat, code);
+  db.prepare(
     `DELETE FROM profile_facts WHERE chat_id=? AND source_message_id IN (
   SELECT m.platform_message_id FROM personal_hidden_messages h JOIN messages m ON m.id=h.message_id WHERE h.code=?
   )`,
@@ -173,6 +177,7 @@ export function confirmDeletion(
     ['admin_recovery_operations', 'owner_id'],
     ['personal_exports', 'user_id'],
     ['personal_profile_choices', 'user_id'],
+    ['profile_inference_rejections', 'user_id'],
   ])
     db.prepare(`DELETE FROM ${table} WHERE chat_id=? AND generation=? AND ${column}=?`).run(
       chat,

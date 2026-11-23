@@ -92,11 +92,12 @@ export function serializeParticipantCard(card: {
     addressForm: card.addressForm,
     ...(card.facts?.length
       ? {
-          facts: card.facts.map(({ fieldKey, value, sourceKind, reliability }) => ({
+          facts: card.facts.map(({ fieldKey, value, sourceKind, reliability, stale }) => ({
             fieldKey,
             value,
             sourceKind,
             reliability,
+            ...(stale ? { stale } : {}),
           })),
         }
       : {}),

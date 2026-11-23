@@ -1,6 +1,7 @@
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { openConnection } from '../src/storage/connection';
 import { personalDataStore } from '../src/storage/personal-data-store';
+import { profileCommandStore } from '../src/storage/profile-command-store';
 import { lifecycleBackend } from '../src/storage/lifecycle-store';
 import {
   admin,
@@ -179,3 +180,74 @@ test.each([false, true])(
     }
   },
 );
+
+test('отклонение связывает варианты вывода и допускает только более позднее явное свидетельство автора', async () => {
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(50);
+  const f = await profileFixture();
+  try {
+    const scope = await f.chat();
+    const direct = await f.chat(alice, [alice]);
+    f.deliver(scope);
+    f.deliver(direct);
+    const first = await f.message(scope, alice, '1', 20, false, 'Я увлекаюсь шахматами.');
+    const alias = await f.message(scope, alice, '2', 21, false, 'Я играю в шахматы.');
+    const running = await f.message(scope, alice, '3', 22, false, 'Я люблю бег.');
+    const olderPending = await f.message(scope, alice, '4', 49, false, 'Моё хобби — шахматы.');
+    expect(f.infer(scope, alice, first, set('interest', 'Шахматы'))).toBe('recorded');
+    expect(f.infer(scope, alice, alias, set('hobby', 'игра в шахматы'))).toBe('recorded');
+    expect(f.infer(scope, alice, running, set('interest', 'Бег'))).toBe('recorded');
+
+    const store = profileCommandStore(f.storage);
+    const list = store.open(alice, direct, scope, { scope: direct, messageId: '100', at: 50 }, 50)!;
+    const [part] = store.parts(list, [{ first: 1, last: 3 }], 50)!;
+    expect(store.confirm(list, 1, part!.sendId, '101', 50)).toBe(true);
+    expect(
+      store.edit(
+        direct,
+        alice,
+        {
+          messageId: '102',
+          replyId: '101',
+          position: 1,
+          at: 50,
+          change: { kind: 'reject' },
+        },
+        50,
+      ),
+    ).toBe('applied');
+    expect(f.storage.profileFacts.read(scope, alice).facts.map(({ value }) => value)).toEqual([
+      'Бег',
+    ]);
+
+    await f.reopen();
+    const current = scopeFor(f.storage, group);
+    clock.mockReturnValue(80);
+    for (const id of [first, alias, olderPending]) {
+      expect(f.infer(current, alice, id, set('hobbies', 'шахматами'))).toBe('blocked');
+    }
+    const atRejection = await f.message(current, alice, '5', 50, false, 'Я люблю шахматы.');
+    const hearsay = await f.message(current, twin, '6', 52, false, 'Я люблю шахматы.');
+    const implicit = await f.message(current, alice, '7', 53, false, 'Вчера смотрел турнир.');
+    const quote = await f.message(current, alice, '8', 54, false, '«Я люблю шахматы».');
+    for (const id of [atRejection, hearsay, implicit, quote])
+      expect(f.infer(current, alice, id, set('interest', 'Шахматы'))).toBe('blocked');
+    expect(f.infer(current, twin, hearsay, set('interest', 'Шахматы'))).toBe('recorded');
+
+    const evidence = await f.message(current, alice, '9', 55, false, 'Шахматы — моё хобби.');
+    expect(f.infer(current, alice, evidence, set('interest', 'Шахматы'))).toBe('recorded');
+    expect(f.infer(current, alice, evidence, set('interest', 'Шахматы'))).toBe('duplicate');
+    expect(f.storage.profileFacts.read(current, alice).facts).toMatchObject([
+      { value: 'Бег', sourceKind: 'inferred' },
+      { value: 'Шахматы', sourceKind: 'inferred' },
+    ]);
+    expect(personalDataStore(f.storage).export(current, alice, 80).facts).toMatchObject([
+      { rejected_at: 50 },
+      { rejected_at: 50 },
+      { rejected_at: null },
+      { rejected_at: null },
+    ]);
+  } finally {
+    clock.mockRestore();
+    await f.close();
+  }
+});

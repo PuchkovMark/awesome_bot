@@ -20,9 +20,15 @@ import {
 } from './profile-fact-selection';
 import { compositeId, requireInput } from './validation';
 
-function publicFact(row: PublicProfileFact): PublicProfileFact {
+function publicFact({ row, stale }: SelectedFact): PublicProfileFact {
   const { fieldKey, value, sourceKind, reliability } = row;
-  return Object.freeze({ fieldKey, value, sourceKind, reliability });
+  return Object.freeze({
+    fieldKey,
+    value,
+    sourceKind,
+    reliability,
+    ...(stale ? { stale: true as const } : {}),
+  });
 }
 
 type SelectedFact = ReturnType<typeof selectPublicFacts>[number];
@@ -47,6 +53,7 @@ function compareFacts(left: SelectedFact, right: SelectedFact) {
   const b = right.row;
   return (
     sourcePriority[b.sourceKind] - sourcePriority[a.sourceKind] ||
+    Number(left.stale) - Number(right.stale) ||
     (b.sourceAt ?? 0) - (a.sourceAt ?? 0) ||
     Buffer.compare(Buffer.from(b.eventKey ?? ''), Buffer.from(a.eventKey ?? '')) ||
     a.id - b.id
@@ -66,6 +73,7 @@ export function createProfileFactReader(lifecycle: LifecycleBackend) {
       readonly fact: number;
       readonly restriction: number | null;
       readonly source: number | null;
+      readonly stale: boolean;
     }
   >();
   const read = (scope: ConnectionScope, query: ProfileQuery) =>
@@ -73,13 +81,13 @@ export function createProfileFactReader(lifecycle: LifecycleBackend) {
       const revision = lifecycle.revision(scope);
       const facts = selectPublicFacts(db, scope, query, Date.now());
       const participation = new Map<UserId, number>();
-      const factVersions = facts.map(({ row, restrictionId }) => {
+      const factVersions = facts.map(({ row, restrictionId, stale }) => {
         let version = participation.get(row.userId);
         if (version === undefined) {
           version = readDeparture(db, scope, row.userId)?.revision ?? 0;
           participation.set(row.userId, version);
         }
-        return [row.id, restrictionId, version];
+        return [row.id, restrictionId, version, stale];
       });
       const signature = JSON.stringify([
         facts.length === 0 ? null : readDisclosureGate(db, scope).version,
@@ -122,7 +130,8 @@ export function createProfileFactReader(lifecycle: LifecycleBackend) {
         const revision = lifecycle.assertScope(db, scope).revision;
         const disclosure = readDisclosureGate(db, scope).version;
         const participation = readDeparture(db, scope, subjectId)?.revision ?? 0;
-        return selected.map(({ row, restrictionId }) => {
+        return selected.map((fact) => {
+          const { row, restrictionId, stale } = fact;
           const source = sourceFor(db, scope, row, now);
           const reference = Object.freeze({}) as ContextCardFactReference;
           cardReferences.set(reference, {
@@ -135,9 +144,10 @@ export function createProfileFactReader(lifecycle: LifecycleBackend) {
             fact: row.id,
             restriction: restrictionId,
             source,
+            stale,
           });
           return Object.freeze({
-            value: publicFact(row),
+            value: publicFact(fact),
             reference,
             sourceIds: Object.freeze(source === null ? [] : [source]),
           });
@@ -177,6 +187,7 @@ export function createProfileFactReader(lifecycle: LifecycleBackend) {
             return (
               fact !== undefined &&
               fact.restrictionId === saved.restriction &&
+              fact.stale === saved.stale &&
               sourceFor(db, scope, fact.row, now) === saved.source
             );
           });
@@ -193,7 +204,7 @@ export function createProfileFactReader(lifecycle: LifecycleBackend) {
         sourceIds: Object.freeze(
           facts.flatMap(({ row }) => (row.messageRowId === null ? [] : [row.messageRowId])),
         ),
-        facts: Object.freeze(facts.map(({ row }) => publicFact(row))),
+        facts: Object.freeze(facts.map(publicFact)),
         reference,
       });
     },
@@ -202,8 +213,8 @@ export function createProfileFactReader(lifecycle: LifecycleBackend) {
         kind: 'interest',
         interest: interestKey(interest),
       });
-      const matches = facts.map(({ row }) =>
-        Object.freeze({ userId: row.userId, fact: publicFact(row) }),
+      const matches = facts.map((fact) =>
+        Object.freeze({ userId: fact.row.userId, fact: publicFact(fact) }),
       );
       return Object.freeze({ matches: Object.freeze(matches), reference });
     },

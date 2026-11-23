@@ -72,13 +72,14 @@ export async function profileFixture() {
     serial: string,
     timestamp: number,
     senderBot = false,
+    text = 'Синтетическая реплика',
   ) {
     const { id } = await storage.messages.append(scope, {
       chatId: scope.chatId,
       userId,
       messageId: serial,
       role: 'user',
-      text: 'Синтетическая реплика',
+      text,
       authorName: 'Саша Иванов',
       senderBot,
       timestamp,

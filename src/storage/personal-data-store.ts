@@ -12,7 +12,7 @@ import type { LifecycleBackend } from './lifecycle-store';
 import type { Storage } from './types';
 import { compositeId, requireInput, timestamp } from './validation';
 import { participantProfileAvailable, readDeparture } from './participant-departures';
-import { recordProfileAnswer } from './participant-derived-data';
+import { dropProfileUpdateInputs, recordProfileAnswer } from './participant-derived-data';
 
 const week = 7 * 86_400_000;
 
@@ -147,6 +147,7 @@ export function createPersonalDataStore(connection: Connection, lifecycle: Lifec
           `INSERT INTO personal_profile_choices(chat_id,generation,user_id,disabled_at)
           VALUES(@chat,@generation,@user,@now) ON CONFLICT DO NOTHING`,
         ).run({ ...args, now });
+        dropProfileUpdateInputs(db, scope, userId);
         const row = db
           .prepare(`SELECT disabled_at FROM personal_profile_choices WHERE ${subject}`)
           .get(args) as { disabled_at: number };
@@ -284,6 +285,7 @@ export function createPersonalDataStore(connection: Connection, lifecycle: Lifec
               db.prepare(
                 'DELETE FROM questionnaire_progress WHERE chat_id=? AND generation=? AND user_id=?',
               ).run(row.chat, row.generation, row.user);
+              db.prepare(`DELETE FROM profile_inference_rejections WHERE ${subject}`).run(row);
               db.prepare('DELETE FROM profile_facts WHERE chat_id=? AND user_id=?').run(
                 row.chat,
                 row.user,

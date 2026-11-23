@@ -2,6 +2,7 @@ import type { Database } from 'better-sqlite3';
 import type { ConnectionScope, HumanMember, UserId } from '../contracts/index';
 import { requireInput, timestamp } from './validation';
 import {
+  dropProfileUpdateInputs,
   eraseDepartedAnswers,
   hideDepartedAnswers,
   releaseDepartedAnswers,
@@ -69,6 +70,7 @@ export function startParticipantDeparture(
 
 export function pauseDepartedActivity(db: Database, scope: ChatGeneration, user: UserId) {
   const args = { ...scope, user };
+  dropProfileUpdateInputs(db, scope, user);
   db.prepare(`DELETE FROM profile_command_lists WHERE ${subject}`).run(args);
   db.prepare(
     `DELETE FROM questionnaire_inputs WHERE chat_id=@chatId AND generation=@generation
@@ -94,7 +96,12 @@ export function eraseDepartedProfile(db: Database, scope: ChatGeneration, user: 
     `DELETE FROM questionnaire_inputs WHERE chat_id=@chatId AND generation=@generation
     AND attempt=(SELECT attempt FROM questionnaire_progress WHERE ${subject})`,
   ).run(args);
-  for (const table of ['questionnaire_progress', 'profile_command_lists', 'address_preferences'])
+  for (const table of [
+    'questionnaire_progress',
+    'profile_command_lists',
+    'address_preferences',
+    'profile_inference_rejections',
+  ])
     db.prepare(`DELETE FROM ${table} WHERE ${subject}`).run(args);
   db.prepare(
     `DELETE FROM profile_facts WHERE chat_id=@chatId AND user_id=@user

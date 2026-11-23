@@ -67,17 +67,30 @@ export function readPersonalExport(
     facts: visible
       ? db
           .prepare(
-            `SELECT field_key,value,source_kind,reliability,visibility,created_at,updated_at,source_at,
+            `SELECT field_key,value,source_kind,reliability,visibility,created_at,updated_at,source_at,r.rejected_at,
       change_kind,CASE WHEN change_kind<>'set' AND interest_key<>'' THEN interest_key END AS interest,
       CASE WHEN source_user_id=user_id AND EXISTS(
         SELECT 1 FROM personal_visible_messages m
         WHERE m.chat_id=f.chat_id AND m.user_id=f.user_id AND m.platform_message_id=f.source_message_id
           AND m.id>? AND m.timestamp>?
       ) THEN source_message_id END AS own_source_message
-      FROM profile_facts f WHERE chat_id=? AND user_id=? AND (generation=? OR generation IS NULL)
+      FROM profile_facts f LEFT JOIN profile_fact_rejections r ON r.fact_id=f.id
+      WHERE chat_id=? AND user_id=? AND (generation=? OR generation IS NULL)
+       AND (source_kind<>'inferred' OR generation IS NULL OR EXISTS(
+        SELECT 1 FROM personal_visible_messages m WHERE m.chat_id=f.chat_id
+        AND m.platform_message_id=f.source_message_id AND m.id>? AND m.timestamp>?
+       ))
       ORDER BY id`,
           )
-          .all(bounds.clearedThrough, bounds.expiredThrough, chat, user, generation)
+          .all(
+            bounds.clearedThrough,
+            bounds.expiredThrough,
+            chat,
+            user,
+            generation,
+            bounds.clearedThrough,
+            bounds.expiredThrough,
+          )
       : [],
     messages: db
       .prepare(

@@ -7,6 +7,7 @@ export interface PublicProfileFact {
   readonly value: string;
   readonly sourceKind: FactSourceKind;
   readonly reliability: FactReliability;
+  readonly stale?: true;
 }
 
 declare const contextCardFactReference: unique symbol;

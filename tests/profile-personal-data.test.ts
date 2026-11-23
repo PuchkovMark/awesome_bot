@@ -1,7 +1,14 @@
-import { expect, test } from 'vitest';
+import Database from 'better-sqlite3';
+import { expect, test, vi } from 'vitest';
 import { openConnection } from '../src/storage/connection';
 import { disclosureStore } from '../src/storage/chat-disclosure-store';
 import { lifecycleBackend } from '../src/storage/lifecycle-store';
+import { applyHistoryRetention } from '../src/storage/history-retention-store';
+import { reconcileStagedPersonalData } from '../src/storage/personal-data-restore';
+import { profileCommandStore } from '../src/storage/profile-command-store';
+import { rememberProfileUpdate } from '../src/storage/profile-update-intake';
+import { profileUpdateStore, profileUpdateWaitMs } from '../src/storage/profile-update-store';
+import { storageFixture } from './helpers/storage-fixture';
 import { personalDataStore } from '../src/storage/personal-data-store';
 import {
   admin,
@@ -249,5 +256,107 @@ test('только автор читает действующие интерес
     expect(f.storage.profileFacts.searchInterests(first, 'Шахматы').matches).toEqual([]);
   } finally {
     await f.close();
+  }
+});
+
+test('сверка копии переносит отказ и расход, сохраняет только доступную необработанную очередь', async () => {
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(110);
+  const f = await profileFixture();
+  const backup = storageFixture();
+  try {
+    const scope = await f.chat();
+    const direct = await f.chat(alice, [alice]);
+    f.deliver(scope);
+    f.deliver(direct);
+    const old = await f.message(scope, alice, '1', 20);
+    const active = await f.message(scope, alice, '2', 100);
+    const consumed = await f.message(scope, alice, '3', 102);
+    const pending = await f.message(scope, twin, '4', 104);
+    expect(f.infer(scope, alice, old, set('city', 'Истёкший источник'))).toBe('recorded');
+    expect(f.infer(scope, alice, active, set('interest', 'Шахматы'))).toBe('recorded');
+    const original = new Database(f.path);
+    try {
+      const backend = lifecycleBackend(f.storage);
+      backend.transaction(scope, (db) => {
+        rememberProfileUpdate(db, scope, consumed, 102);
+        rememberProfileUpdate(db, scope, pending, 104);
+      });
+      await original.backup(backup.path);
+      const now = 102 + profileUpdateWaitMs;
+      clock.mockReturnValue(now);
+      backend.transaction(scope, (db) => applyHistoryRetention(db, now - 20, now));
+      const queue = profileUpdateStore(f.storage);
+      const attempt = queue.begin(scope, [consumed], now, { group: true, input: 50, output: 25 })!;
+      expect(attempt).toBeDefined();
+      expect(queue.reconcile(attempt, { input: 11, output: null })).toBe(true);
+      expect(queue.finish(attempt, now, true)).toBe(true);
+
+      const store = profileCommandStore(f.storage);
+      const list = store.open(
+        alice,
+        direct,
+        scope,
+        { scope: direct, messageId: '100', at: now },
+        now,
+      )!;
+      expect(list.facts).toHaveLength(1);
+      const [part] = store.parts(list, [{ first: 1, last: 1 }], now)!;
+      expect(store.confirm(list, 1, part!.sendId, '101', now)).toBe(true);
+      expect(
+        store.edit(
+          direct,
+          alice,
+          {
+            messageId: '102',
+            replyId: '101',
+            position: 1,
+            at: now,
+            change: { kind: 'reject' },
+          },
+          now,
+        ),
+      ).toBe('applied');
+
+      const staged = new Database(backup.path);
+      const recent = new Database(f.path, { readonly: true });
+      try {
+        staged.pragma('foreign_keys=ON');
+        reconcileStagedPersonalData(staged, recent, now);
+        reconcileStagedPersonalData(staged, recent, now);
+        expect(
+          staged.prepare('SELECT message_id,queued_at FROM profile_update_waiting').all(),
+        ).toEqual([{ message_id: pending, queued_at: 104 }]);
+        expect(
+          staged.prepare('SELECT started_at,attempt_key FROM profile_update_runs').all(),
+        ).toEqual([{ started_at: now, attempt_key: null }]);
+        expect(
+          staged
+            .prepare('SELECT purpose,input_tokens,output_reserve FROM token_budget_attempts')
+            .all(),
+        ).toEqual([{ purpose: 'profile_update', input_tokens: 11, output_reserve: 25 }]);
+        expect(
+          staged
+            .prepare(
+              `SELECT value,rejected_at FROM profile_facts f
+          JOIN profile_fact_rejections r ON f.id=r.fact_id`,
+            )
+            .all(),
+        ).toEqual([{ value: 'Шахматы', rejected_at: now }]);
+        expect(staged.prepare('SELECT count(*) FROM profile_facts').pluck().get()).toBe(1);
+        expect(
+          staged.prepare('SELECT count(*) FROM profile_inference_rejections').pluck().get(),
+        ).toBe(1);
+        expect(staged.pragma('foreign_key_check')).toEqual([]);
+      } finally {
+        staged.close();
+        recent.close();
+      }
+    } finally {
+      original.close();
+    }
+  } finally {
+    clock.mockRestore();
+    await f.close();
+    backup.cleanup();
   }
 });

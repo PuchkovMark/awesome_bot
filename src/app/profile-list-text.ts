@@ -38,7 +38,12 @@ export function profileListText(list: ProfileCommandList) {
   for (const [index, fact] of list.facts.entries()) {
     const position = index + 1;
     const field = fieldLabels.get(fact.fieldKey) ?? fact.fieldKey;
-    const line = `\n${position}. ${escapeProfileText(field)} · ${sourceLabels[fact.sourceKind]} · ${visibilityLabels[fact.visibility]}\n   ${escapeProfileText(fact.value)}`;
+    const evidenceDate = new Date(fact.evidenceAt ?? NaN);
+    const evidence = Number.isFinite(evidenceDate.getTime())
+      ? ' · свидетельство от ' + evidenceDate.toISOString().slice(0, 10) + ' UTC'
+      : '';
+    const age = fact.stale ? ' · устарело' : '';
+    const line = `\n${position}. ${escapeProfileText(field)} · ${sourceLabels[fact.sourceKind]} · ${visibilityLabels[fact.visibility]}${evidence}${age}\n   ${escapeProfileText(fact.value)}`;
     if (Buffer.byteLength(text + line, 'utf8') <= vkMessageLength.value) {
       text += line;
       last = position;

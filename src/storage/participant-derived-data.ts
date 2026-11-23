@@ -139,3 +139,10 @@ export function recordProfileAnswer(
   )
     eraseAnswers(db, scope, 'SELECT @answer', undefined, answer);
 }
+
+export function dropProfileUpdateInputs(db: Database, scope: ChatGeneration, user: UserId) {
+  db.prepare(
+    `DELETE FROM profile_update_waiting WHERE chat_id=@chatId AND generation=@generation
+    AND message_id IN (SELECT id FROM messages WHERE chat_id=@chatId AND user_id=@user)`,
+  ).run({ ...scope, user });
+}

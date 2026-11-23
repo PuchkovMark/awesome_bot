@@ -81,7 +81,8 @@ export function createProfileUpdates(options: {
         !callSignal.aborted && response !== null && response.kind !== 'error',
         conclusions
           ? () => {
-              for (const input of conclusions) if (record(scope, input) === 'recorded') recorded++;
+              for (const input of conclusions)
+                if (record(scope, input, 'automatic') === 'recorded') recorded++;
             }
           : undefined,
       );

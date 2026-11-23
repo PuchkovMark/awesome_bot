@@ -1,6 +1,8 @@
 import { expect, test } from 'vitest';
 import type { ConnectionScope } from '../src/contracts/index';
 import { createAuthorizationService } from '../src/core/index';
+import { profileInference } from '../src/storage/profile-fact-store';
+import { inferenceFreshnessMs } from '../src/storage/profile-fact-selection';
 import { lifecycleBackend } from '../src/storage/lifecycle-store';
 import { participantRegistryStore } from '../src/storage/participant-registry';
 import type { ProfileFactChange } from '../src/storage/participant-types';
@@ -251,6 +253,47 @@ test('личное скрытие сразу исключает интерес �
     expect(app.sends.some((row) => row.peer_id === peer)).toBe(false);
   } finally {
     wait.resolve();
+    await app.close();
+  }
+});
+
+test('личный список показывает происхождение, UTC-дату свидетельства и старение вывода', async () => {
+  const app = await fixture({
+    profileNotice: notice,
+    retentionDays: 120,
+    greetings: { members: [41] },
+  });
+  try {
+    app.at(2000);
+    const at = Date.now();
+    const { id } = await app.storage.messages.append(app.scope, {
+      chatId: chat,
+      userId: author,
+      messageId: '999998',
+      role: 'user',
+      text: 'Я люблю шахматы.',
+      senderBot: false,
+      authorName: 'Саша Иванов',
+      timestamp: at,
+    });
+    expect(
+      profileInference(app.storage)(app.scope, {
+        subjectId: author,
+        messageId: id,
+        change: item('interest', 'Шахматы'),
+      }),
+    ).toBe('recorded');
+    app.at(2000 + inferenceFreshnessMs - 1);
+    app.submit('/профиль');
+    const first = await receivedPart(app);
+    expect(first.text).toContain('вывод бота');
+    expect(first.text).toContain('свидетельство от 2026-11-23 UTC');
+    expect(first.text).not.toContain('устарело');
+    const start = app.sends.length;
+    app.at(2000 + inferenceFreshnessMs);
+    app.submit('/профиль');
+    expect((await receivedPart(app, start)).text).toContain('устарело');
+  } finally {
     await app.close();
   }
 });

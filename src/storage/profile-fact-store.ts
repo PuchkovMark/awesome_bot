@@ -16,6 +16,7 @@ import type {
   ProfileCommandEvent,
   ProfileCommandEditResult,
 } from './profile-command-types';
+import { inferenceAllowed, rememberInferenceRejection } from './profile-inference-rejection';
 import { profileAdmitted } from './personal-data-store';
 import { compositeId, object, requireInput } from './validation';
 import type { Storage } from './types';
@@ -58,7 +59,12 @@ function eventKey(messageId: string) {
   return /^[1-9]\d{0,15}$/u.test(messageId) ? '0:' + messageId.padStart(16, '0') : '1:' + messageId;
 }
 
-type Origin = { readonly messageId: string; readonly userId: UserId; readonly at: number };
+type Origin = {
+  readonly messageId: string;
+  readonly userId: UserId;
+  readonly at: number;
+  readonly text: string;
+};
 
 function origin(
   db: Database,
@@ -70,7 +76,7 @@ function origin(
   const bounds = historyBounds(db, scope.chatId, now);
   return db
     .prepare(
-      `SELECT platform_message_id AS messageId, user_id AS userId, timestamp AS at
+      `SELECT platform_message_id AS messageId, user_id AS userId, timestamp AS at, text
     FROM personal_visible_messages WHERE chat_id=? AND id=? AND id>? AND timestamp>?
       AND role='user' AND sender_bot=0 AND (?=0 OR purpose='conversation')`,
     )
@@ -99,6 +105,7 @@ function writePrivateFact(
       fact.factId,
       now,
     );
+    rememberInferenceRejection(db, scope, actor, fact, now);
     return 'applied';
   }
 
@@ -182,6 +189,7 @@ export function createProfileFactStore(lifecycle: LifecycleBackend) {
     actorId: UserId,
     sourceKind: FactSourceKind,
     input: ProfileFactInput,
+    automatic = false,
   ): ProfileFactWriteResult {
     object(input, ['subjectId', 'messageId', 'change']);
     const { subjectId, messageId, change } = input;
@@ -202,6 +210,12 @@ export function createProfileFactStore(lifecycle: LifecycleBackend) {
         !profileAdmitted(db, scope, subjectId, source.at, 'write') ||
         (actorId !== subjectId && !profileAdmitted(db, scope, actorId, source.at, 'write')) ||
         !db.prepare('SELECT 1 FROM chats WHERE chat_id=? AND enabled=1').get(scope.chatId)
+      )
+        return 'blocked';
+
+      if (
+        sourceKind === 'inferred' &&
+        !inferenceAllowed(db, scope, subjectId, source, slot, automatic)
       )
         return 'blocked';
 
@@ -260,16 +274,18 @@ export function createProfileFactStore(lifecycle: LifecycleBackend) {
   return { record, writePrivateFact };
 }
 
-/** Доверенный вход будущего извлечения F5.7 с проверкой исходной реплики в SQLite. */
+/** Вход извлечения F5.7 с повторной проверкой исходной реплики в SQLite. */
 const inference = new WeakMap<
   Storage,
-  (scope: ConnectionScope, input: ProfileFactInput) => ProfileFactWriteResult
+  (scope: ConnectionScope, input: ProfileFactInput, mode?: 'automatic') => ProfileFactWriteResult
 >();
 export function registerProfileInference(
   storage: Storage,
   facts: ReturnType<typeof createProfileFactStore>,
 ) {
-  inference.set(storage, (scope, input) => facts.record(scope, input.subjectId, 'inferred', input));
+  inference.set(storage, (scope, input, mode) =>
+    facts.record(scope, input.subjectId, 'inferred', input, mode === 'automatic'),
+  );
 }
 export function profileInference(storage: Storage) {
   const record = inference.get(storage);

@@ -40,6 +40,7 @@ export async function fixture(
   options: {
     limit?: number;
     profileNotice?: string;
+    retentionDays?: number;
     upload?: (peer: number, data: Buffer) => Promise<string>;
     threshold?: number;
     window?: number;
@@ -79,7 +80,7 @@ export async function fixture(
       OPENCODE_API_KEY: 'synthetic-go',
       LLM_MODEL: 'synthetic-model',
       MODEL_CONTEXT_TOKENS: '16000',
-      MESSAGE_RETENTION_DAYS: '30',
+      MESSAGE_RETENTION_DAYS: String(options.retentionDays ?? 30),
       LLM_SESSION_SECRET: 'synthetic-session',
       CHAT_RESPONSES_PER_MINUTE: String(options.limit ?? 6),
       CHAT_MENTION_FLOOD_THRESHOLD: String(options.threshold ?? 5),

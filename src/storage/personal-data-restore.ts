@@ -5,6 +5,7 @@ import {
   purgePersonalMessages,
   invalidateDependentData,
 } from './personal-deletion';
+import { reconcileStagedProfileUpdates } from './profile-update-restore';
 import { reconcileStagedDepartures } from './participant-departure-restore';
 import { requireInput, timestamp } from './validation';
 
@@ -158,6 +159,7 @@ function reconcileSnapshot(staged: Database, newer: Database, now: number) {
         /* Проверяем следующую порцию внутри той же изолированной операции. */
       }
       reconcileStagedDepartures(staged, newer, now);
+      reconcileStagedProfileUpdates(staged, newer, now);
       for (const operation of deletions) {
         requireInput(
           !staged

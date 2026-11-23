@@ -113,7 +113,10 @@ export function createProfileCommandStore(
     return (
       facts.length === previous.length &&
       previous.every(
-        (item, index) => item.position === index + 1 && samePosition(item, facts[index]!),
+        (item, index) =>
+          item.position === index + 1 &&
+          samePosition(item, facts[index]!) &&
+          facts[index]!.stale === list.facts[index]?.stale,
       )
     );
   }

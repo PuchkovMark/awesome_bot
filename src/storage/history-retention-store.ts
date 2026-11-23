@@ -243,6 +243,13 @@ export function createHistoryClearStore(connection: Connection, lifecycle: Lifec
           `INSERT INTO history_retention_boundaries(chat_id,generation,cleared_through) VALUES(?,?,?)
           ON CONFLICT(chat_id,generation) DO UPDATE SET cleared_through=max(cleared_through,excluded.cleared_through)`,
         ).run(scope.chatId, scope.generation, request.throughId);
+        db.prepare(
+          'DELETE FROM profile_update_waiting WHERE chat_id=? AND generation=? AND message_id<=?',
+        ).run(scope.chatId, scope.generation, request.throughId);
+        db.prepare(
+          `DELETE FROM profile_facts WHERE chat_id=? AND generation=? AND source_kind='inferred'
+          AND source_message_id IN (SELECT platform_message_id FROM messages WHERE chat_id=? AND id<=?)`,
+        ).run(scope.chatId, scope.generation, scope.chatId, request.throughId);
         removeUnknownFacts(db, scope.chatId);
         return { count: request.count };
       });

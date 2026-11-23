@@ -4,6 +4,7 @@ import { estimateRequestInput } from '../src/core/context/budget';
 import type { ChatId } from '../src/contracts/index';
 import type { LlmRequest, LlmResult } from '../src/llm/types';
 import { disclosureStore } from '../src/storage/chat-disclosure-store';
+import { applyHistoryRetention } from '../src/storage/history-retention-store';
 import { lifecycleBackend } from '../src/storage/lifecycle-store';
 import { personalDataStore } from '../src/storage/personal-data-store';
 import { tokenBudgetStore } from '../src/storage/token-budget-store';
@@ -195,7 +196,7 @@ test('тёзки, соседняя группа и личка имеют отд�
   }
 });
 
-test.each(['foreign-author', 'bad-ref', 'disable', 'generation'] as const)(
+test.each(['foreign-author', 'bad-ref', 'disable', 'deletion', 'expiry', 'generation'] as const)(
   'ответ с нарушением %s не пишет ни одного факта и не публикуется',
   async (fault) => {
     const f = await appFixture();
@@ -210,6 +211,12 @@ test.each(['foreign-author', 'bad-ref', 'disable', 'generation'] as const)(
       f.at(3000);
       let current = f.scope;
       if (fault === 'disable') personalDataStore(f.storage).disable(f.scope, 'vk:42', Date.now());
+      if (fault === 'deletion') {
+        const privacy = personalDataStore(f.storage);
+        const requested = privacy.requestDeletion(f.scope, 'vk:42', '048', Date.now());
+        expect(privacy.confirmDeletion(f.scope, 'vk:42', requested.code, Date.now())).toBe(true);
+      }
+      if (fault === 'expiry') applyHistoryRetention(f.db, 1000, Date.now());
       if (fault === 'generation') {
         const life = lifecycleBackend(f.storage);
         current = life.ownerDecision(life.begin(chat), 'new');
