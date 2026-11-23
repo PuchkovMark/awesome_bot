@@ -2,6 +2,8 @@ import Database from 'better-sqlite3';
 import { expect, test } from 'vitest';
 import { migrate } from '../src/storage/migrate';
 const tables = [
+  'chat_token_budgets',
+  'token_budget_attempts',
   'response_rate_clock',
   'response_rate_publications',
   'mention_flood_state',
@@ -49,6 +51,8 @@ const tables = [
   'sqlite_sequence',
 ];
 const others = [
+  'token_budget_by_chat',
+  'token_budget_expiry',
   'response_rate_by_chat',
   'response_rate_expiry',
   'mention_flood_by_chat',

@@ -153,8 +153,8 @@ test('единственное исключение реестра — реги�
   }
 });
 
-test.each(['queue-registry.ts', 'queue-store.ts'])(
-  'очередь: инфраструктура %s недоступна через транзитивный импорт',
+test.each(['queue-registry.ts', 'queue-store.ts', 'token-budget-store.ts'])(
+  'инфраструктура %s недоступна через транзитивный импорт',
   (module) => {
     const f = fixture();
     try {

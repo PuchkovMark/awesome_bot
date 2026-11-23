@@ -2,25 +2,30 @@ import { spawn } from 'node:child_process';
 import { resolve } from 'node:path';
 import { expect, test } from 'vitest';
 import { openStorage } from '../src/storage/index';
+import { tokenBudgetStore } from '../src/storage/token-budget-store';
 import { queueBackend } from '../src/storage/queue-registry';
 import { scopeFor } from './helpers/connection-scope';
 import { storageFixture } from './helpers/storage-fixture';
-async function contender(path: string, id: string) {
+async function contender(path: string, id: string, operation: 'queue' | 'budget' = 'queue') {
   const code = `
   const root=process.argv[2];const {openStorage}=await import(root+'/storage/index.js');
   const {lifecycleBackend}=await import(root+'/storage/lifecycle-store.js');
   const {queueBackend}=await import(root+'/storage/queue-registry.js');
   const {queueConfig}=await import(root+'/core/chat-queue/validation.js');
+  const {tokenBudgetStore}=await import(root+'/storage/token-budget-store.js');
   const storage=await openStorage(process.argv[1]);const scope=lifecycleBackend(storage).current('vk:a');
   process.stdout.write('ready\\n');
   process.stdin.once('data',async()=>{try{
-   const result=queueBackend(storage).admit('shared',scope,{chatId:'vk:a',messageId:process.argv[3],userId:'vk:u',authorName:'',role:'user',text:'synthetic',timestamp:0},()=>{Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,150);return true;},queueConfig({maxQueuedPerChat:1}));
-   process.stdout.write(result.status+'\\n');
+   const id=process.argv[3];
+   const result=process.argv[4]==='budget'
+    ? String(tokenBudgetStore(storage).reserve(scope,true,{key:id,purpose:'direct',input:1000,output:500},1000))
+    : queueBackend(storage).admit('shared',scope,{chatId:'vk:a',messageId:id,userId:'vk:u',authorName:'',role:'user',text:'synthetic',timestamp:0},()=>{Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,150);return true;},queueConfig({maxQueuedPerChat:1})).status;
+   process.stdout.write(result+'\\n');
   }finally{await storage.close();}});
  `;
   const child = spawn(
     process.execPath,
-    ['--input-type=module', '--eval', code, path, resolve('dist'), id],
+    ['--input-type=module', '--eval', code, path, resolve('dist'), id, operation],
     { stdio: ['pipe', 'pipe', 'pipe'] },
   );
   let text = '',
@@ -72,5 +77,32 @@ test.each([true, false])('два процесса пересекают пост�
     for (const p of processes) p.child.kill();
     await storage.close();
     f.cleanup();
+  }
+});
+
+test('два процесса конкурируют за остаток одного токен-бюджета', async () => {
+  const fixture = storageFixture();
+  const storage = await openStorage(fixture.path);
+  const processes: Awaited<ReturnType<typeof contender>>[] = [];
+  try {
+    const scope = scopeFor(storage, 'vk:a');
+    const store = tokenBudgetStore(storage);
+    store.update(scope, true, { total: 1500 }, 1000);
+    processes.push(
+      ...(await Promise.all([
+        contender(fixture.path, 'job:1:1', 'budget'),
+        contender(fixture.path, 'job:2:1', 'budget'),
+      ])),
+    );
+    for (const { child } of processes) child.stdin.end('go');
+    expect((await Promise.all(processes.map(({ done }) => done))).sort()).toEqual([
+      'false',
+      'true',
+    ]);
+    expect(store.read(scope, true, 1000).total).toMatchObject({ reserved: 1500n, remaining: 0 });
+  } finally {
+    for (const { child } of processes) child.kill();
+    await storage.close();
+    fixture.cleanup();
   }
 });

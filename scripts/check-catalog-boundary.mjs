@@ -61,6 +61,7 @@ export function checkCatalogBoundary(root = process.cwd()) {
           ['queue-registry.ts', 'registerQueue'],
           ['queue-store.ts', 'createQueueBackend'],
           ['notice-store.ts', 'registerNotices'],
+          ['token-budget-store.ts', 'registerTokenBudgets'],
         ]) {
           if (p === resolve(root, 'src/storage/' + moduleName)) {
             const parent = node.parent;
@@ -76,14 +77,31 @@ export function checkCatalogBoundary(root = process.cwd()) {
                 (e) =>
                   (e.propertyName ?? e.name).text === factory ||
                   (moduleName === 'notice-store.ts' &&
-                    (e.propertyName ?? e.name).text === 'createNoticeBackend'),
+                    (e.propertyName ?? e.name).text === 'createNoticeBackend') ||
+                  (moduleName === 'token-budget-store.ts' &&
+                    (e.propertyName ?? e.name).text === 'createTokenBudgetStore'),
               );
             const registryType =
               moduleName === 'queue-store.ts' &&
               file === resolve(root, 'src/storage/queue-registry.ts') &&
               ts.isImportDeclaration(parent) &&
               parent.importClause?.isTypeOnly;
-            if (!storageFactory && !registryType) result.privileged = true;
+            const queueBudget =
+              moduleName === 'token-budget-store.ts' &&
+              file === resolve(root, 'src/storage/queue-store.ts') &&
+              bindings &&
+              ts.isNamedImports(bindings) &&
+              bindings.elements.every((e) =>
+                [
+                  'canReserveTokens',
+                  'insertTokenReservation',
+                  'deleteUnsentTokenReservation',
+                  'pruneTokenBudget',
+                  'reconcileTokenReservation',
+                  'TokenReservation',
+                ].includes((e.propertyName ?? e.name).text),
+              );
+            if (!storageFactory && !registryType && !queueBudget) result.privileged = true;
           }
         }
         if (!p.split(sep).includes('node_modules')) result.edges.push(p);

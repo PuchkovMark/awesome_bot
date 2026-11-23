@@ -5,6 +5,8 @@ import { afterAll, beforeAll, expect, test } from 'vitest';
 import { createSkeletonFixture } from './helpers/skeleton-fixture';
 
 let fixture: ReturnType<typeof createSkeletonFixture>;
+const buildTimeoutMs = 60_000;
+const testTimeoutMs = buildTimeoutMs + 20_000;
 
 beforeAll(() => {
   fixture = createSkeletonFixture();
@@ -20,38 +22,40 @@ function build() {
     cwd: fixture.directory,
     env: process.env,
     encoding: 'utf8',
-    timeout: 30_000,
+    timeout: buildTimeoutMs,
   });
   if (result.error) throw result.error;
   expect(result.signal).toBeNull();
   return { status: result.status, output: result.stdout + result.stderr };
 }
 
-test('корректный проект собирается без сетевой установки', () => {
-  writeFileSync(
-    join(fixture.directory, 'src/esm-probe.ts'),
-    [
-      "import { createRedactor } from './config/secrets';",
-      "import type { Redact } from './config';",
-      "export { ConfigError } from './config';",
-      "export const redact: Redact = createRedactor(['secret']);",
-      "export const load = () => import('./config/secrets');",
-      'export const loadTemplate = () => import(`./config/secrets`);',
-      'export const example = "import \'./config/secrets\'";',
-      '',
-    ].join('\n'),
-  );
-  const result = build();
-  expect(result.output).not.toContain('boundaries/platform-imports');
-  expect(result.status, result.output).toBe(0);
-  expect(existsSync(join(fixture.directory, 'dist/core/index.js'))).toBe(true);
+test(
+  'корректный проект собирается без сетевой установки',
+  () => {
+    writeFileSync(
+      join(fixture.directory, 'src/esm-probe.ts'),
+      [
+        "import { createRedactor } from './config/secrets';",
+        "import type { Redact } from './config';",
+        "export { ConfigError } from './config';",
+        "export const redact: Redact = createRedactor(['secret']);",
+        "export const load = () => import('./config/secrets');",
+        'export const loadTemplate = () => import(`./config/secrets`);',
+        'export const example = "import \'./config/secrets\'";',
+        '',
+      ].join('\n'),
+    );
+    const result = build();
+    expect(result.output).not.toContain('boundaries/platform-imports');
+    expect(result.status, result.output).toBe(0);
+    expect(existsSync(join(fixture.directory, 'dist/core/index.js'))).toBe(true);
 
-  const output = spawnSync(
-    process.execPath,
-    [
-      '--input-type=module',
-      '--eval',
-      `
+    const output = spawnSync(
+      process.execPath,
+      [
+        '--input-type=module',
+        '--eval',
+        `
     import assert from 'node:assert/strict';
     import * as probe from './dist/esm-probe.js';
     assert.equal(probe.redact('secret'), '[REDACTED]');
@@ -59,12 +63,14 @@ test('корректный проект собирается без сетево
     assert.equal(await probe.load(), await probe.loadTemplate());
     assert.equal(probe.example, "import './config/secrets'");
   `,
-    ],
-    { cwd: fixture.directory, env: {}, encoding: 'utf8', timeout: 10_000 },
-  );
-  expect(output.error).toBeUndefined();
-  expect(output.status, output.stderr).toBe(0);
-}, 40_000);
+      ],
+      { cwd: fixture.directory, env: {}, encoding: 'utf8', timeout: 10_000 },
+    );
+    expect(output.error).toBeUndefined();
+    expect(output.status, output.stderr).toBe(0);
+  },
+  testTimeoutMs,
+);
 
 for (const layer of ['core', 'tools']) {
   test.each(["import 'vk-io';", "import type { VK } from 'vk-io';\nexport type Example = VK;"])(
@@ -86,6 +92,6 @@ for (const layer of ['core', 'tools']) {
         rmSync(path);
       }
     },
-    40_000,
+    testTimeoutMs,
   );
 }

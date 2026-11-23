@@ -211,3 +211,46 @@ test('поздний usage после тайм-аута сохраняется �
     vi.useRealTimers();
   }
 });
+
+test.each([1, 2])('отдельное резервирование повтора с бюджетом на %s попытки', async (capacity) => {
+  vi.useFakeTimers();
+  const storage = await openStorage(':memory:');
+  const scope = scopeFor(storage, 'vk:chat');
+  const budget = tokenBudgetStore(storage);
+  const needed = 128 + 32 + Buffer.byteLength('Тест') + ready.input.maxOutputTokens;
+  const complete = vi
+    .fn<() => Promise<LlmResult>>()
+    .mockResolvedValueOnce({ kind: 'error', code: 'server', message: 'Сбой' })
+    .mockResolvedValueOnce(response);
+  const queue = createAgentLoopQueue({
+    storage,
+    limits,
+    tokenBudget: true,
+    tracing: { messageRetentionDays: 30 },
+    modelName: 'synthetic',
+    client: { complete },
+    prepare: async () => ready,
+    loopOptions: { retryDelayMs: 5 },
+  });
+  try {
+    await storage.chats.create(scope, { enabled: true, responseMode: 'normal', createdAt: 0 });
+    budget.update(scope, true, { total: needed * capacity }, Date.now());
+    await queue.start();
+    await queue.admitRouted(scope, queueMessage(scope.chatId, '1'), route);
+    await flushQueue();
+    await vi.advanceTimersByTimeAsync(5);
+    expect(complete).toHaveBeenCalledTimes(capacity);
+    expect((await storage.traces.get(scope, 1))?.payload.resultKind).toBe(
+      capacity === 1 ? 'token_budget_exhausted' : 'complete',
+    );
+    expect(budget.read(scope, true, Date.now()).total).toMatchObject({
+      confirmed: capacity === 1 ? 0n : 2n,
+      reserved: BigInt(needed),
+      incompleteAttempts: 1,
+    });
+  } finally {
+    await queue.stop();
+    await storage.close();
+    vi.useRealTimers();
+  }
+});

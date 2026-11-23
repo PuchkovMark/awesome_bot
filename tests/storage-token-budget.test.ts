@@ -25,6 +25,7 @@ test('обновление с 019 и независимость расхода �
       const scope = scopeFor(storage, 'vk:budget');
       const store = tokenBudgetStore(storage);
       expect(store.read(scope, true, noon).total.limit).toBe(15000);
+      store.update(scope, true, { total: 15000 }, noon);
       expect(store.reserve(scope, true, attempt, noon)).toBe(true);
       store.reconcile(scope, attempt.key, { input: 2000, output: 0 });
       db.exec('DELETE FROM response_traces; DELETE FROM queue_jobs; DELETE FROM messages;');
@@ -52,6 +53,7 @@ test('обновление с 019 и независимость расхода �
       expect(reopened.read(replacement, true, noon).total.remaining).toBe(15000);
       expect(() => reopened.read(current, true, noon)).toThrow('stale_scope');
       expect(db.prepare('SELECT count(*) FROM token_budget_attempts').pluck().get()).toBe(0);
+      expect(db.prepare('SELECT count(*) FROM chat_token_budgets').pluck().get()).toBe(0);
     } finally {
       await storage.close();
     }
@@ -88,35 +90,5 @@ test('раздельные резервы, нулевая и поздняя св
     expect(store.read(scope, true, noon + tokenBudgetWindowMs).total.remaining).toBe(1500);
   } finally {
     await storage.close();
-  }
-});
-
-test('два подключения делят последний резерв одного чата', async () => {
-  const fixture = storageFixture();
-  const first = await openStorage(fixture.path);
-  const second = await openStorage(fixture.path);
-  try {
-    const one = scopeFor(first, 'vk:race');
-    const two = scopeFor(second, one.chatId);
-    const firstStore = tokenBudgetStore(first);
-    const secondStore = tokenBudgetStore(second);
-    firstStore.update(one, true, { total: 1500 }, noon);
-    const start = Promise.withResolvers<void>();
-    const results = Promise.all([
-      start.promise.then(() => firstStore.reserve(one, true, attempt, noon)),
-      start.promise.then(() =>
-        secondStore.reserve(two, true, { ...attempt, key: 'job:2:1' }, noon),
-      ),
-    ]);
-    start.resolve();
-    expect((await results).filter(Boolean)).toHaveLength(1);
-    expect(secondStore.read(two, true, noon).total).toMatchObject({
-      reserved: 1500n,
-      remaining: 0,
-    });
-  } finally {
-    await first.close();
-    await second.close();
-    fixture.cleanup();
   }
 });
