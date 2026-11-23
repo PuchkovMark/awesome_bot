@@ -2,6 +2,8 @@ import { expect, test } from 'vitest';
 import { contextConfig } from '../src/core/context/config';
 import { contextSeparator, estimateInput, staticMinimum } from '../src/core/context/budget';
 import { validateContextStartup } from '../src/core/context/startup';
+import { createContextBuilder } from '../src/core/context/index';
+import { contextFixture } from './helpers/context';
 const c = contextConfig({ modelContextTokens: 16000 });
 test('конфигурация ограничивает общий ввод и резерв независимо от провайдера', () => {
   expect(c.inputBudgetTokens).toBe(8000);
@@ -50,3 +52,39 @@ test('начальная проверка учитывает JSON-поле те�
     'static_budget_too_small',
   );
 });
+
+test.each([true, false])(
+  'последняя реплика входит ровно на границе, беседа=%s',
+  async (isGroupChat) => {
+    const fixture = await contextFixture();
+    try {
+      const older = await fixture.put('older', 'Старое "сообщение"\n😀');
+      const latest = await fixture.put('latest', 'Реплика поновее\n«да»');
+      const trigger = await fixture.put('trigger', 'Что было?');
+      const work = fixture.work(trigger.id, isGroupChat);
+      const complete = await fixture.builder.prepare(work);
+      if (complete.kind !== 'ready') throw Error(complete.kind);
+      expect(complete.metadata.messageIds).toEqual([older.id, latest.id, trigger.id]);
+      const exactBudget = isGroupChat ? 1624 : 1756;
+      expect(
+        complete.metadata.estimatedTokens +
+          c.environmentReserveTokens -
+          complete.metadata.layerBytes.environment,
+      ).toBe(exactBudget);
+
+      const prepare = (inputBudgetTokens: number) =>
+        createContextBuilder({
+          ...fixture.options,
+          config: { ...fixture.options.config, inputBudgetTokens },
+        }).prepare(work);
+      expect(await prepare(exactBudget)).toEqual(complete);
+      const limited = await prepare(exactBudget - 1);
+      if (limited.kind !== 'ready') throw Error(limited.kind);
+      expect(limited.metadata.messageIds).toEqual([latest.id, trigger.id]);
+      expect(limited.metadata.historyTruncated).toBe(true);
+      expect(JSON.stringify(limited.input.messages)).not.toContain('Старое');
+    } finally {
+      await fixture.storage.close();
+    }
+  },
+);

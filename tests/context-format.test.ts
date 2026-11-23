@@ -62,3 +62,15 @@ test('роли лички и честная заглушка одного вло
     formatMessages([], { ...current, text: '' }, null, 'none', false, 'UTC')[0]!.text,
   ).not.toContain('Вложение:');
 });
+
+test.each([true, false])('точный JSON пустого окна, беседа=%s', (isGroupChat) => {
+  const entry = { ...current, authorName: 'Яна "Я"', text: 'Да\n"😀"' };
+  const data = String.raw`{"author":"Яна \"Я\"","time":"01.01.1970, 00:00:00","bot":false,"text":"Да\n\"😀\""}`;
+  const historyField = isGroupChat ? '"history":[],' : '';
+  expect(formatMessages([], entry, null, 'none', isGroupChat, 'UTC')).toEqual([
+    {
+      role: 'user',
+      text: `{"kind":"untrusted_chat_data",${historyField}"reply":null,"current":${data}}`,
+    },
+  ]);
+});

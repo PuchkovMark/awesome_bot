@@ -13,6 +13,7 @@ import { formatEnvironment } from '../src/core/context/environment';
 import { authConfig } from './helpers/authorization-fixture';
 import { scopeFor } from './helpers/connection-scope';
 import { captureLogs } from './helpers/log-output';
+import { createContextBuilder } from '../src/core/context/index';
 test('роутер → очередь → сборщик → цикл: поздний ответ исключён, server повторяет один снимок', async () => {
   vi.useFakeTimers();
   const f = await contextFixture();
@@ -80,6 +81,62 @@ test('роутер → очередь → сборщик → цикл: позд�
     await q.stop();
     await f.storage.close();
     vi.useRealTimers();
+  }
+});
+
+test.each([true, false])('точный снимок с приоритетом выдержки, беседа=%s', async (isGroupChat) => {
+  const fixture = await contextFixture();
+  try {
+    await fixture.put('older', 'За пределом окна');
+    const history = await fixture.put('history', 'Да\n"😀"', { authorName: 'Яна "Я"' });
+    const quote = await fixture.put('quote', 'Я"\n😀'.repeat(40), {
+      role: 'assistant',
+      authorName: 'Бот',
+    });
+    const trigger = await fixture.put('trigger', 'Что в цитате?', { replyToMessageId: 'quote' });
+    const builder = createContextBuilder({
+      ...fixture.options,
+      config: { ...fixture.options.config, maxHistoryMessages: 2, replyTextCodePoints: 7 },
+    });
+    const result = await builder.prepare(fixture.work(trigger.id, isGroupChat));
+    if (result.kind !== 'ready') throw Error(result.kind);
+
+    const historyData = String.raw`{"author":"Яна \"Я\"","time":"01.01.1970, 00:00:00","bot":false,"text":"Да\n\"😀\""}`;
+    const replyData = String.raw`{"author":"Бот","time":"01.01.1970, 00:00:00","bot":true,"text":"Я\"\n😀Я\"\n","truncated":true}`;
+    const currentData =
+      '{"author":"Имя","time":"01.01.1970, 00:00:00","bot":false,"text":"Что в цитате?"}';
+    const tag = '{"kind":"untrusted_chat_data",';
+    const latest = `"reply":${replyData},"current":${currentData}}`;
+    const messages = isGroupChat
+      ? [{ role: 'user', text: `${tag}"history":[${historyData}],${latest}` }]
+      : [
+          { role: 'user', text: `${tag}"history":${historyData}}` },
+          { role: 'user', text: tag + latest },
+        ];
+    const expectedSystem =
+      'Общие правила.\n\nОкружение харнеса:\n' +
+      '{"utc":"1970-01-01T00:00:00.000Z","local":"01.01.1970, 00:00:00 UTC","timezone":"UTC","platform":"vk",' +
+      `"chat":"${isGroupChat ? 'group' : 'direct'}","mode":"normal","reason":"mention",` +
+      '"support":{"send":"supported","typing":"unknown","reply":"supported","getUserName":"unknown",' +
+      '"adminInfo":"unknown","membershipEvents":"unknown","directMessage":"unknown"},' +
+      '"maxMessageLength":"unknown","textFormats":["plain"],' +
+      '"visibility":"История неполна. После исходного сообщения могли прийти новые сообщения. Не выдумывай отсутствующие сведения."}';
+    expect(result.input).toEqual({
+      system: expectedSystem,
+      messages,
+      maxOutputTokens: 1024,
+      sessionId: 'session',
+    });
+    expect(result.metadata).toMatchObject({
+      reply: 'truncated',
+      messageIds: [history.id, quote.id, trigger.id],
+      cutoffId: trigger.id,
+      scanned: 2,
+      historyTruncated: true,
+      estimatedTokens: isGroupChat ? 1170 : 1231,
+    });
+  } finally {
+    await fixture.storage.close();
   }
 });
 test('счётчик начальной ошибки и белый список логов не копируют секреты', async () => {
