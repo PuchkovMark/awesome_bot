@@ -5,15 +5,17 @@ import type { LlmClient } from '../llm/types';
 import { createLlmSessionId } from '../llm/session';
 import { estimateRequestInput } from '../core/context/budget';
 import { createAttemptSummary } from '../core/agent-loop/summary';
-import type { QueueHandlerInput } from '../core/chat-queue/types';
+import type { QueueCompletion, QueueHandlerInput } from '../core/chat-queue/types';
 import type { PublicationPort } from '../core/message-router/publication-service';
 import type { Storage } from '../storage/index';
 import { chatSummaryStore } from '../storage/chat-summary-store';
 import { tokenBudgetStore } from '../storage/token-budget-store';
 import { lifecycleBackend } from '../storage/lifecycle-store';
+import { noticeBackend } from '../storage/notice-store';
 import { summaryEngine, type SummaryRun } from '../core/chat-summaries/worker';
 import { SummaryFailure } from '../core/chat-summaries/compress';
 import { localDay } from '../core/chat-summaries/calendar';
+import { recap, recapPeriod } from '../core/chat-summaries/recap';
 import type { PreparedSummaries } from '../core/context/summaries';
 
 export function applicationSummaries(options: {
@@ -133,6 +135,35 @@ export function applicationSummaries(options: {
       }
     }
   }
+  async function notify(work: QueueHandlerInput, source: string, current: () => boolean) {
+    const { scope } = work;
+    const guard = { signal: work.signal, isCurrent: current, allow: async () => current() };
+    if (
+      !current() ||
+      !(await options.port.canReply(scope, work.signal, source, guard)) ||
+      !current() ||
+      !store.reserveNotice(scope, work.messageId)
+    )
+      return;
+    const text = 'собираю, минутку';
+    await options.port.publish({
+      ...guard,
+      scope,
+      kind: 'notice',
+      text,
+      replyToMessageId: source,
+      beforeSend: current,
+      confirmPart(part) {
+        life.transaction(scope, (db) => {
+          noticeBackend(storage).recordAnswer(scope, part, part.text, source, current);
+          db.prepare(
+            "UPDATE messages SET purpose='service_notice' WHERE chat_id=? AND platform_message_id=? AND role='assistant'",
+          ).run(scope.chatId, part.messageId);
+          store.confirmNotice(scope, work.messageId);
+        });
+      },
+    });
+  }
   return {
     async run() {
       while (!signal.aborted) {
@@ -169,6 +200,81 @@ export function applicationSummaries(options: {
       return entries.length
         ? { entries, inputBudget: options.inputBudget, current: (ids) => store.current(scope, ids) }
         : undefined;
+    },
+    async answer(work: QueueHandlerInput): Promise<QueueCompletion | null> {
+      if (!work.route || work.route.kind === 'initiative') return null;
+      const source = await storage.contextMessages.get(work.scope, work.messageId);
+      if (!source || !/(?:что|перескажи|сводку|итоги)/iu.test(source.text)) return null;
+      const settings = await storage.contextState.settings(work.scope);
+      if (!settings?.enabled) return null;
+      const period = recapPeriod(source.text, source.timestamp, settings.timezone);
+      if (!period) return null;
+      const usage = createAttemptSummary(),
+        started = Date.now();
+      const run = buildRun(work.scope, work.messageId - 1, work, usage);
+      const current = () =>
+        run.current() && noticeBackend(storage).sourceVisible(work.scope, work.messageId);
+      const admission = work.admitModelAttempt?.(current, [work.messageId]);
+      let text = '',
+        entries: readonly number[] = [],
+        sources: readonly number[] = [];
+      let failure: 'quota_exhausted' | 'token_budget_exhausted' | 'unavailable' | undefined;
+      if (admission === 'quota_exhausted') failure = admission;
+      else if (!admission || admission === 'context_stale') return { outcome: 'interrupted' };
+      else if (period === 'clarify')
+        text = 'За какой период собрать пересказ? Укажи даты начала и конца.';
+      else
+        try {
+          let notification: Promise<void> | undefined;
+          const result = await recap(
+            engine,
+            store,
+            {
+              ...run,
+              current,
+              beforeRaw: () => (notification ??= notify(work, source.messageId, current)),
+            },
+            period,
+          );
+          text = result.text;
+          entries = result.entries;
+          sources = result.ids;
+        } catch (error) {
+          if (!(error instanceof SummaryFailure)) throw error;
+          if (error.reason === 'cancelled') return { outcome: 'interrupted' };
+          failure =
+            error.reason === 'limit'
+              ? 'token_budget_exhausted'
+              : error.reason === 'quota'
+                ? 'quota_exhausted'
+                : 'unavailable';
+        }
+      const summary = usage.snapshot(Date.now() - started);
+      const result =
+        failure === 'unavailable'
+          ? {
+              kind: 'error' as const,
+              code: 'client_failure' as const,
+              message: 'Сводка временно недоступна.',
+              summary,
+            }
+          : failure
+            ? { kind: failure, summary }
+            : { kind: 'complete' as const, text, summary };
+      work.recordTrace({
+        summary,
+        model: {
+          name: summary.attempts ? options.model : null,
+          invoked: summary.attempts ? 'yes' : 'no',
+        },
+        resultKind: result.kind,
+      });
+      return {
+        result,
+        outcome: failure ? 'failed' : 'completed',
+        toolResultsCurrent: () => store.current(work.scope, entries),
+        toolSourceIds: sources,
+      };
     },
   };
 }

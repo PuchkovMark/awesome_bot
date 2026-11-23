@@ -47,6 +47,7 @@ export interface AgentLoopQueueOptions extends Omit<ChatQueueOptions, 'handler' 
     settings: Required<AgentLoopOptions>;
   }) => Promise<LoopTools | undefined>;
   readonly modelInputLimit?: number;
+  readonly recapAnswer?: (work: QueueHandlerInput) => Promise<QueueCompletion | null>;
   readonly questionnaireAnswer?: (work: QueueHandlerInput) => Promise<QueueCompletion | null>;
   readonly modelName: string;
   readonly client: LlmClient;
@@ -110,6 +111,8 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
         : work.signal;
       const questionnaire = await options.questionnaireAnswer?.({ ...work, signal: lifetime });
       if (questionnaire) return questionnaire;
+      const recap = await options.recapAnswer?.({ ...work, signal: lifetime });
+      if (recap) return recap;
       const preparationDeadline = performance.now() + prep;
       async function prepare(): Promise<QueuePreparation> {
         const remaining = preparationDeadline - performance.now();

@@ -1,3 +1,4 @@
+import { recapPeriod } from '../src/core/chat-summaries/recap';
 import { expect, test } from 'vitest';
 import { openStorage } from '../src/storage/index';
 import { scopeFor } from './helpers/connection-scope';
@@ -75,4 +76,22 @@ test('порог 249 и 250, две полные части из 620, остат
   } finally {
     await db.close();
   }
+});
+
+test('период пересказа учитывает местные часы, исправно обрабатывает неоднозначность и условные вопросы', () => {
+  const now = Date.UTC(2026, 10, 23, 12),
+    zone = 'Europe/Moscow';
+  expect(recapPeriod('Что было вчера с 10:00 до 11:00?', now, zone)).toEqual({
+    from: Date.UTC(2026, 10, 22, 7),
+    to: Date.UTC(2026, 10, 22, 8),
+    timezone: zone,
+  });
+  expect(recapPeriod('Дай сводку с 2026-11-22T10:00 по 2026-11-22T11:00', now, zone)).toEqual({
+    from: Date.UTC(2026, 10, 22, 7),
+    to: Date.UTC(2026, 10, 22, 8),
+    timezone: zone,
+  });
+  expect(recapPeriod('Что было вчера вечером?', now, zone)).toBe('clarify');
+  expect(recapPeriod('Что было бы, если бы мы закрыли чат?', now, zone)).toBeNull();
+  expect(recapPeriod('Перескажи книгу', now, zone)).toBeNull();
 });

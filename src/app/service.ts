@@ -470,6 +470,7 @@ export async function runApplication(
       });
       const questionnaireAttempts = questionnaireProgressStore(storage);
       queue = createAgentLoopQueue({
+        recapAnswer: summaries.answer,
         questionnaireAnswer: questionnaireAnswerHandler({
           store: questionnaireAttempts,
           client: modelClient,
