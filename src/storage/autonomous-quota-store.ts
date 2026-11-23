@@ -182,6 +182,18 @@ export function createAutonomousQuotaStore(
         return true;
       });
     },
+    repeatUnconfirmedAttempt(reservation: AutonomousReservation, attempt: number, now: number) {
+      timestamp(now);
+      transaction((db) =>
+        db
+          .prepare(
+            `UPDATE autonomous_quota_reservations SET attempted_at=max(attempted_at,?)
+        WHERE id=? AND chat_id=? AND generation=? AND owner=? AND attempt=?
+          AND attempted_at IS NOT NULL AND first_confirmed_at IS NULL`,
+          )
+          .run(now, ...parameters(reservation), attempt),
+      );
+    },
     rejectAttempt(reservation: AutonomousReservation, attempt: number) {
       requireInput(Number.isSafeInteger(attempt) && attempt > 0);
       return transaction(

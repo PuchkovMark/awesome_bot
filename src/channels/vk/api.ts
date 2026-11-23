@@ -336,7 +336,7 @@ export function createVkApi(groupId: number, call: VkApiCall, signal?: AbortSign
       ]);
       return {
         ...(name === undefined ? {} : { authorName: name }),
-        isBot: message.authorId === -groupId ? true : name === undefined ? 'unknown' : false,
+        isBot: message.authorId < 0 ? true : name === undefined ? 'unknown' : false,
         isAdmin,
         ...(verifiedReply ? { verifiedReply } : {}),
       };

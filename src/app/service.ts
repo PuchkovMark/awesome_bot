@@ -239,6 +239,7 @@ export async function runApplication(
         tracing: config.tracing,
         limits: dependencies.chatLimits ?? {},
         tokenBudget: true,
+        autonomousReplies: true,
         responseRate: config.responseRate,
         client: dependencies.client ?? createLlmClient(config.llm),
         disclosure: checkDisclosure,
@@ -247,6 +248,7 @@ export async function runApplication(
         preparationTimeoutMs: preparation.config.preparationTimeoutMs,
         postPreparationMarginMs: preparation.config.postPreparationMarginMs,
         prepare(work) {
+          if (work.route?.kind === 'initiative') return preparation.prepare(work);
           const operation = channel
             .sendTypingForWork(work.scope, work)
             .finally(() => typing.delete(operation));

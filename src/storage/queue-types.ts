@@ -139,10 +139,21 @@ export interface ResponsePublication {
 }
 export type ResponsePublicationAdmission =
   | { readonly allowed: true; readonly permit?: import('./notice-types').NoticePermit }
-  | { readonly allowed: false; readonly reason: 'guard' | 'response_rate' | 'notice_period' };
+  | {
+      readonly allowed: false;
+      readonly reason: 'guard' | 'response_rate' | 'notice_period' | InitiativeDenial;
+    };
 export interface ResponsePublicationBudget {
   currentFlood(input: ResponsePublication): boolean;
   start(input: ResponsePublication, isCurrent: () => boolean): ResponsePublicationAdmission;
+  repeatInitiative?(input: ResponsePublication): void;
+  confirmInitiative?(
+    input: ResponsePublication,
+    receipt: import('./notice-types').NoticeReceipt,
+    text: string,
+    replyToMessageId: string | undefined,
+    isCurrent: () => boolean,
+  ): void;
   finish(
     input: ResponsePublication,
     outcome: import('./response-rate-store').ResponseRateOutcome,

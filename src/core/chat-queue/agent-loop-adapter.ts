@@ -155,7 +155,10 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
               options.tokenBudget && work.route
                 ? {
                     key: `job:${work.jobId}:${ordinal}`,
-                    purpose: 'direct' as const,
+                    purpose:
+                      work.route.kind === 'initiative'
+                        ? ('initiative' as const)
+                        : ('direct' as const),
                     input: estimateRequestInput(request),
                     output: request.maxOutputTokens,
                   }

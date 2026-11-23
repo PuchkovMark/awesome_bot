@@ -153,6 +153,7 @@ export function createPublicationService(options: {
       if (!route || work.signal.aborted || !work.isCurrent()) return suppressed('guard');
       if (!options.port) return suppressed('no_port');
       budget = route.isGroupChat ? options.responseBudget?.() : undefined;
+      if (route.kind === 'initiative' && !budget?.confirmInitiative) return suppressed('guard');
       if (flood && !budget) return suppressed('guard');
       scope = lifecycle.transaction(work.scope, () => lifecycle.current(work.scope.chatId, true));
       function isCurrent(): boolean {
@@ -232,6 +233,7 @@ export function createPublicationService(options: {
         reason: 'none',
       });
       if (!saved) {
+        if (route.kind === 'initiative') return 'silence';
         decision = publicationDecision(route, current, { kind: 'trace_write_failed' });
         if (decision.kind !== 'notice' || reply !== true) return 'silence';
         if (permit) notices.retarget(permit);
@@ -258,7 +260,10 @@ export function createPublicationService(options: {
       }
       const beforeSend = () => {
         if (!budget || !meter || !isCurrent()) return false;
-        if (started) return !flood || budget.currentFlood(meter);
+        if (started) {
+          if (route.kind === 'initiative') budget.repeatInitiative?.(meter);
+          return !flood || budget.currentFlood(meter);
+        }
         const admission = budget.start(meter, isCurrent);
         if (!admission.allowed) {
           denial.reason = admission.reason;
@@ -298,6 +303,10 @@ export function createPublicationService(options: {
             )
               throw new Error('Publication: invalid notice');
             notices.confirm(scope, permit, receipt, part.text, isCurrent);
+          } else if (route.kind === 'initiative') {
+            if (!meter || !budget?.confirmInitiative)
+              throw new Error('Publication: missing initiative admission');
+            budget.confirmInitiative(meter, receipt, part.text, part.replyToMessageId, isCurrent);
           } else {
             notices.recordAnswer(scope, receipt, part.text, part.replyToMessageId, isCurrent);
           }

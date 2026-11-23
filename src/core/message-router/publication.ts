@@ -10,7 +10,7 @@ export function publicationDecision(
   const silence = { kind: 'silence' } as const;
   if (
     !route ||
-    !['direct_message', 'mention', 'reply', 'name'].includes(route.kind) ||
+    !['direct_message', 'mention', 'reply', 'name', 'initiative'].includes(route.kind) ||
     !['normal', 'active'].includes(route.mode) ||
     typeof route.isGroupChat !== 'boolean' ||
     !current ||
@@ -21,6 +21,8 @@ export function publicationDecision(
   )
     return silence;
   const kind = Object.getOwnPropertyDescriptor(outcome, 'kind')?.value as unknown;
+  if (route.kind === 'initiative' && (current.responseMode !== 'active' || kind !== 'complete'))
+    return silence;
   if (kind === 'complete') {
     const text = Object.getOwnPropertyDescriptor(outcome, 'text')?.value as unknown;
     return typeof text === 'string' && text.trim() ? { kind: 'answer', text } : silence;

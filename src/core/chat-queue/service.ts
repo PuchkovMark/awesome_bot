@@ -20,6 +20,7 @@ import type {
   QueueCompletion,
 } from './types';
 import { chatLimits } from '../chat-limits/config';
+import { responseRateConfig } from '../chat-limits/response-rate-config';
 const outcomes = new Set<unknown>([
   'completed',
   'failed',
@@ -56,8 +57,12 @@ function safeFailure(error: unknown): QueueError {
 export function createChatQueue(options: ChatQueueOptions): ChatQueue {
   if (!options || typeof options.handler !== 'function') throw new QueueError('invalid_input');
   const config = queueConfig(options.config);
-  const limits = options.limits === undefined ? undefined : chatLimits(options.limits);
-  const responseRate = options.responseRate;
+  const limits =
+    options.limits === undefined && !options.autonomousReplies
+      ? undefined
+      : chatLimits(options.limits);
+  const responseRate =
+    options.responseRate ?? (options.autonomousReplies ? responseRateConfig() : undefined);
   const notices = responseRate ? noticeBackend(options.storage) : undefined;
   const platform = options.platform;
   if (
@@ -70,6 +75,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
   const traceSettings = traceConfig(options.tracing);
   const traceMetrics = createTraceMetrics(options.logger);
   const backend = queueBackend(options.storage);
+  let initiativeQuota: ReturnType<typeof backend.autonomousQuota> | undefined;
   const readMessage = options.storage.messages.get.bind(options.storage.messages);
   const handler = options.handler;
   const log = options.logger?.event.bind(options.logger);
@@ -178,10 +184,15 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
     try {
       const actual = backend.valid(token, task.work) ? outcome : 'interrupted';
       const relevant = completion?.outcome === actual ? completion : undefined;
+      const initiativeDenial =
+        completion?.initiativeDenial ??
+        (task.work.route?.kind === 'initiative'
+          ? backend.checkInitiativePublication(token, task.work)
+          : undefined);
       const publicationKind = relevant?.preparationFailure ?? relevant?.result?.kind ?? actual;
       const canPublish =
         !!options.onSettled &&
-        !relevant?.initiativeDenial &&
+        !initiativeDenial &&
         actual !== 'interrupted' &&
         actual !== 'expired' &&
         actual !== 'message_missing' &&
@@ -195,8 +206,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
           reaction: 'silence',
           status: canPublish ? 'pending_checks' : 'suppressed',
           reason:
-            relevant?.initiativeDenial ??
-            (canPublish ? 'none' : options.onSettled ? 'guard' : 'no_port'),
+            initiativeDenial ?? (canPublish ? 'none' : options.onSettled ? 'guard' : 'no_port'),
         },
       };
       const committed = backend.finish(token, task.work, actual, {
@@ -209,7 +219,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
       emit();
       if (
         options.onSettled &&
-        !relevant?.initiativeDenial &&
+        !initiativeDenial &&
         committed &&
         committed !== 'interrupted' &&
         committed !== 'expired' &&
@@ -306,7 +316,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
           }
         }
         if (work.route?.kind === 'initiative') {
-          const initiativeDenial = backend.checkInitiative(token, work);
+          const initiativeDenial = backend.checkInitiative(token, work, limits, responseRate);
           if (initiativeDenial) {
             finish(task, 'failed', { outcome: 'failed', initiativeDenial });
             return;
@@ -453,7 +463,15 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
             )
               return { allowed: false, reason: 'guard' };
             try {
-              return backend.startPublication(token, input, responseRate, notices, isCurrent);
+              return backend.startPublication(
+                token,
+                input,
+                responseRate,
+                notices,
+                isCurrent,
+                Date.now(),
+                initiativeQuota,
+              );
             } catch (error) {
               try {
                 backend.check(token);
@@ -462,6 +480,20 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
               }
               throw safeFailure(error);
             }
+          },
+          repeatInitiative(input) {
+            backend.repeatInitiative(input);
+          },
+          confirmInitiative(input, receipt, text, replyToMessageId, isCurrent) {
+            backend.confirmInitiative(
+              token,
+              input,
+              notices,
+              receipt,
+              text,
+              replyToMessageId,
+              isCurrent,
+            );
           },
           finish(input, outcome) {
             if (phase !== 'running' && phase !== 'stopping') return;
@@ -511,6 +543,8 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
         throw safeFailure(error);
       }
       phase = 'running';
+      if (options.autonomousReplies && limits)
+        initiativeQuota = backend.autonomousQuota(token, limits, platform);
       renewAt = performance.now() + config.renewIntervalMs;
       pump();
       armTick();

@@ -258,7 +258,7 @@ export function normalizeVkIncoming(
     authorName: enrichment.authorName ?? '',
     isGroupChat: isVkGroupChat(message.peerId),
     isAdmin: enrichment.isAdmin ?? 'unknown',
-    isBot: enrichment.isBot ?? (message.authorId === -groupId ? true : 'unknown'),
+    isBot: enrichment.isBot ?? (message.authorId < 0 ? true : 'unknown'),
     text: message.text,
     messageId: String(message.cmid),
     ...(reply ? { replyToMessageId: String(reply.cmid) } : {}),

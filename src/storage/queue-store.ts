@@ -33,9 +33,11 @@ import {
 } from './token-budget-store';
 import {
   createAutonomousQuotaStore,
+  autonomousQuotaState,
   recordAutonomousReaction,
   pruneAutonomousQuota,
   restoreAutonomousQuota,
+  type AutonomousReservation,
 } from './autonomous-quota-store';
 import { activeMentionFlood, admitMention, pruneMentionFlood } from './mention-flood-store';
 import {
@@ -48,7 +50,7 @@ import {
   startResponse,
 } from './response-rate-store';
 import type { ResponseRateOutcome } from './response-rate-store';
-import type { NoticeBackend } from './notice-types';
+import type { NoticeBackend, NoticeReceipt } from './notice-types';
 import type { FloodNotice, ResponsePublication, ResponsePublicationAdmission } from './queue-types';
 import type { ResponseRateConfig } from '../core/chat-limits/response-rate-config';
 import type { ChatLimits } from '../core/chat-limits/config';
@@ -71,6 +73,15 @@ export function createQueueBackend(
     messageRetentionDays === undefined ? undefined : messageRetentionDays * 86_400_000;
   const sources = new WeakMap<QueueWork, readonly number[]>();
   const runningRevisions = new WeakMap<QueueWork, number>();
+  type QuotaStore = ReturnType<typeof createAutonomousQuotaStore>;
+  const initiativePublications = new WeakMap<
+    ResponsePublication,
+    {
+      reservation: AutonomousReservation;
+      attempt: number;
+      quota: QuotaStore;
+    }
+  >();
   function owned(db: Database, token: string) {
     const row = db
       .prepare('SELECT token,expires_at AS expires FROM queue_lease WHERE singleton=1')
@@ -147,6 +158,7 @@ export function createQueueBackend(
     now: number,
   ): InitiativeDenial | undefined {
     if (work.route?.kind !== 'initiative') return undefined;
+    if (!currentWork(db, work)) return 'initiative_mode';
     const revision = db
       .prepare('SELECT initiative_revision AS revision FROM queue_jobs WHERE id=?')
       .get(work.id) as { revision: number | null } | undefined;
@@ -155,7 +167,7 @@ export function createQueueBackend(
       revision.revision !== lifecycle.assertScope(db, work.scope).revision
     )
       return 'initiative_mode';
-    return initiativeDenial(
+    const denial = initiativeDenial(
       db,
       work.scope.chatId,
       work.messageId,
@@ -163,6 +175,29 @@ export function createQueueBackend(
       work.route.cause === 'unanswered',
       now,
     );
+    return (
+      denial ?? (activeMentionFlood(db, work.scope, now) !== null ? 'initiative_flood' : undefined)
+    );
+  }
+  function beforeInitiative(
+    db: Database,
+    work: QueueWork,
+    limits: ChatLimits | undefined,
+    responseRate: ResponseRateConfig | undefined,
+    now: number,
+  ): InitiativeDenial | undefined {
+    if (work.route?.kind !== 'initiative') return undefined;
+    if (work.expiresAt !== undefined && work.expiresAt <= now) return 'initiative_expired';
+    const denial = currentInitiative(db, work, now);
+    if (denial) return denial;
+    if (!limits || !autonomousQuotaState(db, work.scope, limits, now, true).allowed)
+      return 'initiative_quota';
+    if (
+      !responseRate ||
+      !responseSlotAvailable(db, work.scope, responseRate.responsesPerMinute, now)
+    )
+      return 'initiative_quota';
+    return undefined;
   }
   function running(db: Database, token: string, work: QueueWork): boolean {
     return (
@@ -699,17 +734,18 @@ export function createQueueBackend(
     valid(token: string, work: QueueWork): boolean {
       return transaction(token, (db) => running(db, token, work));
     },
-    checkInitiative(token: string, work: QueueWork, now = Date.now()) {
-      return transaction(token, (db) => {
-        if (work.route?.kind !== 'initiative') return undefined;
-        if (
-          work.route.cause === 'unanswered' &&
-          work.expiresAt !== undefined &&
-          work.expiresAt <= now
-        )
-          return 'initiative_expired' as const;
-        return currentInitiative(db, work, now);
-      });
+    checkInitiative(
+      token: string,
+      work: QueueWork,
+      limits: ChatLimits | undefined,
+      responseRate: ResponseRateConfig | undefined,
+    ) {
+      return transaction(token, (db) =>
+        beforeInitiative(db, work, limits, responseRate, Date.now()),
+      );
+    },
+    checkInitiativePublication(token: string, work: QueueWork) {
+      return transaction(token, (db) => currentInitiative(db, work, Date.now()));
     },
     admitModelAttempt(
       token: string,
@@ -724,6 +760,7 @@ export function createQueueBackend(
       return transaction(token, (db) => {
         if (!running(db, token, work) || !allow()) return false;
         const at = now();
+        if (beforeInitiative(db, work, limits, responseRate, at)) return false;
         if (
           responseRate &&
           work.route?.isGroupChat &&
@@ -740,7 +777,10 @@ export function createQueueBackend(
           return reservation.purpose === 'initiative'
             ? ('initiative_budget_exhausted' as const)
             : ('token_budget_exhausted' as const);
-        const quota = limits && work.route ? admitRequestQuota(db, work, limits, at) : true;
+        const quota =
+          limits && work.route && work.route.kind !== 'initiative'
+            ? admitRequestQuota(db, work, limits, at)
+            : true;
         if (quota === false || quota === 'quota_exhausted') return quota;
         if (reservation) insertTokenReservation(db, work.scope, reservation, at);
         sources.set(work, ids);
@@ -793,6 +833,7 @@ export function createQueueBackend(
       notices: NoticeBackend,
       isCurrent: () => boolean,
       now = Date.now(),
+      quota?: QuotaStore,
     ): ResponsePublicationAdmission {
       const { scope, key, messageId, route, notice, flood } = input;
       return transaction(token, () =>
@@ -816,13 +857,59 @@ export function createQueueBackend(
             ? notices.reserve(scope, messageId, route, notice.interval, now, notice.kind)
             : null;
           if (notice && !permit) return { allowed: false, reason: 'notice_period' };
+          if (route.kind === 'initiative') {
+            const reservation = quota?.reserve(scope, now, true);
+            if (!quota || !reservation) return { allowed: false, reason: 'initiative_quota' };
+            const attempt = quota.beginAttempt(reservation, now);
+            if (attempt === null) {
+              quota.finish(reservation);
+              return { allowed: false, reason: 'initiative_pause' };
+            }
+            initiativePublications.set(input, { quota, reservation, attempt });
+          }
           startResponse(db, scope, key, now);
           return permit ? { allowed: true, permit } : { allowed: true };
         }),
       );
     },
+    repeatInitiative(input: ResponsePublication) {
+      const active = initiativePublications.get(input);
+      if (active)
+        active.quota.repeatUnconfirmedAttempt(active.reservation, active.attempt, Date.now());
+    },
+    confirmInitiative(
+      token: string,
+      input: ResponsePublication,
+      notices: NoticeBackend,
+      receipt: NoticeReceipt,
+      text: string,
+      replyToMessageId: string | undefined,
+      isCurrent: () => boolean,
+    ) {
+      transaction(token, () => {
+        const active = initiativePublications.get(input);
+        requireInput(active);
+        notices.recordAnswer(input.scope, receipt, text, replyToMessageId, isCurrent);
+        requireInput(
+          active.quota.recordDeliveredPart(
+            active.reservation,
+            active.attempt,
+            receipt.messageId,
+            Date.now(),
+          ),
+        );
+      });
+    },
     finishPublication(token: string, input: ResponsePublication, outcome: ResponseRateOutcome) {
-      transaction(token, (db) => finishResponse(db, input.scope, input.key, outcome));
+      transaction(token, (db) => {
+        finishResponse(db, input.scope, input.key, outcome);
+        const active = initiativePublications.get(input);
+        if (active) {
+          if (outcome === 'failed') active.quota.rejectAttempt(active.reservation, active.attempt);
+          active.quota.finish(active.reservation);
+          initiativePublications.delete(input);
+        }
+      });
     },
     pruneResponseRate(token: string, config: ResponseRateConfig, now = Date.now()) {
       transaction(token, (db) => {
@@ -853,6 +940,7 @@ export function createQueueBackend(
       return transaction(token, (db) => {
         return (
           currentWork(db, work) &&
+          !currentInitiative(db, work, Date.now()) &&
           historySourcesVisible(db, work.scope.chatId, sources.get(work) ?? [work.messageId]) &&
           !!db
             .prepare(
@@ -931,7 +1019,9 @@ export function createQueueBackend(
                     tableVersion: 1,
                     reaction: 'silence',
                     status: 'suppressed',
-                    reason: 'guard',
+                    reason: base.publication.reason.startsWith('initiative_')
+                      ? base.publication.reason
+                      : 'guard',
                   }
                 : base.publication,
           };
