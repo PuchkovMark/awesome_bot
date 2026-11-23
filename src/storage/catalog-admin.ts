@@ -1,6 +1,15 @@
 import type { Storage } from './types';
 import type { CatalogAdministration } from './version-types';
 import { versionBackend } from './version-registry';
+import { starterPersonas } from '../core/personas/catalog';
+
+export function installStarterPersonas(storage: Storage, createdAt: number): void {
+  versionBackend(storage).installStarterPersonas(
+    starterPersonas.map((card) => ({ id: card.id, text: JSON.stringify(card) })),
+    createdAt,
+  );
+}
+
 /** Только доверенная композиция приложения; не аутентифицирует человека. */
 export function catalogAdministration(storage: Storage): CatalogAdministration {
   const backend = versionBackend(storage);

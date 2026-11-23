@@ -38,7 +38,7 @@ import { createLlmClient, createLlmSessionId } from '../llm/index';
 import type { LlmClient } from '../llm/index';
 import type { SafeLogger } from '../logger/index';
 import type { ApplicationFailure } from '../logger/types';
-import { catalogAdministration } from '../storage/catalog-admin';
+import { catalogAdministration, installStarterPersonas } from '../storage/catalog-admin';
 import { openStorage } from '../storage/index';
 import type { Storage } from '../storage/index';
 import { createChatOnboarding } from '../core/chat-onboarding/service';
@@ -134,6 +134,7 @@ export async function runApplication(
         messageRetentionDays: config.tracing.messageRetentionDays,
       });
       if (signal.aborted) return;
+      installStarterPersonas(storage, Date.now());
       let canWritePrivate: (chatId: ChatId) => Promise<boolean> = async () => false;
       const lifecycle = createLifecycleService({
         storage,

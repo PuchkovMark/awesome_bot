@@ -223,6 +223,34 @@ export function createVersionBackend(
     return { status: 'selected' };
   }
   return {
+    installStarterPersonas(cards: readonly { id: string; text: string }[], createdAt: number) {
+      admin((db) => {
+        timestamp(createdAt);
+        const linked = db.prepare('SELECT 1 FROM starter_persona_versions WHERE persona_id=?');
+        const occupied = db.prepare(
+          "SELECT 1 FROM global_content_versions WHERE kind='persona' AND entity_key=? LIMIT 1",
+        );
+        const link = db.prepare(
+          'INSERT INTO starter_persona_versions(persona_id,entity_key,version) VALUES (?,?,?)',
+        );
+        for (const { id, text } of cards) {
+          string(id, true);
+          if (linked.get(id)) continue;
+          let key = id;
+          for (let suffix = 1; occupied.get(key); suffix++)
+            key = suffix === 1 ? 'starter-' + id : 'starter-' + id + '-' + suffix;
+          const result = append(db, {
+            kind: 'persona',
+            key,
+            text,
+            createdAt,
+            expectedHead: null,
+          });
+          if (result.status !== 'created') throw new StorageError('operation_failed');
+          link.run(id, key, result.value.ref.version);
+        }
+      });
+    },
     appendGlobal: (input: VersionInput) => admin((db) => append(db, input)),
     getGlobal: (ref: GlobalVersionRef) => admin((db) => get(db, reference(ref))),
     globalSelected: () => admin(globalSelected),

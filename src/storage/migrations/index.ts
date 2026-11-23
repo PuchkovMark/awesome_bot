@@ -1,3 +1,4 @@
+import { starterPersonas } from './044-starter-personas';
 import { summaryBudget } from './043-summary-budget';
 import { chatSummaries } from './042-chat-summaries';
 import { questionnaireProgress } from './036-questionnaire-progress';
@@ -90,4 +91,5 @@ export const migrations: readonly Migration[] = [
   profileInferenceRejections,
   chatSummaries,
   summaryBudget,
+  starterPersonas,
 ];
