@@ -161,3 +161,104 @@ test('два повода за одно исходящее место вызыв
     await f.close();
   }
 });
+
+test.each(['упоминание', 'имя', 'reply'] as const)(
+  'прямой маршрут %s работает через минуту после инициативы',
+  async (kind) => {
+    const f = await fixture({ active: true });
+    try {
+      expect((await f.trace(f.submit(help))).payload.publication.status).toBe('delivered');
+      const bot = f.sends[0]!;
+      f.at(60_000);
+      const id =
+        kind === 'reply'
+          ? f.submit('И ещё вопрос', 45, bot)
+          : f.submit(kind === 'имя' ? 'Пенёк, подскажи' : mention);
+      const trace = await f.trace(id);
+      expect(trace.payload.route?.kind).toBe(
+        kind === 'имя' ? 'name' : kind === 'упоминание' ? 'mention' : 'reply',
+      );
+      expect(trace.payload.publication.status).toBe('delivered');
+      expect(f.complete).toHaveBeenCalledTimes(2);
+      const spend = tokenBudgetStore(f.storage).read(f.scope, true, Date.now());
+      expect(spend.total.confirmed).toBe(4n);
+      expect(spend.initiative?.confirmed).toBe(2n);
+      expect(f.requests()).toBe(1);
+    } finally {
+      await f.close();
+    }
+  },
+);
+
+test.each([true, false])(
+  'реакция на любую подтверждённую часть сокращает интервал, подходящая часть=%s',
+  async (react) => {
+    const f = await fixture({ active: true });
+    try {
+      f.complete.mockResolvedValueOnce({ ...answer, text: '🙂'.repeat(1100) });
+      expect((await f.trace(f.submit(help))).payload.publication.status).toBe('delivered');
+      expect(f.sends).toHaveLength(2);
+      const laterPart = f.sends[1]!;
+      f.at(60_000);
+      const direct = await f.trace(f.submit('Пенёк, подскажи'));
+      expect(direct.payload.publication.status).toBe('delivered');
+      f.at(5 * 60_000);
+      const reply = await f.trace(f.submit('Спасибо', 45, react ? laterPart : f.sends[2]!));
+      expect(reply.payload.route?.kind).toBe('reply');
+      const reaction = f.db
+        .prepare('SELECT reacted_at AS at FROM autonomous_quota_reservations ORDER BY id LIMIT 1')
+        .get();
+      expect(reaction).toEqual({ at: react ? f.start + 5 * 60_000 : null });
+      f.at(20 * 60_000 - 1);
+      expect((await f.trace(f.submit(help))).payload.publication.reason).toBe('initiative_quota');
+      f.at(20 * 60_000);
+      const next = await f.trace(f.submit(free));
+      expect(next.payload.publication.status).toBe(react ? 'delivered' : 'suppressed');
+      expect(f.complete).toHaveBeenCalledTimes(react ? 4 : 3);
+    } finally {
+      await f.close();
+    }
+  },
+);
+
+test.each(['delivered', 'unknown'] as const)(
+  'без реакции от %s применяется точный порог 30 минут',
+  async (outcome) => {
+    const f = await fixture({ active: true });
+    try {
+      if (outcome === 'unknown')
+        f.failSend((text) => (text === answer.text ? 'unknown' : undefined));
+      expect((await f.trace(f.submit(help))).payload.publication.status).toBe(outcome);
+      const reservation = f.db.prepare('SELECT outcome FROM autonomous_quota_reservations').get();
+      expect(reservation).toEqual({ outcome });
+      f.failSend(undefined);
+      f.at(30 * 60_000 - 1);
+      expect((await f.trace(f.submit(free))).payload.publication.reason).toBe('initiative_quota');
+      expect(f.complete).toHaveBeenCalledOnce();
+      f.at(30 * 60_000);
+      expect((await f.trace(f.submit(free))).payload.publication.status).toBe('delivered');
+      expect(f.complete).toHaveBeenCalledTimes(2);
+    } finally {
+      await f.close();
+    }
+  },
+);
+
+test('частично доставленный ответ составляет одну инициативу и одно исходящее место', async () => {
+  const f = await fixture({ active: true });
+  try {
+    const long = { ...answer, text: '🙂'.repeat(1100) };
+    f.complete.mockResolvedValueOnce(long);
+    f.failSend((text) => (Buffer.byteLength(text) < 4000 ? 901 : undefined));
+    const trace = await f.trace(f.submit(help));
+    expect(trace.payload.publication.reason).toBe('partial_delivery');
+    expect(f.sends).toHaveLength(1);
+    expect(f.slots()).toBe(1);
+    expect(f.db.prepare('SELECT outcome FROM autonomous_quota_reservations').all()).toEqual([
+      { outcome: 'delivered' },
+    ]);
+    expect(f.db.prepare('SELECT 1 FROM autonomous_reply_parts').all()).toHaveLength(1);
+  } finally {
+    await f.close();
+  }
+});

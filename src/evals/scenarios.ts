@@ -359,6 +359,74 @@ const twinScenarios: readonly Scenario[] = [
   },
 ];
 
+const helpText = 'Кто-нибудь, помогите разобраться с расписанием';
+const mentionText = 'Обсуждали, как работает Пенёк';
+const meetingText = 'Во сколько встречаемся у фонтана?';
+const initiativeScenarios: Scenario[] = [
+  ...(
+    [
+      ['initiative-help', helpText, 'help'],
+      ['initiative-mention', mentionText, 'free_mention'],
+      ['initiative-question', meetingText, 'unanswered'],
+    ] as const
+  ).map(([id, text, cause]): Scenario => ({
+    id,
+    revision: 1,
+    title: 'Самостоятельный повод F4.7',
+    prompt: formatPrompt,
+    initiative: { mode: 'active', ...(cause === 'unanswered' ? { due: true } : {}) },
+    input: input(text, { isGroupChat: true }),
+    history: cause === 'unanswered' ? [entry('meeting', 'Встречаемся у фонтана в 18:30.')] : [],
+    answer: cause === 'unanswered' ? 'Встречаемся в 18:30.' : 'Синтетическая помощь.',
+    criteria: [
+      {
+        id: 'initiative-start',
+        description: 'Подходящий повод вызывает модель и приводит к самостоятельному ответу.',
+        check: ({ request, answer, route }) =>
+          request !== null &&
+          answer !== null &&
+          route?.kind === 'initiative' &&
+          route.cause === cause,
+        vk: 'Зафиксируйте запуск по ожидаемому поводу и доставленный ответ.',
+      },
+    ],
+    vkSteps: [
+      `В активной тестовой группе отправьте «${text}». Для вопроса подготовьте запись о встрече и дождитесь двух минут.`,
+    ],
+  })),
+  ...(
+    [
+      ['initiative-other-address', 'Маша, помоги с расписанием', {}, 'active'],
+      ['initiative-other-reply', helpText, { replyAddress: 'other' }, 'active'],
+      ['initiative-quoted-name', 'Автор написал «Обсуждали, как работает Пенёк».', {}, 'active'],
+      ['initiative-sensitive', 'Кто-нибудь, помогите разобраться с угрозами', {}, 'active'],
+      ['initiative-bot', mentionText, { isBot: true }, 'active'],
+      ['initiative-unknown', helpText, { isBot: 'unknown' }, 'active'],
+      ['initiative-normal', helpText, {}, 'normal'],
+      ['initiative-silent', helpText, {}, 'silent'],
+    ] as const
+  ).map(([id, text, extra, mode]): Scenario => ({
+    id,
+    revision: 1,
+    title: 'Обязательное молчание F4.7',
+    prompt: formatPrompt,
+    initiative: { mode },
+    input: input(text, { isGroupChat: true, ...extra }),
+    history: [],
+    answer: 'Лишнее вступление.',
+    criteria: [
+      {
+        id: 'initiative-silence',
+        description: 'Харнес не выбирает повод, не вызывает модель и не публикует текст.',
+        check: ({ request, answer, initiativeCandidate }) =>
+          !initiativeCandidate && request === null && answer === null,
+        vk: 'Проверьте ноль вызовов модели и ноль публикаций.',
+      },
+    ],
+    vkSteps: [`Воспроизведите указанное условие для реплики «${text}» в режиме ${mode}.`],
+  })),
+];
+
 export const scenarios: readonly Scenario[] = [
   {
     id: 'limited-history',
@@ -591,4 +659,5 @@ export const scenarios: readonly Scenario[] = [
     ],
   },
   ...twinScenarios,
+  ...initiativeScenarios,
 ];

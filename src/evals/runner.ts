@@ -5,7 +5,7 @@ import {
   createMessageRouter,
   createPublicationService,
 } from '../core/index';
-import type { PublicationRequest, QueueCompletion } from '../core/index';
+import type { ChatQueue, PublicationRequest, QueueCompletion } from '../core/index';
 import type { CapabilitySnapshot } from '../contracts/index';
 import type { LlmClient, LlmRequest } from '../llm/types';
 import { catalogAdministration } from '../storage/catalog-admin';
@@ -93,6 +93,7 @@ export async function runScenario(
   let request: LlmRequest | null = null;
   let answer: PublicationRequest | null = null;
   let trace: TraceRecord | null = null;
+  let initiativeCandidate = false;
   let stage: EvaluationResult['reason'] = 'setup_failed';
   const evaluate = (reason: EvaluationResult['reason']) =>
     classify(scenario, trace, reason, {
@@ -100,6 +101,8 @@ export async function runScenario(
       answer: trace?.payload.publication.status === 'delivered' ? answer : null,
       historyTruncated: trace?.payload.context?.historyTruncated ?? false,
       publicationReason: trace?.payload.publication.reason ?? 'none',
+      route: trace?.payload.route ?? null,
+      initiativeCandidate,
     });
 
   try {
@@ -114,12 +117,16 @@ export async function runScenario(
           },
         },
       });
+      const syntheticAt = Date.now() - (scenario.initiative?.due ? 120_000 : 0);
+      const stimulus = scenario.initiative
+        ? { ...scenario.input, timestamp: syntheticAt }
+        : scenario.input;
       const startChat = async (chatId: Scenario['input']['chatId']) => {
         const { scope } = await lifecycle.verify(chatId);
         if (!scope) throw Error('Отсутствует область синтетической беседы.');
         await storage.chats.create(scope, {
           enabled: true,
-          responseMode: 'normal',
+          responseMode: scenario.initiative?.mode ?? 'normal',
           timezone: 'UTC',
           createdAt: 0,
         });
@@ -131,7 +138,13 @@ export async function runScenario(
         await storage.messages.append(
           target,
           message.chatId === scope.chatId
-            ? { ...message, isGroupChat: scenario.input.isGroupChat }
+            ? {
+                ...message,
+                isGroupChat: scenario.input.isGroupChat,
+                ...(scenario.initiative
+                  ? { timestamp: syntheticAt - 1000, senderBot: message.senderBot ?? false }
+                  : {}),
+              }
             : message,
         );
       }
@@ -176,11 +189,13 @@ export async function runScenario(
       });
       const publication = createPublicationService({
         storage,
+        ...(scenario.initiative ? { responseBudget: () => queue.responseBudget } : {}),
         port: {
           async canReply() {
             return true;
           },
           async publish(message) {
+            if (message.beforeSend && !message.beforeSend()) return { kind: 'failed' };
             if (message.kind === 'answer') answer = message;
             return {
               kind: 'delivered',
@@ -188,20 +203,22 @@ export async function runScenario(
                 messageId: 'published',
                 userId: 'synthetic:bot',
                 authorName: 'Бот',
-                timestamp: 200,
+                timestamp: scenario.initiative ? Date.now() : 200,
               },
             };
           },
         },
       });
       const settlement = Promise.withResolvers<QueueCompletion>();
-      const queue = createAgentLoopQueue({
+      let settledJobId: number | undefined;
+      const queue: ChatQueue = createAgentLoopQueue({
         storage,
         tracing: { messageRetentionDays: 30 },
         modelName: settings.modelName ?? model,
         loopOptions: { timeoutMs, maxAttemptsPerStep: 1 },
         config: { handlerMarginMs, stopTimeoutMs: 1_000 },
         prepare: preparation.prepare,
+        ...(scenario.initiative ? { autonomousReplies: true } : {}),
         client: {
           async complete(input) {
             request = input;
@@ -209,6 +226,7 @@ export async function runScenario(
           },
         },
         async onSettled(work, completion) {
+          settledJobId = work.jobId;
           try {
             await publication.onSettled(work, completion);
           } finally {
@@ -220,11 +238,21 @@ export async function runScenario(
         stage = 'processing_failed';
         await queue.start();
         const router = createMessageRouter({ storage, queue });
-        const routed = await router.receive(scope, scenario.input);
-        if (routed.admission?.status !== 'queued') return evaluate('not_queued');
+        const routed = await router.receive(scope, stimulus);
+        initiativeCandidate =
+          routed.decision?.kind === 'silence' && routed.decision.initiative !== undefined;
+        if (
+          routed.admission?.status !== 'queued' &&
+          !(scenario.initiative?.due && initiativeCandidate)
+        )
+          return evaluate(
+            scenario.initiative && routed.admission?.status === 'not_needed' ? null : 'not_queued',
+          );
         const completion = await waitForSettlement(settlement.promise, timeoutMs);
-        trace = await storage.traces.get(scope, routed.admission.jobId);
         if (!completion) return evaluate('settlement_timeout');
+        const jobId = routed.admission?.status === 'queued' ? routed.admission.jobId : settledJobId;
+        if (jobId === undefined) return evaluate('trace_missing');
+        trace = await storage.traces.get(scope, jobId);
         if (!trace) return evaluate('trace_missing');
         return evaluate(classifyFailure(completion, trace));
       } finally {

@@ -9,6 +9,8 @@ export interface Observation {
   readonly answer: PublicationRequest | null;
   readonly historyTruncated: boolean;
   readonly publicationReason?: import('../storage/trace-types').TracePublication['reason'];
+  readonly route?: import('../storage/queue-types').RouteMetadata | null;
+  readonly initiativeCandidate?: boolean;
 }
 
 interface Criterion {
@@ -24,6 +26,10 @@ export interface Scenario {
   readonly title: string;
   readonly prompt: string;
   readonly promptKey?: string;
+  readonly initiative?: {
+    readonly mode: 'active' | 'normal' | 'silent';
+    readonly due?: boolean;
+  };
   readonly history: readonly MessageInput[];
   readonly historyLimit?: number;
   readonly input: IncomingMessage;

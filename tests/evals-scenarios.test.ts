@@ -18,6 +18,17 @@ test('сценарии имеют уникальные ключи сравнен
     'authors-given-name',
     'authors-empty-name',
     'authors-technical-reference',
+    'initiative-help',
+    'initiative-mention',
+    'initiative-question',
+    'initiative-other-address',
+    'initiative-other-reply',
+    'initiative-quoted-name',
+    'initiative-sensitive',
+    'initiative-bot',
+    'initiative-unknown',
+    'initiative-normal',
+    'initiative-silent',
   ]);
   for (const scenario of scenarios) {
     expect(scenario.id).toMatch(/^[a-z]+(?:-[a-z]+)*$/);
@@ -28,6 +39,31 @@ test('сценарии имеют уникальные ключи сравнен
     );
     expect(scenario.criteria.some((criterion) => criterion.vk)).toBe(true);
   }
+});
+
+test('оценки самостоятельных реплик отделяют лишнее вступление от пропуска', () => {
+  const selected = scenarios.filter(({ initiative }) => initiative);
+  const positive = selected.filter(({ criteria }) =>
+    criteria.some(({ id }) => id === 'initiative-start'),
+  );
+  const negative = selected.filter(({ criteria }) =>
+    criteria.some(({ id }) => id === 'initiative-silence'),
+  );
+  expect(positive).toHaveLength(3);
+  expect(negative.length).toBeGreaterThan(positive.length);
+  for (const scenario of positive)
+    expect(
+      scenario.criteria[0]!.check({ request: null, answer: null, historyTruncated: false }),
+    ).toBe(false);
+  for (const scenario of negative)
+    expect(
+      scenario.criteria[0]!.check({
+        request: null,
+        answer: null,
+        historyTruncated: false,
+        initiativeCandidate: true,
+      }),
+    ).toBe(false);
 });
 
 test('сценарии тёзок используют одну версию инструкции и проверяют разные предложения', () => {
