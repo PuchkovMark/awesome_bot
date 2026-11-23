@@ -1,6 +1,7 @@
 import { expect, test } from 'vitest';
 import type { LlmRequest } from '../src/llm/types';
 import { fixture, peer, until } from './helpers/application-response-fixture';
+import { questionnaireAccessQuestion } from '../src/core/questionnaire/answer';
 
 type App = Awaited<ReturnType<typeof fixture>>;
 const profileNotice = 'Тестовое уведомление об анкете и личном профиле.';
@@ -10,7 +11,10 @@ const saved = 'Спасибо! Анкета заполнена.';
 function attempt(app: App, destination = peer, user = 41) {
   return app.db
     .prepare(
-      'SELECT attempt,presentation,state,template,answers FROM questionnaire_progress WHERE chat_id=? AND user_id=?',
+      `SELECT attempt,presentation,state,template,(SELECT json_group_object(a.position,f.value)
+        FROM questionnaire_answer_facts a JOIN profile_facts f ON f.id=a.fact_id
+        WHERE a.attempt=q.attempt ORDER BY a.position) AS answers
+      FROM questionnaire_progress q WHERE chat_id=? AND user_id=?`,
     )
     .get(`vk:${destination}`, `vk:${user}`) as
     | {
@@ -66,7 +70,11 @@ test.each(['Пенёк', 'Пенек', 'упоминание', 'ответ'] as 
           ? app.submit(body, 41, prompt)
           : app.submit((address === 'упоминание' ? '[club314|Пенёк] ' : address + ', ') + body);
       await app.published(input);
-      expect(app.sends.at(-1)?.text).toBe(saved);
+      expect(
+        app.sends.some(
+          ({ text }) => text.startsWith(saved) && text.includes(questionnaireAccessQuestion),
+        ),
+      ).toBe(true);
       expect(attempt(app)).toMatchObject({
         state: 'completed',
         answers: '{"2":"Аня","9":"походы"}',

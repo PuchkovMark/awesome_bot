@@ -17,6 +17,7 @@ import { claimControlMessage, readChatControl } from './chat-control-store';
 import { requireInput, timestamp } from './validation';
 import { appendMessage } from './messages';
 import { recordQuestionnaireFacts } from './profile-fact-store';
+import { questionnaireMessageSequence } from './questionnaire-access-store';
 
 const subject = 'chat_id=? AND generation=? AND user_id=?';
 
@@ -379,14 +380,15 @@ export function questionnaireProgressStore(storage: Storage) {
           now,
         );
         if (scope.chatId !== user) {
-          const sequence = Number(platformMessageId);
-          const responseMessageId =
-            Number.isSafeInteger(sequence) && sequence > 0 && String(sequence) === platformMessageId
-              ? sequence
-              : null;
           db.prepare(
             'INSERT INTO questionnaire_access(chat_id,generation,user_id,attempt,response_message_id) VALUES(?,?,?,?,?)',
-          ).run(scope.chatId, scope.generation, user, attempt, responseMessageId);
+          ).run(
+            scope.chatId,
+            scope.generation,
+            user,
+            attempt,
+            questionnaireMessageSequence(platformMessageId),
+          );
         }
         return true;
       });

@@ -604,7 +604,7 @@ export async function runApplication(
           floodPublications.add(operation);
         },
         recognizeCommand: (message, replyToOther, scope) =>
-          questionnaires.recognize(message) ??
+          questionnaires.recognize(scope, message) ??
           passports.recognize(scope, message) ??
           chatControl.editor.recognizeReply(scope, message) ??
           (isUsageCommand(message.text)
@@ -625,7 +625,7 @@ export async function runApplication(
         identity: (scope, message) =>
           commandAuthorization.context({ scope, userId: message.userId }),
         async executeCommand(context, message, isCurrent, replayOnly) {
-          if (questionnaires.recognize(message))
+          if (questionnaires.recognize(context.scope, message))
             return questionnaires.execute(context, message, isCurrent);
           if (passports.recognize(context.scope, message))
             return passports.execute(context, message, isCurrent);

@@ -8,7 +8,11 @@ import type {
 } from './participant-types';
 import { historyBounds } from './history-retention-store';
 import { profileAdmitted } from './personal-data-store';
-import { questionnaireFieldPrefix, questionnaireReviewDelayMs } from './questionnaire-types';
+import {
+  questionnaireAccessOpenSql,
+  questionnaireFieldPrefix,
+  questionnaireReviewDelayMs,
+} from './questionnaire-types';
 import { requireInput } from './validation';
 
 function normalizedInterest(value: string): string {
@@ -74,8 +78,7 @@ function selectSlots(db: Database, scope: ConnectionScope, query: ProfileQuery, 
       f.generation IS NULL AS legacy, r.fact_id IS NOT NULL AS rejected,
       q.question, q.position AS questionPosition, q.attempt AS questionnaireAttempt,
       a.decision_message_id AS questionnaireDecision,
-      (p.status='present' AND coalesce(a.decision='open' OR
-        (a.decision IS NULL AND a.prompt_delivered_at<=@autoOpenThrough),0)) AS questionnaireOpen,
+      (p.status='present' AND ${questionnaireAccessOpenSql}) AS questionnaireOpen,
       CASE WHEN f.source_kind<>'self' OR q.fact_id IS NOT NULL THEN (SELECT m.id FROM personal_visible_messages m
         WHERE m.chat_id=f.chat_id AND m.platform_message_id=f.source_message_id
         AND m.id>@clearedThrough AND m.timestamp>@expiredThrough) END AS messageRowId

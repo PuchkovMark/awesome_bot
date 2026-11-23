@@ -1,10 +1,15 @@
 import type { createVkChannel } from '../channels/vk/channel';
 import { vkMessageLength } from '../channels/vk/outbound-text';
-import type { AuthorizationContext, IncomingMessage } from '../contracts/index';
+import type { AuthorizationContext, ConnectionScope, IncomingMessage } from '../contracts/index';
 import type { createAuthorizationService } from '../core/authorization/service';
 import type { createLifecycleService } from '../core/lifecycle/service';
 import type { createQuestionnaireProgress } from '../core/questionnaire/progress';
 import { chatControlStore } from '../storage/chat-control-store';
+import {
+  questionnaireAccessStore,
+  questionnaireMessageSequence,
+  type QuestionnaireAccessDecision,
+} from '../storage/questionnaire-access-store';
 import type { QuestionnaireCommand } from '../storage/questionnaire-progress-store';
 import type { Storage } from '../storage/types';
 
@@ -21,6 +26,19 @@ export function parseQuestionnaireCommand(text: string): QuestionnaireCommand | 
     default:
       return null;
   }
+}
+
+function accessCommand(text: string): QuestionnaireAccessDecision | null {
+  if (text === '/анкета открыть') return 'open';
+  if (text === '/анкета закрыть') return 'closed';
+  return null;
+}
+
+function accessReply(text: string): QuestionnaireAccessDecision | null {
+  const choice = text.toLowerCase();
+  if (choice === 'разрешить' || choice === 'да') return 'open';
+  if (choice === 'закрыть' || choice === 'нет') return 'closed';
+  return null;
 }
 const ownCommand = {
   action: 'onboarding.self.manage',
@@ -62,33 +80,40 @@ export function createQuestionnaireCommands(options: {
 }) {
   const { channel, progress, authorization, lifecycle, signal } = options;
   const controls = chatControlStore(options.storage);
-  function commandOf(message: IncomingMessage) {
-    return message.isBot === false && (message.isGroupChat || message.chatId === message.userId)
-      ? parseQuestionnaireCommand(message.literalText ?? message.text)
-      : null;
+  const access = questionnaireAccessStore(options.storage);
+  function commandOf(scope: ConnectionScope, message: IncomingMessage) {
+    if (message.isBot !== false || (!message.isGroupChat && message.chatId !== message.userId))
+      return null;
+    const text = (message.literalText ?? message.text).trim();
+    const progress = parseQuestionnaireCommand(text);
+    if (progress) return progress;
+    if (!message.isGroupChat) return null;
+    const direct = accessCommand(text);
+    if (direct) return { access: direct };
+    const reply = accessReply(text);
+    const receipt = message.replyToMessageId ?? message.unverifiedReplyToMessageId;
+    return reply && receipt && access.hasPrompt(scope, receipt) ? { access: reply, receipt } : null;
   }
 
   return {
-    recognize(message: IncomingMessage) {
-      return commandOf(message) ? ownCommand : null;
+    recognize(scope: ConnectionScope, message: IncomingMessage) {
+      return commandOf(scope, message) ? ownCommand : null;
     },
     async execute(
       context: AuthorizationContext,
       message: IncomingMessage,
       accepted: () => boolean,
     ) {
-      const command = commandOf(message);
       const scope = context.scope;
-      const sequence = Number(message.messageId);
+      const command = commandOf(scope, message);
+      const sequence = questionnaireMessageSequence(message.messageId);
       if (
         !command ||
         message.hasForwarded ||
         message.attachments.length ||
         context.userId !== message.userId ||
         scope.chatId !== message.chatId ||
-        !Number.isSafeInteger(sequence) ||
-        sequence <= 0 ||
-        String(sequence) !== message.messageId
+        sequence === null
       )
         return;
       const control = controls.capture(scope);
@@ -99,9 +124,34 @@ export function createQuestionnaireCommands(options: {
         current();
       if (!(await allowed())) return;
 
+      const guard = { signal, isCurrent: current, allow: allowed };
+      if (typeof command !== 'string') {
+        const receipt = command.receipt ? questionnaireMessageSequence(command.receipt) : null;
+        if (
+          command.receipt &&
+          (receipt === null ||
+            message.replyAddress !== 'bot' ||
+            message.replyToMessageId !== command.receipt)
+        )
+          return;
+        const result = access.decide(scope, message.userId, command.access, {
+          sequence,
+          at: message.timestamp,
+          receipt,
+        });
+        if (result === 'ignored') return;
+        const text =
+          result === 'unavailable'
+            ? 'У вас пока нет заполненной анкеты в этой беседе.'
+            : command.access === 'open'
+              ? 'Просмотр вашей анкеты открыт для участников этой беседы.'
+              : 'Просмотр вашей анкеты закрыт.';
+        await channel.replyGroupControl(scope, text, guard);
+        return;
+      }
+
       const actor = progress.participant(scope, message.userId);
       const result = actor.command(command, { sequence, at: message.timestamp }, Date.now());
-      const guard = { signal, isCurrent: current, allow: allowed };
       if (result.kind !== 'showing') {
         const text =
           result.kind === 'active' && message.isGroupChat
