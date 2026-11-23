@@ -5,7 +5,7 @@
 - Статус: выполнено
 - Дата: 2026-11-23
 - Дата завершения: 2026-11-23
-- Связанные документы: [план реализации](../../impl-plans/completed/052-questionnaire-progress.md), [план фичи](../../plans/completed/052-questionnaire-progress.md), [F8.2 в дорожной карте](../../roadmap.md), [шаблон 044](044-legacy-introduction-questionnaire.md), [приглашения 050](../050-new-member-questionnaire-invitations.md), [смежная задача 053](../053-questionnaire-chat-and-dm.md), [Знакомство](../../specs/onboarding.md), [хранилище](../../specs/storage.md)
+- Связанные документы: [план реализации](../../impl-plans/completed/052-questionnaire-progress.md), [план фичи](../../plans/completed/052-questionnaire-progress.md), [F8.2 в дорожной карте](../../roadmap.md), [шаблон 044](044-legacy-introduction-questionnaire.md), [приглашения 050](050-new-member-questionnaire-invitations.md), [смежная задача 053](053-questionnaire-chat-and-dm.md), [Знакомство](../../specs/onboarding.md), [хранилище](../../specs/storage.md)
 
 ## Проблема или цель
 

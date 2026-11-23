@@ -2,10 +2,10 @@
 
 - Номер: 053
 - Название: Заполнение анкеты в беседе и личке
-- Статус: утверждено
+- Статус: выполнено
 - Дата: 2026-11-23
-- Дата завершения: —
-- Связанные документы: [план реализации](../impl-plans/053-questionnaire-chat-and-dm.md), [утверждённая задача](../tasks/053-questionnaire-chat-and-dm.md), [движок 052](completed/052-questionnaire-progress.md), [шаблон 044](completed/044-legacy-introduction-questionnaire.md), [приёмка приглашений 050](../impl-plans/050-new-member-questionnaire-invitations.md), [решение об отдельной анкете лички](../decisions.md#отдельный-профиль-и-анкета-лички).
+- Дата завершения: 2026-11-23
+- Связанные документы: [план реализации](../../impl-plans/completed/053-questionnaire-chat-and-dm.md), [утверждённая задача](../../tasks/completed/053-questionnaire-chat-and-dm.md), [движок 052](052-questionnaire-progress.md), [шаблон 044](044-legacy-introduction-questionnaire.md), [приёмка приглашений 050](../../impl-plans/completed/050-new-member-questionnaire-invitations.md), [решение об отдельной анкете лички](../../decisions.md#отдельный-профиль-и-анкета-лички).
 
 ## Подход и ключевые решения
 
@@ -36,7 +36,7 @@
 
 ## Изменения спецификаций
 
-После приёмки уточнить команды, порядок показа и выбор редакции в [знакомстве](../specs/onboarding.md) и [командах](../specs/commands-and-limits.md). Обновить [правила адресации](../specs/chat-etiquette.md), [каналы](../specs/channels.md) и фактический статус сквозной проверки 050. Применяются действующие [границы профилей](../specs/profiles.md) и [правила уведомления](../specs/privacy.md).
+После приёмки уточнить команды, порядок показа и выбор редакции в [знакомстве](../../specs/onboarding.md) и [командах](../../specs/commands-and-limits.md). Обновить [правила адресации](../../specs/chat-etiquette.md), [каналы](../../specs/channels.md) и фактический статус сквозной проверки 050. Применяются действующие [границы профилей](../../specs/profiles.md) и [правила уведомления](../../specs/privacy.md).
 
 ## Допущения
 

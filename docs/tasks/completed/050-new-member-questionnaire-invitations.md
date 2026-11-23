@@ -2,10 +2,10 @@
 
 - Номер: 050
 - Название: Приглашение новичков заполнить анкету
-- Статус: в работе
+- Статус: выполнено
 - Дата: 2026-11-23
-- Дата завершения: —
-- Связанные документы: [план реализации](../impl-plans/050-new-member-questionnaire-invitations.md), [план фичи](../plans/050-new-member-questionnaire-invitations.md), [F8.7 в дорожной карте](../roadmap.md#веха-8-знакомство), [вопросы анкеты 044](completed/044-legacy-introduction-questionnaire.md), [приветствие 045](completed/045-new-member-greeting.md).
+- Дата завершения: 2026-11-23
+- Связанные документы: [план реализации](../../impl-plans/completed/050-new-member-questionnaire-invitations.md), [план фичи](../../plans/completed/050-new-member-questionnaire-invitations.md), [F8.7 в дорожной карте](../../roadmap.md#веха-8-знакомство), [вопросы анкеты 044](044-legacy-introduction-questionnaire.md), [приветствие 045](045-new-member-greeting.md).
 
 ## Проблема или цель
 
@@ -41,7 +41,7 @@
 
 ## Затрагиваемые спецификации
 
-[Знакомство](../specs/onboarding.md), [команды](../specs/commands-and-limits.md), [поведение в беседе](../specs/chat-etiquette.md).
+[Знакомство](../../specs/onboarding.md), [команды](../../specs/commands-and-limits.md), [поведение в беседе](../../specs/chat-etiquette.md).
 
 ## Открытые вопросы
 
@@ -49,4 +49,4 @@
 
 ## Ход реализации
 
-Настройка и маршрут публикации проверены на подменах. Сквозная приёмка ожидает работающий движок F8.2–F8.3. [Проверки реализации](../impl-plans/050-new-member-questionnaire-invitations.md#проверки-реализации-050)
+Настройка и маршрут публикации проверены на подменах VK. Штатный вход из текста приглашения и сохранение завершения прошли [сквозную приёмку](../../impl-plans/completed/050-new-member-questionnaire-invitations.md#результаты-сквозной-приёмки). [Проверки реализации](../../impl-plans/completed/050-new-member-questionnaire-invitations.md#проверки-реализации-050)

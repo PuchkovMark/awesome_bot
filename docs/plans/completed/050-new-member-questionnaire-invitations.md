@@ -2,10 +2,10 @@
 
 - Номер: 050
 - Название: Приглашение новичков заполнить анкету
-- Статус: утверждено
+- Статус: выполнено
 - Дата: 2026-11-23
-- Дата завершения: —
-- Связанные документы: [план реализации](../impl-plans/050-new-member-questionnaire-invitations.md), [утверждённая задача](../tasks/050-new-member-questionnaire-invitations.md), [приветствие 045](../tasks/completed/045-new-member-greeting.md), [шаблон 044](../tasks/completed/044-legacy-introduction-questionnaire.md), [знакомство](../specs/onboarding.md), [решения](../decisions.md).
+- Дата завершения: 2026-11-23
+- Связанные документы: [план реализации](../../impl-plans/completed/050-new-member-questionnaire-invitations.md), [утверждённая задача](../../tasks/completed/050-new-member-questionnaire-invitations.md), [приветствие 045](../../tasks/completed/045-new-member-greeting.md), [шаблон 044](../../tasks/completed/044-legacy-introduction-questionnaire.md), [знакомство](../../specs/onboarding.md), [решения](../../decisions.md).
 
 ## Подход и ключевые решения
 
@@ -36,7 +36,7 @@
 
 ## Изменения спецификаций
 
-В [знакомстве](../specs/onboarding.md) и [этикете](../specs/chat-etiquette.md) уточнить массовый вход, порядок доставки и подавление повторов. В [командах](../specs/commands-and-limits.md) закрепить права и исходное состояние. В [каналах](../specs/channels.md) и [хранилище](../specs/storage.md) описать служебные упоминания и восстановление доставки.
+В [знакомстве](../../specs/onboarding.md) и [этикете](../../specs/chat-etiquette.md) уточнить массовый вход, порядок доставки и подавление повторов. В [командах](../../specs/commands-and-limits.md) закрепить права и исходное состояние. В [каналах](../../specs/channels.md) и [хранилище](../../specs/storage.md) описать служебные упоминания и восстановление доставки.
 
 ## Риски и приёмка
 

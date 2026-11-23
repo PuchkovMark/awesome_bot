@@ -5,7 +5,7 @@
 - Статус: выполнено
 - Дата: 2026-11-23
 - Дата завершения: 2026-11-23
-- Связанные документы: [план реализации](../../impl-plans/completed/052-questionnaire-progress.md), [задача 052](../../tasks/completed/052-questionnaire-progress.md), [шаблон 044](044-legacy-introduction-questionnaire.md), [приглашения 050](../050-new-member-questionnaire-invitations.md), [каналы заполнения 053](../../tasks/053-questionnaire-chat-and-dm.md), [решения](../../decisions.md).
+- Связанные документы: [план реализации](../../impl-plans/completed/052-questionnaire-progress.md), [задача 052](../../tasks/completed/052-questionnaire-progress.md), [шаблон 044](044-legacy-introduction-questionnaire.md), [приглашения 050](050-new-member-questionnaire-invitations.md), [каналы заполнения 053](../../tasks/completed/053-questionnaire-chat-and-dm.md), [решения](../../decisions.md).
 
 ## Подход и ключевые решения
 
