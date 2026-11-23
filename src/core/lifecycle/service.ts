@@ -88,11 +88,15 @@ export function createLifecycleService(options: {
         result.communityAdmin,
       );
     },
-    async verify(chatId: ChatId, evidence?: 'observation_lost') {
+    async verify(chatId: ChatId, evidence?: 'observation_lost' | 'startup' | 'first_seen') {
       if (!validId(chatId)) throw new TypeError('Lifecycle: invalid_chat');
       const proof = backend.begin(chatId);
-      if (evidence === 'observation_lost') {
-        const result = backend.apply(proof, { confidence: 'unavailable', bot: 'unknown' });
+      if (evidence !== undefined) {
+        const result = backend.apply(
+          proof,
+          { confidence: 'unavailable', bot: 'unknown' },
+          evidence,
+        );
         if (result.status === 'uncertain') failedPauses.delete(chatId);
         return result;
       }

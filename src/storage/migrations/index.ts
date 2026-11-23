@@ -1,3 +1,4 @@
+import { connectionPauseReason } from './021-connection-pause-reason';
 import { chatTokenBudget } from './020-chat-token-budget';
 import { responseRateAndFlood } from './019-response-rate-and-flood';
 import { chatHistoryRetention } from './018-chat-history-retention';
@@ -44,4 +45,5 @@ export const migrations: readonly Migration[] = [
   chatHistoryRetention,
   responseRateAndFlood,
   chatTokenBudget,
+  connectionPauseReason,
 ];

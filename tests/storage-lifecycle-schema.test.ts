@@ -48,6 +48,39 @@ test('счётчик независим от чатов по схеме; миг�
   }
 });
 
+test('миграция 21 сохраняет существующую паузу с неизвестной причиной', () => {
+  const db = new Database(':memory:');
+  try {
+    db.pragma('foreign_keys=ON');
+    migrate(db, migrations.slice(0, 20));
+    db.exec(`
+      INSERT INTO chat_connections(chat_id,generation,revision,state)
+      VALUES ('vk:1',1,7,'uncertain'),('vk:2',2,4,'active');
+    `);
+    const before = db.prepare('SELECT * FROM schema_migrations ORDER BY version').all();
+    migrate(db);
+    expect(
+      db.prepare('SELECT * FROM schema_migrations WHERE version<=20 ORDER BY version').all(),
+    ).toEqual(before);
+    expect(
+      db
+        .prepare(
+          'SELECT chat_id,generation,revision,state,pause_reason FROM chat_connections ORDER BY chat_id',
+        )
+        .all(),
+    ).toEqual([
+      { chat_id: 'vk:1', generation: 1, revision: 7, state: 'uncertain', pause_reason: null },
+      { chat_id: 'vk:2', generation: 2, revision: 4, state: 'active', pause_reason: null },
+    ]);
+    const updateCause = db.prepare('UPDATE chat_connections SET pause_reason=? WHERE chat_id=?');
+    expect(() => updateCause.run('unsupported', 'vk:1')).toThrow('CHECK');
+    expect(() => updateCause.run('startup', 'vk:2')).toThrow('CHECK');
+    expect(updateCause.run('startup', 'vk:1').changes).toBe(1);
+  } finally {
+    db.close();
+  }
+});
+
 function clockIsIndependent(db: Database.Database): boolean {
   const columns = (db.pragma('table_info(lifecycle_clock)') as { name: string }[]).map(
     (r) => r.name,

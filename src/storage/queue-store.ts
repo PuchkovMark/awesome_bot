@@ -340,7 +340,8 @@ export function createQueueBackend(
             const prefix = pausePlatform === undefined ? null : `${pausePlatform}:`;
             restoreAutonomousQuota(db, prefix);
             recoverResponseRate(db, prefix);
-            if (pausePlatform !== undefined) lifecycle.pauseActivePlatform(db, pausePlatform);
+            if (pausePlatform !== undefined)
+              lifecycle.pauseActivePlatform(db, pausePlatform, 'startup');
             const running = db
               .prepare(
                 "SELECT j.id,j.chat_id AS chatId,j.generation,j.message_id AS messageId,j.received_at AS receivedAt FROM queue_jobs j WHERE j.state='running'",

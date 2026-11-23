@@ -6,6 +6,8 @@ export interface ConnectionScope {
   readonly chatId: ChatId;
   readonly generation: number;
 }
+export type ConnectionPauseReason =
+  'startup' | 'observation_lost' | 'first_seen' | 'membership_signal' | 'verification_uncertain';
 export interface LifecycleObservation {
   readonly confidence: 'confirmed' | 'uncertain' | 'unavailable';
   readonly bot: 'present' | 'absent' | 'unknown';

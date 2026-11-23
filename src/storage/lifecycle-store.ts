@@ -1,6 +1,7 @@
 import type { Database } from 'better-sqlite3';
 import type {
   ChatId,
+  ConnectionPauseReason,
   ConnectionScope,
   KnownBoolean,
   LifecycleObservation,
@@ -91,27 +92,40 @@ export function createLifecycleBackend(connection: Connection) {
       .run(chatId);
     if (result.changes !== 1) throw new StorageError('operation_failed');
   }
-  function create(db: Database, chatId: ChatId, state: State['state']) {
+  function create(
+    db: Database,
+    chatId: ChatId,
+    state: State['state'],
+    reason: ConnectionPauseReason | null = null,
+  ) {
     const generation = advanceClock(db);
     db.prepare(
-      'INSERT INTO chat_connections(chat_id,generation,revision,state) VALUES (?,?,0,?)',
-    ).run(chatId, generation, state);
+      'INSERT INTO chat_connections(chat_id,generation,revision,state,pause_reason) VALUES (?,?,0,?,?)',
+    ).run(chatId, generation, state, reason);
   }
-  function markUncertain(db: Database, chatId: ChatId, state: State | null) {
+  function markUncertain(
+    db: Database,
+    chatId: ChatId,
+    state: State | null,
+    reason: ConnectionPauseReason,
+  ) {
     if (!state) {
-      create(db, chatId, 'uncertain');
+      create(db, chatId, 'uncertain', reason);
       return;
     }
-    bump(db, chatId);
+    const result = db
+      .prepare(
+        `UPDATE chat_connections SET state='uncertain',revision=revision+1,pause_reason=?
+        WHERE chat_id=? AND revision<9007199254740991`,
+      )
+      .run(reason, chatId);
+    if (result.changes !== 1) throw new StorageError('operation_failed');
     db.prepare('DELETE FROM admin_presence WHERE chat_id=?').run(chatId);
     db.prepare('UPDATE admin_observations SET community_admin=NULL WHERE chat_id=?').run(chatId);
     db.prepare(
       `UPDATE admin_recovery_operations SET state='pending_delivery',reason='interrupted'
       WHERE chat_id=? AND state='sending'`,
     ).run(chatId);
-    if (state.state === 'active') {
-      db.prepare("UPDATE chat_connections SET state='uncertain' WHERE chat_id=?").run(chatId);
-    }
   }
   function assertScope(db: Database, scope: ConnectionScope) {
     requireInput(typeof scope === 'object' && scope !== null && scopes.has(scope));
@@ -156,7 +170,7 @@ export function createLifecycleBackend(connection: Connection) {
   }
   return {
     assertScope,
-    pauseActivePlatform(db: Database, platform: string) {
+    pauseActivePlatform(db: Database, platform: string, reason: ConnectionPauseReason) {
       requireInput(db.inTransaction && /^[a-z][a-z0-9_-]*$/u.test(platform));
       const prefix = platform + ':';
       const where = "state='active' AND substr(chat_id,1,?)=?";
@@ -176,8 +190,9 @@ export function createLifecycleBackend(connection: Connection) {
         WHERE chat_id IN (SELECT chat_id FROM chat_connections WHERE ${where})`,
       ).run(prefix.length, prefix);
       db.prepare(
-        `UPDATE chat_connections SET state='uncertain',revision=revision+1 WHERE ${where}`,
-      ).run(prefix.length, prefix);
+        `UPDATE chat_connections SET state='uncertain',revision=revision+1,pause_reason=?
+        WHERE ${where}`,
+      ).run(reason, prefix.length, prefix);
     },
     activeChatIds(platform: string): readonly ChatId[] {
       return connection.run((db) => {
@@ -263,7 +278,7 @@ export function createLifecycleBackend(connection: Connection) {
               return { status: 'duplicate' as const };
 
             if (!state || state.state === 'active' || key !== undefined)
-              markUncertain(db, chatId, state);
+              markUncertain(db, chatId, state, 'membership_signal');
             if (key !== undefined) {
               const connection = read(db, chatId)!;
               db.prepare(
@@ -377,7 +392,7 @@ export function createLifecycleBackend(connection: Connection) {
             if (state?.state !== 'active') return false;
             const { chatId, generation } = state;
             if (observation.confidence === 'uncertain') {
-              markUncertain(db, chatId, state);
+              markUncertain(db, chatId, state, 'verification_uncertain');
               return true;
             }
             db.prepare(
@@ -435,7 +450,11 @@ export function createLifecycleBackend(connection: Connection) {
           .immediate(),
       );
     },
-    apply(proof: Verification, observation: LifecycleObservation) {
+    apply(
+      proof: Verification,
+      observation: LifecycleObservation,
+      reason: ConnectionPauseReason = 'verification_uncertain',
+    ) {
       return connection.run((db) => {
         requireInput(!db.inTransaction);
         return db
@@ -467,7 +486,7 @@ export function createLifecycleBackend(connection: Connection) {
               );
             let state = read(db, chatId);
             if (observation.confidence !== 'confirmed' || observation.bot === 'unknown') {
-              markUncertain(db, chatId, state);
+              if (state?.state !== 'uncertain') markUncertain(db, chatId, state, reason);
               return { status: 'uncertain' as const };
             }
             if (state?.state === 'uncertain') return { status: 'uncertain' as const };
@@ -556,7 +575,9 @@ export function createLifecycleBackend(connection: Connection) {
                 state.revision === 0 &&
                 !db.prepare('SELECT 1 FROM chats WHERE chat_id=?').get(chatId);
               bump(db, chatId);
-              db.prepare("UPDATE chat_connections SET state='active' WHERE chat_id=?").run(chatId);
+              db.prepare(
+                "UPDATE chat_connections SET state='active',pause_reason=NULL WHERE chat_id=?",
+              ).run(chatId);
               db.prepare(
                 `INSERT INTO admin_observations(chat_id,generation,opened_at) VALUES (?,?,?)
             ON CONFLICT(chat_id,generation) DO UPDATE SET opened_at=excluded.opened_at`,

@@ -129,6 +129,7 @@ function start(
   } = {},
 ) {
   const onDecision = vi.fn();
+  const verify = vi.fn(f.lifecycle.verify);
   const router = createMessageRouter({
     storage: options.storage ?? f.storage,
     queue: f.queue,
@@ -139,11 +140,11 @@ function start(
       groupId,
       token: 'synthetic-token',
       signal: f.controller.signal,
-      lifecycle: f.lifecycle,
+      lifecycle: { ...f.lifecycle, verify },
     },
     { api: options.api ?? f.api, transport: f.transport },
   );
-  return { inbound, onDecision, done: inbound.startRouted(router, options.membership) };
+  return { inbound, onDecision, verify, done: inbound.startRouted(router, options.membership) };
 }
 
 async function close(f: Awaited<ReturnType<typeof fixture>>, done: Promise<void>) {
@@ -170,6 +171,10 @@ describe('приём VK через штатный роутер', () => {
       await flushQueue();
       expect(f.handled).not.toHaveBeenCalled();
       expect(() => f.lifecycle.current(secondChat)).toThrow('uncertain_connection');
+      expect(run.verify.mock.calls).toEqual([
+        [firstChat, 'startup'],
+        [secondChat, 'first_seen'],
+      ]);
 
       const first = f.decide(firstChat);
       const second = f.decide(secondChat);
@@ -239,6 +244,7 @@ describe('приём VK через штатный роутер', () => {
         f.update(event(2));
         await requested.promise;
         await f.gap();
+        expect(run.verify).toHaveBeenLastCalledWith(firstChat, 'observation_lost');
         expect(() => f.lifecycle.current(firstChat)).toThrow('uncertain_connection');
         f.update(event(3));
         const next = f.decide(firstChat, policy);

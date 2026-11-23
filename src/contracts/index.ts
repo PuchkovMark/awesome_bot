@@ -34,7 +34,12 @@ export type {
   AuthorizationDenial,
   AuthorizationContext,
 } from './authorization';
-export type { ConnectionScope, LifecycleObservation, LifecycleSource } from './lifecycle';
+export type {
+  ConnectionPauseReason,
+  ConnectionScope,
+  LifecycleObservation,
+  LifecycleSource,
+} from './lifecycle';
 export type {
   ContentKind,
   LocalContentKind,

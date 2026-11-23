@@ -16,6 +16,7 @@ import type { LlmRequest, LlmResult } from '../src/llm/index';
 import { llmFailure } from '../src/llm/errors';
 import type { LogEvent, SafeLogger } from '../src/logger/index';
 import { openStorage } from '../src/storage/index';
+import { openConnection } from '../src/storage/connection';
 import { disclosureStore, type DisclosureInput } from '../src/storage/chat-disclosure-store';
 import { storageFixture } from './helpers/storage-fixture';
 
@@ -380,6 +381,11 @@ test('штатная композиция ждёт допуска, публик�
     await f.init();
     const { logger, events } = loggerFixture();
     const inspector = await inspect(f.files.path);
+    const connection = await openConnection(f.files.path);
+    const paused = (chat: string) =>
+      connection.run((db) =>
+        db.prepare('SELECT state,pause_reason FROM chat_connections WHERE chat_id=?').get(chat),
+      );
     try {
       const sessions: string[] = [];
       for (const round of [1, 2, 3, 4]) {
@@ -405,6 +411,13 @@ test('штатная композиция ждёт допуска, публик�
         );
         try {
           await transport.ready;
+          if (round > 1) {
+            expect(paused(chatId)).toEqual({ state: 'uncertain', pause_reason: 'startup' });
+            expect(paused(testGroup)).toEqual({
+              state: 'uncertain',
+              pause_reason: 'membership_signal',
+            });
+          }
           transport.update(
             vk.event(50, 2_000_000_010, { type: 'chat_invite_user', member_id: -groupId }),
             vk.event(99),
@@ -412,11 +425,20 @@ test('штатная композиция ждёт допуска, публик�
           await vi.waitFor(() =>
             expect(() => inspector.life.current(chatId)).toThrow('uncertain_connection'),
           );
+          expect(paused(chatId)).toEqual({
+            state: 'uncertain',
+            pause_reason: round === 1 ? 'first_seen' : 'startup',
+          });
+          expect(paused(testGroup)).toEqual({
+            state: 'uncertain',
+            pause_reason: 'membership_signal',
+          });
           await resolveApplicationChat(
             { databasePath: f.files.path, ownerId },
             chatId,
             round === 4 ? 'new' : 'continue',
           );
+          expect(paused(chatId)).toEqual({ state: 'active', pause_reason: null });
           transport.update(vk.event(round));
           await vi.waitFor(async () => {
             const history = await inspector.storage.messages.list(inspector.life.current(chatId), {
@@ -441,6 +463,7 @@ test('штатная композиция ждёт допуска, публик�
       expect(sessions[3]).not.toBe(sessions[2]);
       expect(events.filter((e) => e.event === 'application_ready')).toHaveLength(4);
     } finally {
+      connection.close();
       await inspector.storage.close();
     }
   } finally {

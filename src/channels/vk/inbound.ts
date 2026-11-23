@@ -106,9 +106,12 @@ export function createVkInbound(
     }
   }
 
-  async function pause(chatId: ChatId): Promise<void> {
+  async function pause(
+    chatId: ChatId,
+    reason: 'startup' | 'observation_lost' | 'first_seen',
+  ): Promise<void> {
     for (;;) {
-      if ((await lifecycle.verify(chatId, 'observation_lost')).status !== 'stale') return;
+      if ((await lifecycle.verify(chatId, reason)).status !== 'stale') return;
       try {
         if (!current(chatId)) return;
       } catch (error) {
@@ -260,7 +263,7 @@ export function createVkInbound(
         } catch (error) {
           if (error instanceof StorageError && error.code === 'stale_scope') {
             counters.paused++;
-            void pause(chatId).catch(() => {
+            void pause(chatId, 'first_seen').catch(() => {
               counters.failed++;
             });
             continue;
@@ -328,7 +331,8 @@ export function createVkInbound(
             observing = false;
             tails.clear();
             membershipObservations.clear();
-            await Promise.all(lifecycle.activeChatIds('vk').map(pause));
+            const cause = reason === 'startup' ? 'startup' : 'observation_lost';
+            await Promise.all(lifecycle.activeChatIds('vk').map((chatId) => pause(chatId, cause)));
             if (subscription === next) observing = true;
           },
           onUpdates,
