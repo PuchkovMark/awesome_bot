@@ -254,6 +254,12 @@ export function createVersionBackend(
   }
   return {
     persona,
+    selectStarterPersona(db: Database, scope: ConnectionScope, id: string): SelectionResult {
+      const ref = starterPersonaRef(db, id);
+      if (!ref) return { status: 'not_found' };
+      const current = localSelected(db, scope, 'persona');
+      return select(db, ref, current?.ref ?? null, scope, 'persona');
+    },
     installStarterPersonas(cards: readonly { id: string; text: string }[], createdAt: number) {
       admin((db) => {
         timestamp(createdAt);

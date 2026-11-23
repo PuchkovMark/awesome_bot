@@ -160,6 +160,30 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
         return { allowed: true, value: tx.applyPassportReply(context.userId, input, now()) };
       });
     },
+    async selectPersona(
+      context: AuthorizationContext,
+      personaId: string,
+      messageId: number,
+      current: () => boolean,
+    ) {
+      if (disposed || !authority.contains(context)) return deny('invalid_context');
+      if (context.kind !== 'chat') return deny('wrong_scope');
+      const direct = context.chatId === context.userId;
+      return guarded<ReturnType<ScopedAuthorizationTransaction['selectStarterPersona']>>(
+        context,
+        direct ? 'persona.self.select' : 'chat.persona.select',
+        direct ? context.userId : undefined,
+        (tx) => {
+          const state = tx.controlState();
+          if (!state.enabled || (direct && state.mode === 'silent')) return deny('disabled');
+          if (!current()) return deny('conflict');
+          return {
+            allowed: true,
+            value: tx.selectStarterPersona(context.userId, personaId, messageId),
+          };
+        },
+      );
+    },
     async readOwnProfile(context: AuthorizationContext, subjectId: UserId) {
       return guarded(context, 'profile.self.manage', subjectId, (tx) => ({
         allowed: true,

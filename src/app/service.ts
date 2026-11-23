@@ -1,4 +1,5 @@
 import { createQuestionnaireProgress } from '../core/questionnaire/progress';
+import { createPersonaCommands, isPersonaCommand } from './persona-commands';
 import {
   createQuestionnaireCommands,
   openQuestionnaire,
@@ -226,7 +227,9 @@ export async function runApplication(
               message.authorId === message.peerId &&
               !message.hasReply &&
               !message.hasForwarded &&
-              (onboarding.configuredForProfiles() || !!parseReminderCommand(message.text, false))
+              (onboarding.configuredForProfiles() ||
+                !!parseReminderCommand(message.text, false) ||
+                (!message.attachments.length && isPersonaCommand(message.text)))
             );
           },
           onReady() {
@@ -584,6 +587,7 @@ export async function runApplication(
         progress: questionnaireProgress,
       });
       const address = createAddressPreferenceHandlers({ storage, channel, signal });
+      const personas = createPersonaCommands({ storage, authorization, channel, signal });
       const pausedChats = createPausedChatCommands({ channel, lifecycle, ownerId, signal });
       const router = createMessageRouter({
         storage,
@@ -608,6 +612,7 @@ export async function runApplication(
             : null) ??
           profiles.recognize(message) ??
           groupPersonalCommand(message) ??
+          personas.recognize(message) ??
           history.recognize(message) ??
           chatControl.recognize(message, replyToOther) ??
           reminders.recognize(message) ??
@@ -627,6 +632,7 @@ export async function runApplication(
           if (chatControl.editor.recognizeReply(context.scope, message))
             return chatControl.editor.reply(context, message, isCurrent);
           if (profiles.recognize(message)) return profiles.group(context.scope, message, isCurrent);
+          if (personas.recognize(message)) return personas.execute(context, message, isCurrent);
           if (groupPersonalCommand(message)) {
             const peerId = vkLocalId(context.scope.chatId),
               authorId = vkLocalId(context.userId);

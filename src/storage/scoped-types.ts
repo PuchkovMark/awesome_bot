@@ -2,6 +2,7 @@ import type { QuestionnaireReply, QuestionnaireReplyResult } from './questionnai
 import type { PassportReply, PassportReplyResult } from './chat-passport-types';
 import type { ProfileCommandEdit, ProfileCommandEditResult } from './profile-command-types';
 import type { VersionStore } from './version-types';
+import type { SelectionResult } from '../contracts/versioning';
 import type { ConnectionScope, UserId } from '../contracts/index';
 import type {
   AppendResult,
@@ -26,6 +27,11 @@ import type {
 } from './participant-types';
 
 export interface ScopedAuthorizationTransaction extends AuthorizationTransaction {
+  selectStarterPersona(
+    actorId: UserId,
+    personaId: string,
+    messageId: number,
+  ): SelectionResult | { readonly status: 'duplicate' };
   applyQuestionnaireReply(
     actorId: UserId,
     input: QuestionnaireReply,

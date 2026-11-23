@@ -8,6 +8,7 @@ export type AuthorizationAction =
   | 'chat.history.clear'
   | 'chat.passport.read'
   | 'chat.passport.edit'
+  | 'chat.persona.read'
   | 'chat.persona.select'
   | 'chat.onboarding.configure'
   | 'chat.pause'

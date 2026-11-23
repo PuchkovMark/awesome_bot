@@ -109,6 +109,11 @@ export function createScopedStorage(
             callback(
               Object.freeze<ScopedAuthorizationTransaction>({
                 ...tx,
+                selectStarterPersona(actorId, personaId, messageId) {
+                  tx.revision();
+                  if (!tx.claimControlMessage(actorId, messageId)) return { status: 'duplicate' };
+                  return versions.selectStarterPersona(db, scope, personaId);
+                },
                 applyQuestionnaireReply(actorId, input, now) {
                   tx.revision();
                   if (!tx.claimControlMessage(actorId, input.eventId))

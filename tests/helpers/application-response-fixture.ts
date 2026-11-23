@@ -55,6 +55,7 @@ export async function fixture(
     existingChat?: (path: string) => void;
     userRequests?: number;
     active?: boolean;
+    vkAdmins?: readonly number[];
     administrationIntervalMs?: number;
     greetings?: {
       readonly members?: readonly number[];
@@ -194,7 +195,10 @@ export async function fixture(
         if (method === 'messages.getConversationMembers') {
           const items = [
             { member_id: -group, is_admin: true },
-            ...(members ?? []).map((member_id) => ({ member_id, is_admin: false })),
+            ...(members ?? []).map((member_id) => ({
+              member_id,
+              is_admin: options.vkAdmins?.includes(member_id) ?? false,
+            })),
           ];
           return { response: { items, ...(members === null ? {} : { count: items.length }) } };
         }

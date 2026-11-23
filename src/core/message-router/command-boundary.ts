@@ -18,6 +18,8 @@ export async function commandAccess(
     [
       'chat.pause',
       'chat.passport.read',
+      'chat.persona.read',
+      'persona.self.select',
       'profile.self.manage',
       'profile.self.address',
       'onboarding.self.manage',
@@ -38,6 +40,7 @@ export async function commandAccess(
     'profile.self.manage',
     'profile.self.address',
     'onboarding.self.manage',
+    'persona.self.select',
   ].includes(command.action)
     ? await auth.check(context, command.action, message.userId)
     : await auth.check(context, command.action);

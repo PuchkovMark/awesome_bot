@@ -34,13 +34,16 @@ export function routeMessage(input: RoutingInput): RoutingDecision {
       'reminder.manage',
       'profile.self.address',
       'onboarding.self.manage',
+      'persona.self.select',
     ].includes(action);
     const passport = action === 'chat.passport.read' || action === 'chat.passport.edit';
+    const persona = action === 'chat.persona.read' || action === 'chat.persona.select';
     const participantCommand =
       service.command.minimumRole === 'member' &&
       (service.command.action === 'chat.pause' ||
         service.command.action === 'profile.self.manage' ||
         action === 'chat.passport.read' ||
+        action === 'chat.persona.read' ||
         privatePreference);
     if (
       !service.allowed ||
@@ -49,6 +52,11 @@ export function routeMessage(input: RoutingInput): RoutingDecision {
         (!settings.enabled || settings.responseMode === 'silent' || message.isBot !== false)) ||
       (passport &&
         (!settings.enabled || (settings.responseMode === 'silent' && service.role === 'member'))) ||
+      (persona &&
+        (!settings.enabled ||
+          (action === 'chat.persona.read' &&
+            settings.responseMode === 'silent' &&
+            (!message.isGroupChat || service.role === 'member')))) ||
       (service.role === 'member' && !participantCommand) ||
       (service.command.minimumRole === 'owner' && service.role !== 'owner') ||
       (!settings.enabled && service.role !== 'owner')
