@@ -90,6 +90,16 @@ export function createVkChannel(
 
   const adapter = {
     platform: 'vk',
+    mentionedPeople(text) {
+      return [
+        ...new Set(
+          Array.from(
+            text.matchAll(/\[id([1-9]\d*)\|[^\]\r\n]+\]/gu),
+            (match) => `vk:${match[1]}` as UserId,
+          ),
+        ),
+      ];
+    },
     start: inbound.start,
     async capabilities(context) {
       const peer = vkLocalId(context.chatId);

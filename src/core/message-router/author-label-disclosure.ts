@@ -1,4 +1,4 @@
-const labelToken = /(?<![\p{L}\p{N}])u[1-9]\d*(?![\p{L}\p{N}])/giu;
+const labelToken = /(?<![\p{L}\p{N}])(?:u|participant)[1-9]\d*(?![\p{L}\p{N}])/giu;
 const internalLabel =
   /authorlabel|(?:внутренн|служебн)\p{L}*\s+(?:метк|номер|идентификатор)\p{L}*/iu;
 const subjectBefore =

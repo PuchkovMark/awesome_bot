@@ -233,7 +233,10 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
         const isCurrent = () => {
           if (task.done || phase !== 'running' || performance.now() >= task.deadline) return false;
           try {
-            return backend.publicationValid(token, task.work);
+            return (
+              (relevant?.toolResultsCurrent?.() ?? true) &&
+              backend.publicationValid(token, task.work)
+            );
           } catch {
             return false;
           }
@@ -350,6 +353,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
                     allow: () => boolean,
                     contextIds?: readonly number[],
                     reservation?: TokenReservation,
+                    finalBudget?: import('../../storage/token-budget-store').FinalBudget,
                   ) => {
                     const admission = backend.admitModelAttempt(
                       token,
@@ -360,6 +364,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
                       contextIds,
                       responseRate,
                       reservation,
+                      finalBudget,
                     );
                     if (admission === false && work.route?.kind === 'initiative' && !task.done) {
                       const denial = backend.checkInitiative(token, work, limits, responseRate);

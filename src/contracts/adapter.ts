@@ -31,5 +31,6 @@ export interface ChannelAdapter {
   send(message: OutgoingMessage): Promise<SendResult>;
   sendTyping(chatId: ChatId): Promise<void>;
   getUserName(userId: UserId): Promise<string | null>;
+  mentionedPeople?(text: string): readonly UserId[];
   humanMembership?(scope: ConnectionScope, signal: AbortSignal): Promise<HumanMembership>;
 }

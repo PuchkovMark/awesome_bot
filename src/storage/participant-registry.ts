@@ -1,3 +1,4 @@
+import { historyBounds, historySourcesVisible } from './history-retention-store';
 import {
   confirmGreetingCandidates,
   forgetGreetingEntry,
@@ -214,6 +215,34 @@ export function createParticipantRegistry(connection: Connection, lifecycle: Lif
         } else forgetGreetingEntry(db, scope, user);
         invalidateSnapshot(db, scope);
         return true;
+      });
+    },
+    sourcesVisible(scope: ConnectionScope, ids: readonly number[]) {
+      return lifecycle.transaction(scope, (db) => historySourcesVisible(db, scope.chatId, ids));
+    },
+    publicMembers(scope: ConnectionScope, cutoff: number) {
+      return lifecycle.transaction(scope, (db) => {
+        const bounds = historyBounds(db, scope.chatId);
+        const meta = participantSync(db, scope);
+        // Имя берётся только из ещё видимой записи текущей беседы.
+        const rows = db
+          .prepare(
+            `WITH names AS (
+          SELECT id,user_id,author_name,row_number() OVER (PARTITION BY user_id ORDER BY id DESC) AS position
+          FROM personal_visible_messages WHERE chat_id=? AND id>? AND timestamp>? AND id<=? AND role='user'
+        ) SELECT p.user_id AS user,p.status,n.author_name AS name,n.id AS nameId FROM chat_participants p
+        LEFT JOIN names n ON n.user_id=p.user_id AND n.position=1 WHERE p.chat_id=?
+        AND NOT EXISTS (SELECT 1 FROM personal_deletions d WHERE d.chat_id=p.chat_id AND d.generation=? AND d.user_id=p.user_id AND d.confirmed_at IS NOT NULL)`,
+          )
+          .all(
+            scope.chatId,
+            bounds.clearedThrough,
+            bounds.expiredThrough,
+            cutoff,
+            scope.chatId,
+            scope.generation,
+          ) as { user: UserId; status: string; name: string | null; nameId: number | null }[];
+        return { complete: meta.lastAttemptComplete === 1 && meta.needsSync === 0, rows };
       });
     },
     lastAttemptIncomplete(scope: ConnectionScope) {

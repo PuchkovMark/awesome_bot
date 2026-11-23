@@ -30,6 +30,7 @@ export interface QueueHandlerInput {
     update: Partial<
       Pick<
         import('../../storage/trace-types').TracePayload,
+        | 'tools'
         | 'model'
         | 'prompt'
         | 'context'
@@ -51,10 +52,13 @@ export interface QueueHandlerInput {
     allow: () => boolean,
     contextIds?: readonly number[],
     reservation?: TokenReservation,
+    finalBudget?: import('../../storage/token-budget-store').FinalBudget,
   ) => AttemptAdmission;
 }
 export type QueueHandler = (input: QueueHandlerInput) => Promise<QueueOutcome | QueueCompletion>;
 export interface QueueCompletion {
+  readonly subjectIds?: readonly import('../../contracts/index').UserId[];
+  readonly toolResultsCurrent?: () => boolean;
   readonly outcome: QueueOutcome;
   readonly preparationFailure?: import('../context/types').PreparationFailure;
   readonly result?: import('../agent-loop/types').AgentLoopResult;

@@ -1,3 +1,4 @@
+import type { LlmRequest } from '../../llm/types';
 import type { AgentLoopMessage } from '../agent-loop/types';
 import type { ContextConfig } from './config';
 import { dataMarkerBytes } from './format';
@@ -34,5 +35,17 @@ export function staticMinimum(text: string, c: ContextConfig): number {
     c.environmentReserveTokens +
     256 +
     dataMarkerBytes
+  );
+}
+
+export function estimateRequestInput(request: LlmRequest) {
+  return (
+    request.messages.reduce((cost, message) => {
+      const structured =
+        message.role === 'tool' || (message.role === 'assistant' && message.toolCalls);
+      const text = structured ? JSON.stringify(message) : (message.text ?? '');
+      return cost + messageInputCost(Buffer.byteLength(text, 'utf8'));
+    }, systemInputCost(request.system)) +
+    (request.tools ? Buffer.byteLength(JSON.stringify(request.tools), 'utf8') : 0)
   );
 }

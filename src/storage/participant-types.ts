@@ -73,6 +73,8 @@ declare const profileReadReference: unique symbol;
 export type ProfileReadReference = { readonly [profileReadReference]: true };
 
 export interface PublicProfile {
+  /** Зависимости харнеса для удаления производных ответов. */
+  readonly sourceIds: readonly number[];
   readonly facts: readonly PublicProfileFact[];
   readonly reference: ProfileReadReference;
 }

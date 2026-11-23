@@ -18,6 +18,9 @@ export interface TokenReservation {
   readonly input: number;
   readonly output: number;
 }
+/** Намерение родительской очереди, отдельно от списания за фактическую попытку. */
+export type FinalBudget = { readonly protect: number } | 'consume';
+
 export interface TokenBudgetPatch {
   readonly total?: number | null;
   readonly initiative?: number | null;
@@ -70,7 +73,13 @@ function balance(limit: number, spending: Spending) {
   return { limit, remaining: remaining > 0n ? Number(remaining) : 0, ...spending };
 }
 
-function readBudget(db: Database, scope: BudgetScope, group: boolean, now: number) {
+function readBudget(
+  db: Database,
+  scope: BudgetScope,
+  group: boolean,
+  now: number,
+  omitJob?: number,
+) {
   timestamp(now);
   const settings = limits(db, scope);
   const total: Spending = { confirmed: 0n, reserved: 0n, incompleteAttempts: 0 };
@@ -84,6 +93,20 @@ function readBudget(db: Database, scope: BudgetScope, group: boolean, now: numbe
     .iterate(scope.chatId, scope.generation, now - tokenBudgetWindowMs, now) as Iterable<Attempt>) {
     addUsage(total, attempt);
     if (attempt.purpose === 'initiative') addUsage(initiative, attempt);
+  }
+  for (const hold of db
+    .prepare(
+      `SELECT id,route_kind,final_budget FROM queue_jobs
+    WHERE chat_id=? AND generation=? AND state='running' AND final_budget>0`,
+    )
+    .iterate(scope.chatId, scope.generation) as Iterable<{
+    id: number;
+    route_kind: string;
+    final_budget: number;
+  }>) {
+    if (hold.id === omitJob) continue;
+    total.reserved += BigInt(hold.final_budget);
+    if (hold.route_kind === 'initiative') initiative.reserved += BigInt(hold.final_budget);
   }
   return {
     period: { from: now - tokenBudgetWindowMs, through: now },
@@ -102,6 +125,7 @@ export function canReserveTokens(
   group: boolean,
   attempt: TokenReservation,
   now: number,
+  final?: { readonly jobId: number; readonly budget: FinalBudget },
 ) {
   requireInput(
     typeof attempt.key === 'string' && attempt.key.length > 0 && attempt.key.length <= 256,
@@ -109,8 +133,21 @@ export function canReserveTokens(
   requireInput(attempt.purpose === 'direct' || attempt.purpose === 'initiative');
   timestamp(attempt.input);
   timestamp(attempt.output);
-  const current = readBudget(db, scope, group, now);
-  const requested = BigInt(attempt.input) + BigInt(attempt.output);
+  const current = readBudget(db, scope, group, now, final?.jobId);
+  let protectedAmount = 0;
+  if (final && final.budget !== 'consume') {
+    timestamp(final.budget.protect);
+    const prior = db
+      .prepare(
+        "SELECT final_budget FROM queue_jobs WHERE id=? AND chat_id=? AND generation=? AND state='running'",
+      )
+      .pluck()
+      .get(final.jobId, scope.chatId, scope.generation);
+    requireInput(typeof prior === 'number');
+    protectedAmount = Math.max(prior, final.budget.protect);
+  }
+  timestamp(protectedAmount);
+  const requested = BigInt(attempt.input) + BigInt(attempt.output) + BigInt(protectedAmount);
   if (current.total.confirmed + current.total.reserved + requested > BigInt(current.total.limit))
     return false;
   if (

@@ -159,6 +159,7 @@ export function checkCatalogBoundary(root = process.cwd()) {
                   'pruneTokenBudget',
                   'reconcileTokenReservation',
                   'TokenReservation',
+                  'FinalBudget',
                 ].includes((e.propertyName ?? e.name).text),
               );
             const membership =

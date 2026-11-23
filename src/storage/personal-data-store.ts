@@ -51,8 +51,14 @@ export function createPersonalDataStore(connection: Connection, lifecycle: Lifec
       scope: ConnectionScope,
       messageId: string,
       sources: readonly number[],
+      subjects: readonly UserId[] = [],
     ) {
       requireInput(db.inTransaction);
+      if (subjects.length)
+        db.prepare(
+          `INSERT OR IGNORE INTO tool_answer_subjects(answer_id,user_id)
+        SELECT m.id,j.value FROM messages m,json_each(?) j WHERE m.chat_id=? AND m.platform_message_id=?`,
+        ).run(JSON.stringify(subjects), scope.chatId, messageId);
       db.prepare(
         `INSERT OR IGNORE INTO personal_answer_sources(answer_id,source_id)
         SELECT a.id,s.id FROM messages a JOIN messages s ON s.chat_id=a.chat_id

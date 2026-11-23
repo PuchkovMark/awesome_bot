@@ -84,6 +84,15 @@ export function confirmDeletion(
   ).run(chat, chat, user);
   db.prepare(
     `INSERT OR IGNORE INTO personal_hidden_messages
+    SELECT s.answer_id,?,1 FROM tool_answer_subjects s JOIN messages m ON m.id=s.answer_id
+    WHERE m.chat_id=? AND s.user_id=?`,
+  ).run(code, chat, user);
+  db.prepare(
+    `DELETE FROM tool_answer_subjects WHERE user_id=? AND answer_id IN
+    (SELECT id FROM messages WHERE chat_id=?)`,
+  ).run(user, chat);
+  db.prepare(
+    `INSERT OR IGNORE INTO personal_hidden_messages
     SELECT w.message_id,?,0 FROM greeting_windows w JOIN greeting_members g ON g.window_id=w.id
     WHERE w.chat_id=? AND w.generation=? AND g.user_id=? AND w.message_id IS NOT NULL`,
   ).run(code, chat, scope.generation, user);

@@ -54,6 +54,9 @@ export function createProfileFactReader(lifecycle: LifecycleBackend) {
       requireInput(subjectId.split(':')[0] === scope.chatId.split(':')[0]);
       const { facts, reference } = snapshot(scope, { kind: 'profile', subjectId });
       return Object.freeze({
+        sourceIds: Object.freeze(
+          facts.flatMap(({ row }) => (row.messageRowId === null ? [] : [row.messageRowId])),
+        ),
         facts: Object.freeze(facts.map(({ row }) => publicFact(row))),
         reference,
       });

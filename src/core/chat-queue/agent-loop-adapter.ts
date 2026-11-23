@@ -1,7 +1,8 @@
+import { estimateRequestInput } from '../context/budget';
 import type { AddressPreferenceReference, ConnectionScope } from '../../contracts/index';
-import { messageInputCost, systemInputCost } from '../context/budget';
-import type { LlmClient, LlmRequest } from '../../llm/types';
-import type { AgentLoopInput, AgentLoopOptions } from '../agent-loop/types';
+import { createJobModelAttempts } from './delegated-attempts';
+import type { LlmClient } from '../../llm/types';
+import type { AgentLoopInput, AgentLoopOptions, LoopTools } from '../agent-loop/types';
 import { createAttemptSummary } from '../agent-loop/summary';
 import { createAgentLoop } from '../agent-loop/service';
 import { loopOptions } from '../agent-loop/validation';
@@ -20,6 +21,15 @@ export type QueuePreparation =
     }
   | Exclude<PreparationResult, { kind: 'ready' }>;
 export interface AgentLoopQueueOptions extends Omit<ChatQueueOptions, 'handler' | 'config'> {
+  readonly tools?: (input: {
+    modelInputLimit?: number;
+    work: QueueHandlerInput;
+    prepared: Extract<QueuePreparation, { kind: 'ready' }>;
+    client: LlmClient;
+    attempts: ReturnType<typeof createJobModelAttempts>;
+    settings: Required<AgentLoopOptions>;
+  }) => Promise<LoopTools | undefined>;
+  readonly modelInputLimit?: number;
   readonly modelName: string;
   readonly client: LlmClient;
   readonly loopOptions?: AgentLoopOptions;
@@ -36,18 +46,6 @@ export interface AgentLoopQueueOptions extends Omit<ChatQueueOptions, 'handler' 
     work: QueueHandlerInput,
   ) => import('../../storage/trace-types').TracePayload['disclosure'];
 }
-function estimateRequestInput(request: LlmRequest) {
-  return (
-    request.messages.reduce((cost, message) => {
-      const structured =
-        message.role === 'tool' || (message.role === 'assistant' && message.toolCalls);
-      const text = structured ? JSON.stringify(message) : (message.text ?? '');
-      return cost + messageInputCost(Buffer.byteLength(text, 'utf8'));
-    }, systemInputCost(request.system)) +
-    (request.tools ? Buffer.byteLength(JSON.stringify(request.tools), 'utf8') : 0)
-  );
-}
-
 export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
   const settings = loopOptions(options.loopOptions ?? {});
   if (
@@ -147,6 +145,7 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
         const allowed = () => {
           if (
             lifetime.aborted ||
+            (session && !session.current()) ||
             (prepared.addressPreference &&
               options.addressCurrent?.(work.scope, prepared.addressPreference) !== true)
           )
@@ -155,31 +154,55 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
           if (checked) work.recordTrace({ disclosure: checked });
           return checked?.allowed ?? true;
         };
+        const jobAttempts = createJobModelAttempts(work, allowed);
+        const session: LoopTools | undefined = await options.tools?.({
+          work,
+          prepared,
+          client,
+          ...(options.modelInputLimit ? { modelInputLimit: options.modelInputLimit } : {}),
+          attempts: jobAttempts,
+          settings,
+        });
         let staleContext = false;
         const loop = createAgentLoop(
           client,
           settings,
           (summary) =>
             work.recordTrace({ model: { name: modelName, invoked: 'possible' }, summary }),
-          (request, ordinal) => {
-            const reservation =
+          (request) => {
+            if (options.modelInputLimit && estimateRequestInput(request) > options.modelInputLimit)
+              return 'token_budget_exhausted';
+            const ids = [
+              ...new Set([
+                ...(prepared.metadata?.messageIds ?? []),
+                ...(session?.sourceIds() ?? []),
+              ]),
+            ];
+            if (
+              prepared.metadata &&
+              session &&
+              (session.sourceIds().length || session.trace().length)
+            )
+              work.recordTrace({
+                context: { ...prepared.metadata, messageIds: ids },
+                tools: session.trace(),
+              });
+            const admission =
               options.tokenBudget && work.route
-                ? {
-                    key: `job:${work.jobId}:${ordinal}`,
-                    purpose:
-                      work.route.kind === 'initiative'
-                        ? ('initiative' as const)
-                        : ('direct' as const),
-                    input: estimateRequestInput(request),
-                    output: request.maxOutputTokens,
-                  }
-                : undefined;
-            const admission = work.admitModelAttempt
-              ? work.admitModelAttempt(allowed, prepared.metadata?.messageIds, reservation)
-              : work.isCurrent() && allowed();
+                ? jobAttempts.reserve(
+                    request,
+                    ids,
+                    session && request.messages.some((m) => m.role === 'tool')
+                      ? 'consume'
+                      : undefined,
+                  )
+                : work.admitModelAttempt
+                  ? work.admitModelAttempt(allowed, ids)
+                  : work.isCurrent() && allowed();
             staleContext = admission === 'context_stale';
             return admission;
           },
+          session,
         );
         const result = await loop.run({ ...prepared.input, signal: lifetime });
         if (staleContext && result.summary.attempts === 0) continue;
@@ -188,6 +211,7 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
             name: result.summary.attempts ? modelName : null,
             invoked: result.summary.attempts ? 'yes' : 'no',
           },
+          ...(session ? { tools: session.trace() } : {}),
           summary: result.summary,
           resultKind: result.kind,
         });
@@ -205,7 +229,10 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
           outcome,
           result,
           ...(prepared.addressPreference ? { addressPreference: prepared.addressPreference } : {}),
-          ...(prepared.authorLabels?.length ? { authorLabels: prepared.authorLabels } : {}),
+          ...(session
+            ? { toolResultsCurrent: session.current, subjectIds: session.subjectIds?.() ?? [] }
+            : {}),
+          authorLabels: [...(prepared.authorLabels ?? []), ...(session?.labels() ?? [])],
         };
       }
     },

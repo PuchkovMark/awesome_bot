@@ -22,6 +22,7 @@ export type ProfileQuery =
 
 interface FactRow {
   readonly id: number;
+  readonly messageRowId: number | null;
   readonly userId: UserId;
   readonly fieldKey: string;
   readonly interest: string;
@@ -57,7 +58,9 @@ export function selectPublicFacts(
     .prepare(
       `SELECT f.id, f.user_id AS userId, f.field_key AS fieldKey, f.interest_key AS interest,
       f.change_kind AS kind, f.source_kind AS sourceKind, f.value, f.visibility, f.reliability,
-      f.generation IS NULL AS legacy
+      f.generation IS NULL AS legacy,
+      CASE WHEN f.source_kind <> 'self' THEN (SELECT m.id FROM messages m
+        WHERE m.chat_id=f.chat_id AND m.platform_message_id=f.source_message_id) END AS messageRowId
     FROM profile_facts f JOIN chat_participants p USING(chat_id,user_id)
     WHERE f.chat_id=? AND (f.generation=? OR (f.generation IS NULL AND f.visibility<>'chat'))
       AND ${profile ? "p.status IN ('present','unknown')" : "p.status='present'"} AND ${condition}

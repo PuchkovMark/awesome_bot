@@ -26,6 +26,7 @@ import { readChatControl } from './chat-control-store';
 import { admitRequestQuota, pruneRequestQuota, releaseRequestQuota } from './request-quota-store';
 import {
   canReserveTokens,
+  type FinalBudget,
   deleteUnsentTokenReservation,
   insertTokenReservation,
   pruneTokenBudget,
@@ -772,6 +773,7 @@ export function createQueueBackend(
       contextIds: readonly number[] = [],
       responseRate?: ResponseRateConfig,
       reservation?: TokenReservation,
+      finalBudget?: FinalBudget,
     ) {
       return transaction(token, (db) => {
         if (!running(db, token, work) || !allow()) return false;
@@ -784,11 +786,18 @@ export function createQueueBackend(
           activeMentionFlood(db, work.scope, at) !== null
         )
           return false;
-        const ids = sources.get(work) ?? [...new Set([work.messageId, ...contextIds])];
+        const ids = [...new Set([...(sources.get(work) ?? [work.messageId]), ...contextIds])];
         if (!historySourcesVisible(db, work.scope.chatId, ids, at)) return 'context_stale' as const;
         if (
           reservation &&
-          !canReserveTokens(db, work.scope, work.route?.isGroupChat ?? false, reservation, at)
+          !canReserveTokens(
+            db,
+            work.scope,
+            work.route?.isGroupChat ?? false,
+            reservation,
+            at,
+            finalBudget === undefined ? undefined : { jobId: work.id, budget: finalBudget },
+          )
         )
           return reservation.purpose === 'initiative'
             ? ('initiative_budget_exhausted' as const)
@@ -798,7 +807,16 @@ export function createQueueBackend(
             ? admitRequestQuota(db, work, limits, at)
             : true;
         if (quota === false || quota === 'quota_exhausted') return quota;
-        if (reservation) insertTokenReservation(db, work.scope, reservation, at);
+        if (reservation) {
+          if (finalBudget === 'consume')
+            db.prepare('UPDATE queue_jobs SET final_budget=0 WHERE id=?').run(work.id);
+          else if (finalBudget)
+            db.prepare('UPDATE queue_jobs SET final_budget=max(final_budget,?) WHERE id=?').run(
+              finalBudget.protect,
+              work.id,
+            );
+          insertTokenReservation(db, work.scope, reservation, at);
+        }
         sources.set(work, ids);
 
         if (!reservation) return true;

@@ -1,10 +1,11 @@
-import type { LlmClient, LlmRequest } from '../../llm/types';
+import type { LlmClient, LlmRequest, LlmMessage, LlmToolCall } from '../../llm/types';
 import { agentError } from './errors';
 import { createAttemptSummary } from './summary';
 import { loopOptions, parseAttempt, prepareLoopInput } from './validation';
 import type { ParsedAttempt } from './validation';
 import type {
   AgentLoop,
+  LoopTools,
   AgentLoopInput,
   AgentLoopOptions,
   AgentLoopOutcome,
@@ -19,6 +20,7 @@ export function createAgentLoop(
   options: AgentLoopOptions = {},
   onAttempt?: (summary: import('./types').AgentLoopSummary) => void,
   allowAttempt?: (request: Readonly<LlmRequest>, ordinal: number) => AttemptAdmission,
+  tools?: LoopTools,
 ): AgentLoop {
   const config = loopOptions(options);
   let invoke: LlmClient['complete'];
@@ -36,7 +38,10 @@ export function createAgentLoop(
       const finish = (outcome: AgentLoopOutcome): AgentLoopResult =>
         Object.freeze({
           ...outcome,
-          summary: summary.snapshot(Math.max(0, performance.now() - started)),
+          summary: summary.snapshot(
+            Math.max(0, performance.now() - started),
+            tools?.helperSummary?.(),
+          ),
         });
       let prepared: AgentLoopInput;
       try {
@@ -73,15 +78,24 @@ export function createAgentLoop(
         prepared.signal?.addEventListener('abort', onAbort, { once: true });
         if (prepared.signal?.aborted) onAbort();
         armDeadline();
-        let attempts = 0;
+        let attempts = 0,
+          parentStep = 0,
+          stepAttempts = 0;
+        const transcript: LlmMessage[] = prepared.messages.map((m) => ({ ...m }));
+        const executions = new Map<string, { call: LlmToolCall; text: Promise<string> }>();
+        const safeCurrent = () => !tools || tools.current();
         for (;;) {
-          // Единственный логический шаг. Вызов получает собственную изменяемую копию.
+          const offered = tools
+            ? await Promise.race([
+                tools.schemas({ ...prepared, messages: transcript }),
+                halted.then(() => undefined),
+              ])
+            : undefined;
+          if (!safeCurrent()) return finish({ kind: 'cancelled' });
           const request: LlmRequest = {
             system: prepared.system,
-            messages: prepared.messages.map((message) => ({
-              role: message.role,
-              text: message.text,
-            })),
+            messages: structuredClone(transcript),
+            ...(offered?.length ? { tools: structuredClone(offered) } : {}),
             maxOutputTokens: prepared.maxOutputTokens,
             sessionId: prepared.sessionId,
             signal: controller.signal,
@@ -100,18 +114,29 @@ export function createAgentLoop(
             return finish({ kind: 'cancelled' });
           }
           const reservation = admission === true ? undefined : admission;
+          let calls: readonly LlmToolCall[] | undefined;
           let counted = false;
           let pending: Promise<ParsedAttempt> | undefined;
           try {
             if (!checkStopped()) {
-              summary.beginAttempt();
+              summary.beginAttempt(parentStep);
               counted = true;
-              onAttempt?.(summary.snapshot(Math.max(0, performance.now() - started)));
+              onAttempt?.(
+                summary.snapshot(
+                  Math.max(0, performance.now() - started),
+                  tools?.helperSummary?.(),
+                ),
+              );
               if (!checkStopped()) {
                 attempts++;
+                stepAttempts++;
                 try {
-                  pending = Promise.resolve(invoke(request)).then(parseAttempt, () =>
-                    parseAttempt(undefined),
+                  pending = Promise.resolve(invoke(request)).then(
+                    (value) => {
+                      if (tools && value?.kind === 'tool_calls') calls = value.calls;
+                      return parseAttempt(value);
+                    },
+                    () => parseAttempt(undefined),
                   );
                 } catch {
                   pending = Promise.resolve(parseAttempt(undefined));
@@ -120,7 +145,7 @@ export function createAgentLoop(
             }
           } finally {
             if (!pending) {
-              if (counted) summary.cancelAttempt();
+              if (counted) summary.cancelAttempt(parentStep);
               reservation?.cancelBeforeSend();
             }
           }
@@ -136,8 +161,61 @@ export function createAgentLoop(
           if (after) return finish(after);
           summary.recordUsage(result.usage);
           const outcome = result.outcome;
+          if (tools && !safeCurrent()) return finish({ kind: 'cancelled' });
+          if (tools && calls) {
+            if (
+              !calls.length ||
+              calls.length > 64 ||
+              new Set(calls.map((c) => c.id)).size !== calls.length ||
+              calls.some(
+                (c) => !c.id || typeof c.name !== 'string' || typeof c.arguments !== 'string',
+              )
+            )
+              return finish(agentError('invalid_response'));
+            if (parentStep + 1 + tools.helperSteps() >= config.maxSteps)
+              return finish({ kind: 'step_limit' });
+            transcript.push({ role: 'assistant', toolCalls: calls });
+            const pendingIds = calls.map((c) => c.id);
+            tools.beginBatch({ ...request, messages: transcript }, pendingIds, parentStep + 1);
+            const execute = (call: LlmToolCall) => {
+              const cached = executions.get(call.id);
+              if (cached) {
+                if (
+                  cached.call.name !== call.name ||
+                  cached.call.arguments !== call.arguments ||
+                  !offered?.some((t) => t.name === call.name)
+                )
+                  return Promise.resolve('{"error":"tool_denied"}');
+                return cached.text;
+              }
+              const text = tools.execute(call, offered ?? []);
+              executions.set(call.id, { call, text });
+              return text;
+            };
+            for (let i = 0; i < calls.length;) {
+              if (checkStopped() || !safeCurrent()) return finish(stopped ?? { kind: 'cancelled' });
+              const batch = [calls[i++]!];
+              while (batch[0]!.name === 'delegate' && calls[i]?.name === 'delegate')
+                batch.push(calls[i++]!);
+              const results = await Promise.race([
+                Promise.all(batch.map(execute)),
+                halted.then(() => undefined),
+              ]);
+              if (!results || !safeCurrent()) return finish(stopped ?? { kind: 'cancelled' });
+              for (const [index, call] of batch.entries())
+                transcript.push({ role: 'tool', callId: call.id, text: results[index]! });
+              tools.beginBatch(
+                { ...request, messages: transcript },
+                pendingIds.slice(i),
+                parentStep + 1,
+              );
+            }
+            parentStep++;
+            stepAttempts = 0;
+            continue;
+          }
           if (outcome.kind === 'error' && outcome.code === 'server' && config.retryServerErrors) {
-            if (attempts >= config.maxAttemptsPerStep)
+            if (stepAttempts >= config.maxAttemptsPerStep)
               return finish({ kind: 'attempt_limit', lastErrorCode: 'server' });
             const pause = new Promise<void>((resolve) => {
               pauseTimer = setTimeout(resolve, config.retryDelayMs);

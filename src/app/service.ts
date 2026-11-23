@@ -1,3 +1,4 @@
+import { applicationTools } from './model-tools';
 import { createGreetingService } from '../core/greetings/service';
 import { greetingStore } from '../storage/greeting-store';
 import { addressPreferenceStore } from '../storage/address-preference-store';
@@ -371,6 +372,8 @@ export async function runApplication(
         storage,
         logger,
         modelName: config.llm.model,
+        tools: applicationTools(storage, channel, authorization),
+        modelInputLimit: config.context.modelContextTokens - preparation.config.maxOutputTokens,
         tracing: config.tracing,
         limits: dependencies.chatLimits ?? {},
         tokenBudget: true,

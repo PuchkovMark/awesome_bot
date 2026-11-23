@@ -101,6 +101,7 @@ export function createPublicationService(options: {
     work: QueueSettlement,
     outcome: unknown,
     details: {
+      readonly subjectIds?: readonly import('../../contracts/index').UserId[];
       readonly withoutJob?: boolean;
       readonly flood?: FloodNotice;
       readonly authorLabels?: readonly string[];
@@ -332,10 +333,13 @@ export function createPublicationService(options: {
             if (!permit) {
               const ids =
                 (!withoutJob && traces.get(scope, jobId)?.payload.context?.messageIds) || [];
-              personalDataStore(options.storage).recordAnswerSources(db, scope, messageId, [
-                work.messageId,
-                ...ids,
-              ]);
+              personalDataStore(options.storage).recordAnswerSources(
+                db,
+                scope,
+                messageId,
+                [work.messageId, ...ids],
+                decision.kind === 'answer' ? details.subjectIds : undefined,
+              );
             }
           });
           parts.add(messageId);
@@ -439,6 +443,7 @@ export function createPublicationService(options: {
           ? { kind: completion.preparationFailure }
           : (completion.result ?? { kind: completion.outcome }),
         {
+          subjectIds: completion.subjectIds ?? [],
           authorLabels: completion.authorLabels ?? [],
           ...(completion.addressPreference
             ? { addressPreference: completion.addressPreference }
