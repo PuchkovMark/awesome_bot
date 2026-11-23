@@ -14,7 +14,7 @@ const tokensPerPerson = 15_000;
 
 export interface TokenReservation {
   readonly key: string;
-  readonly purpose: 'direct' | 'initiative' | 'profile_update';
+  readonly purpose: 'direct' | 'initiative' | 'profile_update' | 'summary';
   readonly input: number;
   readonly output: number;
 }
@@ -141,7 +141,7 @@ export function canReserveTokens(
   requireInput(
     typeof attempt.key === 'string' && attempt.key.length > 0 && attempt.key.length <= 256,
   );
-  requireInput(['direct', 'initiative', 'profile_update'].includes(attempt.purpose));
+  requireInput(['direct', 'initiative', 'profile_update', 'summary'].includes(attempt.purpose));
   timestamp(attempt.input);
   timestamp(attempt.output);
   const current = readBudget(db, scope, group, now, final?.jobId);
