@@ -88,6 +88,8 @@ const others = [
   'messages_retention_chat_id',
   'messages_retention_time',
   'profile_fact_message_source',
+  'profile_fact_event',
+  'profile_fact_interest',
   'history_clear_grant_loss',
   'history_clear_revocation',
   'history_clear_disabled',

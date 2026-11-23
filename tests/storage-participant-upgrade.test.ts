@@ -96,6 +96,7 @@ test('F1.4 → версия 3 сохраняет историю, настрой�
             { version: 26 },
             { version: 27 },
             { version: 28 },
+            { version: 29 },
           ]);
           expect(db.prepare('SELECT * FROM chat_participants').all()).toEqual([]);
           expect(db.prepare('SELECT * FROM participant_profiles').all()).toEqual([]);
@@ -166,7 +167,7 @@ test('F1.4 → версия 3 сохраняет историю, настрой�
 
 test('миграция реестра сохраняет заполненные профили, ссылки, счётчик фактов и область очистки', async () => {
   const fixture = storageFixture();
-  const seed = await openConnection(fixture.path, (db) => migrate(db, migrations.slice(0, -1)));
+  const seed = await openConnection(fixture.path, (db) => migrate(db, migrations.slice(0, 25)));
   let deleted = 0;
   try {
     seed.run((db) => {
@@ -250,5 +251,58 @@ test('миграция реестра сохраняет заполненные 
     }
   } finally {
     fixture.cleanup();
+  }
+});
+
+test('миграция событий профиля не достраивает происхождение старого факта', async () => {
+  const files = storageFixture();
+  try {
+    const old = await openConnection(files.path, (db) => migrate(db, migrations.slice(0, 28)));
+    const recorded = old.run((db) => {
+      const f = participantFixture(db);
+      f.chat('vk:2000000001');
+      f.participant('vk:2000000001', 'vk:41');
+      f.profile('vk:2000000001', 'vk:41');
+      f.fact('vk:2000000001', 'vk:41', {
+        value: 'Сохранённое значение',
+        sourceKind: 'admin',
+        sourceUserId: null,
+        sourceMessageId: null,
+        visibility: 'unknown',
+        reliability: 'unverified',
+      });
+      return db.prepare('SELECT * FROM schema_migrations ORDER BY version').all();
+    });
+    old.close();
+    for (let opening = 0; opening < 2; opening++) {
+      const upgraded = await openConnection(files.path, migrate);
+      try {
+        upgraded.run((db) => {
+          expect(db.prepare('SELECT * FROM profile_facts').all()).toMatchObject([
+            {
+              value: 'Сохранённое значение',
+              source_kind: 'admin',
+              source_user_id: null,
+              source_message_id: null,
+              visibility: 'unknown',
+              reliability: 'unverified',
+              generation: null,
+              source_at: null,
+              event_key: null,
+              interest_key: '',
+              change_kind: 'set',
+            },
+          ]);
+          expect(
+            db.prepare('SELECT * FROM schema_migrations WHERE version<=28 ORDER BY version').all(),
+          ).toEqual(recorded);
+          expect(db.pragma('foreign_key_check')).toEqual([]);
+        });
+      } finally {
+        upgraded.close();
+      }
+    }
+  } finally {
+    files.cleanup();
   }
 });

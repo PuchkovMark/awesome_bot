@@ -1,3 +1,4 @@
+import { profileFactEvents } from './029-profile-fact-events';
 import { delegationFinalBudget } from './028-delegation-final-budget';
 import { addressPreferences } from './027-address-preferences';
 import { participantRegistry } from './026-participant-registry';
@@ -60,4 +61,5 @@ export const migrations: readonly Migration[] = [
   participantRegistry,
   addressPreferences,
   delegationFinalBudget,
+  profileFactEvents,
 ];

@@ -27,7 +27,7 @@ const notice = {
 
 test('выбор переживает перезапуск, меняется только у автора и не восстанавливается старым событием', async () => {
   const files = storageFixture();
-  const legacy = await openConnection(files.path, (db) => migrate(db, migrations.slice(0, -1)));
+  const legacy = await openConnection(files.path, (db) => migrate(db, migrations.slice(0, 26)));
   try {
     legacy.run((db) => {
       const f = participantFixture(db);

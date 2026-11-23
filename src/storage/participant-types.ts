@@ -37,3 +37,27 @@ export interface ProfileFactRecord extends ParticipantProfileRecord {
   readonly reliability: FactReliability;
   readonly visibility: FactVisibility;
 }
+
+export type ProfileFactChange =
+  | {
+      readonly kind: 'set';
+      readonly fieldKey: string;
+      readonly value: string;
+      readonly reliability: FactReliability;
+      readonly sourceNote?: string;
+    }
+  | { readonly kind: 'withdraw'; readonly interest: string }
+  | {
+      readonly kind: 'visibility';
+      readonly fieldKey: string;
+      readonly interest?: string;
+      readonly visibility: FactVisibility;
+    };
+
+export interface ProfileFactInput {
+  readonly subjectId: UserId;
+  readonly messageId: number;
+  readonly change: ProfileFactChange;
+}
+
+export type ProfileFactWriteResult = 'recorded' | 'duplicate' | 'blocked';
