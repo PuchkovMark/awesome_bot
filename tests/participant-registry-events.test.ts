@@ -1,7 +1,8 @@
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { createChatQueue, createMessageRouter } from '../src/core/index';
 import type { ChatId, IncomingMessage, MembershipEvent } from '../src/contracts/index';
 import { participantRegistryStore } from '../src/storage/participant-registry';
+import { departureGraceMs } from '../src/storage/participant-departures';
 import { openStorage, scopeFor } from './helpers/connection-scope';
 import { storageFixture } from './helpers/storage-fixture';
 
@@ -19,6 +20,57 @@ const event = (
   timestamp,
   actorId: 'vk:42',
   subjectId: anna,
+});
+
+test('повторы не продлевают срок, два ухода разделены, поздний возврат начинает новый профиль', async () => {
+  const files = storageFixture();
+  const started = Date.UTC(2026, 10, 23);
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(started);
+  let storage = await openStorage(files.path);
+  try {
+    let registry = participantRegistryStore(storage);
+    let scope = scopeFor(storage, left);
+    registry.observe(scope, event(left, 'joined', started - 1), '1');
+    registry.observe(scope, event(left, 'left', started), '2');
+    const first = registry.departure(scope, anna);
+    expect(first).toMatchObject({ departedAt: started, returnedAt: null, profileEpoch: 0 });
+    expect(registry.observe(scope, event(left, 'left', started), '2')).toBe(false);
+    registry.observe(scope, event(left, 'removed', started + 1), '3');
+    expect(registry.departure(scope, anna)).toEqual(first);
+    expect(registry.departure(scopeFor(storage, right), anna)).toBeUndefined();
+
+    await storage.close();
+    const early = started + departureGraceMs - 1;
+    clock.mockReturnValue(early);
+    storage = await openStorage(files.path);
+    registry = participantRegistryStore(storage);
+    scope = scopeFor(storage, left);
+    registry.observe(scope, event(left, 'joined', early), '4');
+    expect(registry.departure(scope, anna)).toMatchObject({
+      departedAt: started,
+      returnedAt: early,
+      purgedAt: null,
+      profileEpoch: 0,
+    });
+
+    const second = early + 1;
+    registry.observe(scope, event(left, 'removed', second), '5');
+    expect(registry.departure(scope, anna)).toMatchObject({ departedAt: second, returnedAt: null });
+    const deadline = second + departureGraceMs;
+    clock.mockReturnValue(deadline);
+    registry.observe(scope, event(left, 'joined', deadline), '6');
+    expect(registry.departure(scope, anna)).toMatchObject({
+      returnedAt: deadline,
+      purgedAt: deadline,
+      profileEpoch: expect.any(Number),
+    });
+    expect(registry.departure(scope, anna)!.profileEpoch).toBeGreaterThan(0);
+    expect(registry.observe(scope, event(left, 'removed', second), '5')).toBe(false);
+  } finally {
+    await storage.close();
+    clock.mockRestore();
+    files.cleanup();
+  }
 });
 
 test('участие, спорные события и дедупликация сохраняются в пределах поколения', async () => {

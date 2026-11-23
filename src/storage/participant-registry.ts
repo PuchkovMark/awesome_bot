@@ -14,6 +14,12 @@ import type { Storage } from './types';
 import type { Connection } from './connection';
 import { createChatStore } from './chats';
 import { compositeId, requireInput, timestamp } from './validation';
+import {
+  applyDepartureSnapshot,
+  readDeparture,
+  returnDepartedParticipant,
+  startParticipantDeparture,
+} from './participant-departures';
 
 interface SyncRow {
   readonly revision: number;
@@ -110,6 +116,7 @@ export function applyParticipantSnapshot(
       .all(scope.chatId, scope.generation),
   );
   const visible = members.filter(({ userId }) => !erased.has(userId));
+  applyDepartureSnapshot(db, scope, visible, at);
   confirmGreetingCandidates(db, scope, visible, startedAt, at);
   const data = JSON.stringify(visible);
   db.prepare(
@@ -200,6 +207,9 @@ export function createParticipantRegistry(connection: Connection, lifecycle: Lif
           return false;
         }
         chats.create(scope.chatId, { enabled: true, responseMode: 'normal', createdAt: at });
+        if (status === 'present')
+          returnDepartedParticipant(db, scope, user, at, Math.max(at, Date.now()));
+        else startParticipantDeparture(db, scope, user, at);
         updateStatus(db, scope, user, status, at);
         if (status === 'present') {
           if (greeting && prior?.status !== 'present')
@@ -250,6 +260,9 @@ export function createParticipantRegistry(connection: Connection, lifecycle: Lif
         scope,
         (db) => participantSync(db, scope).lastAttemptComplete === 0,
       );
+    },
+    departure(scope: ConnectionScope, user: UserId) {
+      return lifecycle.transaction(scope, (db) => readDeparture(db, scope, user));
     },
     read(scope: ConnectionScope) {
       return lifecycle.transaction(scope, (db) => {
