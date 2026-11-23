@@ -56,6 +56,7 @@ export type AgentLoopOutcome =
         | 'token_budget_exhausted'
         | 'initiative_budget_exhausted'
         | 'tools_not_supported'
+        | 'step_limit'
         | 'cancelled'
         | 'deadline_exceeded';
     }
@@ -64,4 +65,33 @@ export type AgentLoopOutcome =
 export type AgentLoopResult = AgentLoopOutcome & { readonly summary: AgentLoopSummary };
 export interface AgentLoop {
   run(input: AgentLoopInput): Promise<AgentLoopResult>;
+}
+
+/** Доверенный сеанс инструментов одного задания. Параметры модели не содержат этот порт. */
+export interface LoopTools {
+  schemas(
+    request: import('../../llm/types').LlmRequest,
+  ): Promise<readonly import('../../llm/types').LlmToolDescription[]>;
+  current(): boolean;
+  budgetExhausted?(): boolean;
+  helperSteps(): number;
+  beginBatch(
+    request: import('../../llm/types').LlmRequest,
+    pending: readonly string[],
+    parentSteps: number,
+  ): void;
+  execute(
+    call: import('../../llm/types').LlmToolCall,
+    issued: readonly import('../../llm/types').LlmToolDescription[],
+  ): Promise<string>;
+  subjectIds?(): readonly import('../../contracts/index').UserId[];
+  sourceIds(): readonly number[];
+  trace(): readonly {
+    name: string;
+    outcome: 'success' | 'denied' | 'failed';
+    bytes: number;
+    durationMs: number;
+  }[];
+  labels(): readonly string[];
+  helperSummary?(): readonly import('../../llm/types').LlmUsage[];
 }

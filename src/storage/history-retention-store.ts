@@ -55,6 +55,11 @@ export function acceptsHistoryInput(
     message.timestamp > historyBounds(db, scope.chatId, now).expiredThrough &&
     !db
       .prepare(
+        'SELECT 1 FROM personal_deletions WHERE chat_id=? AND generation=? AND user_id=? AND confirmed_at>=? LIMIT 1',
+      )
+      .get(scope.chatId, scope.generation, message.userId, message.timestamp) &&
+    !db
+      .prepare(
         'SELECT 1 FROM history_deleted_inputs WHERE chat_id=? AND generation=? AND platform_message_id=?',
       )
       .get(scope.chatId, scope.generation, message.messageId)
@@ -70,7 +75,7 @@ export function historySourcesVisible(
   const boundary = historyBounds(db, chatId, now);
   const { count } = db
     .prepare(
-      `SELECT count(*) AS count FROM messages
+      `SELECT count(*) AS count FROM personal_visible_messages
     WHERE chat_id=? AND id>? AND timestamp>? AND id IN (SELECT value FROM json_each(?))`,
     )
     .get(chatId, boundary.clearedThrough, boundary.expiredThrough, JSON.stringify(ids)) as {
@@ -238,6 +243,13 @@ export function createHistoryClearStore(connection: Connection, lifecycle: Lifec
           `INSERT INTO history_retention_boundaries(chat_id,generation,cleared_through) VALUES(?,?,?)
           ON CONFLICT(chat_id,generation) DO UPDATE SET cleared_through=max(cleared_through,excluded.cleared_through)`,
         ).run(scope.chatId, scope.generation, request.throughId);
+        db.prepare(
+          'DELETE FROM profile_update_waiting WHERE chat_id=? AND generation=? AND message_id<=?',
+        ).run(scope.chatId, scope.generation, request.throughId);
+        db.prepare(
+          `DELETE FROM profile_facts WHERE chat_id=? AND generation=? AND source_kind='inferred'
+          AND source_message_id IN (SELECT platform_message_id FROM messages WHERE chat_id=? AND id<=?)`,
+        ).run(scope.chatId, scope.generation, scope.chatId, request.throughId);
         removeUnknownFacts(db, scope.chatId);
         return { count: request.count };
       });

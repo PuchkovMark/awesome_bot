@@ -108,6 +108,14 @@ export function checkCatalogBoundary(root = process.cwd()) {
           ['notice-store.ts', 'registerNotices'],
           ['token-budget-store.ts', 'registerTokenBudgets'],
           ['reminder-store.ts', 'registerReminders'],
+          ['participant-registry.ts', 'registerParticipantRegistry'],
+          ['address-preference-store.ts', 'registerAddressPreferences'],
+          ['profile-fact-store.ts', 'registerProfileInference'],
+          ['profile-update-store.ts', 'registerProfileUpdates'],
+          ['greeting-store.ts', 'registerGreetings'],
+          ['profile-command-store.ts', 'registerProfileCommands'],
+          ['chat-passport-store.ts', 'registerChatPassport'],
+          ['questionnaire-store.ts', 'registerQuestionnaires'],
         ]) {
           if (p === resolve(root, 'src/storage/' + moduleName)) {
             const parent = node.parent;
@@ -127,7 +135,23 @@ export function checkCatalogBoundary(root = process.cwd()) {
                   (moduleName === 'token-budget-store.ts' &&
                     (e.propertyName ?? e.name).text === 'createTokenBudgetStore') ||
                   (moduleName === 'reminder-store.ts' &&
-                    (e.propertyName ?? e.name).text === 'createReminderStore'),
+                    (e.propertyName ?? e.name).text === 'createReminderStore') ||
+                  (moduleName === 'participant-registry.ts' &&
+                    (e.propertyName ?? e.name).text === 'createParticipantRegistry') ||
+                  (moduleName === 'address-preference-store.ts' &&
+                    (e.propertyName ?? e.name).text === 'createAddressPreferenceStore') ||
+                  (moduleName === 'profile-fact-store.ts' &&
+                    (e.propertyName ?? e.name).text === 'createProfileFactStore') ||
+                  (moduleName === 'profile-update-store.ts' &&
+                    (e.propertyName ?? e.name).text === 'createProfileUpdateStore') ||
+                  (moduleName === 'greeting-store.ts' &&
+                    (e.propertyName ?? e.name).text === 'createGreetingStore') ||
+                  (moduleName === 'profile-command-store.ts' &&
+                    (e.propertyName ?? e.name).text === 'createProfileCommandStore') ||
+                  (moduleName === 'chat-passport-store.ts' &&
+                    (e.propertyName ?? e.name).text === 'createChatPassportStore') ||
+                  (moduleName === 'questionnaire-store.ts' &&
+                    (e.propertyName ?? e.name).text === 'createQuestionnaireStore'),
               );
             const registryType =
               moduleName === 'queue-store.ts' &&
@@ -147,9 +171,36 @@ export function checkCatalogBoundary(root = process.cwd()) {
                   'pruneTokenBudget',
                   'reconcileTokenReservation',
                   'TokenReservation',
+                  'FinalBudget',
                 ].includes((e.propertyName ?? e.name).text),
               );
-            if (!storageFactory && !registryType && !queueBudget) result.privileged = true;
+            const membership =
+              moduleName === 'participant-registry.ts' &&
+              bindings &&
+              ts.isNamedImports(bindings) &&
+              bindings.elements.every((element) => {
+                const name = (element.propertyName ?? element.name).text;
+                return (
+                  (file === resolve(root, 'src/storage/queue-store.ts') &&
+                    name === 'noteParticipantMessage') ||
+                  (file === resolve(root, 'src/storage/token-budget-store.ts') &&
+                    ['participantSync', 'applyParticipantSnapshot'].includes(name))
+                );
+              });
+            const profileBudget =
+              moduleName === 'token-budget-store.ts' &&
+              file === resolve(root, 'src/storage/profile-update-store.ts') &&
+              bindings &&
+              ts.isNamedImports(bindings) &&
+              bindings.elements.every((e) =>
+                [
+                  'profileUpdateAllowance',
+                  'insertTokenReservation',
+                  'reconcileTokenReservation',
+                ].includes((e.propertyName ?? e.name).text),
+              );
+            if (!storageFactory && !registryType && !queueBudget && !membership && !profileBudget)
+              result.privileged = true;
           }
         }
         if (!p.split(sep).includes('node_modules')) result.edges.push(p);

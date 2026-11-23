@@ -30,18 +30,21 @@ function counter() {
     },
   };
 }
-/** В текстовой версии есть только один логический шаг, сколько бы ни было попыток. */
 export function createAttemptSummary() {
   let attempts = 0;
+  const perStep: number[] = [];
   const input = counter(),
     output = counter();
   return {
-    beginAttempt() {
+    beginAttempt(step = 0) {
+      perStep[step] = (perStep[step] ?? 0) + 1;
       attempts++;
       input.begin();
       output.begin();
     },
-    cancelAttempt() {
+    cancelAttempt(step = 0) {
+      perStep[step]!--;
+      if (perStep.at(-1) === 0) perStep.pop();
       attempts--;
       input.cancel();
       output.cancel();
@@ -50,13 +53,33 @@ export function createAttemptSummary() {
       input.record(usage.input);
       output.record(usage.output);
     },
-    snapshot(durationMs: number): AgentLoopSummary {
+    snapshot(
+      durationMs: number,
+      helpers: readonly { input: number | null; output: number | null }[] = [],
+    ): AgentLoopSummary {
+      const helperTotals = (which: 'input' | 'output', base: TokenCounter): TokenCounter => {
+        let { knownTokens, unknownAttempts, overflowed } = base;
+        for (const h of helpers) {
+          const n = usageCount(h[which]);
+          if (n === null) unknownAttempts++;
+          else if (knownTokens !== null) {
+            if (n > Number.MAX_SAFE_INTEGER - knownTokens) {
+              knownTokens = null;
+              overflowed = true;
+            } else knownTokens += n;
+          }
+        }
+        return Object.freeze({ knownTokens, unknownAttempts, overflowed });
+      };
       return Object.freeze({
-        steps: attempts === 0 ? 0 : 1,
-        attempts,
-        attemptsPerStep: Object.freeze(attempts === 0 ? [] : [attempts]),
+        steps: perStep.length + helpers.length,
+        attempts: attempts + helpers.length,
+        attemptsPerStep: Object.freeze([...perStep, ...helpers.map(() => 1)]),
         durationMs,
-        usage: Object.freeze({ input: input.snapshot(), output: output.snapshot() }),
+        usage: Object.freeze({
+          input: helperTotals('input', input.snapshot()),
+          output: helperTotals('output', output.snapshot()),
+        }),
       });
     },
   };

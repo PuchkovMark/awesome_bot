@@ -1,3 +1,4 @@
+import { createQuestionnaireEditor } from './questionnaire-editor';
 import type { createVkChannel } from '../channels/vk/channel';
 import { isVkGroupChat, type VkIncoming } from '../channels/vk/normalize';
 import type { AuthorizationContext, ChatId, IncomingMessage, UserId } from '../contracts/index';
@@ -15,7 +16,7 @@ export function createChatControlHandlers(options: {
   readonly lifecycle: ReturnType<typeof createLifecycleService>;
   readonly channel: Pick<
     ReturnType<typeof createVkChannel>,
-    'replyPrivateControl' | 'replyGroupControl'
+    'replyPrivateControl' | 'replyGroupControl' | 'deliverGroupControl'
   >;
   readonly ownerId: UserId;
   readonly group: (chatId: ChatId) => boolean;
@@ -23,9 +24,11 @@ export function createChatControlHandlers(options: {
 }) {
   const { authorization, lifecycle, channel, ownerId, signal } = options;
   const controls = chatControlStore(options.storage);
+  const questionnaire = createQuestionnaireEditor(options);
   const diagnostics = createTraceDiagnostics({ storage: options.storage, authorization });
 
   return {
+    editor: questionnaire,
     recognize(message: IncomingMessage, replyToOther?: boolean) {
       if (!message.isGroupChat || message.isBot !== false) return null;
       const request = parseChatControl(message.text, 'group');
@@ -33,6 +36,11 @@ export function createChatControlHandlers(options: {
       if (typeof request.command === 'string')
         return { action: 'chat.configure', minimumRole: 'admin' } as const;
       if (request.command.kind === 'pause' && replyToOther) return null;
+      if (
+        (request.command.kind === 'greeting' || request.command.kind === 'invitation') &&
+        (replyToOther || message.hasForwarded)
+      )
+        return null;
       return chatControlAction(request.command);
     },
     async execute(
@@ -43,7 +51,19 @@ export function createChatControlHandlers(options: {
       const request = parseChatControl(message.text, 'group');
       if (!request || typeof request.command === 'string') return;
       const command = request.command;
-      const result = await authorization.controlChat(context, command, isCurrent);
+      if (command.kind === 'questionnaire') return questionnaire.show(context, message, isCurrent);
+      const messageId =
+        command.kind === 'greeting' || command.kind === 'invitation'
+          ? Number(message.messageId)
+          : undefined;
+      if (
+        messageId !== undefined &&
+        (!Number.isSafeInteger(messageId) ||
+          messageId < 1 ||
+          String(messageId) !== message.messageId)
+      )
+        return;
+      const result = await authorization.controlChat(context, command, isCurrent, messageId);
       if (!result.allowed || !result.value.state.enabled) return;
       const reply = formatChatControl(context.scope, command, result.value, Date.now());
       if (reply)

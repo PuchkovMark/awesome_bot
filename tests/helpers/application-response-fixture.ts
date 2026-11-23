@@ -17,6 +17,7 @@ import { lifecycleBackend } from '../../src/storage/lifecycle-store';
 import { noticeTemplate } from '../../src/storage/notice-types';
 import { storageFixture } from './storage-fixture';
 import type { ChatLimits } from '../../src/core/chat-limits/config';
+import type { QuestionnaireInvitationSource } from '../../src/core/greetings/invitation';
 
 export const group = 314;
 export const peer = 2_000_000_041;
@@ -38,15 +39,34 @@ export function until(check: () => void | Promise<void>) {
 export async function fixture(
   options: {
     limit?: number;
+    profileNotice?: string;
+    retentionDays?: number;
+    summaryIntervalMs?: number;
+    summaryFragmentSize?: number;
+    modelContextTokens?: number;
+    upload?: (peer: number, data: Buffer) => Promise<string>;
     threshold?: number;
     window?: number;
     hold?: boolean;
+    existingChat?: (path: string) => void;
     userRequests?: number;
     active?: boolean;
+    administrationIntervalMs?: number;
+    greetings?: {
+      readonly members?: readonly number[];
+      readonly rules?: string;
+      readonly questionnaire?: QuestionnaireInvitationSource;
+    };
     quotas?: Partial<ChatLimits>;
   } = {},
 ) {
   const files = storageFixture();
+  try {
+    options.existingChat?.(files.path);
+  } catch (error) {
+    files.cleanup();
+    throw error;
+  }
   const clock = vi.spyOn(Date, 'now');
   const realMonotonic = performance.now.bind(performance);
   const monotonic = vi.spyOn(performance, 'now');
@@ -62,8 +82,10 @@ export async function fixture(
       DATABASE_PATH: files.path,
       OPENCODE_API_KEY: 'synthetic-go',
       LLM_MODEL: 'synthetic-model',
-      MODEL_CONTEXT_TOKENS: '16000',
-      MESSAGE_RETENTION_DAYS: '30',
+      SUMMARY_INTERVAL_MS: String(options.summaryIntervalMs ?? 300000),
+      SUMMARY_FRAGMENT_SIZE: String(options.summaryFragmentSize ?? 250),
+      MODEL_CONTEXT_TOKENS: String(options.modelContextTokens ?? 16000),
+      MESSAGE_RETENTION_DAYS: String(options.retentionDays ?? 30),
       LLM_SESSION_SECRET: 'synthetic-session',
       CHAT_RESPONSES_PER_MINUTE: String(options.limit ?? 6),
       CHAT_MENTION_FLOOD_THRESHOLD: String(options.threshold ?? 5),
@@ -81,6 +103,7 @@ export async function fixture(
   const disclosure = disclosureStore(storage);
   const version = disclosure.register(
     {
+      ...(options.profileNotice ? { profileNotice: options.profileNotice } : {}),
       provider: 'OpenCode Go',
       dataPolicy: 'history',
       storagePolicy: 'test',
@@ -91,7 +114,7 @@ export async function fixture(
     },
     start,
   );
-  const ready = Promise.withResolvers<void>();
+  let ready = Promise.withResolvers<void>();
   let listener: Parameters<VkPollTransport['run']>[0];
   const transport: VkPollTransport = {
     async run(callbacks, signal) {
@@ -113,12 +136,27 @@ export async function fixture(
     date: number;
     text: string;
     reply_message?: Message;
+    fwd_messages?: readonly unknown[];
+    action?: { type: string; member_id?: number };
   };
   const messages = new Map<number, Message>();
-  const sends: Message[] = [];
+  const names = new Map<number, { first_name: string; last_name: string }>();
+  const sends: (Message & { readonly disableMentions: number; readonly sendId: number })[] = [];
+  let members: readonly number[] | null = options.greetings?.members ?? null;
+  const filesSent: { peer: number; attachment: string }[] = [];
+  let privateAllowed = true;
   let serial = 0;
   let tick = 0;
-  let sendFault: ((text: string) => number | 'unknown' | undefined) | undefined;
+  let sendFault:
+    ((text: string) => number | 'unknown' | 'unknownAfterDelivery' | undefined) | undefined;
+  let receiptHold:
+    | {
+        readonly match: (text: string) => boolean;
+        readonly enter: () => void;
+        readonly wait: Promise<void>;
+        readonly release: () => void;
+      }
+    | undefined;
   const holds: { release: () => void; finished: Promise<void> }[] = [];
   const limit = createVkRateLimiter({
     now: () => tick,
@@ -134,7 +172,7 @@ export async function fixture(
           return {
             response: String(args.user_ids)
               .split(',')
-              .map((id) => ({ id: Number(id), first_name: 'Тест' })),
+              .map((id) => ({ id: Number(id), first_name: 'Тест', ...names.get(Number(id)) })),
           };
         if (method === 'messages.getConversationsById')
           return {
@@ -148,22 +186,36 @@ export async function fixture(
               ],
             },
           };
-        if (method === 'messages.getConversationMembers')
-          return { response: { items: [{ member_id: -group, is_admin: true }] } };
-        if (method === 'messages.getByConversationMessageId')
-          return {
-            response: {
-              items: String(args.conversation_message_ids)
-                .split(',')
-                .map((id) => messages.get(Number(id)))
-                .filter(Boolean),
-            },
-          };
+        if (method === 'messages.getConversationMembers') {
+          const items = [
+            { member_id: -group, is_admin: true },
+            ...(members ?? []).map((member_id) => ({ member_id, is_admin: false })),
+          ];
+          return { response: { items, ...(members === null ? {} : { count: items.length }) } };
+        }
+        if (method === 'messages.getByConversationMessageId') {
+          const items = String(args.conversation_message_ids)
+            .split(',')
+            .map((id) => messages.get(Number(id)))
+            .filter((item) => item !== undefined);
+          const hold = receiptHold;
+          if (hold && items.some((item) => item.from_id === -group && hold.match(item.text))) {
+            hold.enter();
+            await hold.wait;
+          }
+          return { response: { items } };
+        }
+        if (method === 'messages.isMessagesFromGroupAllowed')
+          return { response: { is_allowed: Number(privateAllowed) } };
+        if (method === 'messages.send' && args.attachment) {
+          filesSent.push({ peer: Number(args.peer_id), attachment: String(args.attachment) });
+          return { response: ++serial };
+        }
         if (method === 'messages.setActivity') return { response: 1 };
         if (method !== 'messages.send') throw new Error('Неожиданный метод тестового VK');
         const fault = sendFault?.(String(args.message));
         if (fault === 'unknown') throw Error('Синтетическая потеря квитанции');
-        if (fault !== undefined) return { error: { error_code: fault } };
+        if (typeof fault === 'number') return { error: { error_code: fault } };
         const forward =
           args.forward === undefined
             ? undefined
@@ -178,7 +230,13 @@ export async function fixture(
           ...(parent ? { reply_message: parent } : {}),
         };
         messages.set(row.conversation_message_id, row);
-        sends.push(row);
+        sends.push({
+          ...row,
+          disableMentions: Number(args.disable_mentions),
+          sendId: Number(args.random_id),
+        });
+        if (fault === 'unknownAfterDelivery')
+          throw Error('Синтетическая потеря квитанции после отправки');
         return { response: [row] };
       },
       async (call, guard) => {
@@ -195,16 +253,43 @@ export async function fixture(
       },
     ),
   );
-  const stop = new AbortController();
+  let stop = new AbortController();
   const complete = vi.fn<(request: LlmRequest) => Promise<LlmResult>>(async () => answer);
-  const running = runApplication(config, logger, stop.signal, {
-    vk: { api, transport },
-    client: { complete },
-    onboardingIntervalMs: 5,
-    chatLimits: { userRequests: options.userRequests ?? 100, chatRequests: 100, ...options.quotas },
-  });
+  const launch = () =>
+    runApplication(config, logger, stop.signal, {
+      vk: {
+        api: { ...api, ...(options.upload ? { uploadPrivateDocument: options.upload } : {}) },
+        transport,
+      },
+      client: { complete },
+      auxiliaryClient: { complete },
+      onboardingIntervalMs: 5,
+      ...(options.administrationIntervalMs === undefined
+        ? {}
+        : {
+            administrationIntervalMs: options.administrationIntervalMs,
+          }),
+      ...(options.greetings
+        ? {
+            greetingIntervalMs: 5,
+            membershipScanMs: 10,
+            membershipStaggerMs: 0,
+            ...(options.greetings.rules ? { greetingRules: () => options.greetings!.rules } : {}),
+            ...(options.greetings.questionnaire
+              ? { questionnaireInvitations: options.greetings.questionnaire }
+              : {}),
+          }
+        : {}),
+      chatLimits: {
+        userRequests: options.userRequests ?? 100,
+        chatRequests: 100,
+        ...options.quotas,
+      },
+    });
+  let running = launch();
   async function close() {
     stop.abort();
+    receiptHold?.release();
     for (const hold of holds) hold.release();
     try {
       expect(await running).toBeNull();
@@ -218,14 +303,18 @@ export async function fixture(
   }
   try {
     await ready.promise;
-    await resolveApplicationChat({ databasePath: files.path, ownerId }, chat, 'new');
+    await resolveApplicationChat(
+      { databasePath: files.path, ownerId },
+      chat,
+      options.existingChat ? 'continue' : 'new',
+    );
     const scope = lifecycleBackend(storage).current(chat);
     await until(() => expect(disclosure.gate(scope).version).toBe(version));
     if (options.active) await storage.chats.update(scope, { responseMode: 'active' });
     sends.length = 0;
     return {
       at(ms: number) {
-        if (options.active) {
+        if (options.active || options.greetings) {
           // Промежуточные продления аренды при скачке управляемых часов.
           db.prepare(
             'UPDATE queue_lease SET expires_at=max(expires_at,?) WHERE token IS NOT NULL',
@@ -235,12 +324,66 @@ export async function fixture(
         elapsed = ms;
       },
       sends,
+      setPrivateAllowed(value: boolean) {
+        privateAllowed = value;
+      },
+      setMembers(value: readonly number[] | null) {
+        members = value;
+      },
+      membership(type: string, actor: number, member?: number, destination = peer) {
+        const row: Message = {
+          peer_id: destination,
+          conversation_message_id: ++serial,
+          from_id: actor,
+          date: Math.floor(Date.now() / 1000),
+          text: '',
+          action: { type, ...(member === undefined ? {} : { member_id: member }) },
+        };
+        messages.set(row.conversation_message_id, row);
+        listener.onUpdates([{ type: 'message_new', group_id: group, object: { message: row } }]);
+        return row.conversation_message_id;
+      },
+      async restart(resume = false, neighbors: readonly number[] = []) {
+        stop.abort();
+        receiptHold?.release();
+        for (const hold of holds) hold.release();
+        expect(await running).toBeNull();
+        ready = Promise.withResolvers<void>();
+        stop = new AbortController();
+        running = launch();
+        await ready.promise;
+        if (resume)
+          for (const destination of [peer, ...neighbors])
+            await resolveApplicationChat(
+              { databasePath: files.path, ownerId },
+              `vk:${destination}`,
+              'continue',
+            );
+      },
+      async connectGroup(destination: number) {
+        const id = `vk:${destination}` as const;
+        await resolveApplicationChat({ databasePath: files.path, ownerId }, id, 'new');
+        const connected = lifecycleBackend(storage).current(id);
+        await until(() => expect(disclosure.gate(connected).version).toBe(version));
+        return connected;
+      },
+      filesSent,
       holds,
       complete,
       db,
       storage,
       scope,
       start,
+      holdReceipt(match: (text: string) => boolean) {
+        const entered = Promise.withResolvers<void>();
+        const gate = Promise.withResolvers<void>();
+        const release = () => {
+          receiptHold = undefined;
+          gate.resolve();
+        };
+        receiptHold = { match, enter: entered.resolve, wait: gate.promise, release };
+        return { entered: entered.promise, release };
+      },
       failSend(fault: typeof sendFault) {
         sendFault = fault;
       },
@@ -263,14 +406,23 @@ export async function fixture(
         return result!;
       },
       close,
-      submit(text: string, from = 41, parent?: Message) {
+      name(from: number, first: string, last = '') {
+        names.set(from, { first_name: first, last_name: last });
+      },
+      replay(id: number) {
+        const message = messages.get(id);
+        if (message)
+          listener.onUpdates([{ type: 'message_new', group_id: group, object: { message } }]);
+      },
+      submit(text: string, from = 41, parent?: Message, destination = peer, forwarded = false) {
         const row: Message = {
-          peer_id: peer,
+          peer_id: destination,
           conversation_message_id: ++serial,
           from_id: from,
           date: Math.floor(Date.now() / 1000),
           text,
           ...(parent ? { reply_message: parent } : {}),
+          ...(forwarded ? { fwd_messages: [{}] } : {}),
         };
         messages.set(row.conversation_message_id, row);
         listener.onUpdates([{ type: 'message_new', group_id: group, object: { message: row } }]);

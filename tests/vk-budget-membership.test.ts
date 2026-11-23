@@ -14,31 +14,74 @@ const page = (ids: readonly number[], count = ids.length) => ({
   items: ids.map((member_id) => ({ member_id })),
 });
 
-test('запрашивает полный состав, проверяет страницы и считает уникальных людей', async () => {
+function full(people: number): Extract<HumanMembership, { complete: true }> {
+  return {
+    complete: true,
+    people,
+    members: Array.from({ length: people }, (_, i) => ({ userId: `vk:${i + 1}`, role: 'unknown' })),
+  };
+}
+
+test('единая выборка возвращает людей и платформенные роли из нескольких страниц', async () => {
   const api = vi
     .fn()
-    .mockResolvedValueOnce(page([1, 1, -99], 4))
-    .mockResolvedValueOnce(page([2], 4));
-  // После дублирующейся строки фактический состав неполон.
-  expect(await readVkHumanMembership(api, peer, guard)).toEqual({ complete: false });
+    .mockResolvedValueOnce({
+      count: 4,
+      items: [{ member_id: 1, is_admin: true }, { member_id: -99 }],
+    })
+    .mockResolvedValueOnce({
+      count: 4,
+      items: [{ member_id: 2, is_admin: false }, { member_id: 3 }],
+    });
+  expect(await readVkHumanMembership(api, peer, guard)).toEqual({
+    complete: true,
+    people: 3,
+    members: [
+      { userId: 'vk:1', role: 'admin' },
+      { userId: 'vk:2', role: 'member' },
+      { userId: 'vk:3', role: 'unknown' },
+    ],
+  });
   expect(api.mock.calls.map(([method, params]) => [method, params])).toEqual([
     ['messages.getConversationMembers', { peer_id: peer, offset: 0, count: 1000 }],
-    ['messages.getConversationMembers', { peer_id: peer, offset: 3, count: 1000 }],
+    ['messages.getConversationMembers', { peer_id: peer, offset: 2, count: 1000 }],
   ]);
-  api
-    .mockReset()
-    .mockResolvedValueOnce(page([1, -99], 4))
-    .mockResolvedValueOnce(page([2, 3], 4));
-  expect(await readVkHumanMembership(api, peer, guard)).toEqual({ complete: true, people: 3 });
-  api
-    .mockReset()
-    .mockResolvedValueOnce(page([1], 3))
-    .mockResolvedValueOnce(page([], 3));
+  api.mockReset().mockResolvedValueOnce(page([]));
+  expect(await readVkHumanMembership(api, peer, guard)).toEqual(full(0));
+  api.mockReset().mockResolvedValueOnce(page([-99]));
+  expect(await readVkHumanMembership(api, peer, guard)).toEqual(full(0));
+});
+
+test.each([
+  ['повтор ID на разных страницах', page([1, -99], 4), page([1, 2], 4)],
+  ['лишняя строка', page([1, 1, -99], 2)],
+  ['разрыв между страницами', page([1], 3), page([], 3)],
+  ['смена общего количества', page([1], 2), page([2], 3)],
+  ['неизвестная строка', { count: 2, items: [{ member_id: 1 }, { member_id: '2' }] }],
+])(
+  'несогласованная выборка %s остаётся неполной',
+  async (_description, first, second?: unknown) => {
+    const api = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(second);
+    expect(await readVkHumanMembership(api, peer, guard)).toEqual({ complete: false });
+  },
+);
+
+test('потеря доступа и отмена после первой страницы не подтверждают состав', async () => {
+  const api = vi
+    .fn()
+    .mockResolvedValueOnce(page([1], 2))
+    .mockRejectedValueOnce(Error('PRIVATE'));
   expect(await readVkHumanMembership(api, peer, guard)).toEqual({ complete: false });
-  api.mockReset().mockRejectedValueOnce(Error('PRIVATE'));
-  expect(await readVkHumanMembership(api, peer, guard)).toEqual({ complete: false });
-  api.mockReset().mockResolvedValueOnce(page([1, 1, -99], 2));
-  expect(await readVkHumanMembership(api, peer, guard)).toEqual({ complete: true, people: 1 });
+  expect(api).toHaveBeenCalledTimes(2);
+  const controller = new AbortController();
+  api.mockReset().mockImplementationOnce(async () => {
+    controller.abort();
+    return page([1], 2);
+  });
+  expect(await readVkHumanMembership(api, peer, { signal: controller.signal })).toEqual({
+    complete: false,
+  });
+  expect(api).toHaveBeenCalledOnce();
 });
 
 test('полные снимки входа, выхода и повтора меняют лимит без сброса расхода', async () => {
@@ -54,17 +97,17 @@ test('полные снимки входа, выхода и повтора ме�
     const refresh = createTokenBudgetMembership(storage, read);
     const observe = () => refresh(scope, guard.signal, guard.isCurrent);
     expect(snapshot()).toMatchObject({ total: { limit: 15000 }, initiative: { limit: 10000 } });
-    read.mockResolvedValueOnce({ complete: true, people: 50 });
+    read.mockResolvedValueOnce(full(50));
     await observe();
     expect(
       store.reserve(scope, true, { key: 'one', input: 1000, output: 100, purpose: 'direct' }, now),
     ).toBe(true);
     store.reconcile(scope, 'one', { input: 180000, output: 0 });
     expect(snapshot().total).toMatchObject({ limit: 750000, remaining: 570000 });
-    read.mockResolvedValueOnce({ complete: true, people: 51 });
+    read.mockResolvedValueOnce(full(51));
     await observe();
     expect(snapshot().total).toMatchObject({ limit: 765000, remaining: 585000 });
-    read.mockResolvedValueOnce({ complete: true, people: 51 });
+    read.mockResolvedValueOnce(full(51));
     await observe();
     expect(snapshot().total.remaining).toBe(585000);
     read.mockResolvedValueOnce({ complete: false });
@@ -72,15 +115,15 @@ test('полные снимки входа, выхода и повтора ме�
     expect(snapshot().total.remaining).toBe(585000);
 
     const late = Promise.withResolvers<HumanMembership>();
-    read.mockReturnValueOnce(late.promise).mockResolvedValueOnce({ complete: true, people: 10 });
+    read.mockReturnValueOnce(late.promise).mockResolvedValueOnce(full(10));
     const pending = observe();
     expect(await observe()).toBe(true);
-    late.resolve({ complete: true, people: 55 });
+    late.resolve(full(55));
     expect(await pending).toBe(false);
     expect(snapshot().total).toMatchObject({ limit: 150000, remaining: 0 });
 
     store.update(scope, true, { total: 700000, initiative: 9000 }, now);
-    read.mockResolvedValueOnce({ complete: true, people: 70 });
+    read.mockResolvedValueOnce(full(70));
     await observe();
     expect(snapshot()).toMatchObject({
       total: { limit: 700000, remaining: 520000 },
@@ -94,7 +137,7 @@ test('полные снимки входа, выхода и повтора ме�
     const stale = observe();
     const lifecycle = lifecycleBackend(storage);
     const next = lifecycle.ownerDecision(lifecycle.begin(scope.chatId), 'new');
-    replacement.resolve({ complete: true, people: 95 });
+    replacement.resolve(full(95));
     await expect(stale).rejects.toThrow('stale_scope');
     expect(store.read(next, true, now).people).toBeNull();
 

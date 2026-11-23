@@ -16,8 +16,13 @@ export interface PublishedPart {
   readonly replyToMessageId?: PlatformMessageId;
 }
 
+export interface HumanMember {
+  readonly userId: UserId;
+  readonly role: 'member' | 'admin' | 'unknown';
+}
 export type HumanMembership =
-  { readonly complete: true; readonly people: number } | { readonly complete: false };
+  | { readonly complete: true; readonly people: number; readonly members: readonly HumanMember[] }
+  | { readonly complete: false };
 
 export interface ChannelAdapter {
   readonly platform: PlatformId;
@@ -26,5 +31,6 @@ export interface ChannelAdapter {
   send(message: OutgoingMessage): Promise<SendResult>;
   sendTyping(chatId: ChatId): Promise<void>;
   getUserName(userId: UserId): Promise<string | null>;
+  mentionedPeople?(text: string): readonly UserId[];
   humanMembership?(scope: ConnectionScope, signal: AbortSignal): Promise<HumanMembership>;
 }

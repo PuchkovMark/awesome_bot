@@ -20,10 +20,11 @@ function formatOverview(overview: Overview) {
   if (overview.chats.length === 0) return `${window}\nБесед пока нет.`;
   return [
     window,
-    ...overview.chats.map(({ chatId, total, initiative }) =>
+    ...overview.chats.map(({ chatId, total, initiative, profileUpdate }) =>
       [
         `${chatId} — ${describe(total)}.`,
         ...(initiative ? [`Инициатива — ${describe(initiative)}.`] : []),
+        `Обновление профилей — ${describe(profileUpdate)}.`,
       ].join('\n'),
     ),
   ].join('\n');

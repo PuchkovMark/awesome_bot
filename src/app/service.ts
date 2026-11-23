@@ -1,3 +1,26 @@
+import { createQuestionnaireProgress } from '../core/questionnaire/progress';
+import {
+  createQuestionnaireCommands,
+  openQuestionnaire,
+  parseQuestionnaireCommand,
+} from './questionnaire-commands';
+import { questionnaireAnswerHandler } from '../core/questionnaire/answer';
+import { questionnaireProgressStore } from '../storage/questionnaire-progress-store';
+import { questionnaireStore } from '../storage/questionnaire-store';
+import { createProfileCommands } from './profile-commands';
+import { createProfileUpdates } from '../core/profile-updates/service';
+import { applicationSummaries } from './chat-summaries';
+import { applicationTools } from './model-tools';
+import { contextParticipantCards } from './context-participant-cards';
+import { createGreetingService } from '../core/greetings/service';
+import type { QuestionnaireInvitationSource } from '../core/greetings/invitation';
+import { greetingStore } from '../storage/greeting-store';
+import { addressPreferenceStore } from '../storage/address-preference-store';
+import type { AddressPreferenceReference } from '../contracts/index';
+import { createAddressPreferenceHandlers } from './address-preferences';
+import { createPersonalCommands, groupPersonalCommand } from './personal-data';
+import { personalDataStore } from '../storage/personal-data-store';
+import { departedProfileBatch } from '../storage/participant-departures';
 import { createVkChannel } from '../channels/index';
 import type { ApplicationConfig } from '../config/application';
 import {
@@ -22,7 +45,7 @@ import { createChatOnboarding } from '../core/chat-onboarding/service';
 import { canonicalTimezone, parseTimezoneCommand } from '../core/chat-onboarding/timezone';
 import { vkLocalId } from '../channels/vk/outbound';
 import { describeVkRights, vkIntroductionReplayWindowMs } from '../channels/vk/introduction';
-import { isVkGroupChat } from '../channels/vk/normalize';
+import { isVkGroupChat, vkChatId } from '../channels/vk/normalize';
 import type { ChatId, ConnectionScope } from '../contracts/index';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createAdminRecoveryService } from '../core/admin-recovery/service';
@@ -30,22 +53,32 @@ import { parseAdminRecoveryCommand } from '../core/admin-recovery/commands';
 import { adminRecoveryStore } from '../storage/admin-recovery-store';
 import { chatControlStore } from '../storage/chat-control-store';
 import { createChatControlHandlers } from './chat-control';
+import { createChatPassport } from './chat-passport';
+import { chatPassportStore } from '../storage/chat-passport-store';
 import { createHistoryHandlers } from './history-retention';
 import type { ChatLimits } from '../core/chat-limits/config';
 import { createTokenBudgetMembership } from '../core/chat-limits/token-budget-membership';
 import { createUsageCommand, isUsageCommand } from './token-budget';
 import { createPausedChatCommands } from './paused-chats';
+import { participantRegistryStore } from '../storage/participant-registry';
+import { createParticipantSync } from './participant-sync';
 import { createReminderHandlers } from './reminders';
 import { parseReminderCommand } from '../core/reminders/commands';
 
 interface ApplicationDependencies {
   readonly vk?: Parameters<typeof createVkChannel>[1];
   readonly client?: LlmClient;
+  readonly auxiliaryClient?: LlmClient;
   readonly readyTimeoutMs?: number;
   readonly stopTimeoutMs?: number;
   readonly onboardingIntervalMs?: number;
   readonly administrationIntervalMs?: number;
   readonly reminderIntervalMs?: number;
+  readonly greetingIntervalMs?: number;
+  readonly questionnaireInvitations?: QuestionnaireInvitationSource;
+  readonly greetingRules?: (scope: ConnectionScope) => string | undefined;
+  readonly membershipScanMs?: number;
+  readonly membershipStaggerMs?: number;
   readonly chatLimits?: Partial<ChatLimits>;
 }
 
@@ -66,7 +99,11 @@ export async function runApplication(
   let poll: Promise<void> | undefined;
   let introductionWork: Promise<void> | undefined;
   let administrationWork: Promise<void> | undefined;
+  let membershipWork: Promise<void> | undefined;
+  let greetingWork: Promise<void> | undefined;
   let reminderWork: Promise<void> | undefined;
+  let summaryWork: Promise<void> | undefined;
+  let profileUpdateWork: Promise<void> | undefined;
   let readyTimer: ReturnType<typeof setTimeout> | undefined;
   let stopTimer: ReturnType<typeof setTimeout> | undefined;
   const typing = new Set<Promise<void>>();
@@ -109,10 +146,17 @@ export async function runApplication(
           },
         },
       });
+      const privacy = personalDataStore(storage);
+      const questionnaireProgress = createQuestionnaireProgress(storage);
+      const questionnaireTemplates = questionnaireStore(storage);
+      const registry = participantRegistryStore(storage);
+      privacy.purgeExpired(Date.now());
+      privacy.cleanup(Date.now());
+      registry.purgeDeparted(Date.now());
       const controls = chatControlStore(storage);
       let ready = false;
-      const checkedMembership = new Map<ConnectionScope['chatId'], ConnectionScope>();
-      const channel = createVkChannel(
+      const adminStore = adminRecoveryStore(storage);
+      const channel: ReturnType<typeof createVkChannel> = createVkChannel(
         {
           ...config.vk,
           lifecycle,
@@ -136,7 +180,44 @@ export async function runApplication(
               return () => ({ journal: false, respond: false, version: null, ordinary: false });
             }
           },
-          onMembershipChanged: refreshBudgetMembership,
+          capturePrivateDisclosure: (scope) =>
+            onboarding.configuredForProfiles() ? onboarding.capture(scope) : undefined,
+          notifyPrivate: async (scope, current, message) => {
+            if (!onboarding.configuredForProfiles()) return true;
+            if (onboarding.privatePending(scope)) {
+              const command = (message.literalText ?? message.text).trim();
+              const questionnaire =
+                !message.hasForwarded &&
+                !message.attachments.length &&
+                parseQuestionnaireCommand(command);
+              await onboarding.notifyPrivate(scope, current);
+              if (questionnaire) {
+                const isCurrent = () => current() && !onboarding.privatePending(scope);
+                if (isCurrent())
+                  await channel.replyPrivateControl(
+                    vkChatId(message.authorId),
+                    `Чтобы продолжить, повторите ${command}.`,
+                    { signal, isCurrent, allow: async () => isCurrent() },
+                  );
+                return false;
+              }
+            }
+            return !onboarding.privatePending(scope) && current();
+          },
+          async onMembershipChanged(scope, event, identity) {
+            const user = event.subjectId && vkLocalId(event.subjectId);
+            if (
+              registry.observe(
+                scope,
+                event,
+                identity,
+                group(scope.chatId) && typeof user === 'number' && user > 0,
+              )
+            ) {
+              membership.request(scope);
+              wakeGreeting();
+            }
+          },
           verifyFirstPrivate(message) {
             return (
               message.peerId > 0 &&
@@ -144,7 +225,7 @@ export async function runApplication(
               message.authorId === message.peerId &&
               !message.hasReply &&
               !message.hasForwarded &&
-              !!parseReminderCommand(message.text, false)
+              (onboarding.configuredForProfiles() || !!parseReminderCommand(message.text, false))
             );
           },
           onReady() {
@@ -153,8 +234,12 @@ export async function runApplication(
             clearTimeout(readyTimer);
             logger.event({ event: 'application_ready' }, 'info');
             introductionWork = onboarding.run().catch(() => stop('vk_failed'));
+            membershipWork = membership.run().catch(() => stop('storage_failed'));
             administrationWork = checkAdministration().catch(() => stop('vk_failed'));
+            greetingWork = deliverGreetings().catch(() => stop('storage_failed'));
             reminderWork = deliverReminders().catch(() => stop('storage_failed'));
+            summaryWork = summaries.run().catch(() => stop('storage_failed'));
+            profileUpdateWork = profileUpdates.run().catch(() => stop('storage_failed'));
           },
         },
         dependencies.vk,
@@ -175,28 +260,32 @@ export async function runApplication(
         const local = vkLocalId(chatId);
         return local !== undefined && isVkGroupChat(local);
       };
-      const observeBudgetMembership = createTokenBudgetMembership(storage, channel.humanMembership);
-      async function refreshBudgetMembership(scope: ConnectionScope) {
-        if (!group(scope.chatId)) return;
-        const current = () => !signal.aborted && lifecycle.isAdmissionCurrent(scope);
-        if (await observeBudgetMembership(scope, signal, current)) {
-          checkedMembership.set(scope.chatId, scope);
-        }
-      }
+      const membership = createParticipantSync({
+        signal,
+        activeGroups: () => lifecycle.activeChatIds('vk').filter(group),
+        scopeFor: lifecycle.admissionScope,
+        confirmed: wakeGreeting,
+        isCurrent: lifecycle.isAdmissionCurrent,
+        refresh: createTokenBudgetMembership(storage, channel.humanMembership),
+        scanMs: dependencies.membershipScanMs ?? dependencies.administrationIntervalMs ?? 1_000,
+        staggerMs: dependencies.membershipStaggerMs ?? 5 * 60_000,
+      });
       async function checkAdministration() {
         while (!signal.aborted) {
-          const active = new Set(lifecycle.activeChatIds('vk').filter(group));
-          for (const chatId of checkedMembership.keys()) {
-            if (!active.has(chatId)) checkedMembership.delete(chatId);
+          profiles.prune(Date.now());
+          passports.prune(Date.now());
+          const moreProfiles = privacy.purgeExpired(Date.now()) === 100;
+          const moreMessages = privacy.cleanup(Date.now()) === 100;
+          const moreDepartures = registry.purgeDeparted(Date.now()) === departedProfileBatch;
+          if (moreProfiles || moreMessages || moreDepartures) {
+            await delay(0);
+            continue;
           }
-          for (const chatId of active) {
+          for (const chatId of lifecycle.activeChatIds('vk').filter(group)) {
             if (signal.aborted) return;
             try {
               const scope = lifecycle.admissionScope(chatId);
-              const checked = checkedMembership.get(chatId);
-              if (!checked || !lifecycle.isAdmissionCurrent(checked)) {
-                await refreshBudgetMembership(scope);
-              }
+              const role = adminStore.communityRole(chatId);
               const guard = {
                 signal,
                 isCurrent: () => !signal.aborted && lifecycle.isAdmissionCurrent(scope),
@@ -204,6 +293,10 @@ export async function runApplication(
               await lifecycle.refreshAdministration(scope, (input) =>
                 channel.administrationEvidence.observe(scope, input, guard),
               );
+              if (role !== true && adminStore.communityRole(chatId) === true) {
+                const active = lifecycle.admissionScope(chatId);
+                if (registry.lastAttemptIncomplete(active)) membership.request(active);
+              }
             } catch {
               /* Подключение и сведения будут проверены в следующем цикле. */
             }
@@ -229,17 +322,114 @@ export async function runApplication(
           : { intervalMs: dependencies.onboardingIntervalMs }),
       });
       function checkDisclosure(work: { scope: ConnectionScope; disclosureVersion?: number }) {
-        if (!group(work.scope.chatId)) return undefined;
+        if (
+          !group(work.scope.chatId) &&
+          !onboarding.configuredForProfiles() &&
+          work.disclosureVersion === undefined
+        )
+          return undefined;
         const version = work.disclosureVersion ?? null;
         const current = onboarding.gate(work.scope);
         return { version, allowed: version !== null && current.version === version };
       }
+      const addressPreferences = addressPreferenceStore(storage);
+      const greetings = createGreetingService({
+        store: greetingStore(storage),
+        profiles: storage.profileFacts,
+        address: addressPreferences,
+        scope: (window) => {
+          const scope = lifecycle.admissionScope(window.chatId);
+          if (scope.generation !== window.generation)
+            throw Error('Приветствие относится к прежнему подключению.');
+          return scope;
+        },
+        scopeCurrent: lifecycle.isAdmissionCurrent,
+        signal,
+        limit: config.responseRate.responsesPerMinute,
+        ...(dependencies.greetingRules ? { rules: dependencies.greetingRules } : {}),
+        questionnaire: questionnaireProgress.invitations(
+          dependencies.questionnaireInvitations ?? {
+            action: (scope) => (questionnaireTemplates.current(scope) ? openQuestionnaire : null),
+            state(scope, user) {
+              const state = controls.read(scope);
+              return state.enabled &&
+                state.mode !== 'silent' &&
+                privacy.profileAllowed(scope, user, Date.now())
+                ? 'available'
+                : 'unavailable';
+            },
+          },
+        ),
+        port: {
+          writing: (scope, guard) => channel.introduction!.writing(scope, 'chat', guard),
+          name: channel.getUserName,
+          send: channel.sendGreeting,
+          sendInvitation: channel.sendQuestionnaireInvitation,
+        },
+      });
+      let greetingWait: AbortController | undefined;
+      function wakeGreeting() {
+        greetingWait?.abort();
+      }
+      async function deliverGreetings() {
+        greetings.recover();
+        while (!signal.aborted) {
+          if (await greetings.due()) continue;
+          greetingWait = new AbortController();
+          try {
+            await delay(dependencies.greetingIntervalMs ?? 1000, undefined, {
+              signal: AbortSignal.any([signal, greetingWait.signal]),
+            });
+          } catch (error) {
+            if (!signal.aborted && !greetingWait.signal.aborted) throw error;
+          } finally {
+            greetingWait = undefined;
+          }
+        }
+      }
+
+      const addressCurrent = (scope: ConnectionScope, reference: AddressPreferenceReference) => {
+        try {
+          return addressPreferences.current(scope, reference);
+        } catch {
+          return false;
+        }
+      };
+      const passport = chatPassportStore(storage);
+      const summaries = applicationSummaries({
+        storage,
+        client:
+          dependencies.auxiliaryClient ??
+          createLlmClient({ ...config.llm, model: config.auxiliaryModel }),
+        model: config.auxiliaryModel,
+        sessionSecret: config.sessionSecret,
+        ...config.summaries,
+        modelContext: config.context.modelContextTokens,
+        signal,
+        port: channel.publicationPort,
+        platform: channel.platform,
+        group,
+        inputBudget: config.context.inputBudgetTokens,
+        disclosure: (scope) =>
+          !group(scope.chatId) && !onboarding.configuredForProfiles()
+            ? 0
+            : onboarding.gate(scope).version,
+        backgroundReady: () =>
+          !!queue?.isRunning() &&
+          !queue.signal.aborted &&
+          queue.stats().depthQueued === 0 &&
+          queue.stats().depthRunning === 0,
+      });
       const preparation = createContextPreparation({
+        summaries: summaries.context,
         storage,
         config: config.context,
         logger,
         sessionId: createLlmSessionId(config.sessionSecret),
         capabilities: ({ chatId }) => channel.capabilities({ chatId }),
+        addressForm: addressPreferences.resolve,
+        participantCards: contextParticipantCards(storage),
+        passport: { read: passport.read, current: passport.current },
       });
       const contextFailure = preparation.checkStartup(
         await catalogAdministration(storage).systemPrompt(),
@@ -259,23 +449,50 @@ export async function runApplication(
       const publication = createPublicationService({
         storage,
         port: channel.publicationPort,
+        addressCurrent,
         responseBudget: () => queue?.responseBudget,
         disclosureCurrent: (work) =>
           work.jobId === undefined && group(work.scope.chatId)
             ? onboarding.gate(work.scope).version !== null
             : (checkDisclosure(work)?.allowed ?? true),
       });
+      const modelClient = dependencies.client ?? createLlmClient(config.llm);
+      const profileUpdates = createProfileUpdates({
+        storage,
+        logger,
+        client: modelClient,
+        sessionId: createLlmSessionId('profile-update:' + config.sessionSecret),
+        scope: lifecycle.admissionScope,
+        group,
+        signal,
+        modelContextTokens: config.context.modelContextTokens,
+        maxOutputTokens: preparation.config.maxOutputTokens,
+      });
+      const questionnaireAttempts = questionnaireProgressStore(storage);
       queue = createAgentLoopQueue({
+        recapAnswer: summaries.answer,
+        questionnaireAnswer: questionnaireAnswerHandler({
+          store: questionnaireAttempts,
+          client: modelClient,
+          sessionId: createLlmSessionId(config.sessionSecret),
+          maxOutputTokens: preparation.config.maxOutputTokens,
+          inputLimit: config.context.modelContextTokens - preparation.config.maxOutputTokens,
+          modelName: config.llm.model,
+          disclosed: (work) => checkDisclosure(work)?.allowed ?? true,
+        }),
         storage,
         logger,
         modelName: config.llm.model,
+        tools: applicationTools(storage, channel, authorization),
+        modelInputLimit: config.context.modelContextTokens - preparation.config.maxOutputTokens,
         tracing: config.tracing,
         limits: dependencies.chatLimits ?? {},
         tokenBudget: true,
         autonomousReplies: true,
         responseRate: config.responseRate,
-        client: dependencies.client ?? createLlmClient(config.llm),
+        client: modelClient,
         disclosure: checkDisclosure,
+        addressCurrent,
         platform: channel.platform,
         signal,
         preparationTimeoutMs: preparation.config.preparationTimeoutMs,
@@ -336,26 +553,63 @@ export async function runApplication(
         signal,
         budget: createTokenBudgetAdministration({ storage, authorization, isGroupChat: group }),
       });
+      const personal = createPersonalCommands({
+        privacy,
+        channel,
+        lifecycle,
+        onboarding,
+        signal,
+        ownerId,
+        authorization,
+        storage,
+      });
+      const profiles = createProfileCommands({
+        storage,
+        authorization,
+        privacy,
+        channel,
+        lifecycle,
+        onboarding,
+        signal,
+      });
+      const passports = createChatPassport({ storage, authorization, channel, lifecycle, signal });
+      const questionnaires = createQuestionnaireCommands({
+        storage,
+        authorization,
+        lifecycle,
+        channel,
+        signal,
+        progress: questionnaireProgress,
+      });
+      const address = createAddressPreferenceHandlers({ storage, channel, signal });
       const pausedChats = createPausedChatCommands({ channel, lifecycle, ownerId, signal });
       const router = createMessageRouter({
         storage,
         queue,
         logger,
         authorization,
+        canAnswerQuestionnaire: questionnaireAttempts.canAnswer,
         onQueueFull: publication.queueFull,
+        onDecision: profileUpdates.wake,
         onFlood(scope, candidate, isCurrent) {
           const operation = publication
             .flood(scope, candidate, { signal, isCurrent })
             .finally(() => floodPublications.delete(operation));
           floodPublications.add(operation);
         },
-        recognizeCommand: (message, replyToOther) =>
+        recognizeCommand: (message, replyToOther, scope) =>
+          questionnaires.recognize(message) ??
+          passports.recognize(scope, message) ??
+          chatControl.editor.recognizeReply(scope, message) ??
           (isUsageCommand(message.text)
             ? ({ action: 'usage.read', minimumRole: 'owner' } as const)
             : null) ??
+          profiles.recognize(message) ??
+          groupPersonalCommand(message) ??
           history.recognize(message) ??
           chatControl.recognize(message, replyToOther) ??
           reminders.recognize(message) ??
+          address.recognize(message) ??
           (message.isGroupChat &&
           message.isBot === false &&
           parseTimezoneCommand(message.text) !== null
@@ -364,10 +618,34 @@ export async function runApplication(
         identity: (scope, message) =>
           commandAuthorization.context({ scope, userId: message.userId }),
         async executeCommand(context, message, isCurrent, replayOnly) {
+          if (questionnaires.recognize(message))
+            return questionnaires.execute(context, message, isCurrent);
+          if (passports.recognize(context.scope, message))
+            return passports.execute(context, message, isCurrent);
+          if (chatControl.editor.recognizeReply(context.scope, message))
+            return chatControl.editor.reply(context, message, isCurrent);
+          if (profiles.recognize(message)) return profiles.group(context.scope, message, isCurrent);
+          if (groupPersonalCommand(message)) {
+            const peerId = vkLocalId(context.scope.chatId),
+              authorId = vkLocalId(context.userId);
+            if (peerId !== undefined && authorId !== undefined)
+              await personal(
+                {
+                  peerId,
+                  authorId,
+                  text: message.text,
+                  cmid: Number(message.messageId),
+                  reply: undefined,
+                },
+                () => isCurrent() && lifecycle.isAdmissionCurrent(context.scope),
+              );
+            return;
+          }
           if (history.recognize(message))
             return history.execute(context, message, isCurrent, replayOnly);
           if (reminders.recognize(message))
             return reminders.execute(context.scope, message, isCurrent, replayOnly);
+          if (address.recognize(message)) return address.execute(context.scope, message, isCurrent);
           const input = parseTimezoneCommand(message.text);
           if (input === null) return chatControl.execute(context, message, isCurrent);
           const timezone = canonicalTimezone(input);
@@ -381,6 +659,17 @@ export async function runApplication(
             lifecycle.observeAdminMembership(scope, userId, present, messageId, at);
           },
           command(message, isCurrent) {
+            if (
+              passports.beforePersonalCommands(message) ||
+              chatControl.editor.beforePersonalCommands(message)
+            )
+              return undefined;
+            const passportAction = passports.privateCommand(message);
+            if (passportAction) return passportAction;
+            const profileAction = profiles.private(message, isCurrent);
+            if (profileAction) return profileAction;
+            const personalAction = !isVkGroupChat(message.peerId) && personal(message, isCurrent);
+            if (personalAction) return personalAction;
             const command = parseAdminRecoveryCommand(message.text);
             if (!command)
               return (
@@ -421,7 +710,11 @@ export async function runApplication(
       poll,
       introductionWork,
       administrationWork,
+      membershipWork,
       reminderWork,
+      greetingWork,
+      profileUpdateWork,
+      summaryWork,
       ...typing,
       ...floodPublications,
     ]);

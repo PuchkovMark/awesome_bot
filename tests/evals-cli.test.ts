@@ -1,9 +1,10 @@
+import { questionnaireCases } from '../src/evals/questionnaire';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { expect, test } from 'vitest';
-import { scenarios } from '../src/evals/scenarios';
+import { profileUpdateCases, scenarios } from '../src/evals/scenarios';
 
 function cli(directory: string, args: string[], before = '') {
   const importHook = `data:text/javascript,${encodeURIComponent(before)}`;
@@ -31,10 +32,14 @@ test('собранная команда запускает набор, а чек
       `globalThis.fetch=()=>{throw Error('NETWORK');};`,
     );
     expect(out.status, out.stderr).toBe(0);
-    expect(out.stdout).toContain(`Пройдено ${scenarios.length}`);
+    expect(out.stdout).toContain(
+      `Пройдено ${scenarios.length + questionnaireCases.length + profileUpdateCases.length + 1}`,
+    );
     const report = JSON.parse(readFileSync(join(directory, 'results.json'), 'utf8'));
     expect(report).toMatchObject({ kind: 'local', schemaVersion: 1 });
-    expect(report.runs).toHaveLength(scenarios.length);
+    expect(report.runs).toHaveLength(
+      scenarios.length + questionnaireCases.length + profileUpdateCases.length + 1,
+    );
     const checklist = cli(
       directory,
       ['--checklist'],
@@ -71,3 +76,63 @@ test('собранная команда запускает набор, а чек
     rmSync(directory, { recursive: true, force: true });
   }
 }, 30_000);
+
+test('отдельная оценка фиксирует качество модели и токены в пределах семи попыток', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'awesome-evals-profile-model-'));
+  try {
+    const transport = `
+      process.env.LLM_MODEL = 'synthetic-model';
+      process.env.OPENCODE_API_KEY = 'synthetic-secret';
+      globalThis.fetch = async () => Response.json({
+        choices: [{ message: { role: 'assistant', content: '[]' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 9, completion_tokens: 2 },
+      });
+    `;
+    const out = cli(directory, ['--profile-model', '--out', 'model.json'], transport);
+    expect(out.status, out.stderr).toBe(1);
+    expect(out.stdout).toContain('Пройдено 4, нарушений 3, технических сбоев 0');
+    const contents = readFileSync(join(directory, 'model.json'), 'utf8');
+    expect(contents).not.toMatch(/synthetic-secret|космодрома|виолончель/);
+    const report = JSON.parse(contents) as {
+      kind: string;
+      runs: {
+        model: string;
+        extraction: {
+          requestRevision: number;
+          inputEstimate: number;
+          outputReserve: number;
+          inputTokens: number;
+          outputTokens: number;
+        };
+      }[];
+    };
+    expect(report.kind).toBe('model');
+    expect(report.runs).toHaveLength(7);
+    for (const run of report.runs) {
+      expect(run.model).toBe('synthetic-model');
+      expect(run.extraction).toMatchObject({ requestRevision: 2, inputTokens: 9, outputTokens: 2 });
+    }
+    expect(
+      report.runs.reduce(
+        (sum, { extraction }) => sum + extraction.inputEstimate + extraction.outputReserve,
+        0,
+      ),
+    ).toBeLessThanOrEqual(7500);
+    const repeated = cli(
+      directory,
+      ['--profile-model', '--case', 'explicit-custom-field', '--out', 'one.json'],
+      transport,
+    );
+    expect(repeated.stdout).toContain('Пройдено 0, нарушений 1, технических сбоев 0');
+    const { runs: one } = JSON.parse(
+      readFileSync(join(directory, 'one.json'), 'utf8'),
+    ) as typeof report;
+    expect(one).toHaveLength(1);
+    expect(one[0]!.extraction.outputReserve).toBe(800);
+    expect(one[0]!.extraction.outputReserve + one[0]!.extraction.inputEstimate).toBeLessThanOrEqual(
+      1500,
+    );
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

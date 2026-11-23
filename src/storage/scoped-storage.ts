@@ -1,11 +1,20 @@
+import type { QuestionnaireReply, QuestionnaireReplyResult } from './questionnaire-types';
+import type { PassportReply, PassportReplyResult } from './chat-passport-types';
+import type { ProfileCommandEdit, ProfileCommandEditResult } from './profile-command-types';
+import { selectOwnProfile } from './profile-fact-selection';
+import { createProfileFactReader } from './profile-fact-reader';
 import { createContextStateReader } from './context-state-reader';
 import { createContextReader } from './context-reader';
-import type { ConnectionScope } from '../contracts/index';
+import type { ConnectionScope, UserId } from '../contracts/index';
 import type { QueueRecord } from './queue-types';
 import type { VersionBackend } from './version-store';
 import type { Connection } from './connection';
 import type { LifecycleBackend } from './lifecycle-store';
-import type { ScopedStorage } from './scoped-types';
+import type {
+  ProfileFactWriter,
+  ScopedAuthorizationTransaction,
+  ScopedStorage,
+} from './scoped-types';
 import { readMessage, createMessageStore } from './messages';
 import { createChatStore } from './chats';
 import { createAuthorizationStore } from './authorization-store';
@@ -15,6 +24,25 @@ export function createScopedStorage(
   backend: LifecycleBackend,
   versions: VersionBackend,
   queue: { get(scope: ConnectionScope, id: number): QueueRecord | null },
+  facts: ProfileFactWriter,
+  editProfile: (
+    scope: ConnectionScope,
+    actor: UserId,
+    input: ProfileCommandEdit,
+    now: number,
+  ) => ProfileCommandEditResult,
+  applyPassport: (
+    scope: ConnectionScope,
+    actor: UserId,
+    input: PassportReply,
+    now: number,
+  ) => PassportReplyResult,
+  replaceQuestionnaire: (
+    scope: ConnectionScope,
+    actor: UserId,
+    input: QuestionnaireReply,
+    now: number,
+  ) => QuestionnaireReplyResult,
 ): Omit<ScopedStorage, 'traces'> {
   const messages = createMessageStore(connection),
     chats = createChatStore(connection),
@@ -22,6 +50,7 @@ export function createScopedStorage(
   return {
     contextState: createContextStateReader(connection, backend, versions),
     contextMessages: createContextReader(connection, backend),
+    profileFacts: createProfileFactReader(backend),
     queue: {
       async get(scope, id) {
         return queue.get(scope, id);
@@ -75,7 +104,43 @@ export function createScopedStorage(
     },
     authorization: {
       async transaction(scope, callback) {
-        return backend.transaction(scope, () => authorization.transaction(scope.chatId, callback));
+        return backend.transaction(scope, (db) =>
+          authorization.transaction(scope.chatId, (tx) =>
+            callback(
+              Object.freeze<ScopedAuthorizationTransaction>({
+                ...tx,
+                applyQuestionnaireReply(actorId, input, now) {
+                  tx.revision();
+                  if (!tx.claimControlMessage(actorId, input.eventId))
+                    return { status: 'duplicate' };
+                  return replaceQuestionnaire(scope, actorId, input, now);
+                },
+                applyPassportReply(actorId, input, now) {
+                  tx.revision();
+                  if (!tx.claimControlMessage(actorId, input.eventId)) return 'duplicate';
+                  return applyPassport(scope, actorId, input, now);
+                },
+                editOwnProfile(actorId, input, now) {
+                  tx.revision();
+                  return editProfile(scope, actorId, input, now);
+                },
+                readOwnProfile(actorId, now) {
+                  tx.revision();
+                  return selectOwnProfile(db, scope, actorId, now);
+                },
+                changeProfileFact(actorId, input) {
+                  tx.revision();
+                  return facts.record(
+                    scope,
+                    actorId,
+                    actorId === input.subjectId ? 'self' : 'admin',
+                    input,
+                  );
+                },
+              }),
+            ),
+          ),
+        );
       },
       async pruneReasons(now, retentionMs) {
         return authorization.pruneReasons(now, retentionMs);

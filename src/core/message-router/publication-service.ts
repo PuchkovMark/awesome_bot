@@ -1,3 +1,5 @@
+import type { AddressPreferenceReference } from '../../contracts/index';
+import { personalDataStore } from '../../storage/personal-data-store';
 import { isRateLimitedNotice } from '../../storage/notice-types';
 import type { ConnectionScope, PublishedPart } from '../../contracts/index';
 import type { Storage } from '../../storage/index';
@@ -68,6 +70,10 @@ export function createPublicationService(options: {
   readonly queueFullTimeoutMs?: number;
   readonly onFailure?: (code: PublicationFailure) => void;
   readonly disclosureCurrent?: (work: QueueSettlement) => boolean;
+  readonly addressCurrent?: (
+    scope: ConnectionScope,
+    reference: AddressPreferenceReference,
+  ) => boolean;
   readonly responseBudget?: () => ResponsePublicationBudget | undefined;
 }) {
   const fullTimeout = noticeInterval(options.queueFullTimeoutMs ?? 10000);
@@ -95,12 +101,26 @@ export function createPublicationService(options: {
     work: QueueSettlement,
     outcome: unknown,
     details: {
+      readonly subjectIds?: readonly import('../../contracts/index').UserId[];
       readonly withoutJob?: boolean;
       readonly flood?: FloodNotice;
       readonly authorLabels?: readonly string[];
+      readonly addressPreference?: AddressPreferenceReference;
+      readonly participantCards?: QueueCompletion['participantCards'];
+      readonly passportCurrent?: QueueCompletion['passportCurrent'];
+      readonly toolSourceIds?: readonly number[];
+      readonly toolResultsCurrent?: QueueCompletion['toolResultsCurrent'];
     } = {},
   ): Promise<string> {
-    const { withoutJob = false, flood, authorLabels = [] } = details;
+    const {
+      withoutJob = false,
+      flood,
+      authorLabels = [],
+      addressPreference,
+      participantCards,
+      passportCurrent,
+      toolResultsCurrent,
+    } = details;
     const jobId = work.jobId;
     if (!withoutJob && (jobId === undefined || active.has(jobId))) return 'silence';
     if (jobId !== undefined) active.add(jobId);
@@ -111,6 +131,8 @@ export function createPublicationService(options: {
     let budget: ResponsePublicationBudget | undefined,
       meter: ResponsePublication | undefined,
       started = false;
+    let preferenceDenied = false;
+    let contextDenied = false;
     let meteredOutcome: import('../../storage/response-rate-store').ResponseRateOutcome = 'unknown';
     const denial: { reason?: Extract<ResponsePublicationAdmission, { allowed: false }>['reason'] } =
       {};
@@ -118,14 +140,22 @@ export function createPublicationService(options: {
     const save = (pub: TracePublication): boolean => {
       if (withoutJob) return true;
       if (jobId === undefined) return false;
+      // Ревизия запрещает отправку. Итог допуска относится к тому же поколению.
+      let traceScope: ConnectionScope;
       try {
-        if (traces.publication(scope, jobId, pub)) return true;
+        traceScope = lifecycle.current(scope.chatId);
+        if (traceScope.generation !== scope.generation) return false;
+      } catch {
+        return false;
+      }
+      try {
+        if (traces.publication(traceScope, jobId, pub)) return true;
       } catch {
         /* Попытка минимальной формы ниже. */
       }
       traces.report('full_write_failed');
       try {
-        if (traces.publication(scope, jobId, pub, true)) {
+        if (traces.publication(traceScope, jobId, pub, true)) {
           traces.report('minimal_saved');
           return true;
         }
@@ -156,6 +186,31 @@ export function createPublicationService(options: {
       if (route.kind === 'initiative' && !budget?.confirmInitiative) return suppressed('guard');
       if (flood && !budget) return suppressed('guard');
       scope = lifecycle.transaction(work.scope, () => lifecycle.current(work.scope.chatId, true));
+      const addressCurrent = () => {
+        if (!addressPreference) return true;
+        try {
+          const current = lifecycle.current(scope.chatId);
+          return (
+            current.generation === scope.generation &&
+            options.addressCurrent?.(current, addressPreference) === true
+          );
+        } catch {
+          return false;
+        }
+      };
+      const contextCurrent = () => {
+        try {
+          return (
+            (participantCards?.current() ?? true) &&
+            (toolResultsCurrent?.() ?? true) &&
+            (passportCurrent?.() ?? true)
+          );
+        } catch {
+          return false;
+        }
+      };
+      const guardReason = () =>
+        addressCurrent() ? ('guard' as const) : ('address_preference_changed' as const);
       function isCurrent(): boolean {
         if (closed || work.signal.aborted || !work.isCurrent()) return false;
         try {
@@ -168,19 +223,21 @@ export function createPublicationService(options: {
           return false;
         }
       }
+      const readyToSend = () => isCurrent() && addressCurrent() && contextCurrent();
       const settings = await options.storage.chats.get(scope);
-      if (!settings || !isCurrent()) return suppressed('guard');
+      if (!settings || !readyToSend()) return suppressed(guardReason());
       let decision = publicationDecision(route, settings, outcome);
       if (decision.kind === 'silence') return suppressed('none');
       const guard: PublicationGuard = {
         signal: work.signal,
         isCurrent,
         async allow() {
-          if (!isCurrent()) return false;
+          if (!isCurrent() || !contextCurrent()) return false;
           const latest = await options.storage.chats.get(scope);
           return (
             !!latest &&
             isCurrent() &&
+            contextCurrent() &&
             publicationDecision(
               route,
               latest,
@@ -190,7 +247,7 @@ export function createPublicationService(options: {
         },
       };
       const source = await options.storage.messages.get(scope, work.messageId);
-      if (!source || !isCurrent()) return suppressed('guard');
+      if (!source || !readyToSend()) return suppressed(guardReason());
       if (
         decision.kind === 'answer' &&
         route.isGroupChat &&
@@ -201,14 +258,14 @@ export function createPublicationService(options: {
         work.signal,
         options.port.canReply(scope, work.signal, source.messageId, guard),
       );
-      if (!isCurrent()) return suppressed('guard');
+      if (!readyToSend()) return suppressed(guardReason());
       const current = await options.storage.chats.get(scope);
       if (
         !current ||
         publicationDecision(route, current, outcome).kind !== decision.kind ||
-        !isCurrent()
+        !readyToSend()
       )
-        return suppressed('guard');
+        return suppressed(guardReason());
       // Проверка после await защищает и от второго экземпляра сервиса в одном процессе.
       if (!withoutJob && traces.get(scope, jobId)?.payload.publication.status !== 'pending_checks')
         return 'silence';
@@ -243,7 +300,7 @@ export function createPublicationService(options: {
             undefined;
         if (!permit) return 'silence';
       }
-      if (!(await guard.allow())) return suppressed('guard');
+      if (!(await guard.allow()) || !readyToSend()) return suppressed(guardReason());
       const notice =
         decision.kind === 'notice' && isRateLimitedNotice(decision.template)
           ? { kind: decision.template, interval }
@@ -259,7 +316,16 @@ export function createPublicationService(options: {
         };
       }
       const beforeSend = () => {
-        if (!budget || !meter || !isCurrent()) return false;
+        if (!isCurrent()) return false;
+        if (!contextCurrent()) {
+          contextDenied = true;
+          return false;
+        }
+        if (!addressCurrent()) {
+          preferenceDenied = true;
+          return false;
+        }
+        if (!budget || !meter) return true;
         if (started) {
           if (route.kind === 'initiative') budget.repeatInitiative?.(meter);
           return !flood || budget.currentFlood(meter);
@@ -295,21 +361,48 @@ export function createPublicationService(options: {
             (part.replyToMessageId !== replyToMessageId || (!samePart && parts.size > 0))
           )
             throw new Error('Publication: invalid reply');
-          if (permit) {
-            if (
-              part.replyToMessageId !== replyToMessageId ||
-              replyToMessageId === undefined ||
-              (!samePart && parts.size > 0)
-            )
-              throw new Error('Publication: invalid notice');
-            notices.confirm(scope, permit, receipt, part.text, isCurrent);
-          } else if (route.kind === 'initiative') {
-            if (!meter || !budget?.confirmInitiative)
-              throw new Error('Publication: missing initiative admission');
-            budget.confirmInitiative(meter, receipt, part.text, part.replyToMessageId, isCurrent);
-          } else {
-            notices.recordAnswer(scope, receipt, part.text, part.replyToMessageId, isCurrent);
-          }
+          lifecycle.transaction(scope, (db) => {
+            if (permit) {
+              if (
+                part.replyToMessageId !== replyToMessageId ||
+                replyToMessageId === undefined ||
+                (!samePart && parts.size > 0)
+              )
+                throw new Error('Publication: invalid notice');
+              notices.confirm(scope, permit, receipt, part.text, isCurrent);
+            } else if (route.kind === 'initiative') {
+              if (!meter || !budget?.confirmInitiative)
+                throw new Error('Publication: missing initiative admission');
+              budget.confirmInitiative(meter, receipt, part.text, part.replyToMessageId, isCurrent);
+            } else {
+              notices.recordAnswer(scope, receipt, part.text, part.replyToMessageId, isCurrent);
+            }
+            if (!permit) {
+              const ids =
+                (!withoutJob && traces.get(scope, jobId)?.payload.context?.messageIds) || [];
+              personalDataStore(options.storage).recordAnswerSources(
+                db,
+                scope,
+                messageId,
+                [
+                  ...new Set([
+                    work.messageId,
+                    ...ids,
+                    ...(decision.kind === 'answer' ? (details.toolSourceIds ?? []) : []),
+                    ...(decision.kind === 'answer' ? (participantCards?.sourceIds ?? []) : []),
+                  ]),
+                ],
+                decision.kind === 'answer'
+                  ? [
+                      ...new Set([
+                        ...(details.subjectIds ?? []),
+                        ...(addressPreference ? [addressPreference.userId] : []),
+                      ]),
+                    ]
+                  : undefined,
+              );
+            }
+          });
           parts.add(messageId);
         } catch {
           journalFailed = true;
@@ -326,7 +419,13 @@ export function createPublicationService(options: {
             text,
             ...replyFields,
             ...guard,
-            ...(meter ? { beforeSend } : {}),
+            ...(meter ||
+            addressPreference ||
+            participantCards ||
+            toolResultsCurrent ||
+            passportCurrent
+              ? { beforeSend }
+              : {}),
             confirmPart,
           }),
         );
@@ -346,6 +445,12 @@ export function createPublicationService(options: {
       if (parts.size > 0) meteredOutcome = 'delivered';
       else if (!journalFailed && result?.kind === 'failed') meteredOutcome = 'failed';
       if (denial.reason && !started) return suppressed(denial.reason);
+      if (parts.size === 0 && (contextDenied || !contextCurrent())) return suppressed('guard');
+      if (
+        parts.size === 0 &&
+        (preferenceDenied || (result?.kind === 'failed' && !addressCurrent()))
+      )
+        return suppressed('address_preference_changed');
       if (journalFailed) {
         report('journal_failed');
         if (parts.size > 0) report('partial_delivery');
@@ -408,7 +513,19 @@ export function createPublicationService(options: {
         completion.preparationFailure
           ? { kind: completion.preparationFailure }
           : (completion.result ?? { kind: completion.outcome }),
-        { authorLabels: completion.authorLabels ?? [] },
+        {
+          toolSourceIds: completion.toolSourceIds ?? [],
+          subjectIds: completion.subjectIds ?? [],
+          ...(completion.participantCards ? { participantCards: completion.participantCards } : {}),
+          ...(completion.passportCurrent ? { passportCurrent: completion.passportCurrent } : {}),
+          ...(completion.toolResultsCurrent
+            ? { toolResultsCurrent: completion.toolResultsCurrent }
+            : {}),
+          authorLabels: completion.authorLabels ?? [],
+          ...(completion.addressPreference
+            ? { addressPreference: completion.addressPreference }
+            : {}),
+        },
       );
     },
     async flood(

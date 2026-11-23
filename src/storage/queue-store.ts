@@ -1,3 +1,6 @@
+import { acceptQuestionnaireInput, answerableAttempt } from './questionnaire-input';
+import { rememberProfileUpdate } from './profile-update-intake';
+import { noteParticipantMessage } from './participant-registry';
 import {
   acceptsHistoryInput,
   applyHistoryRetention,
@@ -25,6 +28,7 @@ import { readChatControl } from './chat-control-store';
 import { admitRequestQuota, pruneRequestQuota, releaseRequestQuota } from './request-quota-store';
 import {
   canReserveTokens,
+  type FinalBudget,
   deleteUnsentTokenReservation,
   insertTokenReservation,
   pruneTokenBudget,
@@ -227,18 +231,21 @@ export function createQueueBackend(
       guard?: import('./queue-types').RoutedAdmissionGuard,
       responseRate?: ResponseRateConfig,
       autonomous = false,
+      serviceInput?: true,
     ): RoutedAdmission {
       return transaction(token, () =>
         lifecycle.transaction(scope, (db) => {
           const gate = guard?.();
           if (gate && !gate.journal) return { admission: { status: 'paused' }, decision: null };
           let chosen: import('./queue-types').RoutedQueueDecision | null = null;
+          let receivedAt = 0;
           let floodNotice: FloodNotice | undefined;
           const admission = this.admit(
             token,
             scope,
             message,
             (snapshot) => {
+              receivedAt = snapshot.receivedAt;
               const settings = createChatStore(connection).get(scope.chatId);
               requireInput(settings);
               if (
@@ -292,8 +299,10 @@ export function createQueueBackend(
                     routed.reason === 'not_addressed' &&
                     ['help', 'free_mention', 'unanswered'].includes(routed.initiative),
                 );
-              if (routed.privateCommand === true) {
-                requireInput(routed.reason === 'service' && routed.route === null);
+              if (serviceInput || routed.privateCommand === true) {
+                requireInput(
+                  routed.route === null && (serviceInput || routed.reason === 'service'),
+                );
                 db.prepare(
                   "UPDATE messages SET purpose='service_notice' WHERE chat_id=? AND id=?",
                 ).run(scope.chatId, snapshot.message.id);
@@ -303,6 +312,21 @@ export function createQueueBackend(
                   ? { route: null, reason: 'silent' }
                   : routed;
               const route = result.route;
+              if (
+                routed.profileUpdate &&
+                !(
+                  route &&
+                  !routed.skipQuestionnaire &&
+                  answerableAttempt(
+                    db,
+                    scope,
+                    message.userId,
+                    snapshot.message.id,
+                    snapshot.receivedAt,
+                  )
+                )
+              )
+                rememberProfileUpdate(db, scope, snapshot.message.id, snapshot.receivedAt);
               if (responseRate && route?.isGroupChat) {
                 const now = snapshot.receivedAt;
                 const messageId = snapshot.message.id;
@@ -331,6 +355,7 @@ export function createQueueBackend(
               chosen = Object.freeze({
                 reason: result.reason,
                 route: route === null ? null : Object.freeze({ ...route }),
+                ...(result.skipQuestionnaire ? { skipQuestionnaire: true as const } : {}),
                 ...(gate?.ordinary !== false && result.initiative
                   ? { initiative: result.initiative }
                   : {}),
@@ -358,6 +383,8 @@ export function createQueueBackend(
           const routed = chosen as import('./queue-types').RoutedQueueDecision | null;
           const route = routed?.route;
           if (admission.status === 'queued' && route) {
+            if (!routed?.skipQuestionnaire)
+              acceptQuestionnaireInput(db, scope, message.userId, admission.messageId, receivedAt);
             const revision = readChatControl(db, scope.chatId).responseRevision;
             db.prepare(
               'UPDATE queue_jobs SET route_kind=?,route_mode=?,route_group=?,disclosure_version=?,control_revision=? WHERE id=?',
@@ -412,6 +439,12 @@ export function createQueueBackend(
           const appended = messages.append(snapshotMessage);
           if (appended.status === 'duplicate')
             return { status: 'duplicate', messageId: appended.id };
+          if (
+            snapshotMessage.isGroupChat &&
+            snapshotMessage.role === 'user' &&
+            snapshotMessage.senderBot === false
+          )
+            noteParticipantMessage(db, scope, snapshotMessage.userId, snapshotMessage.timestamp);
           const now = Date.now();
           const expires = now + config.maxQueueAgeMs;
           timestamp(expires);
@@ -765,6 +798,7 @@ export function createQueueBackend(
       contextIds: readonly number[] = [],
       responseRate?: ResponseRateConfig,
       reservation?: TokenReservation,
+      finalBudget?: FinalBudget,
     ) {
       return transaction(token, (db) => {
         if (!running(db, token, work) || !allow()) return false;
@@ -777,11 +811,18 @@ export function createQueueBackend(
           activeMentionFlood(db, work.scope, at) !== null
         )
           return false;
-        const ids = sources.get(work) ?? [...new Set([work.messageId, ...contextIds])];
+        const ids = [...new Set([...(sources.get(work) ?? [work.messageId]), ...contextIds])];
         if (!historySourcesVisible(db, work.scope.chatId, ids, at)) return 'context_stale' as const;
         if (
           reservation &&
-          !canReserveTokens(db, work.scope, work.route?.isGroupChat ?? false, reservation, at)
+          !canReserveTokens(
+            db,
+            work.scope,
+            work.route?.isGroupChat ?? false,
+            reservation,
+            at,
+            finalBudget === undefined ? undefined : { jobId: work.id, budget: finalBudget },
+          )
         )
           return reservation.purpose === 'initiative'
             ? ('initiative_budget_exhausted' as const)
@@ -791,7 +832,16 @@ export function createQueueBackend(
             ? admitRequestQuota(db, work, limits, at)
             : true;
         if (quota === false || quota === 'quota_exhausted') return quota;
-        if (reservation) insertTokenReservation(db, work.scope, reservation, at);
+        if (reservation) {
+          if (finalBudget === 'consume')
+            db.prepare('UPDATE queue_jobs SET final_budget=0 WHERE id=?').run(work.id);
+          else if (finalBudget)
+            db.prepare('UPDATE queue_jobs SET final_budget=max(final_budget,?) WHERE id=?').run(
+              finalBudget.protect,
+              work.id,
+            );
+          insertTokenReservation(db, work.scope, reservation, at);
+        }
         sources.set(work, ids);
 
         if (!reservation) return true;

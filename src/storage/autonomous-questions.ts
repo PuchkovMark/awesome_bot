@@ -76,7 +76,7 @@ function questionReceivedAnswer(db: Database, chatId: ChatId, messageId: number,
   const bounds = historyBounds(db, chatId, now);
   return !!db
     .prepare(
-      `SELECT 1 FROM messages
+      `SELECT 1 FROM personal_visible_messages
     WHERE chat_id=? AND id>? AND timestamp>? AND role='user' AND sender_bot IS NOT 1 LIMIT 1`,
     )
     .get(chatId, Math.max(messageId, bounds.clearedThrough), bounds.expiredThrough);
@@ -91,14 +91,14 @@ export function questionEvidence(
   if (!historySourcesVisible(db, chatId, [messageId], now)) return { denial: 'initiative_source' };
   if (questionReceivedAnswer(db, chatId, messageId, now)) return { denial: 'initiative_answered' };
   const origin = db
-    .prepare('SELECT text,timestamp FROM messages WHERE chat_id=? AND id=?')
+    .prepare('SELECT text,timestamp FROM personal_visible_messages WHERE chat_id=? AND id=?')
     .get(chatId, messageId) as { text: string; timestamp: number } | undefined;
   const question = origin && meetingQuestion(origin.text);
   if (!origin || !question) return { denial: 'initiative_source' };
   const bounds = historyBounds(db, chatId, now);
   const candidates = db
     .prepare(
-      `SELECT id,text FROM messages
+      `SELECT id,text FROM personal_visible_messages
     WHERE chat_id=? AND id>? AND id<? AND timestamp>? AND timestamp<=? AND role='user' AND sender_bot=0
     AND purpose='conversation' AND length(text)<=1024 ORDER BY id DESC LIMIT 257`,
     )
@@ -141,7 +141,7 @@ export function initiativeDenial(
     if (questionReceivedAnswer(db, chatId, messageId, now)) return 'initiative_answered';
   }
   const origin = db
-    .prepare('SELECT timestamp FROM messages WHERE chat_id=? AND id=?')
+    .prepare('SELECT timestamp FROM personal_visible_messages WHERE chat_id=? AND id=?')
     .get(chatId, messageId) as { timestamp: number } | undefined;
   if (!origin) return 'initiative_source';
   const bounds = historyBounds(db, chatId, now);
@@ -149,7 +149,7 @@ export function initiativeDenial(
   if (
     db
       .prepare(
-        `SELECT 1 FROM messages WHERE chat_id=? AND sender_bot=1
+        `SELECT 1 FROM personal_visible_messages WHERE chat_id=? AND sender_bot=1
       AND timestamp>? AND timestamp<=? AND id>? LIMIT 1`,
       )
       .get(chatId, since, now, bounds.clearedThrough)
@@ -157,7 +157,7 @@ export function initiativeDenial(
     return 'initiative_other_bot';
   const recent = db
     .prepare(
-      `SELECT substr(text,1,4096) AS text,length(text)>4096 AS clipped FROM messages
+      `SELECT substr(text,1,4096) AS text,length(text)>4096 AS clipped FROM personal_visible_messages
     WHERE chat_id=? AND timestamp>? AND timestamp<=? AND id>? AND purpose='conversation'
     ORDER BY timestamp DESC,id DESC LIMIT 33`,
     )

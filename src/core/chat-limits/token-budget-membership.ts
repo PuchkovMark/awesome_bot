@@ -1,4 +1,4 @@
-import type { ChannelAdapter, ConnectionScope } from '../../contracts/index';
+import type { ChannelAdapter, ConnectionScope, HumanMembership } from '../../contracts/index';
 import { tokenBudgetStore } from '../../storage/token-budget-store';
 import type { Storage } from '../../storage/index';
 
@@ -10,8 +10,13 @@ export function createTokenBudgetMembership(
   return async (scope: ConnectionScope, signal: AbortSignal, isCurrent: () => boolean) => {
     if (signal.aborted || !isCurrent()) return false;
     const observation = store.beginObservation(scope);
-    const result = await read(scope, signal);
-    if (!result.complete || signal.aborted || !isCurrent()) return false;
-    return store.confirmPeople(scope, observation, result.people);
+    let result: HumanMembership;
+    try {
+      result = await read(scope, signal);
+    } catch {
+      result = { complete: false };
+    }
+    if (signal.aborted || !isCurrent()) return false;
+    return store.finishObservation(scope, observation, result);
   };
 }

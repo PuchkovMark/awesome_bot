@@ -1,3 +1,4 @@
+import { passportSections } from '../contracts/chat-passport';
 import { requireInput } from './validation';
 import { StorageError } from './errors';
 import type { TracePayload } from './trace-types';
@@ -102,6 +103,7 @@ export function validateTrace(value: unknown): asserts value is TracePayload {
     'token_budget_exhausted',
     'initiative_budget_exhausted',
     'tools_not_supported',
+    'step_limit',
     'cancelled',
     'deadline_exceeded',
     'attempt_limit',
@@ -135,6 +137,7 @@ export function validateTrace(value: unknown): asserts value is TracePayload {
     'response_rate',
     'trace_write_failed',
     'author_label_disclosure',
+    'address_preference_changed',
     'publication_failed',
     'journal_failed',
     'partial_delivery',
@@ -168,17 +171,38 @@ export function validateTrace(value: unknown): asserts value is TracePayload {
     num(v.version);
   }
   if (p.context !== null) {
-    const c = plain(p.context, [
-      'version',
-      'cutoffId',
-      'messageIds',
-      'layerBytes',
-      'estimatedTokens',
-      'scanned',
-      'historyTruncated',
-      'reply',
-      'absentLayers',
-    ]);
+    const c = plain(
+      p.context,
+      [
+        'version',
+        'cutoffId',
+        'messageIds',
+        'layerBytes',
+        'estimatedTokens',
+        'scanned',
+        'historyTruncated',
+        'reply',
+        'absentLayers',
+      ],
+      ['passport', 'summaries'],
+    );
+    if (Object.hasOwn(c, 'summaries'))
+      list(c.summaries, 4, (value) => {
+        const s = plain(value, ['level', 'id', 'bytes']);
+        one(s.level, ['day', 'rolling']);
+        num(s.id);
+        num(s.bytes);
+      });
+    if (Object.hasOwn(c, 'passport')) {
+      const passport = plain(c.passport, ['sections', 'estimatedTokens']);
+      list(passport.sections, passportSections.length, (section) => one(section, passportSections));
+      requireInput(
+        typeof passport.estimatedTokens === 'number' &&
+          Number.isInteger(passport.estimatedTokens) &&
+          passport.estimatedTokens > 0 &&
+          passport.estimatedTokens <= 1024,
+      );
+    }
     const v = plain(c.version, ['area', 'kind', 'key', 'version']);
     one(v.area, ['global']);
     one(v.kind, ['system_prompt']);

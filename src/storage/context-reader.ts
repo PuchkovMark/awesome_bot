@@ -1,3 +1,5 @@
+import type { Database } from 'better-sqlite3';
+import type { ConnectionScope, UserId } from '../contracts/index';
 import { historyBounds } from './history-retention-store';
 import type { Connection } from './connection';
 import type { LifecycleBackend } from './lifecycle-store';
@@ -8,7 +10,7 @@ function positive(n: number, max = Number.MAX_SAFE_INTEGER) {
   requireInput(Number.isSafeInteger(n) && n > 0 && n <= max);
 }
 const columns = `m.id,m.chat_id AS chatId,m.platform_message_id AS messageId,m.user_id AS userId,m.role,
- m.reply_to_message_id AS replyToMessageId,m.timestamp,m.purpose,m.attachment_count AS attachmentCount`;
+ m.reply_to_message_id AS replyToMessageId,m.timestamp,m.purpose,m.attachment_count AS attachmentCount,m.sender_bot AS senderBot`;
 const projection = `${columns},
  coalesce(CAST(substr(CAST(m.text AS BLOB),1,?) AS TEXT),'') AS text,
  coalesce(CAST(substr(CAST(m.author_name AS BLOB),1,?) AS TEXT),'') AS authorName,
@@ -16,8 +18,9 @@ const projection = `${columns},
 const authorJoin = `LEFT JOIN chat_author_labels a
  ON a.chat_id=m.chat_id AND a.generation=? AND a.user_id=m.user_id AND m.role='user'`;
 const visible = `m.chat_id=? AND m.purpose='conversation' AND m.id>? AND m.timestamp>?`;
-type MessageRow = Omit<ContextMessage, 'replyToMessageId' | 'authorNumber'> & {
+type MessageRow = Omit<ContextMessage, 'replyToMessageId' | 'authorNumber' | 'senderBot'> & {
   replyToMessageId: string | null;
+  senderBot: number | null;
   authorNumber: number | null;
 };
 type Row = MessageRow & {
@@ -25,9 +28,10 @@ type Row = MessageRow & {
   nameBytes: number;
 };
 function contextMessage(row: MessageRow): ContextMessage {
-  const { replyToMessageId, authorNumber, ...message } = row;
+  const { replyToMessageId, authorNumber, senderBot, ...message } = row;
   return {
     ...message,
+    ...(senderBot == null ? {} : { senderBot: senderBot !== 0 }),
     ...(replyToMessageId !== null ? { replyToMessageId } : {}),
     ...(authorNumber !== null ? { authorNumber } : {}),
   };
@@ -44,7 +48,100 @@ function result(row: Row, limit: number): ContextRecord {
       text.length > limit || name.length > limit || textBytes > limit * 4 || nameBytes > limit * 4,
   };
 }
+export interface HistorySelection {
+  readonly kind: 'search' | 'period';
+  readonly cutoffId: number;
+  readonly from?: number;
+  readonly to?: number;
+  readonly query?: string;
+  readonly author?: UserId;
+  readonly authorNumber?: number;
+  readonly limit: number;
+}
+
+export interface HistorySnapshot {
+  readonly found: number;
+  readonly rows: readonly ContextRecord[];
+  countsCurrent(): boolean;
+}
+
+function selectHistory(
+  lifecycle: LifecycleBackend,
+  scope: ConnectionScope,
+  selection: HistorySelection,
+): HistorySnapshot {
+  const { kind, cutoffId, limit, from, to, query, author, authorNumber } = selection;
+  positive(cutoffId);
+  positive(limit, 40);
+  requireInput(kind === 'search' || kind === 'period');
+  if (kind === 'period') requireInput(from !== undefined && to !== undefined);
+  if (from !== undefined) requireInput(Number.isSafeInteger(from));
+  if (to !== undefined) requireInput(Number.isSafeInteger(to));
+  if (from !== undefined && to !== undefined) requireInput(from < to);
+  const filters = [visible, 'm.id<=?'];
+  const values: (string | number)[] = [cutoffId];
+  if (from !== undefined) {
+    filters.push('m.timestamp>=?');
+    values.push(from);
+  }
+  if (to !== undefined) {
+    filters.push('m.timestamp<?');
+    values.push(to);
+  }
+  if (author !== undefined) {
+    filters.push('m.user_id=?');
+    values.push(author);
+  }
+  if (authorNumber !== undefined) {
+    positive(authorNumber);
+    filters.push('a.author_number=?');
+    values.push(authorNumber);
+  }
+  if (query !== undefined) {
+    requireInput(query.trim().length > 0 && query.length <= 512 && !query.includes('\0'));
+    filters.push('m.id IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?)');
+    values.push('"' + query.replaceAll('"', '""') + '"');
+  }
+  if (kind === 'search') {
+    // SQLite lower() распознаёт только ASCII. Варианты русской реакции перечислены явно.
+    filters.push("trim(m.text, ?) NOT IN ('', '+', '👍', 'ок', 'ОК', 'Ок', 'оК')");
+    values.push(
+      ' \t\r\n\v\f\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff',
+    );
+  }
+  const source = `FROM personal_visible_messages m ${authorJoin} WHERE ${filters.join(' AND ')}`;
+  function parameters(db: Database) {
+    const bounds = historyBounds(db, scope.chatId);
+    return [
+      scope.generation,
+      scope.chatId,
+      bounds.clearedThrough,
+      bounds.expiredThrough,
+      ...values,
+    ];
+  }
+  return lifecycle.transaction(scope, (db) => {
+    const count = db.prepare('SELECT count(*) ' + source).pluck();
+    const args = parameters(db);
+    const found = count.get(...args) as number;
+    const textLimit = 2048;
+    const rows = db
+      .prepare(
+        `SELECT ${projection},a.author_number AS authorNumber ${source}
+      ORDER BY m.timestamp DESC,m.id DESC LIMIT ?`,
+      )
+      .all(textLimit * 4, textLimit * 4, ...args, limit) as Row[];
+    return {
+      found,
+      rows: rows.map((row) => result(row, textLimit)),
+      countsCurrent: () =>
+        lifecycle.transaction(scope, (db) => count.get(...parameters(db)) === found),
+    };
+  });
+}
+
 export interface ContextSearch {
+  history(scope: ConnectionScope, selection: HistorySelection): HistorySnapshot;
   search(
     scope: import('../contracts/index').ConnectionScope,
     query: string,
@@ -58,6 +155,9 @@ export function createContextReader(
 ): ContextMessageReader & ContextSearch {
   const reader = createMessageStore(connection, true);
   return Object.freeze({
+    history(scope, selection) {
+      return selectHistory(lifecycle, scope, selection);
+    },
     async get(scope, id) {
       return lifecycle.transaction(scope, (db) => {
         positive(id);
@@ -65,7 +165,7 @@ export function createContextReader(
         const row = db
           .prepare(
             `SELECT ${columns},m.text,m.author_name AS authorName,a.author_number AS authorNumber
-            FROM messages m ${authorJoin} WHERE ${visible} AND m.id=?`,
+            FROM personal_visible_messages m ${authorJoin} WHERE ${visible} AND m.id=?`,
           )
           .get(scope.generation, scope.chatId, bounds.clearedThrough, bounds.expiredThrough, id) as
           MessageRow | undefined;
@@ -84,7 +184,7 @@ export function createContextReader(
         const bounds = historyBounds(db, scope.chatId);
         const rows = db
           .prepare(
-            `SELECT ${projection},a.author_number AS authorNumber FROM messages m ${authorJoin}
+            `SELECT ${projection},a.author_number AS authorNumber FROM personal_visible_messages m ${authorJoin}
             WHERE ${visible} AND m.id<=? AND m.id<? ORDER BY m.id DESC LIMIT ?`,
           )
           .all(
@@ -109,7 +209,7 @@ export function createContextReader(
         const bounds = historyBounds(db, scope.chatId);
         const row = db
           .prepare(
-            `SELECT ${projection},a.author_number AS authorNumber FROM messages m ${authorJoin}
+            `SELECT ${projection},a.author_number AS authorNumber FROM personal_visible_messages m ${authorJoin}
             WHERE ${visible} AND m.platform_message_id=? AND m.id<=?`,
           )
           .get(
@@ -134,8 +234,8 @@ export function createContextReader(
         const phrase = '"' + query.replaceAll('"', '""') + '"';
         const rows = db
           .prepare(
-            `SELECT ${projection},NULL AS authorNumber FROM messages m WHERE m.id IN (
-     SELECT messages_fts.rowid FROM messages_fts JOIN messages m ON m.id=messages_fts.rowid
+            `SELECT ${projection},NULL AS authorNumber FROM personal_visible_messages m WHERE m.id IN (
+     SELECT messages_fts.rowid FROM messages_fts JOIN personal_visible_messages m ON m.id=messages_fts.rowid
      WHERE messages_fts MATCH ? AND m.chat_id=? AND m.purpose='conversation' AND m.id>? AND m.timestamp>?
      ORDER BY messages_fts.rowid DESC LIMIT ?
    ) ORDER BY m.id DESC`,

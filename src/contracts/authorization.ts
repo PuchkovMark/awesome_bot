@@ -6,6 +6,7 @@ export type GrantBasis = 'creator' | 'inviter' | 'explicit';
 export type AuthorizationAction =
   | 'chat.configure'
   | 'chat.history.clear'
+  | 'chat.passport.read'
   | 'chat.passport.edit'
   | 'chat.persona.select'
   | 'chat.onboarding.configure'
@@ -24,6 +25,7 @@ export type AuthorizationAction =
   | 'consent.edit'
   | 'profile.admin.add'
   | 'profile.self.manage'
+  | 'profile.self.address'
   | 'persona.self.select'
   | 'onboarding.self.manage';
 export type AuthorizationDenial =

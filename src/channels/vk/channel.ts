@@ -1,3 +1,7 @@
+import type { QuestionnaireInvitationPort } from '../../core/greetings/invitation';
+import type { VkIncoming } from './normalize';
+import type { PublishedPart } from '../../contracts/index';
+import { randomInt } from 'node:crypto';
 import type {
   CapabilityState,
   ChannelAdapter,
@@ -49,6 +53,7 @@ export function createVkChannel(
     ...(dependencies.wait ? { wait: dependencies.wait } : {}),
   });
   let typingFailed = 0;
+  let invitationMentionsOmitted = 0;
 
   function guardFor(chatId: ChatId): PublicationGuard {
     const scope = options.lifecycle.admissionScope(chatId);
@@ -64,6 +69,26 @@ export function createVkChannel(
         return isCurrent() && settings?.enabled === true && settings.responseMode !== 'silent';
       },
     };
+  }
+
+  async function confirmServicePart(
+    scope: ConnectionScope,
+    text: string,
+    guard: PublicationGuard & { readonly beforeSend?: () => boolean },
+  ) {
+    let receipt: PublishedPart | undefined;
+    const outcome = await outbound.send({
+      ...guard,
+      chatId: scope.chatId,
+      kind: 'service',
+      text,
+      sendId: randomInt(1, 0x80000000),
+      confirmPart(part) {
+        receipt = part;
+      },
+    });
+    if (outcome.kind === 'delivered' && receipt) return { kind: 'delivered', receipt } as const;
+    return { kind: outcome.kind === 'failed' ? 'failed' : 'unknown' } as const;
   }
 
   const publicationPort: PublicationPort = Object.freeze({
@@ -88,6 +113,16 @@ export function createVkChannel(
 
   const adapter = {
     platform: 'vk',
+    mentionedPeople(text) {
+      return [
+        ...new Set(
+          Array.from(
+            text.matchAll(/\[id([1-9]\d*)\|[^\]\r\n]+\]/gu),
+            (match) => `vk:${match[1]}` as UserId,
+          ),
+        ),
+      ];
+    },
     start: inbound.start,
     async capabilities(context) {
       const peer = vkLocalId(context.chatId);
@@ -190,6 +225,47 @@ export function createVkChannel(
     administrationDelivery: options.owner
       ? createVkAdministrationDelivery(api, outbound, options.owner, options.groupId)
       : undefined,
+    async sendPersonalFile(sender: UserId, data: Buffer, guard: PublicationGuard) {
+      const peer = vkLocalId(sender);
+      if (
+        !api.uploadPrivateDocument ||
+        !peer ||
+        peer <= 0 ||
+        isVkGroupChat(peer) ||
+        !guard.isCurrent() ||
+        !(await guard.allow?.())
+      )
+        return false;
+      if (
+        !(await createVkAdministrationDelivery(api, outbound, sender, options.groupId).canWrite(
+          guard,
+        )) ||
+        !(await guard.allow()) ||
+        !guard.isCurrent()
+      )
+        return false;
+      const attachment = await api.uploadPrivateDocument(peer, data);
+      if (
+        !/^doc-?\d+_\d+(?:_[a-zA-Z0-9]+)?$/u.test(attachment) ||
+        !guard.isCurrent() ||
+        !(await guard.allow?.())
+      )
+        return false;
+      const result = await api.request(
+        'messages.send',
+        { peer_id: peer, attachment, random_id: randomInt(1, 0x80000000) },
+        guard,
+      );
+      return typeof result === 'number' && result > 0;
+    },
+    async verifiedProfileReply(message: VkIncoming, guard: PublicationGuard) {
+      if (message.peerId !== message.authorId || isVkGroupChat(message.peerId) || !message.reply)
+        return null;
+      const reply = (await api.enrich(message, guard)).verifiedReply;
+      return reply?.authorId === -options.groupId && reply.cmid === message.reply.cmid
+        ? String(reply.cmid)
+        : null;
+    },
     reminderDelivery(recipient: UserId) {
       return createVkAdministrationDelivery(api, outbound, recipient, options.groupId);
     },
@@ -209,6 +285,74 @@ export function createVkChannel(
           confirmPart() {},
         });
       }
+    },
+    async deliverGroupControl(
+      scope: ConnectionScope,
+      text: string,
+      guard: PublicationGuard,
+    ): Promise<PublishedPart | null> {
+      const peer = vkLocalId(scope.chatId);
+      if (peer === undefined || !isVkGroupChat(peer) || !guard.isCurrent()) return null;
+      const outcome = await confirmServicePart(scope, text, guard);
+      return outcome.kind === 'delivered' ? outcome.receipt : null;
+    },
+    async deliverQuestionnairePart(scope: ConnectionScope, text: string, guard: PublicationGuard) {
+      const id = vkLocalId(scope.chatId);
+      if (
+        id === undefined ||
+        id <= 0 ||
+        Buffer.byteLength(text) > vkMessageLength.value ||
+        !guard.isCurrent()
+      )
+        return { kind: 'failed' } as const;
+      if (
+        !isVkGroupChat(id) &&
+        !(await createVkAdministrationDelivery(
+          api,
+          outbound,
+          scope.chatId,
+          options.groupId,
+        ).canWrite(guard))
+      )
+        return { kind: 'failed' } as const;
+      return confirmServicePart(scope, text, { ...guard, beforeSend: guard.isCurrent });
+    },
+    async sendGreeting(
+      scope: ConnectionScope,
+      text: string,
+      sendId: number,
+      guard: import('../../core/chat-onboarding/ports').IntroductionGuard & {
+        beforeSend(): boolean;
+      },
+      confirmPart: (part: PublishedPart) => void,
+    ) {
+      const id = vkLocalId(scope.chatId);
+      if (id === undefined || !isVkGroupChat(id)) return 'failed' as const;
+      const result = await outbound.send({
+        ...guard,
+        chatId: scope.chatId,
+        kind: 'service',
+        text,
+        sendId,
+        confirmPart,
+      });
+      return result.kind;
+    },
+    async sendQuestionnaireInvitation(
+      ...args: Parameters<QuestionnaireInvitationPort['sendInvitation']>
+    ) {
+      const [scope, sendId, guard, prepare, confirmPart] = args;
+      const result = await outbound.sendInvitation({
+        ...guard,
+        chatId: scope.chatId,
+        sendId,
+        prepare,
+        confirmPart,
+        onOmitted(count) {
+          invitationMentionsOmitted += count;
+        },
+      });
+      return result.kind;
     },
     introduction: options.owner
       ? createVkIntroduction({ owner: options.owner, groupId: options.groupId, api, outbound })
@@ -231,6 +375,6 @@ export function createVkChannel(
       }
     },
     publicationPort,
-    stats: () => Object.freeze({ ...inbound.stats(), typingFailed }),
+    stats: () => Object.freeze({ ...inbound.stats(), typingFailed, invitationMentionsOmitted }),
   });
 }

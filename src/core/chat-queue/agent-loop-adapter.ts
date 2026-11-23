@@ -1,6 +1,21 @@
-import { messageInputCost, systemInputCost } from '../context/budget';
-import type { LlmClient, LlmRequest } from '../../llm/types';
-import type { AgentLoopInput, AgentLoopOptions } from '../agent-loop/types';
+import {
+  composeSummaries,
+  type ContextSummary,
+  type PreparedSummaries,
+} from '../context/summaries';
+import type { PassportRevision, PassportSection } from '../../contracts/chat-passport';
+import { composePassport, type PreparedPassport } from '../context/passport';
+import {
+  createParticipantCardComposer,
+  type PreparedCards,
+  type UsedCard,
+  type CardReference,
+} from '../context/participant-cards';
+import { estimateRequestInput } from '../context/budget';
+import type { AddressPreferenceReference, ConnectionScope, UserId } from '../../contracts/index';
+import { createJobModelAttempts } from './delegated-attempts';
+import type { LlmClient, LlmMessage } from '../../llm/types';
+import type { AgentLoopInput, AgentLoopOptions, LoopTools } from '../agent-loop/types';
 import { createAttemptSummary } from '../agent-loop/summary';
 import { createAgentLoop } from '../agent-loop/service';
 import { loopOptions } from '../agent-loop/validation';
@@ -14,10 +29,26 @@ export type QueuePreparation =
       readonly kind: 'ready';
       readonly input: Omit<AgentLoopInput, 'signal'>;
       readonly metadata?: import('../context/types').ContextMetadata;
+      readonly timezone?: string;
       readonly authorLabels?: readonly string[];
+      readonly addressPreference?: AddressPreferenceReference;
+      readonly participantCards?: PreparedCards;
+      readonly passport?: PreparedPassport;
+      readonly summaries?: PreparedSummaries;
     }
   | Exclude<PreparationResult, { kind: 'ready' }>;
 export interface AgentLoopQueueOptions extends Omit<ChatQueueOptions, 'handler' | 'config'> {
+  readonly tools?: (input: {
+    modelInputLimit?: number;
+    work: QueueHandlerInput;
+    prepared: Extract<QueuePreparation, { kind: 'ready' }>;
+    client: LlmClient;
+    attempts: ReturnType<typeof createJobModelAttempts>;
+    settings: Required<AgentLoopOptions>;
+  }) => Promise<LoopTools | undefined>;
+  readonly modelInputLimit?: number;
+  readonly recapAnswer?: (work: QueueHandlerInput) => Promise<QueueCompletion | null>;
+  readonly questionnaireAnswer?: (work: QueueHandlerInput) => Promise<QueueCompletion | null>;
   readonly modelName: string;
   readonly client: LlmClient;
   readonly loopOptions?: AgentLoopOptions;
@@ -26,22 +57,14 @@ export interface AgentLoopQueueOptions extends Omit<ChatQueueOptions, 'handler' 
   readonly postPreparationMarginMs?: number;
   readonly signal?: AbortSignal;
   readonly prepare: (work: QueueHandlerInput) => Promise<QueuePreparation>;
+  readonly addressCurrent?: (
+    scope: ConnectionScope,
+    reference: AddressPreferenceReference,
+  ) => boolean;
   readonly disclosure?: (
     work: QueueHandlerInput,
   ) => import('../../storage/trace-types').TracePayload['disclosure'];
 }
-function estimateRequestInput(request: LlmRequest) {
-  return (
-    request.messages.reduce((cost, message) => {
-      const structured =
-        message.role === 'tool' || (message.role === 'assistant' && message.toolCalls);
-      const text = structured ? JSON.stringify(message) : (message.text ?? '');
-      return cost + messageInputCost(Buffer.byteLength(text, 'utf8'));
-    }, systemInputCost(request.system)) +
-    (request.tools ? Buffer.byteLength(JSON.stringify(request.tools), 'utf8') : 0)
-  );
-}
-
 export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
   const settings = loopOptions(options.loopOptions ?? {});
   if (
@@ -86,6 +109,10 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
       const lifetime = options.signal
         ? AbortSignal.any([work.signal, options.signal])
         : work.signal;
+      const questionnaire = await options.questionnaireAnswer?.({ ...work, signal: lifetime });
+      if (questionnaire) return questionnaire;
+      const recap = await options.recapAnswer?.({ ...work, signal: lifetime });
+      if (recap) return recap;
       const preparationDeadline = performance.now() + prep;
       async function prepare(): Promise<QueuePreparation> {
         const remaining = preparationDeadline - performance.now();
@@ -138,37 +165,213 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
           prompt: prepared.metadata?.version ?? null,
           context: prepared.metadata ?? null,
         });
+        const cards = prepared.participantCards;
+        const compose = cards
+          ? createParticipantCardComposer(cards, options.modelInputLimit)
+          : undefined;
+        const passport = prepared.passport;
+        const summaries = prepared.summaries;
+        const usedSummaries = new Map<number, ContextSummary>();
+        let candidateSummaries: readonly ContextSummary[] = [];
+        const summaryCurrent = () =>
+          summaries?.current([...usedSummaries.keys(), ...candidateSummaries.map((s) => s.id)]) ??
+          true;
+        const messageIndex = prepared.input.messages.length - 1;
+        const usedRefs = new Map<CardReference['value'], CardReference>();
+        const cardSubjects = new Set<UserId>();
+        const cardSources = new Set<number>();
+        let candidateCards: readonly UsedCard[] = [];
+        const usedPassport = new Map<PassportSection, PassportRevision>();
+        let candidatePassport: ReturnType<typeof composePassport> | undefined;
+        let passportBase: LlmMessage | undefined;
+        let passportTokens = 0;
+        let addedBytes = 0;
+        let context = prepared.metadata;
+        let staleContext = false;
+        let attempted = false;
+        const cardsCurrent = () => cards?.current([...usedRefs.values()]) ?? true;
+        const passportCurrent = (extra: readonly PassportRevision[] = []) => {
+          try {
+            return passport?.current([...usedPassport.values(), ...extra]) ?? true;
+          } catch {
+            return false;
+          }
+        };
         const allowed = () => {
-          if (lifetime.aborted) return false;
+          if (
+            (cards &&
+              !cards.current([
+                ...usedRefs.values(),
+                ...candidateCards.flatMap(({ refs }) => refs),
+              ])) ||
+            !summaryCurrent() ||
+            !passportCurrent(attempted ? candidatePassport?.used : passport?.entries)
+          ) {
+            staleContext = true;
+            return false;
+          }
+          if (
+            lifetime.aborted ||
+            (session && !session.current()) ||
+            (prepared.addressPreference &&
+              options.addressCurrent?.(work.scope, prepared.addressPreference) !== true)
+          )
+            return false;
           const checked = options.disclosure?.(work);
           if (checked) work.recordTrace({ disclosure: checked });
           return checked?.allowed ?? true;
         };
-        let staleContext = false;
+        const jobAttempts = createJobModelAttempts(work, allowed);
+        const session: LoopTools | undefined = await options.tools?.({
+          work,
+          prepared,
+          client,
+          ...(options.modelInputLimit ? { modelInputLimit: options.modelInputLimit } : {}),
+          attempts: jobAttempts,
+          settings,
+        });
+        const guardedSession: LoopTools | undefined =
+          session && (cards || passport || summaries)
+            ? {
+                ...session,
+                current: () =>
+                  session.current() && cardsCurrent() && passportCurrent() && summaryCurrent(),
+                ...(passport || summaries
+                  ? {
+                      beginBatch(request, remaining, steps) {
+                        // Результат инструмента использует место до добавления необязательных разделов.
+                        if (!passportBase) return session.beginBatch(request, remaining, steps);
+                        const messages = request.messages.slice();
+                        messages[messageIndex] = passportBase;
+                        session.beginBatch({ ...request, messages }, remaining, steps);
+                      },
+                    }
+                  : {}),
+              }
+            : session;
         const loop = createAgentLoop(
           client,
           settings,
           (summary) =>
             work.recordTrace({ model: { name: modelName, invoked: 'possible' }, summary }),
-          (request, ordinal) => {
-            const reservation =
+          (request) => {
+            if (options.modelInputLimit && estimateRequestInput(request) > options.modelInputLimit)
+              return 'token_budget_exhausted';
+            const ids = [
+              ...new Set([...(context?.messageIds ?? []), ...(session?.sourceIds() ?? [])]),
+            ];
+            if (context && session && (session.sourceIds().length || session.trace().length))
+              work.recordTrace({
+                context: { ...context, messageIds: ids },
+                tools: session.trace(),
+              });
+            const admission =
               options.tokenBudget && work.route
-                ? {
-                    key: `job:${work.jobId}:${ordinal}`,
-                    purpose:
-                      work.route.kind === 'initiative'
-                        ? ('initiative' as const)
-                        : ('direct' as const),
-                    input: estimateRequestInput(request),
-                    output: request.maxOutputTokens,
-                  }
-                : undefined;
-            const admission = work.admitModelAttempt
-              ? work.admitModelAttempt(allowed, prepared.metadata?.messageIds, reservation)
-              : work.isCurrent() && allowed();
-            staleContext = admission === 'context_stale';
+                ? jobAttempts.reserve(
+                    request,
+                    ids,
+                    session && request.messages.some((m) => m.role === 'tool')
+                      ? 'consume'
+                      : undefined,
+                  )
+                : work.admitModelAttempt
+                  ? work.admitModelAttempt(allowed, ids)
+                  : work.isCurrent() && allowed();
+            if (admission === 'context_stale') staleContext = true;
+            if (admission === true || (admission !== null && typeof admission === 'object')) {
+              attempted = true;
+              for (const s of candidateSummaries) usedSummaries.set(s.id, s);
+              for (const card of candidateCards) {
+                cardSubjects.add(card.owner);
+                for (const id of card.sourceIds) cardSources.add(id);
+                for (const ref of card.refs) usedRefs.set(ref.value, ref);
+              }
+              for (const revision of candidatePassport?.used ?? [])
+                usedPassport.set(revision.section, revision);
+              if (
+                context &&
+                prepared.metadata &&
+                (candidateCards.length ||
+                  candidatePassport?.used.length ||
+                  candidateSummaries.length)
+              ) {
+                const index = messageIndex;
+                const original = prepared.metadata;
+                addedBytes = Math.max(
+                  addedBytes,
+                  Buffer.byteLength(request.messages[index]?.text ?? '') -
+                    Buffer.byteLength(prepared.input.messages[index]?.text ?? ''),
+                );
+                passportTokens = Math.max(passportTokens, candidatePassport?.estimatedTokens ?? 0);
+                context = {
+                  ...original,
+                  layerBytes: {
+                    ...original.layerBytes,
+                    messages: original.layerBytes.messages + addedBytes,
+                  },
+                  estimatedTokens: original.estimatedTokens + addedBytes,
+                  absentLayers: original.absentLayers.filter(
+                    (layer) =>
+                      !(layer === 'profiles' && cardSubjects.size) &&
+                      !(layer === 'passport' && usedPassport.size) &&
+                      !(layer === 'summaries' && usedSummaries.size),
+                  ),
+                  ...(usedSummaries.size
+                    ? {
+                        summaries: [...usedSummaries.values()].map(({ id, level, text }) => ({
+                          id,
+                          level,
+                          bytes: Buffer.byteLength(text),
+                        })),
+                      }
+                    : {}),
+                  ...(usedPassport.size
+                    ? {
+                        passport: {
+                          sections: [...usedPassport.keys()],
+                          estimatedTokens: passportTokens,
+                        },
+                      }
+                    : {}),
+                };
+                work.recordTrace({ context: { ...context, messageIds: ids } });
+              }
+              candidateSummaries = [];
+              candidatePassport = undefined;
+              candidateCards = [];
+            }
             return admission;
           },
+          guardedSession,
+          compose || passport || summaries
+            ? (request) => {
+                const result = compose?.(request);
+                candidateCards = result?.used ?? [];
+                const withCards = result?.request ?? request;
+                const currentPassport =
+                  passport && attempted
+                    ? { ...passport, entries: passport.readEntries() }
+                    : passport;
+                candidatePassport = currentPassport
+                  ? composePassport(currentPassport, withCards, options.modelInputLimit)
+                  : undefined;
+                const withPassport = candidatePassport?.request ?? withCards;
+                const enriched = summaries
+                  ? composeSummaries(
+                      summaries.entries,
+                      messageIndex,
+                      withPassport,
+                      Math.min(summaries.inputBudget, options.modelInputLimit ?? Infinity),
+                    )
+                  : undefined;
+                candidateSummaries = enriched?.used ?? [];
+                passportBase =
+                  candidatePassport?.used.length || candidateSummaries.length
+                    ? withCards.messages[messageIndex]
+                    : undefined;
+                return enriched?.request ?? withPassport;
+              }
+            : undefined,
         );
         const result = await loop.run({ ...prepared.input, signal: lifetime });
         if (staleContext && result.summary.attempts === 0) continue;
@@ -177,6 +380,7 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
             name: result.summary.attempts ? modelName : null,
             invoked: result.summary.attempts ? 'yes' : 'no',
           },
+          ...(session ? { tools: session.trace() } : {}),
           summary: result.summary,
           resultKind: result.kind,
         });
@@ -193,7 +397,24 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
         return {
           outcome,
           result,
-          ...(prepared.authorLabels?.length ? { authorLabels: prepared.authorLabels } : {}),
+          ...(prepared.addressPreference ? { addressPreference: prepared.addressPreference } : {}),
+          ...(session || usedSummaries.size
+            ? {
+                toolResultsCurrent: () => (session?.current() ?? true) && summaryCurrent(),
+                toolSourceIds: [
+                  ...new Set([
+                    ...(session?.sourceIds() ?? []),
+                    ...[...usedSummaries.values()].flatMap((s) => s.ids),
+                  ]),
+                ],
+              }
+            : {}),
+          ...(usedPassport.size ? { passportCurrent: () => passportCurrent() } : {}),
+          ...(cardSubjects.size
+            ? { participantCards: { current: cardsCurrent, sourceIds: [...cardSources] } }
+            : {}),
+          subjectIds: [...new Set([...(session?.subjectIds?.() ?? []), ...cardSubjects])],
+          authorLabels: [...(prepared.authorLabels ?? []), ...(session?.labels() ?? [])],
         };
       }
     },

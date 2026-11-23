@@ -1,3 +1,4 @@
+import type { AddressPreferenceReference } from '../../contracts/index';
 import type {
   RoutedQueueCallback,
   RoutedAdmission,
@@ -29,6 +30,7 @@ export interface QueueHandlerInput {
     update: Partial<
       Pick<
         import('../../storage/trace-types').TracePayload,
+        | 'tools'
         | 'model'
         | 'prompt'
         | 'context'
@@ -50,14 +52,24 @@ export interface QueueHandlerInput {
     allow: () => boolean,
     contextIds?: readonly number[],
     reservation?: TokenReservation,
+    finalBudget?: import('../../storage/token-budget-store').FinalBudget,
   ) => AttemptAdmission;
 }
 export type QueueHandler = (input: QueueHandlerInput) => Promise<QueueOutcome | QueueCompletion>;
 export interface QueueCompletion {
+  readonly subjectIds?: readonly import('../../contracts/index').UserId[];
+  readonly toolSourceIds?: readonly number[];
+  readonly toolResultsCurrent?: () => boolean;
+  readonly passportCurrent?: () => boolean;
+  readonly participantCards?: {
+    readonly current: () => boolean;
+    readonly sourceIds: readonly number[];
+  };
   readonly outcome: QueueOutcome;
   readonly preparationFailure?: import('../context/types').PreparationFailure;
   readonly result?: import('../agent-loop/types').AgentLoopResult;
   readonly authorLabels?: readonly string[];
+  readonly addressPreference?: AddressPreferenceReference;
   readonly initiativeDenial?: import('../../storage/queue-types').InitiativeDenial;
 }
 export interface QueueSettlement extends Omit<
@@ -100,6 +112,7 @@ export interface ChatQueue {
     message: MessageInput,
     decision: RoutedQueueCallback,
     guard?: RoutedAdmissionGuard,
+    serviceInput?: true,
   ): Promise<RoutedAdmission>;
   stop(): Promise<void>;
   traceStats(): Readonly<Record<import('../response-tracing/metrics').TraceEvent, number>>;

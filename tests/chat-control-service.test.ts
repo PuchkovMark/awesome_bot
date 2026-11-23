@@ -2,7 +2,7 @@ import { expect, test } from 'vitest';
 import { authorizationFixture } from './helpers/authorization-fixture';
 import { scopeFor } from './helpers/connection-scope';
 import { chatControlStore } from '../src/storage/chat-control-store';
-import { parseChatControl } from '../src/core/chat-control/commands';
+import { chatControlAction, parseChatControl } from '../src/core/chat-control/commands';
 import { routeMessage } from '../src/core/message-router/routing';
 
 const quarter = 15 * 60_000;
@@ -137,6 +137,28 @@ test('включение доступно владельцу из служебн
     });
     expect(parseChatControl('помолчи, пожалуйста', 'group')).toBeUndefined();
     expect(parseChatControl('/продлить-паузу -1', 'group')).toEqual({ command: 'invalid' });
+  } finally {
+    await f.close();
+  }
+});
+
+test('вопросы анкеты относятся к групповым настройкам знакомства', async () => {
+  const f = await authorizationFixture();
+  try {
+    expect(parseChatControl('/вопросы', 'group')).toEqual({ command: { kind: 'questionnaire' } });
+    expect(parseChatControl('/вопросы vk:2000000010@1', 'private')).toEqual({ command: 'invalid' });
+    const command = { kind: 'questionnaire' } as const;
+    expect(chatControlAction(command)).toMatchObject({
+      action: 'chat.onboarding.configure',
+      minimumRole: 'admin',
+    });
+    expect(await f.service.controlChat(f.member, command, current)).toMatchObject({
+      allowed: false,
+    });
+    expect(await f.service.controlChat(f.owner, command, current)).toMatchObject({
+      allowed: true,
+      value: { state: { greetingEnabledAt: null, invitationEnabledAt: null } },
+    });
   } finally {
     await f.close();
   }

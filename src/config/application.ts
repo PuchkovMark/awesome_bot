@@ -58,6 +58,8 @@ export function loadApplicationConfig(options?: ConfigOptions) {
   } catch {
     throw new ConfigError('invalid', ['MESSAGE_RETENTION_DAYS']);
   }
+  const intervalMs = positiveParameter(values, 'SUMMARY_INTERVAL_MS', 300_000);
+  if (intervalMs > 2147483647) throw new ConfigError('invalid', ['SUMMARY_INTERVAL_MS']);
   const defaults = responseRateConfig();
   const floodWindowMs = positiveParameter(
     values,
@@ -87,6 +89,14 @@ export function loadApplicationConfig(options?: ConfigOptions) {
       vk: Object.freeze({ ...base.vk, groupId: positiveParameter(values, 'VK_GROUP_ID') }),
       databasePath: databasePath(cwd, values),
       context: modelContext(values),
+      auxiliaryModel:
+        values.LLM_AUX_MODEL === undefined
+          ? 'claude-haiku-5-5'
+          : requiredParameter(values, 'LLM_AUX_MODEL'),
+      summaries: Object.freeze({
+        intervalMs,
+        fragmentSize: positiveParameter(values, 'SUMMARY_FRAGMENT_SIZE', 250),
+      }),
       sessionSecret,
       tracing,
       responseRate,

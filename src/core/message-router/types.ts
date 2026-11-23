@@ -6,11 +6,13 @@ export interface ServiceCommand {
   readonly action: AuthorizationAction;
   readonly minimumRole: BotRole;
   readonly replayRequest?: boolean;
+  readonly journalLabel?: string;
 }
 export interface RoutingInput {
   readonly message: IncomingMessage;
   readonly settings: Pick<ChatSettings, 'enabled' | 'responseMode'>;
   readonly considerInitiative?: boolean;
+  readonly questionnaireName?: boolean;
   readonly service?: {
     readonly command: ServiceCommand;
     readonly role: BotRole;

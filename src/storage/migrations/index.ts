@@ -1,4 +1,23 @@
+import { summaryBudget } from './043-summary-budget';
+import { chatSummaries } from './042-chat-summaries';
+import { questionnaireProgress } from './036-questionnaire-progress';
+import { participantDepartures } from './037-participant-departures';
+import { questionnaireDelivery } from './038-questionnaire-delivery';
+import { profileInferenceRejections } from './041-profile-inference-rejections';
+import { profileUpdateBudget } from './040-profile-update-budget';
+import { profileUpdateQueue } from './039-profile-update-queue';
+import { questionnaireTemplate } from './035-questionnaire-template';
+import { chatPassport } from './034-chat-passport';
+import { profileCommands } from './032-profile-commands';
+import { questionnaireInvitations } from './033-questionnaire-invitations';
+import { memberGreetings } from './031-member-greetings';
+import { toolAnswerSubjects } from './030-tool-answer-subjects';
+import { profileFactEvents } from './029-profile-fact-events';
+import { delegationFinalBudget } from './028-delegation-final-budget';
+import { addressPreferences } from './027-address-preferences';
+import { participantRegistry } from './026-participant-registry';
 import { personalReminders } from './024-personal-reminders';
+import { personalData } from './025-personal-data';
 import { autonomousReplies } from './023-autonomous-replies';
 import { chatAuthorLabels } from './022-chat-author-labels';
 import { connectionPauseReason } from './021-connection-pause-reason';
@@ -52,4 +71,23 @@ export const migrations: readonly Migration[] = [
   chatAuthorLabels,
   autonomousReplies,
   personalReminders,
+  personalData,
+  participantRegistry,
+  addressPreferences,
+  delegationFinalBudget,
+  profileFactEvents,
+  toolAnswerSubjects,
+  memberGreetings,
+  profileCommands,
+  questionnaireInvitations,
+  chatPassport,
+  questionnaireTemplate,
+  questionnaireProgress,
+  participantDepartures,
+  questionnaireDelivery,
+  profileUpdateQueue,
+  profileUpdateBudget,
+  profileInferenceRejections,
+  chatSummaries,
+  summaryBudget,
 ];

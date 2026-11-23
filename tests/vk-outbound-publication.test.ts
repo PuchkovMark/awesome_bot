@@ -536,3 +536,89 @@ describe('публикация VK через очередь и журнал', ()
     },
   );
 });
+
+describe('служебное приглашение к анкете', () => {
+  it('сохраняет действие на границе длины и отмечает только полные упоминания по порядку', async () => {
+    const { formatQuestionnaireInvitation } =
+      await import('../src/channels/vk/questionnaire-invitation');
+    const action = '/анкета';
+    const users = Array.from({ length: 50 }, (_, i) => ({
+      user: `vk:${100 + i}` as const,
+      name: null,
+      confirmedAt: 1,
+    }));
+    const whole = formatQuestionnaireInvitation({ action, recipients: users.slice(0, 2) })!;
+    const length = Buffer.byteLength(whole.text);
+    expect(
+      formatQuestionnaireInvitation({ action, recipients: users.slice(0, 2) }, length),
+    ).toEqual(whole);
+    const extra = Buffer.byteLength('\nОстальные новички тоже могут заполнить анкету.');
+    const limit = length + extra;
+    const exact = formatQuestionnaireInvitation(
+      { action, recipients: [...users].reverse() },
+      limit,
+    )!;
+    const smaller = formatQuestionnaireInvitation({ action, recipients: users }, limit - 1)!;
+    expect(Buffer.byteLength(exact.text)).toBe(limit);
+    expect(exact.text.match(/\[id\d+\|/gu)).toEqual(['[id100|', '[id101|']);
+    expect(exact.omitted).toBe(48);
+    expect(smaller.text.match(/\[id\d+\|/gu)).toEqual(['[id100|']);
+    expect(smaller.omitted).toBe(49);
+    expect(exact.text.endsWith(action)).toBe(true);
+    expect(smaller.text.endsWith(action)).toBe(true);
+    expect(
+      formatQuestionnaireInvitation({ action: '/анкета [id999|подмена]', recipients: users }),
+    ).toBeNull();
+  });
+
+  it('проверяет адрес самой отправки и включает только сформированные каналом упоминания', async () => {
+    const { createVkOutbound } = await import('../src/channels/vk/outbound');
+    const clock = { tick: 0 };
+    const limit = createVkRateLimiter({
+      now: () => clock.tick,
+      wait: async (ms) => {
+        clock.tick += ms;
+      },
+    });
+    let text = '';
+    const attempt = vi.fn(async (method: string, args: Record<string, string | number>) => {
+      if (method === 'messages.send') text = String(args.message);
+      return {
+        response:
+          method === 'messages.send'
+            ? [{ peer_id: peer, conversation_message_id: 123 }]
+            : {
+                items: [
+                  { peer_id: peer, conversation_message_id: 123, from_id: -groupId, date, text },
+                ],
+              },
+      };
+    });
+    const outbound = createVkOutbound({
+      groupId,
+      api: createVkApi(groupId, createVkApiCall(attempt, limit)),
+    });
+    const confirmPart = vi.fn();
+    const reserve = vi.fn(() => true);
+    const omitted = vi.fn();
+    const invitation = {
+      sendId: 213,
+      prepare: () => ({
+        action: '/анкета',
+        recipients: [{ user: 'vk:52' as const, name: 'Имя][id999|подмена @id888', confirmedAt: 1 }],
+        reserve,
+      }),
+      onOmitted: omitted,
+      confirmPart,
+    };
+    expect((await outbound.sendInvitation({ ...invitation, chatId: 'vk:52' })).kind).toBe('failed');
+    expect(attempt).not.toHaveBeenCalled();
+    expect((await outbound.sendInvitation({ ...invitation, chatId: chat })).kind).toBe('delivered');
+    const request = attempt.mock.calls.find(([method]) => method === 'messages.send')![1];
+    expect(request).toMatchObject({ disable_mentions: 0, random_id: 213, peer_ids: String(peer) });
+    expect(String(request.message).match(/\[id\d+\|/gu)).toEqual(['[id52|']);
+    expect(reserve).toHaveBeenCalledTimes(1);
+    expect(omitted).toHaveBeenCalledExactlyOnceWith(0);
+    expect(confirmPart).toHaveBeenCalledWith(expect.objectContaining({ messageId: '123', text }));
+  });
+});

@@ -1,5 +1,7 @@
+import { summaryFactChecks } from '../src/evals/chat-summaries';
 import { expect, test } from 'vitest';
-import { scenarios } from '../src/evals/scenarios';
+import { runScenario } from '../src/evals/runner';
+import { scenarios, yesterdayScenario } from '../src/evals/scenarios';
 
 test('сценарии имеют уникальные ключи сравнения и шаги проверки в VK', () => {
   expect(scenarios.map((scenario) => scenario.id)).toEqual([
@@ -18,6 +20,15 @@ test('сценарии имеют уникальные ключи сравнен
     'authors-given-name',
     'authors-empty-name',
     'authors-technical-reference',
+    'address-chosen',
+    'address-namesake',
+    'address-reset',
+    'address-neighbor',
+    'address-given-name',
+    'address-empty',
+    'address-neutral',
+    'address-hidden',
+    'address-literal',
     'initiative-help',
     'initiative-mention',
     'initiative-question',
@@ -29,6 +40,9 @@ test('сценарии имеют уникальные ключи сравнен
     'initiative-unknown',
     'initiative-normal',
     'initiative-silent',
+    'passport-local-glossary',
+    'passport-untrusted-grant',
+    'history-yesterday',
   ]);
   for (const scenario of scenarios) {
     expect(scenario.id).toMatch(/^[a-z]+(?:-[a-z]+)*$/);
@@ -82,4 +96,43 @@ test('сценарии тёзок используют одну версию и�
     new Set(authors.map(({ prompt, promptKey }) => JSON.stringify([prompt, promptKey]))).size,
   ).toBe(1);
   expect(first.prompt).toContain('authorLabel');
+});
+
+test('оценки обращений передают выбор только его владельцу и проверяют ответ на его реплику', () => {
+  const own = scenarios.find(({ id }) => id === 'address-chosen')!;
+  const other = scenarios.find(({ id }) => id === 'address-namesake')!;
+  const hidden = scenarios.find(({ id }) => id === 'address-hidden')!;
+  expect(own.input.userId).toBe(own.address?.preference?.owner);
+  expect(other.address?.preference).toEqual(own.address?.preference);
+  expect(other.input.userId).not.toBe(own.input.userId);
+  expect(other.input.authorName).toBe(own.input.authorName);
+  expect(own.answer).toBe('Рысь, вы предложили фонтан.');
+  expect(other.answer).toBe('Саша Иванов, вы предложили маяк.');
+  expect(hidden.address?.preference).toMatchObject({ state: 'hidden' });
+  expect(hidden.answer).not.toContain(hidden.address?.preference?.form);
+  expect(
+    new Set(scenarios.filter(({ address }) => address).map(({ promptKey }) => promptKey)),
+  ).toEqual(new Set(['f52-address-preferences']));
+});
+
+test.each([
+  ['2026-03-30T00:15:00+02:00', '2026-03-28T23:00:00Z', '2026-03-29T22:00:00Z', 23],
+  ['2026-10-26T00:15:00+01:00', '2026-10-24T22:00:00Z', '2026-10-25T23:00:00Z', 25],
+] as const)('вчерашний период учитывает смену смещения %s', async (now, from, to, hours) => {
+  expect(Date.parse(to) - Date.parse(from)).toBe(hours * 3600000);
+  const scenario = yesterdayScenario('history-dst', 'Europe/Berlin', now, from, to);
+  expect(await runScenario(scenario)).toMatchObject({ outcome: 'passed' });
+});
+
+test('оценка пересказа различает автора обещания и направление переноса', () => {
+  expect(
+    summaryFactChecks('Зал Б. Ира принесёт ключ. Встреча перенесена с 27 на 28 ноября.').map(
+      (c) => c.matches,
+    ),
+  ).toEqual([true, true, true]);
+  expect(
+    summaryFactChecks(
+      'Зал Б. Ключ принесёт Лев. Ира выбрала дату. Встреча перенесена с 28 на 27 ноября.',
+    ).map((c) => c.matches),
+  ).toEqual([true, false, false]);
 });

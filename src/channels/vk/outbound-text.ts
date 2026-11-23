@@ -8,10 +8,13 @@ interface Segment {
   readonly bytes: number;
 }
 
-export function splitVkText(input: string): readonly string[] {
+export function splitVkText(
+  input: string,
+  limit: number = vkMessageLength.value,
+): readonly string[] {
   const text = input.toWellFormed();
   if (!text.trim()) return [];
-  const limit = vkMessageLength.value;
+
   if (Buffer.byteLength(text) <= limit) return [text];
 
   const paragraphEnds = new Set(

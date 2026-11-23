@@ -1,5 +1,0 @@
-# opencodeProvider
-
-## Выбор провайдера и вызов модели
-
-[opencodeProvider.ts](../../../../../src/services/ai/opencodeProvider.ts) при создании требует `OPENCODE_API_KEY` и создаёт OpenAI-совместимый клиент с `OPENCODE_BASE_URL`, числом повторов `AI_MAX_RETRIES` и таймаутом 90 секунд. В `send` явная `options.model` имеет приоритет над сохранённым `AppSetting.ai_model`, затем используется `OPENCODE_MODEL`. Уровень рассуждения берётся из сохранённого `ai_effort` или `AI_EFFORT`; неизвестный сохранённый уровень вызывает ошибку. Для DeepSeek `medium` отображается в `high`, а `high` — в `max`; для остальных моделей уровень передаётся без этого преобразования. Идентификатор сессии хешируется в заголовок `x-opencode-session`; без него генерируется случайный. Пределы инструментов и вывода по умолчанию берутся из конфигурации; явный `options.maxOutputTokens` имеет приоритет над `AI_MAX_OUTPUT_TOKENS`. `options.signal` передаётся через `sendChatCompletion` в SDK. Цикл инструментов описан в [tool-execution.md](tools.md).

@@ -47,7 +47,7 @@ export function installAuthorities(db: Database, chatId: ChatId, grantedAt = Dat
       `INSERT INTO bot_admin_grants(chat_id,user_id,basis,granted_at,granted_by)
       SELECT c.chat_id,c.${column},?,?,NULL FROM chat_connections c JOIN chats s USING(chat_id)
       WHERE c.chat_id=? AND c.state='active' AND c.${basis}_applied=0 AND c.${column} IS NOT NULL
-        AND NOT EXISTS(SELECT 1 FROM bot_admin_revocations r WHERE r.chat_id=c.chat_id AND r.user_id=c.${column})
+        AND NOT EXISTS(SELECT 1 FROM active_admin_denials r WHERE r.chat_id=c.chat_id AND r.user_id=c.${column})
       ON CONFLICT DO NOTHING`,
     ).run(basis, grantedAt, chatId);
     db.prepare(

@@ -15,7 +15,14 @@ export async function commandAccess(
   const denied = { command, role: 'member', allowed: false } as const;
   const participantCommand =
     command.minimumRole === 'member' &&
-    (command.action === 'chat.pause' || command.action === 'reminder.manage');
+    [
+      'chat.pause',
+      'chat.passport.read',
+      'profile.self.manage',
+      'profile.self.address',
+      'onboarding.self.manage',
+      'reminder.manage',
+    ].includes(command.action);
   if (
     !auth ||
     !context ||
@@ -27,6 +34,12 @@ export async function commandAccess(
     return denied;
   const role = await auth.role(context);
   if (!role.allowed) return denied;
-  const decision = await auth.check(context, command.action);
+  const decision = [
+    'profile.self.manage',
+    'profile.self.address',
+    'onboarding.self.manage',
+  ].includes(command.action)
+    ? await auth.check(context, command.action, message.userId)
+    : await auth.check(context, command.action);
   return { command, role: role.value, allowed: decision.allowed };
 }

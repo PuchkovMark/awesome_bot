@@ -36,6 +36,7 @@ export interface VkReply {
   readonly cmid: number;
   readonly authorId: number | undefined;
   readonly date: number | undefined;
+  readonly text?: string;
 }
 
 export interface VkIncoming {
@@ -44,6 +45,7 @@ export interface VkIncoming {
   readonly cmid: number;
   readonly timestamp: number;
   readonly text: string;
+  readonly literalText?: string;
   readonly isMentioned: boolean;
   readonly soleBotMention?: boolean;
   readonly hasOtherAddress?: boolean;
@@ -68,7 +70,7 @@ export interface VkEnrichment {
   readonly authorName?: string;
   readonly isAdmin?: KnownBoolean;
   readonly isBot?: KnownBoolean;
-  readonly verifiedReply?: Pick<VkReply, 'cmid' | 'authorId'>;
+  readonly verifiedReply?: Pick<VkReply, 'cmid' | 'authorId'> & { readonly text?: string };
 }
 
 export function vkRecord(value: unknown): Record<string, unknown> | undefined {
@@ -101,6 +103,12 @@ export function isVkGroupChat(peerId: number): boolean {
   return peerId >= chatPeerStart;
 }
 
+export function isVkGroupChatId(chatId: string): boolean {
+  if (!chatId.startsWith('vk:')) return false;
+  const id = vkId(Number(chatId.slice(3)));
+  return id !== undefined && chatId === `vk:${id}` && isVkGroupChat(id);
+}
+
 export function vkChatId(peerId: number): `vk:${number}` {
   return `vk:${peerId}`;
 }
@@ -113,6 +121,7 @@ function parseReply(value: unknown): VkReply | undefined {
     cmid,
     authorId: vkId(row.from_id),
     date: toTimestamp(row.date),
+    ...(typeof row.text === 'string' ? { text: row.text } : {}),
   };
 }
 
@@ -151,7 +160,8 @@ function parseMembership(
   platformEventId: unknown,
 ): ParseResult {
   const actor = vkId(row.from_id);
-  const subject = vkId(action.member_id);
+  const subject =
+    vkId(action.member_id) ?? (type === 'chat_invite_user_by_link' ? actor : undefined);
   const affectsConnection = subject === -groupId;
   const timestamp = toTimestamp(row.date);
   if (timestamp === undefined && !affectsConnection) return { kind: 'invalid' };
@@ -238,6 +248,7 @@ export function parseVkIncoming(update: unknown, groupId: number): ParseResult {
       ...(row.reply_message !== undefined ? { hasReply: true } : {}),
       ...(hasForwarded ? { hasForwarded: true } : {}),
       text: isMentioned ? withoutMention.trim() : row.text,
+      ...(isMentioned ? { literalText: row.text } : {}),
       attachments: parseAttachments(row.attachments),
       reply: reply && reply.cmid < cmid ? reply : undefined,
     },
@@ -251,6 +262,7 @@ export function normalizeVkIncoming(
 ): IncomingMessage {
   const reply =
     enrichment.verifiedReply?.cmid === message.reply?.cmid ? enrichment.verifiedReply : undefined;
+  const botQuote = reply ?? message.reply;
   return {
     kind: 'message',
     chatId: vkChatId(message.peerId),
@@ -260,9 +272,17 @@ export function normalizeVkIncoming(
     isAdmin: enrichment.isAdmin ?? 'unknown',
     isBot: enrichment.isBot ?? (message.authorId < 0 ? true : 'unknown'),
     text: message.text,
+    ...(message.literalText === undefined ? {} : { literalText: message.literalText }),
     messageId: String(message.cmid),
-    ...(reply ? { replyToMessageId: String(reply.cmid) } : {}),
+    ...(reply
+      ? { replyToMessageId: String(reply.cmid) }
+      : message.reply
+        ? { unverifiedReplyToMessageId: String(message.reply.cmid) }
+        : {}),
     isReplyToBot: reply?.authorId === -groupId,
+    ...(botQuote?.authorId === -groupId && botQuote.text !== undefined
+      ? { botReplyText: botQuote.text }
+      : {}),
     ...(message.hasReply || message.reply
       ? {
           replyAddress:
@@ -276,6 +296,7 @@ export function normalizeVkIncoming(
     isMentioned: message.isMentioned,
     ...(message.soleBotMention === undefined ? {} : { soleBotMention: message.soleBotMention }),
     ...(message.hasOtherAddress ? { hasOtherAddress: true } : {}),
+    ...(message.hasForwarded ? { hasForwarded: true } : {}),
     timestamp: message.timestamp,
     attachments: message.attachments,
   };

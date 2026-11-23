@@ -28,6 +28,8 @@ export interface AuthorizationTransaction {
     createdAt: Timestamp,
   ): void;
   writePause(pause: ChatPause): void;
+  writeGreeting(enabled: boolean, now: Timestamp, sequence?: number): void;
+  writeInvitation(enabled: boolean, now: Timestamp, sequence?: number): void;
   writeQuietHours(hours: QuietHours | null): void;
   claimControlMessage(actorId: UserId, messageId: number): boolean;
   holder(basis: GrantBasis): UserId | null;

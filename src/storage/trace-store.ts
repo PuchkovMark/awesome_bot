@@ -65,7 +65,7 @@ export function traceRecord(
   const bounds = historyBounds(db, scope.chatId, now);
   const r = db
     .prepare(
-      `SELECT job_id AS jobId,message_id AS messageId,generation,started_at AS startedAt,finished_at AS finishedAt,expires_at AS expiresAt,outcome,payload FROM response_traces WHERE chat_id=? AND generation=? AND expires_at>? AND EXISTS(SELECT 1 FROM messages m
+      `SELECT job_id AS jobId,message_id AS messageId,generation,started_at AS startedAt,finished_at AS finishedAt,expires_at AS expiresAt,outcome,payload FROM response_traces WHERE chat_id=? AND generation=? AND expires_at>? AND EXISTS(SELECT 1 FROM personal_visible_messages m
    WHERE m.chat_id=response_traces.chat_id AND m.id=response_traces.message_id AND m.id>? AND m.timestamp>?) ${delivered} ${id === undefined ? 'ORDER BY job_id DESC LIMIT 1' : 'AND job_id=?'}`,
     )
     .get(

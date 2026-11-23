@@ -233,7 +233,10 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
         const isCurrent = () => {
           if (task.done || phase !== 'running' || performance.now() >= task.deadline) return false;
           try {
-            return backend.publicationValid(token, task.work);
+            return (
+              (relevant?.toolResultsCurrent?.() ?? true) &&
+              backend.publicationValid(token, task.work)
+            );
           } catch {
             return false;
           }
@@ -350,6 +353,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
                     allow: () => boolean,
                     contextIds?: readonly number[],
                     reservation?: TokenReservation,
+                    finalBudget?: import('../../storage/token-budget-store').FinalBudget,
                   ) => {
                     const admission = backend.admitModelAttempt(
                       token,
@@ -360,6 +364,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
                       contextIds,
                       responseRate,
                       reservation,
+                      finalBudget,
                     );
                     if (admission === false && work.route?.kind === 'initiative' && !task.done) {
                       const denial = backend.checkInitiative(token, work, limits, responseRate);
@@ -558,7 +563,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
       armTick();
       if (failure) throw failure;
     },
-    async admitRouted(scope, message, decision, guard) {
+    async admitRouted(scope, message, decision, guard, serviceInput) {
       if (phase !== 'running') return { admission: { status: 'stopped' }, decision: null };
       if (platform !== undefined && !scope.chatId.startsWith(platform + ':'))
         throw new QueueError('invalid_input');
@@ -572,6 +577,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
           guard,
           responseRate,
           options.autonomousReplies,
+          serviceInput,
         );
         if (result.admission.status === 'queue_full') counters.rejected = add(counters.rejected, 1);
         emit();

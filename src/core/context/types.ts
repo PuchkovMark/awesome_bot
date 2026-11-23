@@ -1,3 +1,7 @@
+import type { PassportSection } from '../../contracts/chat-passport';
+import type { PreparedPassport } from './passport';
+import type { PreparedCards } from './participant-cards';
+import type { AddressPreferenceReference } from '../../contracts/index';
 import type { GlobalVersionRef } from '../../contracts/versioning';
 import type { AgentLoopInput } from '../agent-loop/types';
 export type PreparationFailure =
@@ -11,6 +15,11 @@ export interface ContextMetadata {
   readonly messageIds: readonly number[];
   readonly layerBytes: Readonly<{ system: number; environment: number; messages: number }>;
   readonly estimatedTokens: number;
+  readonly summaries?: readonly { id: number; level: string; bytes: number }[];
+  readonly passport?: {
+    readonly sections: readonly PassportSection[];
+    readonly estimatedTokens: number;
+  };
   readonly scanned: number;
   readonly historyTruncated: boolean;
   readonly reply: 'none' | 'included' | 'truncated' | 'unavailable';
@@ -21,7 +30,12 @@ export type PreparationResult =
       readonly kind: 'ready';
       readonly input: Omit<AgentLoopInput, 'signal'>;
       readonly metadata: ContextMetadata;
+      readonly timezone?: string;
       readonly authorLabels?: readonly string[];
+      readonly addressPreference?: AddressPreferenceReference;
+      readonly participantCards?: PreparedCards;
+      readonly passport?: PreparedPassport;
+      readonly summaries?: import('./summaries').PreparedSummaries;
     }
   | { readonly kind: 'failed'; readonly reason: PreparationFailure }
   | { readonly kind: 'cancelled' | 'unavailable' | 'deadline_exceeded' };

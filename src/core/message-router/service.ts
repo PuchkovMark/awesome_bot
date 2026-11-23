@@ -1,10 +1,16 @@
 import { createRouterMetrics } from './metrics';
 import type { SafeLogger } from '../../logger/types';
-import type { ConnectionScope, IncomingMessage, AuthorizationContext } from '../../contracts/index';
+import type {
+  ConnectionScope,
+  IncomingMessage,
+  AuthorizationContext,
+  UserId,
+} from '../../contracts/index';
 import type { Storage } from '../../storage/index';
 import type { ChatQueue } from '../chat-queue/types';
 import type { RoutingDecision, ServiceCommand } from './types';
 import { routeMessage } from './routing';
+import { addressesQuestionnaireByName } from './name-address';
 import { validIncoming } from './validation';
 import { commandAccess, type RouterAuthorization } from './command-boundary';
 import type {
@@ -27,9 +33,16 @@ export interface RouterOptions {
   readonly storage: Storage;
   readonly queue: ChatQueue;
   readonly authorization?: RouterAuthorization;
+  readonly canAnswerQuestionnaire?: (
+    scope: ConnectionScope,
+    user: UserId,
+    messageId: number,
+    receivedAt: number,
+  ) => boolean;
   readonly recognizeCommand?: (
     message: IncomingMessage,
-    replyToOther?: boolean,
+    replyToOther: boolean | undefined,
+    scope: ConnectionScope,
   ) => ServiceCommand | null;
   readonly identity?: (
     scope: ConnectionScope,
@@ -82,7 +95,7 @@ export function createMessageRouter(options: RouterOptions) {
         })
       ).settings;
       if (isCurrent && !isCurrent()) return { decision: null, admission: null };
-      const command = options.recognizeCommand?.(message, replyToOther) ?? null;
+      const command = options.recognizeCommand?.(message, replyToOther, scope) ?? null;
       if (command) context ??= options.identity?.(scope, message);
       const service = command
         ? await commandAccess(options.authorization, context, scope, message, command)
@@ -98,12 +111,10 @@ export function createMessageRouter(options: RouterOptions) {
         userId: message.userId,
         authorName: message.authorName,
         isGroupChat: message.isGroupChat,
-        ...(options.queue.autonomousReplies && message.isGroupChat
-          ? { senderBot: message.isBot }
-          : {}),
+        senderBot: message.isBot,
         role: 'user' as const,
         attachmentCount: message.attachments.length,
-        text: message.text,
+        text: command?.journalLabel ?? message.text,
         timestamp: message.timestamp,
         ...(message.replyToMessageId ? { replyToMessageId: message.replyToMessageId } : {}),
       };
@@ -111,15 +122,41 @@ export function createMessageRouter(options: RouterOptions) {
         scope,
         record,
         (snapshot) => {
+          const answerForm =
+            message.isBot === false &&
+            !message.hasForwarded &&
+            message.replyAddress !== 'unknown' &&
+            (message.isGroupChat || message.chatId === message.userId);
           const decision = routeMessage({
             message,
             settings: snapshot.settings,
             considerInitiative: options.queue.autonomousReplies === true,
+            questionnaireName:
+              !service &&
+              answerForm &&
+              message.isGroupChat &&
+              addressesQuestionnaireByName(message.text) &&
+              options.canAnswerQuestionnaire?.(
+                scope,
+                message.userId,
+                snapshot.message.id,
+                snapshot.receivedAt,
+              ) === true,
             ...(service ? { service } : {}),
           });
           return {
             reason: decision.reason,
-            ...(decision.kind === 'service' && command?.action === 'reminder.manage'
+            ...(!command &&
+            message.isBot === false &&
+            !message.hasForwarded &&
+            !message.text.trimStart().startsWith('/') &&
+            (message.isGroupChat || message.chatId === message.userId)
+              ? { profileUpdate: true as const }
+              : {}),
+            ...(answerForm ? {} : { skipQuestionnaire: true as const }),
+            ...(decision.kind === 'service' &&
+            command &&
+            ['reminder.manage', 'profile.self.address'].includes(command.action)
               ? { privateCommand: true as const }
               : {}),
             route: decision.kind === 'ordinary' ? decision.route : null,
@@ -129,6 +166,7 @@ export function createMessageRouter(options: RouterOptions) {
           };
         },
         disclosure,
+        command?.journalLabel === undefined ? undefined : true,
       );
       const decision = result.decision ? fromDecision(result.decision) : null;
       if (decision) {

@@ -1,3 +1,17 @@
+import { isVkGroupChatId } from '../channels/vk/normalize';
+import { vkMessageLength } from '../channels/vk/outbound-text';
+import { legacyQuestionnaire } from '../core/questionnaires/legacy-template';
+import { createQuestionnaireStore, registerQuestionnaires } from './questionnaire-store';
+import { createChatPassportStore, registerChatPassport } from './chat-passport-store';
+import { createProfileCommandStore, registerProfileCommands } from './profile-command-store';
+import { createGreetingStore, registerGreetings } from './greeting-store';
+import { createProfileFactStore, registerProfileInference } from './profile-fact-store';
+import { createProfileUpdateStore, registerProfileUpdates } from './profile-update-store';
+import {
+  createAddressPreferenceStore,
+  registerAddressPreferences,
+} from './address-preference-store';
+import { createPersonalDataStore, registerPersonalData } from './personal-data-store';
 import { createTokenBudgetStore, registerTokenBudgets } from './token-budget-store';
 import { createHistoryClearStore, registerHistoryClear } from './history-retention-store';
 import { requireInput } from './validation';
@@ -16,6 +30,7 @@ import { createDisclosureStore, registerDisclosureStore } from './chat-disclosur
 import { createAdminRecoveryStore, registerAdminRecovery } from './admin-recovery-store';
 import { createChatControlStore, registerChatControl } from './chat-control-store';
 import { createReminderStore, registerReminders } from './reminder-store';
+import { createParticipantRegistry, registerParticipantRegistry } from './participant-registry';
 import { createScopedStorage } from './scoped-storage';
 import { openConnection } from './connection';
 import { migrate } from './migrate';
@@ -45,8 +60,29 @@ export async function openStorage(
     const versions = createVersionBackend(connection, backend, limits);
     const traces = createTraceBackend(connection, backend);
     const queue = createQueueBackend(connection, backend, traces, options.messageRetentionDays);
+    const profileFacts = createProfileFactStore(backend);
+    const profileCommands = createProfileCommandStore(
+      connection,
+      backend,
+      profileFacts.writePrivateFact,
+    );
+    const passport = createChatPassportStore(connection, backend);
+    const questionnaires = createQuestionnaireStore(connection, backend, {
+      builtIn: legacyQuestionnaire,
+      supports: isVkGroupChatId,
+      maxBytes: vkMessageLength.value,
+    });
     const storage: Storage = {
-      ...createScopedStorage(connection, backend, versions, queue),
+      ...createScopedStorage(
+        connection,
+        backend,
+        versions,
+        queue,
+        profileFacts,
+        profileCommands.edit,
+        passport.apply,
+        questionnaires.replace,
+      ),
       traces: {
         async get(scope, id) {
           return traces.get(scope, id);
@@ -59,10 +95,20 @@ export async function openStorage(
         connection.close();
       },
     };
+    const privacy = createPersonalDataStore(connection, backend);
+    registerPersonalData(storage, privacy);
+    registerProfileInference(storage, profileFacts);
+    registerProfileUpdates(storage, createProfileUpdateStore(connection, backend));
+    registerProfileCommands(storage, profileCommands);
+    registerChatPassport(storage, passport);
+    registerQuestionnaires(storage, questionnaires);
+    registerAddressPreferences(storage, createAddressPreferenceStore(privacy));
+    registerParticipantRegistry(storage, createParticipantRegistry(connection, backend));
     registerReminders(storage, createReminderStore(connection, backend));
     registerHistoryClear(storage, createHistoryClearStore(connection, backend));
     registerDisclosureStore(storage, createDisclosureStore(connection, backend));
     registerAdminRecovery(storage, createAdminRecoveryStore(connection, backend));
+    registerGreetings(storage, createGreetingStore(connection, backend, versions));
     registerChatControl(storage, createChatControlStore(connection, backend));
     registerTraces(storage, traces);
     registerTokenBudgets(storage, createTokenBudgetStore(connection, backend));

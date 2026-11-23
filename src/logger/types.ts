@@ -41,6 +41,13 @@ export type LogEvent =
       reason: 'reply_other' | 'reply_unknown' | 'mention_flood';
       count: number;
     }
+  | {
+      event: 'profile_update_stats';
+      messages: number;
+      attempts: number;
+      recorded: number;
+      outcome: 'processed' | 'discarded';
+    }
   | ({ event: 'queue_stats'; window: 'run' } & import('../storage/queue-types').QueueStats)
   | { event: 'config_loaded' }
   | { event: 'application_ready' | 'application_stopped' | 'prompt_initialized' | 'chat_resolved' }

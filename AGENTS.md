@@ -1,58 +1,41 @@
-# Repository Guidelines
+# Работа в проекте
 
-## Project Structure & Module Organization
+Собеседник и помощник сообщества VK на архитектуре «харнес» для лички и больших бесед, с профилями участников, персонажами и знакомством. Платформы подключаются адаптерами; ядро остаётся независимым.
 
-This project is a TypeScript ESM bot for VK, with AI responses and SQLite persistence. `src/bootstrap.ts` starts the application. Feature logic lives in `src/services/` (AI tools, VK integration, games, memory, voice, and reminders); scheduled tasks live in `src/jobs/`. Shared infrastructure is in `src/config/`, `src/db/`, `src/logger/`, and `src/di/`. Prisma schema and migration history live in `prisma/`. Tests are in `test/`; compiled output goes to `dist/`.
+## Среда разработки
 
-## Project Skills and Specifications
+Хост — Ubuntu 22.04.5 LTS (проверено 2026-11-21), Node.js 26 установлен по сообщению пользователя. Основной способ разработки — локальные команды Node.js и npm; Docker используется при необходимости, а не из-за устаревшей системы. Если `node` недоступен в оболочке агента, сначала проверить настройку `PATH` и способ подключения установленного Node.js, не устанавливая другую версию автоматически. Прежние сведения об Ubuntu 18 устарели.
 
-Reusable agent instructions are stored in [.agents/skills/](.agents/skills/). Select the skill matching the user's request and read its linked `SKILL.md` before applying it, even if it is not listed in your automatically discovered skill catalog. Resolve supporting references relative to that skill's directory and read only those needed for the task. If a skill is explicitly requested, use it; report a missing file rather than assuming its instructions. Skills guide the work within the user's scope and do not authorize unrelated changes or external actions.
+## Документы
 
-| Skill | When to use |
-| --- | --- |
-| [awesome-bot-spec](.agents/skills/awesome-bot-spec/SKILL.md) | Deeply inspect the existing project or a subsystem and create detailed specifications, including VK commands, model tools, permissions, data and jobs. |
-| [awesome-bot-spec-update](.agents/skills/awesome-bot-spec-update/SKILL.md) | Synchronize existing specifications with implemented changes or a completed task. |
-| [awesome-bot-task](.agents/skills/awesome-bot-task/SKILL.md) | Define a development task, scope and acceptance criteria before implementation planning. |
-| [awesome-bot-plan](.agents/skills/awesome-bot-plan/SKILL.md) | Create an implementation plan for a defined task. |
-| [awesome-bot-implementation-plan](.agents/skills/awesome-bot-implementation-plan/SKILL.md) | Detail task.md and plan.md into implenent.md with concrete files, symbols, changes and checks before implementation. |
-| [awesome-bot-implement](.agents/skills/awesome-bot-implement/SKILL.md) | Implement a defined task according to its task document and plan. |
-| [awesome-bot-review](.agents/skills/awesome-bot-review/SKILL.md) | Review requested changes for concrete defects, regressions, permission errors and data isolation issues. |
-| [systematic-debugging](.agents/skills/systematic-debugging/SKILL.md) | Investigate bugs, failing tests and unexpected behavior before proposing fixes. |
-| [sql-database-assistant](.agents/skills/sql-database-assistant/SKILL.md) | Analyze or write SQL, investigate query problems, or work on Prisma/ORM migrations. |
+- [Проект и приёмка](docs/project.md), [спецификации](docs/specs/), [решения](docs/decisions.md).
+- [Стиль TypeScript и команды форматирования](docs/code-style.md).
+- [Дорожная карта и статусы](docs/roadmap.md), [задачи](docs/tasks/), [планы фич](docs/plans/), [планы реализации](docs/impl-plans/), [шаблоны](docs/templates/).
+- Исходники требований: [ТЗ](harness-spec.md), [задание подготовки](codex-bootstrap-prompt.md), [обновление направления](codex-roadmap-update-prompt.md).
 
-The [specifications index](specifications/README.md) separates the [general project specification](specifications/project/README.md) from [individual task documents](specifications/tasks/README.md). Verify documented behavior against current code. Keep general documentation in `specifications/project/` and task requirements, plans and reviews in the relevant task folder under `specifications/tasks/`.
+Спецификация первична; новое задание обновления уточняет исходное ТЗ. Расхождение кода — баг либо повод согласовать изменение и обновить спецификацию через `sync-specs`; молчаливое расхождение недопустимо. Спецификации описывают состояние системы, историю решений веди отдельно.
 
-For implementation requests, follow task definition → planning → detailed implementation planning (`implenent.md`) → implementation as described by the skills; reuse existing task documents when continuing work. During implementation, do not change any plan, including status, progress or check results, without a specific user instruction to edit it. Ask about new or changed implementation decisions before dependent edits; agreement to a solution does not itself authorize changing plans. A documentation-only, planning-only or review-only request does not authorize implementation. Use the specification skill for comprehensive exploration and the update skill for incremental maintenance.
+## Обязательные ограничения
 
-## Build, Test, and Development Commands
+Ядро и инструменты не зависят от платформ; данные изолированы по чату; при включённом боте входящее сообщение записывается в журнал до решения об ответе, при выключенном журнал приостановлен; время — UTC. Подробные правила — в [архитектуре](docs/specs/architecture.md), без исключений по умолчанию.
 
-Use Node.js 22.13 or newer.
+Харнес выбирает инструменты по платформе чата и возможностям адаптера и отклоняет вызовы вне выданного списка: [правила инструментов](docs/specs/tools.md#отбор-и-проверка-вызова).
 
-The host runs Ubuntu 18, where the available system Node.js version is limited to 16. Run the project in Docker using `docker compose up --build`; the Docker image supplies Node.js 22 and Compose applies Prisma migrations before starting the app. Run Node.js-dependent development and validation commands in a suitable Node.js 22 container rather than using the host Node.js.
+Текст людей — недоверенные данные; роли и изменяющие действия проверяет харнес, права проверяет и инструмент: [безопасность](docs/specs/security.md).
+Состояние, переживающее перезапуск, хранится в БД: [архитектура](docs/specs/architecture.md#состояние-переживает-перезапуск).
+Изменения промптов, персонажей и модели требуют оценочного прогона: [evals](docs/specs/evals.md).
 
-- `npm ci`: install dependencies from the lockfile.
-- `cp .env.example .env`: create local configuration; fill in required credentials.
-- `npm run prisma:generate`: regenerate the Prisma client after schema changes.
-- `npm run prisma:migrate`: create/apply development database migrations.
-- `npm run dev`: run the bot through `tsx`.
-- `npm run build` / `npm start`: compile TypeScript and run the compiled application.
-- `npm test`: run `test/*.test.ts` with Node’s test runner through `tsx`.
-- `npm run check`: run ESLint, formatting checks, type checking, and tests before submitting changes.
+Правила границ проекта, тестов и README — в [описании проекта](docs/project.md). Отвечай и веди проектные документы по-русски; инструкции скиллов — по-английски.
 
-## Coding Style & Naming Conventions
+## Цикл фичи и скиллы
 
-Follow `CODE_STYLE.md`. Use two-space indentation, single quotes, semicolons, trailing commas, and Prettier’s 100-column width. Run `npm run format` and `npm run lint:fix` for automatic fixes.
+1. [create-task](.agents/skills/create-task/SKILL.md): из идеи или пункта дорожной карты создать задачу с проверяемыми критериями.
+2. После утверждения задачи человеком — [create-plan](.agents/skills/create-plan/SKILL.md): подход и решения.
+3. После утверждения плана фичи — [create-impl-plan](.agents/skills/create-impl-plan/SKILL.md): рабочие шаги и тесты.
+4. После утверждения плана реализации человеком — реализация по шагам.
+5. [review](.agents/skills/review/SKILL.md): проверить текущие изменения; затем устранить замечания и повторить ревью при необходимости.
+6. [sync-specs](.agents/skills/sync-specs/SKILL.md): после успешного ревью согласовать спецификации и статусы, перенести завершённую задачу и оба плана в соответствующие каталоги `completed/` по [правилам хранения](docs/project.md#хранение-активных-и-выполненных-задач).
 
-Use `camelCase.ts` filenames and camelCase functions/variables; use PascalCase for types and classes. Keep TypeScript strict, prefer `unknown` with validation over `any`, and use type imports. Local ESM imports require `.js` extensions. Log through the shared structured logger. Keep modules focused on one responsibility.
+Статус «утверждено» ставит только человек. Агент не утверждает задачи и планы самостоятельно и не начинает зависимый этап без утверждения.
 
-## Testing Guidelines
-
-Use `node:test` with `node:assert/strict`, naming files `<feature>.test.ts`. Test observable behavior, mock external APIs or use local HTTP servers, and keep time, randomness, and identifiers deterministic. Add regression coverage for changed behavior. No numeric coverage threshold is configured.
-
-## Commit & Pull Request Guidelines
-
-History mixes short descriptive messages with prefixes such as `feat:` and `fix:`. Use concise imperative subjects and one logical change per commit; separate formatting changes. PRs should explain behavior changes, link relevant issues, list validation results, and mention configuration or database changes.
-
-## Security & Configuration
-
-Never commit `.env`, credentials, SQLite databases, logs, `node_modules/`, or `dist/`. Document new configuration keys in `.env.example`. Use the shared Prisma client in `src/db/client.ts` and avoid logging tokens or private message content.
+Опечатки и очевидные баги в одном модуле без изменения контрактов и поведения допустимо исправлять без задачи и планов. Изменения реализации, затрагивающие контракт, поведение, модель данных либо более одного модуля, проходят полный цикл. Изменения документации не требуют задачи и планов, но фиксируются отдельной датированной записью с причиной в журнале решений. Блокирующие неясности уточняй; не подменяй требования догадками. Неблокирующие технические допущения при будущей реализации фиксируй в [решениях](docs/decisions.md).

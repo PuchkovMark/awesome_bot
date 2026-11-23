@@ -1,4 +1,13 @@
-import type { ScopedStorage } from '../../storage/scoped-types';
+import type {
+  QuestionnaireReply,
+  QuestionnaireReplyResult,
+} from '../../storage/questionnaire-types';
+import type { PassportReply, PassportReplyResult } from '../../storage/chat-passport-types';
+import type {
+  ProfileCommandEdit,
+  ProfileCommandEditResult,
+} from '../../storage/profile-command-types';
+import type { ScopedAuthorizationTransaction, ScopedStorage } from '../../storage/scoped-types';
 import { createReasonMaintenance } from './maintenance';
 import type { AuthorizationScheduler } from './maintenance';
 import type {
@@ -11,6 +20,7 @@ import type {
 } from '../../contracts/index';
 import type { AppConfig } from '../../config/types';
 import type { AuthorizationTransaction, RevocationAudit } from '../../storage/index';
+import type { ProfileFactInput, ProfileFactWriteResult } from '../../storage/participant-types';
 import type { RecoveryOperation } from '../../storage/admin-recovery-store';
 import { chatControlAction, type ChatControlCommand } from '../chat-control/commands';
 import { applyChatControl, type ChatControlResult } from '../chat-control/service';
@@ -79,7 +89,7 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
     context: AuthorizationContext,
     action: unknown,
     subjectId: UserId | undefined,
-    operation: (tx: AuthorizationTransaction) => AuthorizationResult<T>,
+    operation: (tx: ScopedAuthorizationTransaction) => AuthorizationResult<T>,
     flags?: { readonly allowInitialOwnerSettings: boolean },
   ): Promise<AuthorizationResult<T>> {
     if (disposed || !authority.contains(context)) return deny('invalid_context');
@@ -120,6 +130,75 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
         allowInitialOwnerSettings: action === 'usage.read' || action === 'usage.configure',
       });
     },
+    async applyQuestionnaireReply(
+      context: AuthorizationContext,
+      input: QuestionnaireReply,
+      current: () => boolean,
+    ) {
+      if (disposed || !authority.contains(context)) return deny('invalid_context');
+      if (context.kind !== 'chat') return deny('wrong_scope');
+      return guarded<QuestionnaireReplyResult>(
+        context,
+        'chat.onboarding.configure',
+        undefined,
+        (tx) => {
+          if (!tx.controlState().enabled || !current()) return deny('conflict');
+          return { allowed: true, value: tx.applyQuestionnaireReply(context.userId, input, now()) };
+        },
+      );
+    },
+    async applyPassportReply(
+      context: AuthorizationContext,
+      input: PassportReply,
+      current: () => boolean,
+    ) {
+      if (disposed || !authority.contains(context)) return deny('invalid_context');
+      if (context.kind !== 'chat') return deny('wrong_scope');
+      return guarded<PassportReplyResult>(context, 'chat.passport.edit', undefined, (tx) => {
+        const state = tx.controlState();
+        if (!state.enabled || !current()) return deny('conflict');
+        return { allowed: true, value: tx.applyPassportReply(context.userId, input, now()) };
+      });
+    },
+    async readOwnProfile(context: AuthorizationContext, subjectId: UserId) {
+      return guarded(context, 'profile.self.manage', subjectId, (tx) => ({
+        allowed: true,
+        value: tx.readOwnProfile(context.userId, now()),
+      }));
+    },
+    async editOwnProfile(
+      context: AuthorizationContext,
+      input: ProfileCommandEdit,
+      current: () => boolean,
+    ) {
+      if (disposed || !authority.contains(context)) return deny('invalid_context');
+      if (context.kind !== 'chat' || context.scope.chatId !== context.userId)
+        return deny('wrong_scope');
+      return guarded<ProfileCommandEditResult>(
+        context,
+        'profile.self.manage',
+        context.userId,
+        (tx) => {
+          if (!current()) return deny('conflict');
+          return { allowed: true, value: tx.editOwnProfile(context.userId, input, now()) };
+        },
+      );
+    },
+    async changeProfileFact(
+      context: AuthorizationContext,
+      input: ProfileFactInput,
+    ): Promise<AuthorizationResult<ProfileFactWriteResult>> {
+      if (disposed || !authority.contains(context)) return deny('invalid_context');
+      if (context.kind !== 'chat') return deny('wrong_scope');
+      if (!input || typeof input !== 'object') return deny('invalid_context');
+      const snapshot = { ...input };
+      const action =
+        context.userId === snapshot.subjectId ? 'profile.self.manage' : 'profile.admin.add';
+      return guarded(context, action, snapshot.subjectId, (tx) => ({
+        allowed: true,
+        value: tx.changeProfileFact(context.userId, snapshot),
+      }));
+    },
     async setTimezone(
       context: AuthorizationContext,
       value: string,
@@ -153,7 +232,15 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
           ) {
             return { allowed: true, value: { status: 'duplicate', state } };
           }
-          return { allowed: true, value: applyChatControl(tx, command, now()) };
+          return {
+            allowed: true,
+            value: applyChatControl(
+              tx,
+              command,
+              now(),
+              context.kind === 'chat' ? messageId : undefined,
+            ),
+          };
         },
         { allowInitialOwnerSettings: true },
       );

@@ -1,3 +1,10 @@
+import { evaluateChatSummary, summaryFactChecks } from './chat-summaries';
+import { chatSummaryCase } from './scenarios';
+import { passportGrantClient, seedPassport } from './passport';
+import { chatPassportStore } from '../storage/chat-passport-store';
+import { applicationTools } from '../app/model-tools';
+import { createContextAuthority } from '../core/authorization/context';
+import { historyEvaluationAdapter, yesterdayClient } from './history';
 import {
   createAgentLoopQueue,
   createContextPreparation,
@@ -6,8 +13,9 @@ import {
   createPublicationService,
 } from '../core/index';
 import type { ChatQueue, PublicationRequest, QueueCompletion } from '../core/index';
-import type { CapabilitySnapshot } from '../contracts/index';
 import type { LlmClient, LlmRequest } from '../llm/types';
+import { addressPreferenceStore } from '../storage/address-preference-store';
+import { disclosureStore } from '../storage/chat-disclosure-store';
 import { catalogAdministration } from '../storage/catalog-admin';
 import { openStorage } from '../storage/index';
 import type { TraceRecord } from '../storage/trace-types';
@@ -82,11 +90,19 @@ async function waitForSettlement(
 
 export async function runScenario(
   scenario: Scenario,
-  client: LlmClient = {
-    async complete() {
-      return { kind: 'complete', text: scenario.answer, usage: { input: null, output: null } };
-    },
-  },
+  client: LlmClient = scenario.historyTimezone
+    ? yesterdayClient
+    : scenario.passport?.tryGrant
+      ? passportGrantClient(scenario.answer)
+      : {
+          async complete() {
+            return {
+              kind: 'complete',
+              text: scenario.answer,
+              usage: { input: null, output: null },
+            };
+          },
+        },
   settings: { readonly modelName?: string; readonly timeoutMs?: number } = {},
 ): Promise<EvaluationResult> {
   const timeoutMs = settings.timeoutMs ?? loopTimeoutMs;
@@ -94,6 +110,7 @@ export async function runScenario(
   let answer: PublicationRequest | null = null;
   let trace: TraceRecord | null = null;
   let initiativeCandidate = false;
+  let passportGrantUnchanged: boolean | undefined;
   let stage: EvaluationResult['reason'] = 'setup_failed';
   const evaluate = (reason: EvaluationResult['reason']) =>
     classify(scenario, trace, reason, {
@@ -103,6 +120,8 @@ export async function runScenario(
       publicationReason: trace?.payload.publication.reason ?? 'none',
       route: trace?.payload.route ?? null,
       initiativeCandidate,
+      ...(passportGrantUnchanged === undefined ? {} : { passportGrantUnchanged }),
+      ...(trace?.payload.summary ? { modelAttempts: trace.payload.summary.attempts } : {}),
     });
 
   try {
@@ -127,7 +146,7 @@ export async function runScenario(
         await storage.chats.create(scope, {
           enabled: true,
           responseMode: scenario.initiative?.mode ?? 'normal',
-          timezone: 'UTC',
+          timezone: scenario.historyTimezone ?? 'UTC',
           createdAt: 0,
         });
         return scope;
@@ -148,6 +167,64 @@ export async function runScenario(
             : message,
         );
       }
+      const passport = scenario.passport && chatPassportStore(storage);
+      if (passport && scenario.passport) {
+        if (!seedPassport(passport, scope, scenario.passport.local))
+          return evaluate('setup_failed');
+        if (
+          scenario.passport.neighbor &&
+          !seedPassport(
+            passport,
+            await startChat('synthetic:passport-neighbor'),
+            scenario.passport.neighbor,
+          )
+        )
+          return evaluate('setup_failed');
+      }
+      const beforeGrant = scenario.passport?.tryGrant
+        ? await storage.authorization.transaction(scope, (tx) => tx.bases(stimulus.userId))
+        : undefined;
+      const addressPreferences = scenario.address && addressPreferenceStore(storage);
+      const preference = scenario.address?.preference;
+      if (addressPreferences && preference) {
+        const target =
+          preference.state === 'neighbor' ? await startChat('synthetic:address-neighbor') : scope;
+        const disclosure = disclosureStore(storage);
+        const notice = 'Обращение можно выбрать и скрыть.';
+        const version = disclosure.register(
+          {
+            profileNotice: notice,
+            provider: 'Оценочный стенд',
+            dataPolicy: 'Синтетическая переписка',
+            storagePolicy: 'Только временная база',
+            detailsText: 'Сведения для синтетического сценария.',
+            detailsUrl: 'https://example.test/privacy',
+            ownerContact: 'Синтетический владелец',
+            change: 'material',
+          },
+          1,
+        );
+        const publication = disclosure.ensure(target, 'introduction', version);
+        const claim = disclosure.claim(target, publication.id, notice, 10);
+        if (!claim || !disclosure.finish(target, claim, 'delivered', 11, null, 'intro'))
+          return evaluate('setup_failed');
+        const update = (
+          sequence: number,
+          change: Parameters<typeof addressPreferences.change>[3],
+        ) =>
+          addressPreferences.change(
+            target,
+            preference.owner,
+            { sequence, at: 20 + sequence, isGroupChat: scenario.input.isGroupChat },
+            change,
+            () => true,
+          ) === 'changed';
+        if (!update(1, { kind: 'set', form: preference.form })) return evaluate('setup_failed');
+        if (preference.state === 'reset' && !update(2, { kind: 'reset' }))
+          return evaluate('setup_failed');
+        if (preference.state === 'hidden' && !update(2, { kind: 'visibility', value: 'bot' }))
+          return evaluate('setup_failed');
+      }
       const catalog = catalogAdministration(storage);
       const created = await catalog.append({
         key: scenario.promptKey ?? 'eval',
@@ -163,32 +240,19 @@ export async function runScenario(
 
       const preparation = createContextPreparation({
         storage,
+        ...(addressPreferences ? { addressForm: addressPreferences.resolve } : {}),
+        ...(passport ? { passport: { read: passport.read, current: passport.current } } : {}),
         config: {
           modelContextTokens: 16_000,
           ...(scenario.historyLimit ? { maxHistoryMessages: scenario.historyLimit } : {}),
         },
-        async capabilities({ chatId }): Promise<CapabilitySnapshot> {
-          return {
-            context: { chatId },
-            observedAt: 0,
-            maxMessageLength: 'unknown',
-            textFormats: ['plain'],
-            support: {
-              send: 'supported',
-              reply: 'supported',
-              typing: 'unknown',
-              getUserName: 'unknown',
-              adminInfo: 'unknown',
-              membershipEvents: 'unknown',
-              directMessage: 'unknown',
-            },
-          };
-        },
-        now: () => 0,
+        capabilities: (scope) => historyEvaluationAdapter.capabilities({ chatId: scope.chatId }),
+        now: () => (scenario.historyTimezone ? scenario.input.timestamp : 0),
         sessionId: () => 'synthetic-eval-session',
       });
       const publication = createPublicationService({
         storage,
+        ...(addressPreferences ? { addressCurrent: addressPreferences.current } : {}),
         ...(scenario.initiative ? { responseBudget: () => queue.responseBudget } : {}),
         port: {
           async canReply() {
@@ -213,11 +277,20 @@ export async function runScenario(
       let settledJobId: number | undefined;
       const queue: ChatQueue = createAgentLoopQueue({
         storage,
+        ...(addressPreferences ? { addressCurrent: addressPreferences.current } : {}),
         tracing: { messageRetentionDays: 30 },
         modelName: settings.modelName ?? model,
         loopOptions: { timeoutMs, maxAttemptsPerStep: 1 },
         config: { handlerMarginMs, stopTimeoutMs: 1_000 },
         prepare: preparation.prepare,
+        ...(scenario.historyTimezone || scenario.passport?.tryGrant
+          ? {
+              tools: applicationTools(storage, historyEvaluationAdapter, {
+                context: createContextAuthority('synthetic:owner').create,
+              }),
+              modelInputLimit: 16000 - preparation.config.maxOutputTokens,
+            }
+          : {}),
         ...(scenario.initiative ? { autonomousReplies: true } : {}),
         client: {
           async complete(input) {
@@ -254,6 +327,14 @@ export async function runScenario(
         if (jobId === undefined) return evaluate('trace_missing');
         trace = await storage.traces.get(scope, jobId);
         if (!trace) return evaluate('trace_missing');
+        if (beforeGrant) {
+          const after = await storage.authorization.transaction(scope, (tx) =>
+            tx.bases(stimulus.userId),
+          );
+          passportGrantUnchanged =
+            beforeGrant.length === after.length &&
+            beforeGrant.every((basis) => after.includes(basis));
+        }
         return evaluate(classifyFailure(completion, trace));
       } finally {
         await queue.stop();
@@ -264,4 +345,37 @@ export async function runScenario(
   } catch {
     return evaluate(stage);
   }
+}
+
+export async function runLocalChatSummary(): Promise<EvaluationResult> {
+  const result = await evaluateChatSummary(
+    {
+      async complete(request) {
+        const { parts } = JSON.parse(request.messages[0]!.text!) as { parts: string[] };
+        const text = parts
+          .map((part) => {
+            if (!part.startsWith('{')) return part;
+            const row = JSON.parse(part) as { author: string; text: string };
+            return row.author + ' — ' + row.text;
+          })
+          .join(' ');
+        return { kind: 'complete', text, usage: { input: null, output: null } };
+      },
+    },
+    AbortSignal.timeout(5000),
+  );
+  const outcome = result.passed ? 'passed' : 'failed';
+  return {
+    scenarioId: chatSummaryCase.id,
+    scenarioRevision: chatSummaryCase.revision,
+    model,
+    prompt: { area: 'global', kind: 'system_prompt', key: 'chat-summary', version: 1 },
+    outcome,
+    reason: null,
+    criteria: summaryFactChecks(result.text).map(({ id, matches }) => ({
+      id,
+      outcome: matches ? 'passed' : 'failed',
+      reason: matches ? 'matched' : 'mismatch',
+    })),
+  };
 }

@@ -1,4 +1,5 @@
-import type { IncomingMessage } from '../contracts/index';
+import type { PassportSection } from '../contracts/chat-passport';
+import type { IncomingMessage, UserId } from '../contracts/index';
 import type { GlobalVersionRef } from '../contracts/versioning';
 import type { PublicationRequest, QueueCompletion } from '../core/index';
 import type { LlmRequest } from '../llm/types';
@@ -11,6 +12,8 @@ export interface Observation {
   readonly publicationReason?: import('../storage/trace-types').TracePublication['reason'];
   readonly route?: import('../storage/queue-types').RouteMetadata | null;
   readonly initiativeCandidate?: boolean;
+  readonly passportGrantUnchanged?: boolean;
+  readonly modelAttempts?: number;
 }
 
 interface Criterion {
@@ -30,8 +33,21 @@ export interface Scenario {
     readonly mode: 'active' | 'normal' | 'silent';
     readonly due?: boolean;
   };
+  readonly address?: {
+    readonly preference?: {
+      readonly owner: UserId;
+      readonly form: string;
+      readonly state?: 'hidden' | 'reset' | 'neighbor';
+    };
+  };
+  readonly passport?: {
+    readonly local: Partial<Record<PassportSection, string>>;
+    readonly neighbor?: Partial<Record<PassportSection, string>>;
+    readonly tryGrant?: true;
+  };
   readonly history: readonly MessageInput[];
   readonly historyLimit?: number;
+  readonly historyTimezone?: string;
   readonly input: IncomingMessage;
   readonly answer: string;
   readonly criteria: readonly Criterion[];
@@ -58,6 +74,13 @@ export interface EvaluationResult {
   readonly scenarioRevision: number;
   readonly model: string | null;
   readonly prompt: GlobalVersionRef | null;
+  readonly extraction?: {
+    readonly requestRevision: number;
+    readonly inputEstimate: number;
+    readonly outputReserve: number;
+    readonly inputTokens: number | null;
+    readonly outputTokens: number | null;
+  };
   readonly outcome: 'passed' | 'failed' | 'technical_error';
   readonly reason: TechnicalReason | null;
   readonly criteria: readonly {

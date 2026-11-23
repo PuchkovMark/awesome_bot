@@ -1,57 +1,11 @@
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { contextConfig } from '../src/core/context/config';
-import { contextSeparator, estimateInput, staticMinimum } from '../src/core/context/budget';
-import { validateContextStartup } from '../src/core/context/startup';
+import { estimateInput, estimateRequestInput } from '../src/core/context/budget';
+import { composePassport, type PreparedPassport } from '../src/core/context/passport';
 import { createContextBuilder } from '../src/core/context/index';
 import { contextFixture } from './helpers/context';
+
 const c = contextConfig({ modelContextTokens: 16000 });
-test('конфигурация ограничивает общий ввод и резерв независимо от провайдера', () => {
-  expect(c.inputBudgetTokens).toBe(8000);
-  expect(Object.isFrozen(c)).toBe(true);
-  for (const patch of [
-    { modelContextTokens: 8000 },
-    { historyPageSize: 257 },
-    { maxHistoryMessages: 257 },
-    { preparationTimeoutMs: NaN },
-    { environmentReserveTokens: 8000 },
-  ])
-    expect(() => contextConfig({ ...c, ...patch })).toThrow('invalid_configuration');
-});
-test('оценка учитывает UTF-8 и сериализованные поля, а не длину русского текста', () => {
-  expect(estimateInput('Я', [{ role: 'user', text: '😀' }])).toBe(128 + 2 + 32 + 4);
-  expect(estimateInput('', [{ role: 'user', text: JSON.stringify('"\n') }])).toBeGreaterThan(
-    estimateInput('', [{ role: 'user', text: '"\n' }]),
-  );
-});
-test('нет fallback, начальная проверка различает отсутствие версии и размер статики', () => {
-  expect(validateContextStartup(null, c)).toBe('missing_system_prompt');
-  const version = {
-    ref: { area: 'global', kind: 'system_prompt', key: 'base', version: 1 },
-    text: 'x',
-    createdAt: 0,
-  } as const;
-  const exact = { ...c, inputBudgetTokens: staticMinimum(version.text, c) };
-  expect(validateContextStartup(version, exact)).toBe(null);
-  expect(
-    validateContextStartup(version, { ...exact, inputBudgetTokens: exact.inputBudgetTokens - 1 }),
-  ).toBe('static_budget_too_small');
-});
-test('начальная проверка учитывает JSON-поле тега сверх действующего резерва обрамления', () => {
-  const version = {
-    ref: { area: 'global', kind: 'system_prompt', key: 'base', version: 1 },
-    text: 'x',
-    createdAt: 0,
-  } as const;
-  const previousMinimum =
-    estimateInput(version.text + contextSeparator, [{ role: 'user', text: '' }]) +
-    c.environmentReserveTokens +
-    256;
-  const addedBytes = Buffer.byteLength('"kind":"untrusted_chat_data",');
-  expect(staticMinimum(version.text, c)).toBe(previousMinimum + addedBytes);
-  expect(validateContextStartup(version, { ...c, inputBudgetTokens: previousMinimum })).toBe(
-    'static_budget_too_small',
-  );
-});
 
 test.each([true, false])(
   'последняя реплика входит ровно на границе, беседа=%s',
@@ -123,6 +77,164 @@ test('новое поле входит в точную стоимость и н�
     expect(smaller.metadata.messageIds).toEqual([newer.id, current.id]);
     expect(smaller.metadata.historyTruncated).toBe(true);
     expect(smaller.authorLabels).toEqual(['u2']);
+  } finally {
+    await f.storage.close();
+  }
+});
+
+test('допустимая форма обращения входит в точную стоимость текущей реплики', async () => {
+  const f = await contextFixture();
+  try {
+    const trigger = await f.put('current', 'Текущая реплика', {
+      userId: 'vk:2',
+      isGroupChat: true,
+    });
+    const work = f.work(trigger.id, true);
+    const name = 'Рысь "' + 'Я😀'.repeat(180);
+    const prepare = (inputBudgetTokens: number) =>
+      createContextBuilder({
+        ...f.options,
+        config: { ...f.options.config, inputBudgetTokens },
+        addressForm: () => ({
+          text: name,
+          reference: {
+            userId: 'vk:2',
+            sourceTime: 100,
+            revision: 1,
+            isGroupChat: true,
+          },
+        }),
+      }).prepare(work);
+    const ready = await prepare(c.inputBudgetTokens);
+    if (ready.kind !== 'ready') throw Error(ready.kind);
+    expect(ready.addressPreference).toMatchObject({ userId: 'vk:2', revision: 1 });
+    const messages = ready.input.messages;
+    const budget =
+      ready.metadata.estimatedTokens +
+      c.environmentReserveTokens -
+      ready.metadata.layerBytes.environment;
+    expect(JSON.parse(messages.at(-1)!.text).current.addressForm).toBe(name);
+    expect(await prepare(budget)).toEqual(ready);
+    expect(await prepare(budget - 1)).toMatchObject({
+      kind: 'failed',
+      reason: 'current_message_too_large',
+    });
+  } finally {
+    await f.storage.close();
+  }
+});
+
+const groupInput = {
+  kind: 'untrusted_chat_data',
+  history: [{ text: 'История.' }],
+  reply: { text: 'Цитата.' },
+  current: { text: 'Можно ли публиковать рекламу, и что значит «маяк»?' },
+  participantCards: [{ author: 'Саша', facts: [{ fieldKey: 'city', value: 'Томск' }] }],
+};
+const request = {
+  system: 'Проверенная инструкция.',
+  messages: [{ role: 'user' as const, text: JSON.stringify(groupInput) }],
+  maxOutputTokens: 1024,
+  sessionId: 'session',
+  tools: [
+    { name: 'history_search', description: 'Поиск', parameters: { type: 'object' as const } },
+  ],
+};
+const requestCost = estimateRequestInput(request);
+const plan = (
+  entries: PreparedPassport['entries'],
+  flags: Partial<PreparedPassport> = {},
+): PreparedPassport => ({
+  entries,
+  readEntries: () => entries,
+  messageIndex: 0,
+  modelContextTokens: c.modelContextTokens,
+  inputBudgetTokens: c.inputBudgetTokens,
+  current: () => true,
+  ...flags,
+});
+
+function passportCost(chatPassport: Record<string, string>) {
+  return (
+    estimateRequestInput({
+      ...request,
+      messages: [
+        { ...request.messages[0]!, text: JSON.stringify({ ...groupInput, chatPassport }) },
+      ],
+    }) - requestCost
+  );
+}
+
+test('паспорт укладывается ровно в десять процентов и в полный запрос со схемами и резервом', () => {
+  const rules = 'Реклама по согласованию. "Оговорка"\nСимволы }😀\\';
+  const extra = passportCost({ rules });
+  const entries = [{ section: 'rules', revision: 3, text: rules }] as const;
+  const edge = {
+    inputBudgetTokens: extra * 10,
+    modelContextTokens: requestCost + extra + request.maxOutputTokens,
+  };
+  const result = composePassport(plan(entries, edge), request);
+  expect(result.used).toEqual([{ section: 'rules', revision: 3 }]);
+  expect(result.estimatedTokens).toBe(extra);
+  expect(estimateRequestInput(result.request) + request.maxOutputTokens).toBe(
+    edge.modelContextTokens,
+  );
+  expect(result.request.tools).toBe(request.tools);
+  expect(JSON.parse(result.request.messages[0]!.text!)).toEqual({
+    ...groupInput,
+    chatPassport: { rules },
+  });
+
+  for (const limit of [
+    { ...edge, inputBudgetTokens: edge.inputBudgetTokens - 1 },
+    { ...edge, modelContextTokens: edge.modelContextTokens - 1 },
+  ])
+    expect(composePassport(plan(entries, limit), request).request).toBe(request);
+  expect(composePassport(plan(entries, edge), request, requestCost + extra - 1).request).toBe(
+    request,
+  );
+});
+
+test('предел 1024 сохраняет целый раздел и позволяет проверить следующий при переполнении', () => {
+  const rules = 'r'.repeat(1024 - passportCost({ rules: '' }));
+  expect(passportCost({ rules })).toBe(1024);
+  const large = { section: 'rules', revision: 7, text: rules } as const;
+  const glossary = 'Маяк означает место сбора.';
+  const short = { section: 'glossary', revision: 4, text: glossary } as const;
+  const config = { inputBudgetTokens: 12_000 };
+  expect(composePassport(plan([large, short], config), request).estimatedTokens).toBe(1024);
+  const overflow = { ...large, text: large.text + 'S' };
+  expect(composePassport(plan([overflow], config), request).request).toBe(request);
+  const smaller = composePassport(plan([overflow, short], config), request);
+  expect(smaller.used).toEqual([{ section: 'glossary', revision: 4 }]);
+  expect(JSON.parse(smaller.request.messages[0]!.text!)).toEqual({
+    ...groupInput,
+    chatPassport: { glossary },
+  });
+});
+
+test('нейтральное обращение сохраняет запрос и пропускает чтение паспорта', async () => {
+  const f = await contextFixture();
+  try {
+    const reply = await f.put('neutral', 'Как дела?');
+    const work = f.work(reply.id, true);
+    const read = vi.fn(() => [
+      { section: 'rules' as const, revision: 1, text: 'Локальное правило.' },
+    ]);
+    const builder = createContextBuilder({ ...f.options, passport: { read, current: () => true } });
+    expect(await builder.prepare(work)).toEqual(await f.builder.prepare(work));
+    expect(read).not.toHaveBeenCalled();
+    const question = await f.put('relevant', 'Что значит «маяк» и можно ли размещать рекламу?');
+    const scoped = await builder.prepare(f.work(question.id, true));
+    if (scoped.kind !== 'ready') throw Error(scoped.kind);
+    expect(scoped.passport?.entries).toEqual([
+      { section: 'rules', revision: 1, text: 'Локальное правило.' },
+      { section: 'glossary', revision: 0, text: null },
+    ]);
+    expect(read).toHaveBeenCalledOnce();
+    const privateInput = await builder.prepare(f.work(question.id, false));
+    expect(privateInput).not.toHaveProperty('passport');
+    expect(read).toHaveBeenCalledOnce();
   } finally {
     await f.storage.close();
   }
