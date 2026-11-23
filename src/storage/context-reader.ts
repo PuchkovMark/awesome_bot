@@ -1,3 +1,5 @@
+import type { Database } from 'better-sqlite3';
+import type { ConnectionScope, UserId } from '../contracts/index';
 import { historyBounds } from './history-retention-store';
 import type { Connection } from './connection';
 import type { LifecycleBackend } from './lifecycle-store';
@@ -46,7 +48,100 @@ function result(row: Row, limit: number): ContextRecord {
       text.length > limit || name.length > limit || textBytes > limit * 4 || nameBytes > limit * 4,
   };
 }
+export interface HistorySelection {
+  readonly kind: 'search' | 'period';
+  readonly cutoffId: number;
+  readonly from?: number;
+  readonly to?: number;
+  readonly query?: string;
+  readonly author?: UserId;
+  readonly authorNumber?: number;
+  readonly limit: number;
+}
+
+export interface HistorySnapshot {
+  readonly found: number;
+  readonly rows: readonly ContextRecord[];
+  countsCurrent(): boolean;
+}
+
+function selectHistory(
+  lifecycle: LifecycleBackend,
+  scope: ConnectionScope,
+  selection: HistorySelection,
+): HistorySnapshot {
+  const { kind, cutoffId, limit, from, to, query, author, authorNumber } = selection;
+  positive(cutoffId);
+  positive(limit, 40);
+  requireInput(kind === 'search' || kind === 'period');
+  if (kind === 'period') requireInput(from !== undefined && to !== undefined);
+  if (from !== undefined) requireInput(Number.isSafeInteger(from));
+  if (to !== undefined) requireInput(Number.isSafeInteger(to));
+  if (from !== undefined && to !== undefined) requireInput(from < to);
+  const filters = [visible, 'm.id<=?'];
+  const values: (string | number)[] = [cutoffId];
+  if (from !== undefined) {
+    filters.push('m.timestamp>=?');
+    values.push(from);
+  }
+  if (to !== undefined) {
+    filters.push('m.timestamp<?');
+    values.push(to);
+  }
+  if (author !== undefined) {
+    filters.push('m.user_id=?');
+    values.push(author);
+  }
+  if (authorNumber !== undefined) {
+    positive(authorNumber);
+    filters.push('a.author_number=?');
+    values.push(authorNumber);
+  }
+  if (query !== undefined) {
+    requireInput(query.trim().length > 0 && query.length <= 512 && !query.includes('\0'));
+    filters.push('m.id IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?)');
+    values.push('"' + query.replaceAll('"', '""') + '"');
+  }
+  if (kind === 'search') {
+    // SQLite lower() распознаёт только ASCII. Варианты русской реакции перечислены явно.
+    filters.push("trim(m.text, ?) NOT IN ('', '+', '👍', 'ок', 'ОК', 'Ок', 'оК')");
+    values.push(
+      ' \t\r\n\v\f\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff',
+    );
+  }
+  const source = `FROM personal_visible_messages m ${authorJoin} WHERE ${filters.join(' AND ')}`;
+  function parameters(db: Database) {
+    const bounds = historyBounds(db, scope.chatId);
+    return [
+      scope.generation,
+      scope.chatId,
+      bounds.clearedThrough,
+      bounds.expiredThrough,
+      ...values,
+    ];
+  }
+  return lifecycle.transaction(scope, (db) => {
+    const count = db.prepare('SELECT count(*) ' + source).pluck();
+    const args = parameters(db);
+    const found = count.get(...args) as number;
+    const textLimit = 2048;
+    const rows = db
+      .prepare(
+        `SELECT ${projection},a.author_number AS authorNumber ${source}
+      ORDER BY m.timestamp DESC,m.id DESC LIMIT ?`,
+      )
+      .all(textLimit * 4, textLimit * 4, ...args, limit) as Row[];
+    return {
+      found,
+      rows: rows.map((row) => result(row, textLimit)),
+      countsCurrent: () =>
+        lifecycle.transaction(scope, (db) => count.get(...parameters(db)) === found),
+    };
+  });
+}
+
 export interface ContextSearch {
+  history(scope: ConnectionScope, selection: HistorySelection): HistorySnapshot;
   search(
     scope: import('../contracts/index').ConnectionScope,
     query: string,
@@ -60,6 +155,9 @@ export function createContextReader(
 ): ContextMessageReader & ContextSearch {
   const reader = createMessageStore(connection, true);
   return Object.freeze({
+    history(scope, selection) {
+      return selectHistory(lifecycle, scope, selection);
+    },
     async get(scope, id) {
       return lifecycle.transaction(scope, (db) => {
         positive(id);

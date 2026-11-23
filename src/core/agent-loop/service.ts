@@ -207,6 +207,7 @@ export function createAgentLoop(
                 Promise.all(batch.map(execute)),
                 halted.then(() => undefined),
               ]);
+              if (tools.budgetExhausted?.()) return finish({ kind: 'token_budget_exhausted' });
               if (!results || !safeCurrent()) return finish(stopped ?? { kind: 'cancelled' });
               for (const [index, call] of batch.entries())
                 transcript.push({ role: 'tool', callId: call.id, text: results[index]! });

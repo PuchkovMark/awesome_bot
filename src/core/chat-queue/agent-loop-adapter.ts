@@ -22,6 +22,7 @@ export type QueuePreparation =
       readonly kind: 'ready';
       readonly input: Omit<AgentLoopInput, 'signal'>;
       readonly metadata?: import('../context/types').ContextMetadata;
+      readonly timezone?: string;
       readonly authorLabels?: readonly string[];
       readonly addressPreference?: AddressPreferenceReference;
       readonly participantCards?: PreparedCards;
@@ -287,7 +288,9 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
           outcome,
           result,
           ...(prepared.addressPreference ? { addressPreference: prepared.addressPreference } : {}),
-          ...(session ? { toolResultsCurrent: session.current } : {}),
+          ...(session
+            ? { toolResultsCurrent: session.current, toolSourceIds: session.sourceIds() }
+            : {}),
           ...(cardSubjects.size
             ? { participantCards: { current: cardsCurrent, sourceIds: [...cardSources] } }
             : {}),

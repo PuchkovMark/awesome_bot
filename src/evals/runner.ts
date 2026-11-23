@@ -1,3 +1,6 @@
+import { applicationTools } from '../app/model-tools';
+import { createContextAuthority } from '../core/authorization/context';
+import { historyEvaluationAdapter, yesterdayClient } from './history';
 import {
   createAgentLoopQueue,
   createContextPreparation,
@@ -6,7 +9,6 @@ import {
   createPublicationService,
 } from '../core/index';
 import type { ChatQueue, PublicationRequest, QueueCompletion } from '../core/index';
-import type { CapabilitySnapshot } from '../contracts/index';
 import type { LlmClient, LlmRequest } from '../llm/types';
 import { addressPreferenceStore } from '../storage/address-preference-store';
 import { disclosureStore } from '../storage/chat-disclosure-store';
@@ -84,11 +86,13 @@ async function waitForSettlement(
 
 export async function runScenario(
   scenario: Scenario,
-  client: LlmClient = {
-    async complete() {
-      return { kind: 'complete', text: scenario.answer, usage: { input: null, output: null } };
-    },
-  },
+  client: LlmClient = scenario.historyTimezone
+    ? yesterdayClient
+    : {
+        async complete() {
+          return { kind: 'complete', text: scenario.answer, usage: { input: null, output: null } };
+        },
+      },
   settings: { readonly modelName?: string; readonly timeoutMs?: number } = {},
 ): Promise<EvaluationResult> {
   const timeoutMs = settings.timeoutMs ?? loopTimeoutMs;
@@ -129,7 +133,7 @@ export async function runScenario(
         await storage.chats.create(scope, {
           enabled: true,
           responseMode: scenario.initiative?.mode ?? 'normal',
-          timezone: 'UTC',
+          timezone: scenario.historyTimezone ?? 'UTC',
           createdAt: 0,
         });
         return scope;
@@ -211,24 +215,8 @@ export async function runScenario(
           modelContextTokens: 16_000,
           ...(scenario.historyLimit ? { maxHistoryMessages: scenario.historyLimit } : {}),
         },
-        async capabilities({ chatId }): Promise<CapabilitySnapshot> {
-          return {
-            context: { chatId },
-            observedAt: 0,
-            maxMessageLength: 'unknown',
-            textFormats: ['plain'],
-            support: {
-              send: 'supported',
-              reply: 'supported',
-              typing: 'unknown',
-              getUserName: 'unknown',
-              adminInfo: 'unknown',
-              membershipEvents: 'unknown',
-              directMessage: 'unknown',
-            },
-          };
-        },
-        now: () => 0,
+        capabilities: (scope) => historyEvaluationAdapter.capabilities({ chatId: scope.chatId }),
+        now: () => (scenario.historyTimezone ? scenario.input.timestamp : 0),
         sessionId: () => 'synthetic-eval-session',
       });
       const publication = createPublicationService({
@@ -264,6 +252,14 @@ export async function runScenario(
         loopOptions: { timeoutMs, maxAttemptsPerStep: 1 },
         config: { handlerMarginMs, stopTimeoutMs: 1_000 },
         prepare: preparation.prepare,
+        ...(scenario.historyTimezone
+          ? {
+              tools: applicationTools(storage, historyEvaluationAdapter, {
+                context: createContextAuthority('synthetic:owner').create,
+              }),
+              modelInputLimit: 16000 - preparation.config.maxOutputTokens,
+            }
+          : {}),
         ...(scenario.initiative ? { autonomousReplies: true } : {}),
         client: {
           async complete(input) {

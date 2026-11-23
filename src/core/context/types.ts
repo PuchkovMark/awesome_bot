@@ -23,6 +23,7 @@ export type PreparationResult =
       readonly kind: 'ready';
       readonly input: Omit<AgentLoopInput, 'signal'>;
       readonly metadata: ContextMetadata;
+      readonly timezone?: string;
       readonly authorLabels?: readonly string[];
       readonly addressPreference?: AddressPreferenceReference;
       readonly participantCards?: PreparedCards;

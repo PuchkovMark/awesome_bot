@@ -1,7 +1,7 @@
 import type { ChannelAdapter, UserId, ToolContext } from '../contracts/index';
 import type { LlmRequest, LlmToolDescription, LlmUsage } from '../llm/types';
 import type { LoopTools } from '../core/agent-loop/types';
-import { estimateRequestInput } from '../core/context/budget';
+import { estimateRequestInput, toolMessageInputCost } from '../core/context/budget';
 import { delegateDescription } from '../core/agent-loop/delegation';
 import {
   createJobDelegation,
@@ -14,6 +14,7 @@ import type {
 } from '../core/chat-queue/agent-loop-adapter';
 import type { createAuthorizationService } from '../core/authorization/service';
 import { createToolRegistry, type RuntimeTool, type ToolExecution } from '../tools/registry';
+import { historyTools } from '../tools/history';
 import { participantTools } from '../tools/participants';
 import { participantRegistryStore } from '../storage/participant-registry';
 import { addressPreferenceStore } from '../storage/address-preference-store';
@@ -51,7 +52,7 @@ function exposedMaterial(ready: Extract<QueuePreparation, { kind: 'ready' }>) {
 export function applicationTools(
   storage: Storage,
   adapter: ChannelAdapter,
-  authorization: Awaited<ReturnType<typeof createAuthorizationService>>,
+  authorization: Pick<Awaited<ReturnType<typeof createAuthorizationService>>, 'context'>,
 ): NonNullable<AgentLoopQueueOptions['tools']> {
   const members = participantRegistryStore(storage),
     addresses = addressPreferenceStore(storage);
@@ -71,13 +72,14 @@ export function applicationTools(
     }
     for (const [index, user] of (adapter.mentionedPeople?.(current.text) ?? []).entries())
       anchors.set('mention' + (index + 1), user);
+    const principal = authorization.context({ scope, userId: current.userId });
     const context: ToolContext = {
       chatId: scope.chatId,
       userId: current.userId,
       platform: adapter.platform,
       adapter,
       isAdmin: 'unknown',
-      authorization: authorization.context({ scope, userId: current.userId }),
+      authorization: principal,
     };
     const group = work.route.isGroupChat;
     const roster = (interest?: string) => {
@@ -135,7 +137,22 @@ export function applicationTools(
       for (const id of result.sourceIds ?? []) ids.add(id);
       if (result.current) guards.push(result.current);
     };
-    const used = group ? participants.definitions : [];
+    const knownLabels = new Set(prepared.authorLabels ?? []);
+    const histories = historyTools({
+      principal,
+      cutoffId: work.messageId,
+      group,
+      timezone: prepared.timezone ?? 'UTC',
+      read: storage.contextMessages.history,
+      author(ref) {
+        const user = anchors.get(ref);
+        if (user) return { author: user };
+        if (group && knownLabels.has(ref) && /^u[1-9]\d*$/.test(ref))
+          return { authorNumber: Number(ref.slice(1)) };
+      },
+    });
+    const used = [...(group ? participants.definitions : []), ...histories];
+    let budgetExhausted = false;
     const delegate: RuntimeTool = {
       ...delegateDescription,
       description:
@@ -166,11 +183,17 @@ export function applicationTools(
         if (
           modelInputLimit &&
           estimateRequestInput({ ...request, tools: offered }) > modelInputLimit
-        )
-          offered = [];
+        ) {
+          // Сохраняем прежний набор инструментов, если новые схемы истории не помещаются.
+          offered = offered.filter(
+            (tool) => !histories.some((history) => history.name === tool.name),
+          );
+          if (estimateRequestInput({ ...request, tools: offered }) > modelInputLimit) offered = [];
+        }
         return offered;
       },
       current: valid,
+      budgetExhausted: () => budgetExhausted,
       helperSteps: () => helper?.helperSteps() ?? 0,
       helperSummary: () => usage,
       beginBatch(request, remaining, steps) {
@@ -196,8 +219,9 @@ export function applicationTools(
             resolve: (ref) => material.get(ref),
             visible: (received) => members.sourcesVisible(scope, received) && valid(),
             allowedTools: () => used.filter((t) => offered.some((s) => s.name === t.name)),
-            read: async (call) => {
-              const output = await execute(call, offered, true);
+            read: async (call, _signal, fits) => {
+              const output = await execute(call, offered, true, fits);
+              if (output.budgetExhausted) return 'limit';
               if (output.outcome !== 'success') return;
               return {
                 ref: 'read:' + call.id,
@@ -209,26 +233,37 @@ export function applicationTools(
         });
       },
       async execute(call, issued) {
-        return (await execute(call, issued, false)).text;
+        const available =
+          modelInputLimit === undefined ? Infinity : modelInputLimit - estimateRequestInput(frame);
+        const result = await execute(
+          call,
+          issued,
+          false,
+          (text) => toolMessageInputCost(call.id, text) <= available,
+        );
+        if (result.budgetExhausted) budgetExhausted = true;
+        return result.text;
       },
       subjectIds: () => [...subjects],
       sourceIds: () => [...ids],
       trace: () => traces,
-      labels: participants.labels,
+      labels: () => [...knownLabels, ...participants.labels()],
     };
     async function execute(
       call: import('../llm/types').LlmToolCall,
       issued: readonly LlmToolDescription[],
       readOnly: boolean,
+      fits: (text: string, ceiling?: number) => boolean,
     ) {
       const started = performance.now();
-      const reply = await registry.execute(call, issued, readOnly);
+      const reply = await registry.execute(call, issued, readOnly, fits);
       const result = fitsToolEnvelope(call.id, reply.text)
         ? reply
         : {
             text: '{"status":"incomplete","gaps":["Результат превысил допустимый размер."]}',
             outcome: 'failed' as const,
           };
+      for (const label of result.authorLabels ?? []) knownLabels.add(label);
       remember(result);
       traces.push({
         name: /^\w[\w.-]{0,63}$/.test(call.name) ? call.name : 'unknown',

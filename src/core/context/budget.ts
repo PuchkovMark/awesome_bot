@@ -13,6 +13,10 @@ export function messageInputCost(textBytes: number): number {
   return 32 + textBytes;
 }
 
+export function toolMessageInputCost(callId: string, text: string): number {
+  return messageInputCost(Buffer.byteLength(JSON.stringify({ role: 'tool', callId, text })));
+}
+
 export function historyEntryInputCost(
   textBytes: number,
   group: boolean,

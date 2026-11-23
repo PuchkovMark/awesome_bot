@@ -11,12 +11,7 @@ const dataPrefix = JSON.stringify({ kind: 'untrusted_chat_data' }).slice(0, -1) 
 // Поле и запятая внутри существующего объекта, без внешних скобок.
 export const dataMarkerBytes = Buffer.byteLength(dataPrefix) - 1;
 
-export function createContextMessageFormatter(
-  current: ContextMessage,
-  group: boolean,
-  timezone: string,
-  addressForm?: string,
-) {
+export function createHistoryFormatter(group: boolean, timezone: string) {
   const time = new Intl.DateTimeFormat('ru-RU', {
     timeZone: timezone,
     dateStyle: 'short',
@@ -36,8 +31,8 @@ export function createContextMessageFormatter(
     return undefined;
   }
 
-  function serializeEntry({ message, truncated }: ContextEntry, currentForm?: string): string {
-    return JSON.stringify({
+  function entry({ message, truncated }: ContextEntry, currentForm?: string) {
+    return {
       author: message.authorName,
       ...(currentForm === undefined ? {} : { addressForm: currentForm }),
       authorLabel: authorLabel(message),
@@ -49,9 +44,20 @@ export function createContextMessageFormatter(
           ? '[Вложение: содержимое недоступно.]'
           : '[Текст сообщения отсутствует; содержимое недоступно.]'),
       ...(truncated ? { truncated: true } : {}),
-    });
+    };
   }
+  return { authorLabel, entry };
+}
 
+export function createContextMessageFormatter(
+  current: ContextMessage,
+  group: boolean,
+  timezone: string,
+  addressForm?: string,
+) {
+  const { authorLabel, entry } = createHistoryFormatter(group, timezone);
+  const serializeEntry = (value: ContextEntry, currentForm?: string) =>
+    JSON.stringify(entry(value, currentForm));
   const prefix = group ? dataPrefix + '"history":[' : dataPrefix;
   const replyPrefix = group ? '],"reply":' : '"reply":';
   const suffix = `,"current":${serializeEntry({ message: current }, addressForm)}}`;
