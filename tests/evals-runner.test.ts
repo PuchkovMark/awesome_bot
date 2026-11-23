@@ -1,6 +1,8 @@
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { runScenario } from '../src/evals/runner';
-import { scenarios } from '../src/evals/scenarios';
+import { historySearchScenarios, scenarios } from '../src/evals/scenarios';
+import { historySearchClient } from '../src/evals/history';
+import type { Observation } from '../src/evals/types';
 import type { LlmRequest } from '../src/llm/types';
 
 test('ограниченная история, версия и опубликованный ответ воспроизводятся в отдельной БД', async () => {
@@ -167,5 +169,105 @@ test('вход без задания возвращает исход сразу'
     reason: 'not_queued',
     model: null,
     prompt: null,
+  });
+});
+
+test.each(historySearchScenarios)(
+  'сценарий $id передаёт реальный результат поиска и публикует ответ по нему',
+  async (scenario) => {
+    const captured = vi.fn<(observation: Observation) => boolean>(() => true);
+    const complete = vi.fn(historySearchClient.complete);
+    const result = await runScenario(
+      {
+        ...scenario,
+        criteria: [
+          ...scenario.criteria,
+          { id: 'publication-probe', description: 'Наблюдение публикации.', check: captured },
+        ],
+      },
+      { complete },
+    );
+    expect(result).toMatchObject({
+      outcome: 'passed',
+      prompt: { key: 'history-search-completeness', version: 1 },
+    });
+    expect(complete).toHaveBeenCalledTimes(2);
+    const [first, continuation] = complete.mock.calls.map(([request]) => request);
+    expect(first!.tools?.map(({ name }) => name)).toContain('history_search');
+    expect(JSON.stringify(first!.messages)).toContain('Открыли дверь.');
+    expect(JSON.stringify(first!.messages)).not.toContain('фонтан');
+    const call = continuation!.messages.find((message) => message.role === 'assistant')
+      ?.toolCalls?.[0];
+    expect(call).toMatchObject({ name: 'history_search', id: 'meeting-search' });
+    const period = {
+      from: '2026-11-22T21:00:00Z',
+      to: '2026-11-23T21:00:00Z',
+    };
+    expect(JSON.parse(call!.arguments)).toEqual({ query: 'встреча', ...period });
+    const reply = continuation!.messages.find((message) => message.role === 'tool');
+    expect(reply?.callId).toBe(call?.id);
+    const found = scenario.historySearch === 'found';
+    expect(JSON.parse(reply!.text)).toMatchObject({
+      kind: 'untrusted_chat_data',
+      ...period,
+      found: found ? 1 : 0,
+      shown: found ? 1 : 0,
+      messages: found ? [expect.objectContaining({ text: 'Встреча у фонтана.' })] : [],
+    });
+    expect(captured).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        answer: expect.objectContaining({
+          text: scenario.answer,
+          scope: expect.objectContaining({ chatId: scenario.input.chatId }),
+          replyToMessageId: scenario.input.messageId,
+        }),
+      }),
+    );
+  },
+);
+
+test.each([
+  ['found', 'По вчерашней переписке встреча назначена возле фонтана.', 'passed'],
+  ['found', 'Возможно, встреча у фонтана, но я не уверен.', 'failed'],
+  ['found', 'Встреча у фонтана?', 'failed'],
+  ['found', 'Встреча у киоска.', 'failed'],
+  ['empty', 'В доступной истории за вчера не обнаружено сообщений о встрече.', 'passed'],
+  ['empty', 'Встречу не обсуждали.', 'failed'],
+  ['empty', 'Поиск завершился ошибкой, проверка истории недоступна.', 'failed'],
+  ['empty', 'Совпадений нет.', 'failed'],
+  ['empty', 'В доступной переписке ничего не нашёл. Встреча у кафе.', 'failed'],
+  ['empty', 'В доступной переписке ничего не нашёл. Встречу не обсуждали.', 'failed'],
+] as const)('смысл ответа для %s: %s', async (outcome, text, expected) => {
+  const scenario = historySearchScenarios.find(({ historySearch }) => historySearch === outcome)!;
+  const result = await runScenario(scenario, {
+    async complete(request) {
+      const reply = await historySearchClient.complete(request);
+      return reply.kind === 'complete' ? { ...reply, text } : reply;
+    },
+  });
+  expect(result).toMatchObject({ outcome: expected, reason: null });
+  expect(result.criteria.filter(({ outcome }) => outcome === 'failed').map(({ id }) => id)).toEqual(
+    expected === 'passed' ? [] : ['search-answer'],
+  );
+});
+
+test('неверный период поиска проваливает критерий даже при правдоподобном ответе', async () => {
+  const scenario = historySearchScenarios.find(({ historySearch }) => historySearch === 'found')!;
+  const result = await runScenario(scenario, {
+    async complete(request) {
+      const reply = await historySearchClient.complete(request);
+      if (reply.kind === 'complete') return { ...reply, text: scenario.answer };
+      if (reply.kind !== 'tool_calls') return reply;
+      return {
+        ...reply,
+        calls: reply.calls.map((call) => ({ ...call, arguments: '{"query":"встреча"}' })),
+      };
+    },
+  });
+  expect(result).toMatchObject({ outcome: 'failed', reason: null });
+  expect(result.criteria).toContainEqual({
+    id: 'search-yesterday',
+    outcome: 'failed',
+    reason: 'mismatch',
   });
 });

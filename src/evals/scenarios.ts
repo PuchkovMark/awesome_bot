@@ -3,6 +3,7 @@ import type { IncomingMessage } from '../contracts/index';
 import type { MessageInput } from '../storage/index';
 import type { Observation, Scenario } from './types';
 import { addressPromptVersion } from '../core/context/address-prompt';
+import { answersHistorySearch, historySearchExchange } from './history';
 import {
   addressPreferencePrompt,
   addressPreferencePromptKey,
@@ -657,6 +658,113 @@ export function yesterdayScenario(
   };
 }
 
+const historySearchQuestion = 'Вчера обсуждали, где будет встреча?';
+const historySearchPrompt =
+  'Для этого вопроса один раз вызови history_search по слову «встреча» за вчерашние местные сутки. ' +
+  'Границы поиска возьми из даты и часового пояса окружения. Ответь одним предложением по результату.';
+const historySearchTimezone = 'Europe/Moscow';
+const historySearchFrom = Date.parse('2026-11-22T21:00:00Z');
+const historySearchTo = Date.parse('2026-11-23T21:00:00Z');
+const meetingPlace = 'Встреча у фонтана.';
+const historySearchCases = [
+  {
+    outcome: 'found',
+    title: 'Поиск подтвердил место встречи',
+    entry: meetingPlace,
+    answer: meetingPlace,
+    criterion:
+      'Назовите подтверждённое место у фонтана без догадки или оговорки о его неизвестности.',
+  },
+  {
+    outcome: 'empty',
+    title: 'Поиск по доступной переписке пуст',
+    entry: 'Закрыли окно.',
+    answer: 'В доступной переписке за вчера не нашёл упоминаний встречи.',
+    criterion:
+      'Укажите отсутствие совпадений в доступной переписке. Утверждение «встречу не обсуждали» считается нарушением.',
+  },
+] as const;
+
+export const historySearchScenarios: readonly Scenario[] = historySearchCases.map(
+  ({ outcome, title, entry: yesterdayEntry, answer, criterion }) => {
+    const chatId = `synthetic:history-${outcome}` as const;
+    return {
+      id: `history-search-${outcome}`,
+      revision: 1,
+      title,
+      prompt: historySearchPrompt,
+      promptKey: 'history-search-completeness',
+      input: input(historySearchQuestion, {
+        chatId,
+        isGroupChat: true,
+        isMentioned: true,
+        soleBotMention: true,
+        timestamp: Date.parse('2026-11-24T09:00:00+03:00'),
+      }),
+      history: [
+        entry('yesterday', yesterdayEntry, { chatId, timestamp: historySearchFrom + 60_000 }),
+        entry('today', 'Открыли дверь.', { chatId, timestamp: historySearchTo + 60_000 }),
+      ],
+      historyLimit: 1,
+      historyTimezone: historySearchTimezone,
+      historySearch: outcome,
+      answer,
+      criteria: [
+        {
+          id: 'search-source-outside-window',
+          description: 'Место встречи отсутствует в первом запросе к модели.',
+          check: ({ firstRequest }) =>
+            firstRequest !== undefined && !/фонтан/iu.test(JSON.stringify(firstRequest.messages)),
+        },
+        {
+          id: 'search-yesterday',
+          description: 'Модель получила ответ на поиск слова «встреча» за местные вчерашние сутки.',
+          check: ({ request }) => {
+            const args = historySearchExchange(request)?.args;
+            return (
+              typeof args?.query === 'string' &&
+              args.query.trim().toLowerCase() === 'встреча' &&
+              typeof args.from === 'string' &&
+              Date.parse(args.from) === historySearchFrom &&
+              typeof args.to === 'string' &&
+              Date.parse(args.to) === historySearchTo
+            );
+          },
+        },
+        {
+          id: 'search-tool-result',
+          description: 'В продолжении передана фактическая выдача поиска.',
+          check: ({ request }) => {
+            const result = historySearchExchange(request)?.result;
+            const count = outcome === 'found' ? 1 : 0;
+            return (
+              result?.kind === 'untrusted_chat_data' &&
+              result.found === count &&
+              result.shown === count &&
+              Array.isArray(result.messages) &&
+              result.messages.length === count &&
+              (count === 0 || result.messages[0]?.text === meetingPlace)
+            );
+          },
+        },
+        {
+          id: 'search-answer',
+          description: 'Доставленный ответ передаёт смысл результата поиска.',
+          check: ({ answer: published }) =>
+            published?.scope.chatId === chatId &&
+            published.replyToMessageId === 'current' &&
+            answersHistorySearch(outcome, published.text),
+          vk: criterion,
+        },
+      ],
+      vkSteps: [
+        `В отдельной тестовой беседе оставьте за вчера синтетическую реплику «${yesterdayEntry}». Вытесните её из недавнего окна нейтральными репликами.`,
+        `Сегодня адресуйте боту вопрос «${historySearchQuestion}».`,
+      ],
+    };
+  },
+);
+
 const localBeacon = 'Маяк — место встречи у сцены.';
 const neighborBeacon = 'Маяк — кодовое слово для пропуска.';
 const unauthorizedInstruction =
@@ -979,6 +1087,7 @@ export const scenarios: readonly Scenario[] = [
     '2026-11-21T21:00:00Z',
     '2026-11-22T21:00:00Z',
   ),
+  ...historySearchScenarios,
 ];
 
 export const profileUpdateCases = [

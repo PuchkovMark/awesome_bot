@@ -4,7 +4,7 @@ import { passportGrantClient, seedPassport } from './passport';
 import { chatPassportStore } from '../storage/chat-passport-store';
 import { applicationTools } from '../app/model-tools';
 import { createContextAuthority } from '../core/authorization/context';
-import { historyEvaluationAdapter, yesterdayClient } from './history';
+import { historyEvaluationAdapter, historySearchClient, yesterdayClient } from './history';
 import {
   createAgentLoopQueue,
   createContextPreparation,
@@ -90,22 +90,11 @@ async function waitForSettlement(
 
 export async function runScenario(
   scenario: Scenario,
-  client: LlmClient = scenario.historyTimezone
-    ? yesterdayClient
-    : scenario.passport?.tryGrant
-      ? passportGrantClient(scenario.answer)
-      : {
-          async complete() {
-            return {
-              kind: 'complete',
-              text: scenario.answer,
-              usage: { input: null, output: null },
-            };
-          },
-        },
+  client: LlmClient = defaultClient(scenario),
   settings: { readonly modelName?: string; readonly timeoutMs?: number } = {},
 ): Promise<EvaluationResult> {
   const timeoutMs = settings.timeoutMs ?? loopTimeoutMs;
+  let firstRequest: LlmRequest | undefined;
   let request: LlmRequest | null = null;
   let answer: PublicationRequest | null = null;
   let trace: TraceRecord | null = null;
@@ -114,6 +103,7 @@ export async function runScenario(
   let stage: EvaluationResult['reason'] = 'setup_failed';
   const evaluate = (reason: EvaluationResult['reason']) =>
     classify(scenario, trace, reason, {
+      ...(firstRequest ? { firstRequest } : {}),
       request,
       answer: trace?.payload.publication.status === 'delivered' ? answer : null,
       historyTruncated: trace?.payload.context?.historyTruncated ?? false,
@@ -297,6 +287,7 @@ export async function runScenario(
         ...(scenario.initiative ? { autonomousReplies: true } : {}),
         client: {
           async complete(input) {
+            firstRequest ??= input;
             request = input;
             return client.complete(input);
           },
@@ -348,6 +339,21 @@ export async function runScenario(
   } catch {
     return evaluate(stage);
   }
+}
+
+function defaultClient(scenario: Scenario): LlmClient {
+  if (scenario.historySearch) return historySearchClient;
+  if (scenario.historyTimezone) return yesterdayClient;
+  if (scenario.passport?.tryGrant) return passportGrantClient(scenario.answer);
+  return {
+    async complete() {
+      return {
+        kind: 'complete',
+        text: scenario.answer,
+        usage: { input: null, output: null },
+      };
+    },
+  };
 }
 
 export async function runLocalChatSummary(): Promise<EvaluationResult> {

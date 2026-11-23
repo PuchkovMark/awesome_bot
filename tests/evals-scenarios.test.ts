@@ -1,7 +1,7 @@
 import { summaryFactChecks } from '../src/evals/chat-summaries';
 import { expect, test } from 'vitest';
 import { runScenario } from '../src/evals/runner';
-import { scenarios, yesterdayScenario } from '../src/evals/scenarios';
+import { historySearchScenarios, scenarios, yesterdayScenario } from '../src/evals/scenarios';
 
 test('сценарии имеют уникальные ключи сравнения и шаги проверки в VK', () => {
   expect(scenarios.map((scenario) => scenario.id)).toEqual([
@@ -43,6 +43,8 @@ test('сценарии имеют уникальные ключи сравнен
     'passport-local-glossary',
     'passport-untrusted-grant',
     'history-yesterday',
+    'history-search-found',
+    'history-search-empty',
   ]);
   for (const scenario of scenarios) {
     expect(scenario.id).toMatch(/^[a-z]+(?:-[a-z]+)*$/);
@@ -52,6 +54,28 @@ test('сценарии имеют уникальные ключи сравнен
       scenario.criteria.length,
     );
     expect(scenario.criteria.some((criterion) => criterion.vk)).toBe(true);
+  }
+});
+
+test('исходы поиска сравниваются на одном вопросе, промпте и недавнем окне', () => {
+  const [found, empty] = historySearchScenarios;
+  expect(found?.history).toMatchObject([
+    { text: 'Встреча у фонтана.' },
+    { text: 'Открыли дверь.' },
+  ]);
+  expect(empty?.history).toMatchObject([{ text: 'Закрыли окно.' }, { text: 'Открыли дверь.' }]);
+  expect(new Set(historySearchScenarios.map(({ input }) => input.chatId)).size).toBe(2);
+  for (const scenario of historySearchScenarios) {
+    expect(scenario).toMatchObject({
+      promptKey: 'history-search-completeness',
+      prompt: found!.prompt,
+      input: { text: found!.input.text, timestamp: found!.input.timestamp },
+      historyTimezone: 'Europe/Moscow',
+      historyLimit: 1,
+    });
+    expect(scenario.history.map(({ timestamp }) => timestamp)).toEqual(
+      found!.history.map(({ timestamp }) => timestamp),
+    );
   }
 });
 

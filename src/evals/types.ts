@@ -6,6 +6,7 @@ import type { LlmRequest } from '../llm/types';
 import type { MessageInput } from '../storage/index';
 
 export interface Observation {
+  readonly firstRequest?: LlmRequest;
   readonly request: LlmRequest | null;
   readonly answer: PublicationRequest | null;
   readonly historyTruncated: boolean;
@@ -48,6 +49,7 @@ export interface Scenario {
   readonly history: readonly MessageInput[];
   readonly historyLimit?: number;
   readonly historyTimezone?: string;
+  readonly historySearch?: 'found' | 'empty';
   readonly input: IncomingMessage;
   readonly answer: string;
   readonly criteria: readonly Criterion[];
