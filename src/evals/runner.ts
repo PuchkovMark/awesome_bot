@@ -1,3 +1,5 @@
+import { evaluateChatSummary, summaryFactChecks } from './chat-summaries';
+import { chatSummaryCase } from './scenarios';
 import { passportGrantClient, seedPassport } from './passport';
 import { chatPassportStore } from '../storage/chat-passport-store';
 import { applicationTools } from '../app/model-tools';
@@ -343,4 +345,37 @@ export async function runScenario(
   } catch {
     return evaluate(stage);
   }
+}
+
+export async function runLocalChatSummary(): Promise<EvaluationResult> {
+  const result = await evaluateChatSummary(
+    {
+      async complete(request) {
+        const { parts } = JSON.parse(request.messages[0]!.text!) as { parts: string[] };
+        const text = parts
+          .map((part) => {
+            if (!part.startsWith('{')) return part;
+            const row = JSON.parse(part) as { author: string; text: string };
+            return row.author + ' — ' + row.text;
+          })
+          .join(' ');
+        return { kind: 'complete', text, usage: { input: null, output: null } };
+      },
+    },
+    AbortSignal.timeout(5000),
+  );
+  const outcome = result.passed ? 'passed' : 'failed';
+  return {
+    scenarioId: chatSummaryCase.id,
+    scenarioRevision: chatSummaryCase.revision,
+    model,
+    prompt: { area: 'global', kind: 'system_prompt', key: 'chat-summary', version: 1 },
+    outcome,
+    reason: null,
+    criteria: summaryFactChecks(result.text).map(({ id, matches }) => ({
+      id,
+      outcome: matches ? 'passed' : 'failed',
+      reason: matches ? 'matched' : 'mismatch',
+    })),
+  };
 }

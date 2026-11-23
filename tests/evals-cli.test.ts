@@ -33,12 +33,12 @@ test('собранная команда запускает набор, а чек
     );
     expect(out.status, out.stderr).toBe(0);
     expect(out.stdout).toContain(
-      `Пройдено ${scenarios.length + questionnaireCases.length + profileUpdateCases.length}`,
+      `Пройдено ${scenarios.length + questionnaireCases.length + profileUpdateCases.length + 1}`,
     );
     const report = JSON.parse(readFileSync(join(directory, 'results.json'), 'utf8'));
     expect(report).toMatchObject({ kind: 'local', schemaVersion: 1 });
     expect(report.runs).toHaveLength(
-      scenarios.length + questionnaireCases.length + profileUpdateCases.length,
+      scenarios.length + questionnaireCases.length + profileUpdateCases.length + 1,
     );
     const checklist = cli(
       directory,

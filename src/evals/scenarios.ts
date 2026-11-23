@@ -1044,3 +1044,13 @@ export const profileUpdateCases = [
       '[{"ref":"m1","author":"u1","field":"музыкальный инструмент","value":"виолончель"}]',
   },
 ] as const;
+
+export const chatSummaryCase = {
+  id: 'chat-history-summary',
+  revision: 1,
+  facts: [
+    ['Лев', 'Выбираем зал Б для встречи 27 ноября.'],
+    ['Ира', 'Я принесу ключ от зала Б.'],
+    ['Лев', 'Исправление даты: встреча 28 ноября, зал прежний.'],
+  ],
+} as const;

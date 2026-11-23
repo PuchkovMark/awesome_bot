@@ -1,3 +1,4 @@
+import { summaryFactChecks } from '../src/evals/chat-summaries';
 import { expect, test } from 'vitest';
 import { runScenario } from '../src/evals/runner';
 import { scenarios, yesterdayScenario } from '../src/evals/scenarios';
@@ -121,4 +122,17 @@ test.each([
   expect(Date.parse(to) - Date.parse(from)).toBe(hours * 3600000);
   const scenario = yesterdayScenario('history-dst', 'Europe/Berlin', now, from, to);
   expect(await runScenario(scenario)).toMatchObject({ outcome: 'passed' });
+});
+
+test('оценка пересказа различает автора обещания и направление переноса', () => {
+  expect(
+    summaryFactChecks('Зал Б. Ира принесёт ключ. Встреча перенесена с 27 на 28 ноября.').map(
+      (c) => c.matches,
+    ),
+  ).toEqual([true, true, true]);
+  expect(
+    summaryFactChecks(
+      'Зал Б. Ключ принесёт Лев. Ира выбрала дату. Встреча перенесена с 28 на 27 ноября.',
+    ).map((c) => c.matches),
+  ).toEqual([true, false, false]);
 });

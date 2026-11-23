@@ -3,7 +3,7 @@ import { createLlmClient } from '../llm/index';
 import { runProfileUpdateMocks, runProfileUpdateModel } from './profile-updates';
 import { formatVkChecklist } from './checklist';
 import { writeLocalReport } from './report';
-import { runScenario } from './runner';
+import { runLocalChatSummary, runScenario } from './runner';
 import { scenarios } from './scenarios';
 import type { EvaluationResult } from './types';
 
@@ -43,7 +43,7 @@ async function main(args: readonly string[]): Promise<number> {
     for (const scenario of scenarios) results.push(await runScenario(scenario));
     for (const sample of questionnaireCases)
       results.push(assessQuestionnaire(sample, sample.mockOutput));
-    results.push(...runProfileUpdateMocks());
+    results.push(...runProfileUpdateMocks(), await runLocalChatSummary());
   }
   try {
     await writeLocalReport(output, results, new Date(), modelRun ? 'model' : 'local');
