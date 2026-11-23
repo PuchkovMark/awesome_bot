@@ -41,6 +41,8 @@ export async function fixture(
     limit?: number;
     profileNotice?: string;
     retentionDays?: number;
+    summaryIntervalMs?: number;
+    summaryFragmentSize?: number;
     modelContextTokens?: number;
     upload?: (peer: number, data: Buffer) => Promise<string>;
     threshold?: number;
@@ -80,6 +82,8 @@ export async function fixture(
       DATABASE_PATH: files.path,
       OPENCODE_API_KEY: 'synthetic-go',
       LLM_MODEL: 'synthetic-model',
+      SUMMARY_INTERVAL_MS: String(options.summaryIntervalMs ?? 300000),
+      SUMMARY_FRAGMENT_SIZE: String(options.summaryFragmentSize ?? 250),
       MODEL_CONTEXT_TOKENS: String(options.modelContextTokens ?? 16000),
       MESSAGE_RETENTION_DAYS: String(options.retentionDays ?? 30),
       LLM_SESSION_SECRET: 'synthetic-session',
@@ -258,6 +262,7 @@ export async function fixture(
         transport,
       },
       client: { complete },
+      auxiliaryClient: { complete },
       onboardingIntervalMs: 5,
       ...(options.administrationIntervalMs === undefined
         ? {}

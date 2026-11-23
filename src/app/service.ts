@@ -9,6 +9,7 @@ import { questionnaireProgressStore } from '../storage/questionnaire-progress-st
 import { questionnaireStore } from '../storage/questionnaire-store';
 import { createProfileCommands } from './profile-commands';
 import { createProfileUpdates } from '../core/profile-updates/service';
+import { applicationSummaries } from './chat-summaries';
 import { applicationTools } from './model-tools';
 import { contextParticipantCards } from './context-participant-cards';
 import { createGreetingService } from '../core/greetings/service';
@@ -67,6 +68,7 @@ import { parseReminderCommand } from '../core/reminders/commands';
 interface ApplicationDependencies {
   readonly vk?: Parameters<typeof createVkChannel>[1];
   readonly client?: LlmClient;
+  readonly auxiliaryClient?: LlmClient;
   readonly readyTimeoutMs?: number;
   readonly stopTimeoutMs?: number;
   readonly onboardingIntervalMs?: number;
@@ -100,6 +102,7 @@ export async function runApplication(
   let membershipWork: Promise<void> | undefined;
   let greetingWork: Promise<void> | undefined;
   let reminderWork: Promise<void> | undefined;
+  let summaryWork: Promise<void> | undefined;
   let profileUpdateWork: Promise<void> | undefined;
   let readyTimer: ReturnType<typeof setTimeout> | undefined;
   let stopTimer: ReturnType<typeof setTimeout> | undefined;
@@ -235,6 +238,7 @@ export async function runApplication(
             administrationWork = checkAdministration().catch(() => stop('vk_failed'));
             greetingWork = deliverGreetings().catch(() => stop('storage_failed'));
             reminderWork = deliverReminders().catch(() => stop('storage_failed'));
+            summaryWork = summaries.run().catch(() => stop('storage_failed'));
             profileUpdateWork = profileUpdates.run().catch(() => stop('storage_failed'));
           },
         },
@@ -392,6 +396,30 @@ export async function runApplication(
         }
       };
       const passport = chatPassportStore(storage);
+      const summaries = applicationSummaries({
+        storage,
+        client:
+          dependencies.auxiliaryClient ??
+          createLlmClient({ ...config.llm, model: config.auxiliaryModel }),
+        model: config.auxiliaryModel,
+        sessionSecret: config.sessionSecret,
+        ...config.summaries,
+        modelContext: config.context.modelContextTokens,
+        signal,
+        port: channel.publicationPort,
+        platform: channel.platform,
+        group,
+        inputBudget: config.context.inputBudgetTokens,
+        disclosure: (scope) =>
+          !group(scope.chatId) && !onboarding.configuredForProfiles()
+            ? 0
+            : onboarding.gate(scope).version,
+        backgroundReady: () =>
+          !!queue?.isRunning() &&
+          !queue.signal.aborted &&
+          queue.stats().depthQueued === 0 &&
+          queue.stats().depthRunning === 0,
+      });
       const preparation = createContextPreparation({
         storage,
         config: config.context,
@@ -684,6 +712,7 @@ export async function runApplication(
       reminderWork,
       greetingWork,
       profileUpdateWork,
+      summaryWork,
       ...typing,
       ...floodPublications,
     ]);
