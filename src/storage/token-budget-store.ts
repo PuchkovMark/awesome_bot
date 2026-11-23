@@ -120,6 +120,16 @@ function readBudget(
   };
 }
 
+export function profileUpdateAllowance(
+  db: Database,
+  scope: BudgetScope,
+  group: boolean,
+  now: number,
+) {
+  const { total, profileUpdate } = readBudget(db, scope, group, now);
+  return Math.min(total.remaining, profileUpdate.remaining);
+}
+
 export function canReserveTokens(
   db: Database,
   scope: ConnectionScope,

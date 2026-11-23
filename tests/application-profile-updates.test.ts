@@ -96,7 +96,7 @@ test('сокращённая порция оставляет ожидание о
   const f = await appFixture();
   try {
     const text = 'Я люблю шахматы.';
-    const sample = profileUpdateRequest([{ id: 1, user: 'vk:41', at: 0, text }], 'test', 300);
+    const sample = profileUpdateRequest([{ id: 1, user: 'vk:41', at: 0, text }], 'test', 1024);
     const cost = estimateRequestInput(sample) + sample.maxOutputTokens;
     tokenBudgetStore(f.storage).update(f.scope, true, { total: 20 * cost }, Date.now());
     f.complete.mockImplementation(async () => ({
@@ -249,3 +249,33 @@ test.each(['foreign-author', 'bad-ref', 'disable', 'deletion', 'expiry', 'genera
     }
   },
 );
+
+test('пустой ответ провайдера удерживает порцию до повторной попытки через пять минут', async () => {
+  const f = await appFixture();
+  try {
+    tokenBudgetStore(f.storage).update(f.scope, true, { total: 300_000 }, Date.now());
+    f.complete
+      .mockResolvedValueOnce({ kind: 'empty', usage: { input: 45, output: 365 } })
+      .mockResolvedValueOnce(result());
+    f.at(1000);
+    for (let i = 0; i < 10; i++) await f.journaled(f.submit('Обычная запись ' + i));
+    await until(() => {
+      expect(profileCalls(f)).toHaveLength(1);
+      expect(f.db.prepare('SELECT attempt_key FROM profile_update_runs').pluck().get()).toBeNull();
+    });
+    expect(pending(f)).toBe(10);
+    f.at(300_999);
+    await f.journaled(f.submit('/неизвестная-команда'));
+    expect(profileCalls(f)).toHaveLength(1);
+    f.at(301_000);
+    await f.journaled(f.submit('/другая-команда'));
+    await until(() => expect(pending(f)).toBe(0));
+    expect(profileCalls(f)).toHaveLength(2);
+    expect(
+      tokenBudgetStore(f.storage).read(f.scope, true, Date.now()).profileUpdate.confirmed,
+    ).toBe(530n);
+    expect(f.sends).toEqual([]);
+  } finally {
+    await f.close();
+  }
+});

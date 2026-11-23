@@ -1,4 +1,4 @@
-import { acceptQuestionnaireInput } from './questionnaire-input';
+import { acceptQuestionnaireInput, answerableAttempt } from './questionnaire-input';
 import { rememberProfileUpdate } from './profile-update-intake';
 import { noteParticipantMessage } from './participant-registry';
 import {
@@ -307,13 +307,26 @@ export function createQueueBackend(
                   "UPDATE messages SET purpose='service_notice' WHERE chat_id=? AND id=?",
                 ).run(scope.chatId, snapshot.message.id);
               }
-              if (routed.profileUpdate)
-                rememberProfileUpdate(db, scope, snapshot.message.id, snapshot.receivedAt);
               const result: import('./queue-types').RoutedQueueDecision =
                 gate?.ordinary === false && routed.route
                   ? { route: null, reason: 'silent' }
                   : routed;
               const route = result.route;
+              if (
+                routed.profileUpdate &&
+                !(
+                  route &&
+                  !routed.skipQuestionnaire &&
+                  answerableAttempt(
+                    db,
+                    scope,
+                    message.userId,
+                    snapshot.message.id,
+                    snapshot.receivedAt,
+                  )
+                )
+              )
+                rememberProfileUpdate(db, scope, snapshot.message.id, snapshot.receivedAt);
               if (responseRate && route?.isGroupChat) {
                 const now = snapshot.receivedAt;
                 const messageId = snapshot.message.id;

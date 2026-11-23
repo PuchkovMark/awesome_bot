@@ -194,7 +194,7 @@ export function checkCatalogBoundary(root = process.cwd()) {
               ts.isNamedImports(bindings) &&
               bindings.elements.every((e) =>
                 [
-                  'canReserveTokens',
+                  'profileUpdateAllowance',
                   'insertTokenReservation',
                   'reconcileTokenReservation',
                 ].includes((e.propertyName ?? e.name).text),

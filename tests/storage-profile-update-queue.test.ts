@@ -64,7 +64,7 @@ test('десятая реплика запускает порцию, два пр
     const scope = await f.chat();
     f.deliver(scope);
     const at = 100_000;
-    const budget = { group: true, input: 2, output: 1 };
+    const budget = { input: 2, output: 1 };
     const store = profileUpdateStore(f.storage);
     const ids: number[] = [];
     for (let i = 0; i < 9; i++) ids.push(await enqueue(f, scope, at + i, 'first-' + i));
@@ -79,9 +79,11 @@ test('десятая реплика запускает порцию, два пр
           .ready(secondScope, at + 9)
           ?.map(({ id }) => id),
       ).toEqual(ids);
-      const run = store.begin(scope, ids, at + 9, budget)!;
+      const run = store.begin(scope, at + 9, true, [{ ids, ...budget }])!;
       expect(run).toBeTruthy();
-      expect(profileUpdateStore(second).begin(secondScope, ids, at + 9, budget)).toBeNull();
+      expect(
+        profileUpdateStore(second).begin(secondScope, at + 9, true, [{ ids, ...budget }]),
+      ).toBeNull();
       const next: number[] = [];
       for (let i = 0; i < 10; i++) next.push(await enqueue(f, scope, at + 10 + i, 'second-' + i));
       expect(store.finish(run, at + 20, true)).toBe(true);
@@ -92,7 +94,9 @@ test('десятая реплика запускает порцию, два пр
       expect(
         reopened.ready(current, at + 9 + profileUpdateIntervalMs)?.map(({ id }) => id),
       ).toEqual(next);
-      const nextRun = reopened.begin(current, next, at + 9 + profileUpdateIntervalMs, budget)!;
+      const nextRun = reopened.begin(current, at + 9 + profileUpdateIntervalMs, true, [
+        { ids: next, ...budget },
+      ])!;
       expect(nextRun).toBeTruthy();
       expect(
         reopened.finish({ ...run, scope: current }, at + 9 + profileUpdateIntervalMs, true),

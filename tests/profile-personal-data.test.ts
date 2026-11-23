@@ -286,7 +286,7 @@ test('сверка копии переносит отказ и расход, с�
       clock.mockReturnValue(now);
       backend.transaction(scope, (db) => applyHistoryRetention(db, now - 20, now));
       const queue = profileUpdateStore(f.storage);
-      const attempt = queue.begin(scope, [consumed], now, { group: true, input: 50, output: 25 })!;
+      const attempt = queue.begin(scope, now, true, [{ ids: [consumed], input: 50, output: 25 }])!;
       expect(attempt).toBeDefined();
       expect(queue.reconcile(attempt, { input: 11, output: null })).toBe(true);
       expect(queue.finish(attempt, now, true)).toBe(true);

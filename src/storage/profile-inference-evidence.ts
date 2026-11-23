@@ -49,6 +49,13 @@ const plainValue = /^[\p{L}\p{M}\p{N}][\p{L}\p{M}\p{N} –-]{0,79}$/u;
 const uncertain =
   /(?:^|\s)(?:не|нет|или|ли|бы|если|вроде|возможно|кажется|якобы|шучу|шутка|прикол|сарказм|цитата|цитирую|сказал[аи]?|говорит|написал[аи]?|придумай|запиши|игнорируй|добавь)(?=\s|$)/iu;
 
+const knownFields = new Set(fields.values());
+
+export function hasCustomInferenceField(text: string) {
+  const field = ownField.exec(text.normalize('NFC').trim())?.[1];
+  return field !== undefined && !knownFields.has(inferenceField(field));
+}
+
 /** Проверяем буквальное утверждение от первого лица и связь значения с ним. */
 export function verifiedInference(text: string, proposedField: string, proposedValue: string) {
   const statement = text.normalize('NFC').trim().replace(/[.!]$/u, '').trim();

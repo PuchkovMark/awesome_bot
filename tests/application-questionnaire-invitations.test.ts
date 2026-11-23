@@ -410,11 +410,19 @@ test.each([false, true])(
         usage: { input: 20, output: 10 },
       });
       app.at(33_000);
-      app.submit('Пенёк, я Аня. Остальное пропущу.', 101);
+      const answerId = app.submit('Пенёк, я Аня. Остальное пропущу.', 101);
       await until(() =>
         expect(app.sends.some((s) => s.text === 'Спасибо! Анкета заполнена.')).toBe(true),
       );
       expect(progress()).toEqual({ state: 'completed', answers: '{"2":"Аня"}' });
+      expect(
+        app.db
+          .prepare(
+            `SELECT 1 FROM profile_update_waiting w JOIN messages m ON m.id=w.message_id
+         WHERE w.chat_id=? AND m.platform_message_id=?`,
+          )
+          .get(app.scope.chatId, String(answerId)),
+      ).toBeUndefined();
       if (!greet) await app.restart(true);
       app.at(34_000);
       app.setMembers([73, 102]);

@@ -4,7 +4,7 @@ import type { ChatId, ConnectionScope } from '../contracts/index';
 import type { Connection } from './connection';
 import type { LlmUsage } from '../llm/types';
 import {
-  canReserveTokens,
+  profileUpdateAllowance,
   insertTokenReservation,
   reconcileTokenReservation,
 } from './token-budget-store';
@@ -19,8 +19,12 @@ export const profileUpdateWaitMs = 3_600_000;
 export const profileUpdateIntervalMs = 300_000;
 const inScope = 'chat_id=? AND generation=?';
 
-interface WaitingSource extends ProfileUpdateSource {
-  readonly queuedAt: number;
+type WaitingSource = ProfileUpdateSource & { readonly queuedAt: number };
+type MissingSource = { readonly id: number; readonly user: null };
+interface Candidate {
+  readonly ids: readonly number[];
+  readonly input: number;
+  readonly output: number;
 }
 export interface ProfileUpdateAttempt {
   readonly scope: ConnectionScope;
@@ -53,22 +57,22 @@ function readySources(db: Database, scope: ConnectionScope, now: number) {
   const run = previousRun(db, scope);
   if (!enabled(db, scope) || (run && now - run.at < profileUpdateIntervalMs)) return null;
   const bounds = historyBounds(db, scope.chatId, now);
-  db.prepare(
-    `DELETE FROM profile_update_waiting WHERE ${inScope} AND NOT EXISTS (
-      SELECT 1 FROM personal_visible_messages m
-      WHERE m.id=profile_update_waiting.message_id AND m.chat_id=profile_update_waiting.chat_id
-        AND m.id>? AND m.timestamp>? AND ${actualMessage})`,
-  ).run(scope.chatId, scope.generation, bounds.clearedThrough, bounds.expiredThrough);
   const sources: WaitingSource[] = [];
   const withdrawn: number[] = [];
   for (const source of db
     .prepare(
-      `SELECT m.id,m.user_id AS user,m.text,m.timestamp AS at,w.queued_at AS queuedAt
-      FROM profile_update_waiting w JOIN messages m ON m.id=w.message_id AND m.chat_id=w.chat_id
-      WHERE w.chat_id=? AND w.generation=? ORDER BY w.queued_at,w.message_id`,
+      `SELECT w.message_id AS id,m.user_id AS user,m.text,m.timestamp AS at,w.queued_at AS queuedAt
+    FROM profile_update_waiting w LEFT JOIN personal_visible_messages m
+      ON m.id=w.message_id AND m.chat_id=w.chat_id AND m.id>? AND m.timestamp>? AND ${actualMessage}
+    WHERE w.chat_id=? AND w.generation=? ORDER BY w.queued_at,w.message_id`,
     )
-    .iterate(scope.chatId, scope.generation) as Iterable<WaitingSource>) {
-    if (!sourceAdmitted(db, scope, source)) withdrawn.push(source.id);
+    .iterate(
+      bounds.clearedThrough,
+      bounds.expiredThrough,
+      scope.chatId,
+      scope.generation,
+    ) as Iterable<WaitingSource | MissingSource>) {
+    if (source.user === null || !sourceAdmitted(db, scope, source)) withdrawn.push(source.id);
     else if (sources.push(source) === profileUpdateBatchSize) break;
   }
   forgetWaiting(db, scope, withdrawn);
@@ -107,6 +111,16 @@ function batchStillAdmitted(
   );
 }
 
+function directWaiting(db: Database, scope: ConnectionScope, now: number) {
+  return !!db
+    .prepare(
+      `SELECT 1 FROM queue_jobs WHERE ${inScope}
+     AND route_kind IN ('direct_message','mention','reply','name')
+     AND (state='running' OR (state='queued' AND expires_at>?)) LIMIT 1`,
+    )
+    .get(scope.chatId, scope.generation, now);
+}
+
 export function createProfileUpdateStore(connection: Connection, lifecycle: LifecycleBackend) {
   return {
     schedule(now: number) {
@@ -132,38 +146,36 @@ export function createProfileUpdateStore(connection: Connection, lifecycle: Life
     },
     ready(scope: ConnectionScope, now: number) {
       timestamp(now);
-      return lifecycle.transaction(scope, (db) => readySources(db, scope, now));
+      return lifecycle.transaction(scope, (db) =>
+        directWaiting(db, scope, now) ? null : readySources(db, scope, now),
+      );
     },
     begin(
       scope: ConnectionScope,
-      ids: readonly number[],
       now: number,
-      budget: { readonly group: boolean; readonly input: number; readonly output: number },
+      group: boolean,
+      candidates: readonly Candidate[],
     ): ProfileUpdateAttempt | null {
       timestamp(now);
-      requireInput(ids.length > 0 && ids.length <= profileUpdateBatchSize);
       return lifecycle.transaction(scope, (db) => {
+        if (directWaiting(db, scope, now)) return null;
         const ready = readySources(db, scope, now);
-        if (!ready || !ids.every((id, index) => ready[index]?.id === id)) return null;
-        if (
-          db
-            .prepare(
-              `SELECT 1 FROM queue_jobs WHERE ${inScope}
-          AND route_kind IN ('direct_message','mention','reply','name')
-          AND (state='running' OR (state='queued' AND expires_at>?)) LIMIT 1`,
-            )
-            .get(scope.chatId, scope.generation, now)
-        )
-          return null;
+        if (!ready) return null;
+        const allowance = profileUpdateAllowance(db, scope, group, now);
+        const candidate = candidates.find(({ ids, input, output }) => {
+          timestamp(input);
+          timestamp(output);
+          return (
+            ids.length > 0 &&
+            input <= allowance &&
+            output <= allowance - input &&
+            ids.every((id, index) => ready[index]?.id === id)
+          );
+        });
+        if (!candidate) return null;
+        const { ids, input, output } = candidate;
         const key = randomUUID();
-        const reservation = {
-          purpose: 'profile_update' as const,
-          key,
-          input: budget.input,
-          output: budget.output,
-        };
-        if (!canReserveTokens(db, scope, budget.group, reservation, now)) return null;
-        insertTokenReservation(db, scope, reservation, now);
+        insertTokenReservation(db, scope, { purpose: 'profile_update', key, input, output }, now);
         db.prepare(
           `INSERT INTO profile_update_runs(chat_id,generation,started_at,attempt_key) VALUES(?,?,?,?)
           ON CONFLICT(chat_id,generation) DO UPDATE SET started_at=excluded.started_at,attempt_key=excluded.attempt_key`,

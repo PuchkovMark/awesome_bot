@@ -1,4 +1,6 @@
 import { assessQuestionnaire, questionnaireCases } from './questionnaire';
+import { createLlmClient } from '../llm/index';
+import { runProfileUpdateMocks, runProfileUpdateModel } from './profile-updates';
 import { formatVkChecklist } from './checklist';
 import { writeLocalReport } from './report';
 import { runScenario } from './runner';
@@ -10,18 +12,41 @@ async function main(args: readonly string[]): Promise<number> {
     process.stdout.write(formatVkChecklist(scenarios));
     return 0;
   }
-  const output = args[1];
-  if (args.length !== 2 || args[0] !== '--out' || !output?.trim() || output.startsWith('--')) {
-    process.stderr.write('Укажите --out <новый файл JSON> или --checklist.\n');
+  const modelRun = args[0] === '--profile-model';
+  const single = modelRun && args[1] === '--case';
+  const caseId = single ? args[2] : undefined;
+  const [flag, output, ...extra] = modelRun ? args.slice(single ? 3 : 1) : args;
+  if (extra.length || flag !== '--out' || !output?.trim() || output.startsWith('--')) {
+    process.stderr.write(
+      'Укажите --out <новый файл JSON>, --profile-model [--case <сценарий>] --out <новый файл JSON> или --checklist.\n',
+    );
     return 1;
   }
 
-  const results: EvaluationResult[] = [];
-  for (const scenario of scenarios) results.push(await runScenario(scenario));
-  for (const sample of questionnaireCases)
-    results.push(assessQuestionnaire(sample, sample.mockOutput));
+  let results: EvaluationResult[] = [];
+  if (modelRun) {
+    const { LLM_MODEL: model, OPENCODE_API_KEY: apiKey } = process.env;
+    try {
+      if (!model || !apiKey) throw Error('profile_eval_config');
+      results = await runProfileUpdateModel(
+        createLlmClient({ provider: 'opencode', apiKey, model }),
+        model,
+        caseId,
+      );
+    } catch {
+      process.stderr.write(
+        'Не удалось выполнить оценку модели. Проверьте настройки и лимит прогона.\n',
+      );
+      return 1;
+    }
+  } else {
+    for (const scenario of scenarios) results.push(await runScenario(scenario));
+    for (const sample of questionnaireCases)
+      results.push(assessQuestionnaire(sample, sample.mockOutput));
+    results.push(...runProfileUpdateMocks());
+  }
   try {
-    await writeLocalReport(output, results);
+    await writeLocalReport(output, results, new Date(), modelRun ? 'model' : 'local');
   } catch (error) {
     const exists = error instanceof Error && 'code' in error && error.code === 'EEXIST';
     process.stderr.write(
@@ -32,7 +57,7 @@ async function main(args: readonly string[]): Promise<number> {
   const passed = results.filter((result) => result.outcome === 'passed').length;
   const failed = results.filter((result) => result.outcome === 'failed').length;
   process.stdout.write(
-    `Локальная оценка на подменах. Пройдено ${passed}, нарушений ${failed}, технических сбоев ${results.length - passed - failed}.\n`,
+    `${modelRun ? 'Оценка модели на синтетических репликах' : 'Локальная оценка на подменах'}. Пройдено ${passed}, нарушений ${failed}, технических сбоев ${results.length - passed - failed}.\n`,
   );
   return passed === results.length ? 0 : 1;
 }

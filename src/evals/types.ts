@@ -65,6 +65,13 @@ export interface EvaluationResult {
   readonly scenarioRevision: number;
   readonly model: string | null;
   readonly prompt: GlobalVersionRef | null;
+  readonly extraction?: {
+    readonly requestRevision: number;
+    readonly inputEstimate: number;
+    readonly outputReserve: number;
+    readonly inputTokens: number | null;
+    readonly outputTokens: number | null;
+  };
   readonly outcome: 'passed' | 'failed' | 'technical_error';
   readonly reason: TechnicalReason | null;
   readonly criteria: readonly {
