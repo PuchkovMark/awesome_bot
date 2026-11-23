@@ -32,6 +32,7 @@ import { chatControlStore } from '../storage/chat-control-store';
 import { createChatControlHandlers } from './chat-control';
 import { createHistoryHandlers } from './history-retention';
 import type { ChatLimits } from '../core/chat-limits/config';
+import { createTokenBudgetMembership } from '../core/chat-limits/token-budget-membership';
 
 interface ApplicationDependencies {
   readonly vk?: Parameters<typeof createVkChannel>[1];
@@ -97,6 +98,7 @@ export async function runApplication(
       });
       const controls = chatControlStore(storage);
       let ready = false;
+      const checkedMembership = new Map<ConnectionScope['chatId'], ConnectionScope>();
       const channel = createVkChannel(
         {
           ...config.vk,
@@ -121,6 +123,7 @@ export async function runApplication(
               return () => ({ journal: false, respond: false, version: null, ordinary: false });
             }
           },
+          onMembershipChanged: refreshBudgetMembership,
           onReady() {
             if (signal.aborted || ready) return;
             ready = true;
@@ -136,12 +139,28 @@ export async function runApplication(
         const local = vkLocalId(chatId);
         return local !== undefined && isVkGroupChat(local);
       };
+      const observeBudgetMembership = createTokenBudgetMembership(storage, channel.humanMembership);
+      async function refreshBudgetMembership(scope: ConnectionScope) {
+        if (!group(scope.chatId)) return;
+        const current = () => !signal.aborted && lifecycle.isAdmissionCurrent(scope);
+        if (await observeBudgetMembership(scope, signal, current)) {
+          checkedMembership.set(scope.chatId, scope);
+        }
+      }
       async function checkAdministration() {
         while (!signal.aborted) {
-          for (const chatId of lifecycle.activeChatIds('vk').filter(group)) {
+          const active = new Set(lifecycle.activeChatIds('vk').filter(group));
+          for (const chatId of checkedMembership.keys()) {
+            if (!active.has(chatId)) checkedMembership.delete(chatId);
+          }
+          for (const chatId of active) {
             if (signal.aborted) return;
             try {
               const scope = lifecycle.admissionScope(chatId);
+              const checked = checkedMembership.get(chatId);
+              if (!checked || !lifecycle.isAdmissionCurrent(checked)) {
+                await refreshBudgetMembership(scope);
+              }
               const guard = {
                 signal,
                 isCurrent: () => !signal.aborted && lifecycle.isAdmissionCurrent(scope),

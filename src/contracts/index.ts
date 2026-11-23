@@ -17,7 +17,13 @@ export type {
   MessageLengthLimit,
   TextFormat,
 } from './capabilities';
-export type { ChannelAdapter, EventHandler, PublishedPart, SendResult } from './adapter';
+export type {
+  ChannelAdapter,
+  HumanMembership,
+  EventHandler,
+  PublishedPart,
+  SendResult,
+} from './adapter';
 export type { JsonPrimitive, JsonValue, JsonObject, ObjectParameterSchema } from './json';
 export type { ToolContext, ToolAccess, PlatformAvailability, ToolDefinition } from './tool';
 export type {

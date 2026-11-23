@@ -9,7 +9,7 @@ import type {
 } from '../../contracts/index';
 import type { PublicationGuard, PublicationPort } from '../../core/index';
 import type { Storage } from '../../storage/index';
-import { createVkSdkApi } from './api';
+import { createVkSdkApi, readVkHumanMembership } from './api';
 import type { VkApi } from './api';
 import { createVkInbound } from './inbound';
 import type { VkInboundOptions } from './inbound';
@@ -86,7 +86,7 @@ export function createVkChannel(
     },
   } satisfies PublicationPort);
 
-  const adapter: ChannelAdapter = {
+  const adapter = {
     platform: 'vk',
     start: inbound.start,
     async capabilities(context) {
@@ -170,11 +170,19 @@ export function createVkChannel(
         typingFailed++;
       }
     },
+    async humanMembership(scope, requestSignal) {
+      const peer = vkLocalId(scope.chatId);
+      if (peer === undefined) return { complete: false };
+      return readVkHumanMembership(api.request, peer, {
+        signal: AbortSignal.any([signal, requestSignal]),
+        isCurrent: () => options.lifecycle.isAdmissionCurrent(scope),
+      });
+    },
     async getUserName(userId) {
       const id = vkLocalId(userId);
       return id === undefined ? null : api.getUserName(id);
     },
-  };
+  } satisfies ChannelAdapter;
 
   return Object.freeze({
     ...adapter,

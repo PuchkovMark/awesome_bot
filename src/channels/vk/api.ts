@@ -1,5 +1,5 @@
 import { API, APIRequest } from 'vk-io';
-import type { KnownBoolean } from '../../contracts/index';
+import type { HumanMembership, KnownBoolean } from '../../contracts/index';
 import { isVkGroupChat, vkId, vkRecord } from './normalize';
 import type { VkEnrichment, VkIncoming } from './normalize';
 import { createVkRateLimiter, VkRequestCancelled, waitForVkRetry } from './rate-limit';
@@ -90,6 +90,51 @@ async function readWithRetry(
       if (guard?.signal?.aborted || retry >= 2 || !vkReadRetryable(error)) throw error;
       await waitForVkRetry(retry, guard?.signal);
     }
+  }
+}
+
+export async function readVkHumanMembership(
+  call: VkApiCall,
+  peer: number,
+  guard: VkRequestGuard,
+): Promise<HumanMembership> {
+  const incomplete = { complete: false } as const;
+  if (!isVkGroupChat(peer)) return incomplete;
+  const count = 1000;
+  const members = new Set<number>();
+  let total: number | undefined;
+  let people = 0;
+  try {
+    for (let offset = 0; ;) {
+      if (guard.signal?.aborted || guard.isCurrent?.() === false) return incomplete;
+      const page = vkRecord(
+        await call('messages.getConversationMembers', { peer_id: peer, count, offset }, guard),
+      );
+      if (guard.signal?.aborted || guard.isCurrent?.() === false) return incomplete;
+      if (
+        typeof page?.count !== 'number' ||
+        !Number.isSafeInteger(page.count) ||
+        page.count < 0 ||
+        (total !== undefined && total !== page.count) ||
+        !Array.isArray(page.items) ||
+        page.items.length > count
+      )
+        return incomplete;
+      total = page.count;
+      for (const entry of page.items) {
+        const member = vkId(vkRecord(entry)?.member_id);
+        if (member === undefined) return incomplete;
+        if (!members.has(member)) {
+          members.add(member);
+          if (member > 0) people++;
+        }
+      }
+      offset += page.items.length;
+      if (offset >= total) return members.size === total ? { complete: true, people } : incomplete;
+      if (page.items.length === 0) return incomplete;
+    }
+  } catch {
+    return incomplete;
   }
 }
 

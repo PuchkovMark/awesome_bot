@@ -56,6 +56,7 @@ export interface VkInboundOptions {
   readonly lifecycle: Lifecycle;
   readonly signal?: AbortSignal;
   readonly onReady?: () => void;
+  readonly onMembershipChanged?: (scope: ConnectionScope) => Promise<void>;
   readonly captureDisclosure?: (scope: ConnectionScope) => RoutedAdmissionGuard;
 }
 
@@ -208,6 +209,16 @@ export function createVkInbound(
               }
             }
             observeMembership(chatId);
+            const scope = membershipObservations.get(chatId);
+            if (scope && options.onMembershipChanged && event.change !== 'unknown') {
+              const task = options
+                .onMembershipChanged(scope)
+                .catch(() => {
+                  counters.failed++;
+                })
+                .finally(() => pending.delete(task));
+              pending.add(task);
+            }
             if (membership) {
               const task = deliverMembership(event, membership)
                 .catch(() => {
