@@ -44,6 +44,7 @@ export async function fixture(
     threshold?: number;
     window?: number;
     hold?: boolean;
+    existingChat?: (path: string) => void;
     userRequests?: number;
     active?: boolean;
     greetings?: {
@@ -55,6 +56,12 @@ export async function fixture(
   } = {},
 ) {
   const files = storageFixture();
+  try {
+    options.existingChat?.(files.path);
+  } catch (error) {
+    files.cleanup();
+    throw error;
+  }
   const clock = vi.spyOn(Date, 'now');
   const realMonotonic = performance.now.bind(performance);
   const monotonic = vi.spyOn(performance, 'now');
@@ -283,7 +290,11 @@ export async function fixture(
   }
   try {
     await ready.promise;
-    await resolveApplicationChat({ databasePath: files.path, ownerId }, chat, 'new');
+    await resolveApplicationChat(
+      { databasePath: files.path, ownerId },
+      chat,
+      options.existingChat ? 'continue' : 'new',
+    );
     const scope = lifecycleBackend(storage).current(chat);
     await until(() => expect(disclosure.gate(scope).version).toBe(version));
     if (options.active) await storage.chats.update(scope, { responseMode: 'active' });

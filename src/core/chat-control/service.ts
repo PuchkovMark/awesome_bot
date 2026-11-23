@@ -19,6 +19,7 @@ export function applyChatControl(
 ): ChatControlResult {
   const state = tx.controlState();
   switch (command.kind) {
+    case 'questionnaire':
     case 'settings':
       return { status: 'applied', state };
     case 'greeting':
@@ -72,7 +73,12 @@ export function formatChatControl(
   now: number,
 ): string | undefined {
   const { state } = result;
-  if (result.status === 'duplicate' || result.status === 'waiting') return undefined;
+  if (
+    command.kind === 'questionnaire' ||
+    result.status === 'duplicate' ||
+    result.status === 'waiting'
+  )
+    return undefined;
   if (command.kind === 'greeting')
     return state.greetingEnabledAt === null ? 'Приветствия выключены.' : 'Приветствия включены.';
   if (command.kind === 'invitation')

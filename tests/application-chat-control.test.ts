@@ -276,6 +276,17 @@ test('команды VK сохраняют паузу, выключение от
       ).toBe(true),
     );
     expect(controls.read(scope).invitationEnabledAt).toBeNull();
+    event(213, '/вопросы', member);
+    await vi.waitFor(async () =>
+      expect(
+        (await storage.messages.list(scope, { limit: 25 })).some((row) => row.messageId === '213'),
+      ).toBe(true),
+    );
+    expect(sent().some((args) => String(args.message).includes('полным списком'))).toBe(false);
+    event(214, '/вопросы', administrator);
+    await vi.waitFor(() =>
+      expect(sent().some((args) => String(args.message).includes('полным списком'))).toBe(true),
+    );
     event(202, '/тихие-часы 23:00–07:00', administrator);
     await vi.waitFor(() =>
       expect(controls.read(scope).quietHours).toEqual({ start: 1380, end: 420 }),

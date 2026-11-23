@@ -4,7 +4,7 @@ import type { ServiceCommand } from '../message-router/types';
 import type { QuietHours } from '../../storage/chat-control-store';
 
 export type ChatControlCommand =
-  | { readonly kind: 'settings' | 'on' | 'off' | 'pause' | 'disableAutonomous' }
+  | { readonly kind: 'settings' | 'on' | 'off' | 'pause' | 'disableAutonomous' | 'questionnaire' }
   | { readonly kind: 'mode'; readonly mode: ResponseMode }
   | { readonly kind: 'greeting' | 'invitation'; readonly enabled: boolean }
   | { readonly kind: 'quietHours'; readonly hours: QuietHours | null }
@@ -15,6 +15,12 @@ export type ChatControlRequest = {
 };
 
 export function chatControlAction(command: ChatControlCommand): ServiceCommand {
+  if (command.kind === 'questionnaire')
+    return {
+      action: 'chat.onboarding.configure',
+      minimumRole: 'admin',
+      journalLabel: 'Команда вопросов анкеты',
+    };
   if (command.kind === 'pause') return { action: 'chat.pause', minimumRole: 'member' };
   if (command.kind === 'extend' || command.kind === 'disableAutonomous')
     return { action: 'chat.pause.extend', minimumRole: 'admin' };
@@ -66,6 +72,10 @@ export function parseChatControl(
   }
   const [name, ...args] = clean.split(/\s+/u);
   if (!name || (name === 'помолчи' && (location === 'private' || args.length))) return undefined;
+  if (name === '/вопросы')
+    return {
+      command: location === 'group' && !args.length ? { kind: 'questionnaire' } : 'invalid',
+    };
   const kind = simple.get(name);
   if (
     !kind &&

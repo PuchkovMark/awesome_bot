@@ -1,3 +1,4 @@
+import { createQuestionnaireEditor } from './questionnaire-editor';
 import type { createVkChannel } from '../channels/vk/channel';
 import { isVkGroupChat, type VkIncoming } from '../channels/vk/normalize';
 import type { AuthorizationContext, ChatId, IncomingMessage, UserId } from '../contracts/index';
@@ -15,7 +16,7 @@ export function createChatControlHandlers(options: {
   readonly lifecycle: ReturnType<typeof createLifecycleService>;
   readonly channel: Pick<
     ReturnType<typeof createVkChannel>,
-    'replyPrivateControl' | 'replyGroupControl'
+    'replyPrivateControl' | 'replyGroupControl' | 'deliverGroupControl'
   >;
   readonly ownerId: UserId;
   readonly group: (chatId: ChatId) => boolean;
@@ -23,9 +24,11 @@ export function createChatControlHandlers(options: {
 }) {
   const { authorization, lifecycle, channel, ownerId, signal } = options;
   const controls = chatControlStore(options.storage);
+  const questionnaire = createQuestionnaireEditor(options);
   const diagnostics = createTraceDiagnostics({ storage: options.storage, authorization });
 
   return {
+    editor: questionnaire,
     recognize(message: IncomingMessage, replyToOther?: boolean) {
       if (!message.isGroupChat || message.isBot !== false) return null;
       const request = parseChatControl(message.text, 'group');
@@ -48,6 +51,7 @@ export function createChatControlHandlers(options: {
       const request = parseChatControl(message.text, 'group');
       if (!request || typeof request.command === 'string') return;
       const command = request.command;
+      if (command.kind === 'questionnaire') return questionnaire.show(context, message, isCurrent);
       const messageId =
         command.kind === 'greeting' || command.kind === 'invitation'
           ? Number(message.messageId)

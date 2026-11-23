@@ -488,6 +488,7 @@ export async function runApplication(
         },
         recognizeCommand: (message, replyToOther, scope) =>
           passports.recognize(scope, message) ??
+          chatControl.editor.recognizeReply(scope, message) ??
           (isUsageCommand(message.text)
             ? ({ action: 'usage.read', minimumRole: 'owner' } as const)
             : null) ??
@@ -507,6 +508,8 @@ export async function runApplication(
         async executeCommand(context, message, isCurrent, replayOnly) {
           if (passports.recognize(context.scope, message))
             return passports.execute(context, message, isCurrent);
+          if (chatControl.editor.recognizeReply(context.scope, message))
+            return chatControl.editor.reply(context, message, isCurrent);
           if (profiles.recognize(message)) return profiles.group(context.scope, message, isCurrent);
           if (groupPersonalCommand(message)) {
             const peerId = vkLocalId(context.scope.chatId),
@@ -542,7 +545,11 @@ export async function runApplication(
             lifecycle.observeAdminMembership(scope, userId, present, messageId, at);
           },
           command(message, isCurrent) {
-            if (passports.beforePersonalCommands(message)) return undefined;
+            if (
+              passports.beforePersonalCommands(message) ||
+              chatControl.editor.beforePersonalCommands(message)
+            )
+              return undefined;
             const passportAction = passports.privateCommand(message);
             if (passportAction) return passportAction;
             const profileAction = profiles.private(message, isCurrent);
