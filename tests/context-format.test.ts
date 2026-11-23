@@ -1,6 +1,5 @@
 import { expect, test } from 'vitest';
-import { createMessageTimeFormatter, formatMessages } from '../src/core/context/format';
-const utc = createMessageTimeFormatter('UTC');
+import { createContextMessageFormatter } from '../src/core/context/format';
 const current = {
   id: 1,
   chatId: 'vk:a',
@@ -14,7 +13,8 @@ const current = {
 } as const;
 const history = { message: { ...current, id: 2, role: 'assistant' as const } };
 test('данные не создают системную роль, текущее сообщение ровно один раз', () => {
-  const messages = formatMessages([], current, history, 'included', true, utc);
+  const formatter = createContextMessageFormatter(current, true, 'UTC');
+  const messages = formatter.messages([], formatter.serializeEntry(history));
   expect(messages.map((message) => message.role)).toEqual(['user']);
   const data = JSON.parse(messages[0]!.text);
   expect(Object.keys(data)).toEqual(['kind', 'history', 'reply', 'current']);
@@ -31,14 +31,12 @@ test('данные не создают системную роль, текуще
   });
 });
 test('роли лички и честная заглушка одного вложения', () => {
-  const messages = formatMessages(
-    [history],
+  const formatter = createContextMessageFormatter(
     { ...current, text: '', attachmentCount: 1 },
-    null,
-    'none',
     false,
-    utc,
+    'UTC',
   );
+  const messages = formatter.messages([formatter.serializeHistoryEntry(history)], 'null');
   expect(messages.map((m) => m.role)).toEqual(['assistant', 'user']);
   expect(JSON.parse(messages[0]!.text)).toEqual({
     kind: 'untrusted_chat_data',
@@ -60,7 +58,8 @@ test('роли лички и честная заглушка одного вло
     },
   });
   expect(
-    formatMessages([], { ...current, text: '' }, null, 'none', false, utc)[0]!.text,
+    createContextMessageFormatter({ ...current, text: '' }, false, 'UTC').messages([], 'null')[0]!
+      .text,
   ).not.toContain('Вложение:');
 });
 
@@ -68,7 +67,7 @@ test.each([true, false])('точный JSON пустого окна, бесед�
   const entry = { ...current, authorName: 'Яна "Я"', text: 'Да\n"😀"' };
   const data = String.raw`{"author":"Яна \"Я\"","time":"01.01.1970, 00:00:00","bot":false,"text":"Да\n\"😀\""}`;
   const historyField = isGroupChat ? '"history":[],' : '';
-  expect(formatMessages([], entry, null, 'none', isGroupChat, utc)).toEqual([
+  expect(createContextMessageFormatter(entry, isGroupChat, 'UTC').messages([], 'null')).toEqual([
     {
       role: 'user',
       text: `{"kind":"untrusted_chat_data",${historyField}"reply":null,"current":${data}}`,

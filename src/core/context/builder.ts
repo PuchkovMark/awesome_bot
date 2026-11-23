@@ -3,12 +3,21 @@ import type { ConnectionScope } from '../../contracts/lifecycle';
 import type { CapabilitySnapshot } from '../../contracts/capabilities';
 import type { ContextMessageReader, ContextStateReader } from '../../storage/context-types';
 import { contextConfig, type ContextConfig } from './config';
-import { contextSeparator, estimateInput } from './budget';
+import {
+  contextSeparator,
+  estimateInput,
+  historyEntryInputCost,
+  messageInputCost,
+  systemInputCost,
+} from './budget';
 import { validateContextStartup } from './startup';
 import { formatEnvironment, type ContextRoute } from './environment';
-import { createMessageTimeFormatter, formatMessages, type ContextEntry } from './format';
-import type { PreparationResult } from './types';
+import { createContextMessageFormatter } from './format';
+import type { AgentLoopMessage } from '../agent-loop/types';
+import type { ContextMetadata, PreparationResult } from './types';
 import { createContextMetrics } from './metrics';
+const unavailableReplyJson = JSON.stringify({ unavailable: true });
+
 export interface ContextWork {
   readonly scope: ConnectionScope;
   readonly messageId: number;
@@ -85,28 +94,32 @@ export function createContextBuilder(options: ContextBuilderOptions) {
       capabilities,
       route,
     });
-    if (Buffer.byteLength(environment) > config.environmentReserveTokens) {
+    const environmentBytes = Buffer.byteLength(environment, 'utf8');
+    if (environmentBytes > config.environmentReserveTokens) {
       return { kind: 'failed', reason: 'internal_error' };
     }
     const system = systemPrompt.text + contextSeparator + environment;
 
-    const replyPlatformMessageId = currentMessage.replyToMessageId;
-    let reply: ContextEntry | null = null;
-    let replyState: 'none' | 'included' | 'truncated' | 'unavailable' = replyPlatformMessageId
-      ? 'unavailable'
-      : 'none';
-    const history: ContextEntry[] = [];
-    const messageTime = createMessageTimeFormatter(settings.timezone);
-    const serializeMessages = () =>
-      formatMessages(history, currentMessage, reply, replyState, route.isGroupChat, messageTime);
+    const formatter = createContextMessageFormatter(
+      currentMessage,
+      route.isGroupChat,
+      settings.timezone,
+    );
     // Неиспользованный резерв окружения не увеличивает окно истории.
-    const fitsInputBudget = () => {
-      const inputTokens = estimateInput(system, serializeMessages());
-      const unusedEnvironmentTokens =
-        config.environmentReserveTokens - Buffer.byteLength(environment);
-      return inputTokens + unusedEnvironmentTokens <= config.inputBudgetTokens;
-    };
-    if (!fitsInputBudget()) return { kind: 'failed', reason: 'current_message_too_large' };
+    const fixedInputCost =
+      systemInputCost(system) +
+      messageInputCost(formatter.fixedLatestTextBytes) +
+      config.environmentReserveTokens -
+      environmentBytes;
+    const inputCostWithReply = (replyJson: string) =>
+      fixedInputCost + Buffer.byteLength(replyJson, 'utf8');
+
+    const replyPlatformMessageId = currentMessage.replyToMessageId;
+    let replyState: ContextMetadata['reply'] = replyPlatformMessageId ? 'unavailable' : 'none';
+    let replyJson = replyPlatformMessageId ? unavailableReplyJson : 'null';
+    if (inputCostWithReply(replyJson) > config.inputBudgetTokens) {
+      return { kind: 'failed', reason: 'current_message_too_large' };
+    }
 
     let replyJournalId: number | undefined;
     if (replyPlatformMessageId) {
@@ -120,48 +133,56 @@ export function createContextBuilder(options: ContextBuilderOptions) {
 
       if (quotedMessage && quotedMessage.id !== currentJournalId) {
         replyJournalId = quotedMessage.id;
-        reply = { message: quotedMessage, truncated: quotedMessage.truncated };
+        replyJson = formatter.serializeEntry({
+          message: quotedMessage,
+          truncated: quotedMessage.truncated,
+        });
         replyState = quotedMessage.truncated ? 'truncated' : 'included';
 
-        if (!fitsInputBudget()) {
-          // Двоичный поиск ограничивает число проверок бюджета при подборе выдержки.
+        if (inputCostWithReply(replyJson) > config.inputBudgetTokens) {
+          // Каждый кандидат пересчитывает только стоимость выдержки.
           const codePoints = Array.from(quotedMessage.text);
           let minCodePoints = 0;
           let maxCodePoints = codePoints.length;
-          replyState = 'truncated';
+          let fittingReply: string | undefined;
 
           while (minCodePoints < maxCodePoints) {
             const candidateCodePoints = Math.ceil((minCodePoints + maxCodePoints) / 2);
-            reply = {
+            const candidate = formatter.serializeEntry({
               message: {
                 ...quotedMessage,
                 text: codePoints.slice(0, candidateCodePoints).join(''),
               },
               truncated: true,
-            };
-            if (fitsInputBudget()) minCodePoints = candidateCodePoints;
-            else maxCodePoints = candidateCodePoints - 1;
+            });
+            if (inputCostWithReply(candidate) <= config.inputBudgetTokens) {
+              minCodePoints = candidateCodePoints;
+              fittingReply = candidate;
+            } else {
+              maxCodePoints = candidateCodePoints - 1;
+            }
           }
 
-          reply = minCodePoints
-            ? {
-                message: { ...quotedMessage, text: codePoints.slice(0, minCodePoints).join('') },
-                truncated: true,
-              }
-            : null;
-          replyState = reply ? 'truncated' : 'unavailable';
+          replyJson = fittingReply ?? unavailableReplyJson;
+          replyState = fittingReply === undefined ? 'unavailable' : 'truncated';
         }
       }
     }
 
+    const includedReplyId =
+      replyState === 'included' || replyState === 'truncated' ? replyJournalId : undefined;
+    const replyCount = includedReplyId === undefined ? 0 : 1;
+    const history: { readonly journalId: number; readonly serialized: AgentLoopMessage }[] = [];
+    let inputCost = inputCostWithReply(replyJson);
+
     let beforeJournalId = currentJournalId;
     let scannedMessages = 0;
-    let historyTruncated = !!reply && config.maxHistoryMessages === 1;
+    let historyTruncated = replyCount === config.maxHistoryMessages;
     let stopReadingHistory = false;
     while (
       !stopReadingHistory &&
       scannedMessages < config.maxScannedMessages &&
-      history.length + (reply ? 1 : 0) < config.maxHistoryMessages
+      history.length + replyCount < config.maxHistoryMessages
     ) {
       const pageLimit = Math.min(
         config.historyPageSize,
@@ -181,15 +202,26 @@ export function createContextBuilder(options: ContextBuilderOptions) {
         beforeJournalId = message.id;
         if (message.id === replyJournalId) continue;
 
-        history.unshift({ message, truncated: message.truncated });
-        if (!fitsInputBudget()) {
-          history.shift();
+        const serialized = formatter.serializeHistoryEntry({
+          message,
+          truncated: message.truncated,
+        });
+        const candidateCost =
+          inputCost +
+          historyEntryInputCost(
+            Buffer.byteLength(serialized.text, 'utf8'),
+            route.isGroupChat,
+            history.length > 0,
+          );
+        if (candidateCost > config.inputBudgetTokens) {
           historyTruncated = true;
           stopReadingHistory = true;
           break;
         }
+        history.push({ journalId: message.id, serialized });
+        inputCost = candidateCost;
         if (message.truncated) historyTruncated = true;
-        if (history.length + (reply ? 1 : 0) >= config.maxHistoryMessages) {
+        if (history.length + replyCount >= config.maxHistoryMessages) {
           historyTruncated = true;
           stopReadingHistory = true;
           break;
@@ -208,8 +240,14 @@ export function createContextBuilder(options: ContextBuilderOptions) {
       return { kind: 'cancelled' };
     }
 
+    history.reverse();
     const messages = Object.freeze(
-      serializeMessages().map((message) => Object.freeze({ ...message })),
+      formatter
+        .messages(
+          history.map((entry) => entry.serialized),
+          replyJson,
+        )
+        .map((message) => Object.freeze(message)),
     );
     const estimatedTokens = estimateInput(system, messages);
     if (estimatedTokens > config.inputBudgetTokens) {
@@ -219,13 +257,13 @@ export function createContextBuilder(options: ContextBuilderOptions) {
       version: Object.freeze({ ...systemPrompt.ref }),
       cutoffId: currentJournalId,
       messageIds: Object.freeze([
-        ...history.map((entry) => entry.message.id),
-        ...(reply ? [reply.message.id] : []),
+        ...history.map((entry) => entry.journalId),
+        ...(includedReplyId === undefined ? [] : [includedReplyId]),
         currentJournalId,
       ]),
       layerBytes: Object.freeze({
         system: Buffer.byteLength(systemPrompt.text),
-        environment: Buffer.byteLength(environment),
+        environment: environmentBytes,
         messages: messages.reduce((bytes, message) => bytes + Buffer.byteLength(message.text), 0),
       }),
       estimatedTokens,
