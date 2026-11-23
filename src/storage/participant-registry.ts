@@ -16,6 +16,7 @@ import { createChatStore } from './chats';
 import { compositeId, requireInput, timestamp } from './validation';
 import {
   applyDepartureSnapshot,
+  purgeDepartedProfiles,
   readDeparture,
   returnDepartedParticipant,
   startParticipantDeparture,
@@ -275,6 +276,11 @@ export function createParticipantRegistry(connection: Connection, lifecycle: Lif
     },
     departure(scope: ConnectionScope, user: UserId) {
       return lifecycle.transaction(scope, (db) => readDeparture(db, scope, user));
+    },
+    purgeDeparted(now: number) {
+      return connection.run((db) =>
+        db.transaction(() => purgeDepartedProfiles(db, now)).immediate(),
+      );
     },
     read(scope: ConnectionScope) {
       return lifecycle.transaction(scope, (db) => {

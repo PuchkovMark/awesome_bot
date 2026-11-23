@@ -3,6 +3,7 @@ import { expect, test } from 'vitest';
 import { migrate } from '../src/storage/migrate';
 const tables = [
   'participant_departures',
+  'departed_profile_answers',
   'questionnaire_progress',
   'questionnaire_inputs',
   'questionnaire_revisions',
@@ -85,6 +86,7 @@ const tables = [
 ];
 const others = [
   'participant_departures_due',
+  'departed_profile_answers_message',
   'questionnaire_release_job',
   'questionnaire_removed_input',
   'chat_passport_prompt_expiry',

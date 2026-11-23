@@ -12,7 +12,8 @@ export function createQuestionnaireProgress(storage: Storage) {
           return entry?.action(scope) ?? null;
         },
         state(scope, user) {
-          if (store.completed(scope, user)) return 'completed';
+          if (store.completionRevision(scope, user) !== null) return 'completed';
+          if (!store.participating(scope, user)) return 'unavailable';
           return entry?.state(scope, user) ?? 'unavailable';
         },
       };

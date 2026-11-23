@@ -1,6 +1,11 @@
 import type { Database } from 'better-sqlite3';
 import type { ConnectionScope, HumanMember, UserId } from '../contracts/index';
 import { requireInput, timestamp } from './validation';
+import {
+  eraseDepartedAnswers,
+  hideDepartedAnswers,
+  releaseDepartedAnswers,
+} from './participant-derived-data';
 
 export const departureGraceMs = 30 * 86_400_000;
 type ChatGeneration = Pick<ConnectionScope, 'chatId' | 'generation'>;
@@ -58,6 +63,7 @@ export function startParticipantDeparture(
     )
     .run(args);
   if (!changed.changes) return;
+  hideDepartedAnswers(db, scope, user);
   db.prepare(`DELETE FROM profile_command_lists WHERE ${subject}`).run(args);
   db.prepare(
     `DELETE FROM questionnaire_inputs WHERE chat_id=@chatId AND generation=@generation
@@ -73,6 +79,12 @@ export function startParticipantDeparture(
 export function eraseDepartedProfile(db: Database, scope: ChatGeneration, user: UserId) {
   requireInput(db.inTransaction);
   const args = { ...scope, user };
+  eraseDepartedAnswers(db, scope, user);
+  db.prepare(
+    `DELETE FROM greeting_members WHERE user_id=@user
+    AND window_id IN (SELECT id FROM greeting_windows WHERE chat_id=@chatId AND generation=@generation)`,
+  ).run(args);
+  db.prepare(`DELETE FROM greeting_candidates WHERE ${subject}`).run(args);
   db.prepare(
     `DELETE FROM questionnaire_inputs WHERE chat_id=@chatId AND generation=@generation
     AND attempt=(SELECT attempt FROM questionnaire_progress WHERE ${subject})`,
@@ -114,6 +126,7 @@ export function returnDepartedParticipant(
     `UPDATE participant_departures SET revision=revision+1,returned_at=@at,needs_verification=0
     WHERE ${subject}`,
   ).run({ ...scope, user, at });
+  releaseDepartedAnswers(db, scope, user);
 }
 
 export function applyDepartureSnapshot(

@@ -12,6 +12,7 @@ import type { LifecycleBackend } from './lifecycle-store';
 import type { Storage } from './types';
 import { compositeId, requireInput, timestamp } from './validation';
 import { participantProfileAvailable, readDeparture } from './participant-departures';
+import { recordProfileAnswer } from './participant-derived-data';
 
 const week = 7 * 86_400_000;
 
@@ -64,16 +65,16 @@ export function createPersonalDataStore(connection: Connection, lifecycle: Lifec
       subjects: readonly UserId[] = [],
     ) {
       requireInput(db.inTransaction);
-      if (subjects.length)
-        db.prepare(
-          `INSERT OR IGNORE INTO tool_answer_subjects(answer_id,user_id)
-        SELECT m.id,j.value FROM messages m,json_each(?) j WHERE m.chat_id=? AND m.platform_message_id=?`,
-        ).run(JSON.stringify(subjects), scope.chatId, messageId);
+      const id = db
+        .prepare('SELECT id FROM messages WHERE chat_id=? AND platform_message_id=?')
+        .pluck()
+        .get(scope.chatId, messageId) as number | undefined;
+      if (id === undefined) return;
       db.prepare(
         `INSERT OR IGNORE INTO personal_answer_sources(answer_id,source_id)
-        SELECT a.id,s.id FROM messages a JOIN messages s ON s.chat_id=a.chat_id
-        WHERE a.chat_id=? AND a.platform_message_id=? AND s.id IN (SELECT value FROM json_each(?))`,
-      ).run(scope.chatId, messageId, JSON.stringify(sources));
+        SELECT ?,id FROM messages WHERE chat_id=? AND id IN (SELECT value FROM json_each(?))`,
+      ).run(id, scope.chatId, JSON.stringify(sources));
+      recordProfileAnswer(db, scope, id, subjects, sources);
     },
     profileAllowed(scope: ConnectionScope, userId: UserId, sourceTime: number) {
       return lifecycle.transaction(scope, (db) => profileAdmitted(db, scope, userId, sourceTime));

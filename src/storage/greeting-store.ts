@@ -8,6 +8,7 @@ import { greetingsAllowed, invitationsAllowed } from './greeting-entry';
 import type { LifecycleBackend } from './lifecycle-store';
 import { createMessageStore } from './messages';
 import { participantProfileAvailable, readDeparture } from './participant-departures';
+import { recordProfileAnswer } from './participant-derived-data';
 import { profileAdmitted } from './personal-data-store';
 import {
   finishResponse,
@@ -283,6 +284,7 @@ export function createGreetingStore(
             )
             .run(messageId, id, sendId).changes === 1,
         );
+        if (messageId !== null) recordProfileAnswer(db, scope, messageId, subjects);
         finishResponse(db, scope, rateKey(id, publication), 'delivered');
       });
     },

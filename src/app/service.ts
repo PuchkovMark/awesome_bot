@@ -12,6 +12,7 @@ import type { AddressPreferenceReference } from '../contracts/index';
 import { createAddressPreferenceHandlers } from './address-preferences';
 import { createPersonalCommands, groupPersonalCommand } from './personal-data';
 import { personalDataStore } from '../storage/personal-data-store';
+import { departedProfileBatch } from '../storage/participant-departures';
 import { createVkChannel } from '../channels/index';
 import type { ApplicationConfig } from '../config/application';
 import {
@@ -134,11 +135,12 @@ export async function runApplication(
         },
       });
       const privacy = personalDataStore(storage);
+      const registry = participantRegistryStore(storage);
       privacy.purgeExpired(Date.now());
       privacy.cleanup(Date.now());
+      registry.purgeDeparted(Date.now());
       const controls = chatControlStore(storage);
       let ready = false;
-      const registry = participantRegistryStore(storage);
       const adminStore = adminRecoveryStore(storage);
       const channel = createVkChannel(
         {
@@ -241,7 +243,8 @@ export async function runApplication(
           passports.prune(Date.now());
           const moreProfiles = privacy.purgeExpired(Date.now()) === 100;
           const moreMessages = privacy.cleanup(Date.now()) === 100;
-          if (moreProfiles || moreMessages) {
+          const moreDepartures = registry.purgeDeparted(Date.now()) === departedProfileBatch;
+          if (moreProfiles || moreMessages || moreDepartures) {
             await delay(0);
             continue;
           }

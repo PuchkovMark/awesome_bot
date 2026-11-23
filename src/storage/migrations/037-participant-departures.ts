@@ -1,5 +1,8 @@
+import { hideDepartedAnswersSql } from '../participant-derived-data';
+
 export const participantDepartures = {
-  version: 37, name: 'participant-departures',
+  version: 37,
+  name: 'participant-departures',
   sql: `
 CREATE TABLE participant_departures (
   chat_id TEXT NOT NULL,
@@ -22,5 +25,20 @@ INSERT INTO participant_departures(chat_id,generation,user_id,departed_at)
     CASE WHEN p.status IN ('left','removed') THEN p.status_observed_at END
   FROM chat_participants p JOIN chat_connections c USING(chat_id)
   WHERE p.status IN ('left','removed','absent');
+
+CREATE TABLE departed_profile_answers (
+  chat_id TEXT NOT NULL,
+  generation INTEGER NOT NULL,
+  user_id TEXT NOT NULL,
+  answer_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  PRIMARY KEY(chat_id,generation,user_id,answer_id),
+  FOREIGN KEY(chat_id,generation,user_id) REFERENCES participant_departures(chat_id,generation,user_id) ON DELETE CASCADE
+) STRICT;
+CREATE INDEX departed_profile_answers_message ON departed_profile_answers(answer_id);
+${hideDepartedAnswersSql('returned_at IS NULL')};
+DROP VIEW personal_visible_messages;
+CREATE VIEW personal_visible_messages AS SELECT * FROM messages
+  WHERE id NOT IN (SELECT message_id FROM personal_hidden_messages)
+    AND id NOT IN (SELECT answer_id FROM departed_profile_answers);
 `,
 } as const;

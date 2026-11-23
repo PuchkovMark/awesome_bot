@@ -178,20 +178,23 @@ export function questionnaireProgressStore(storage: Storage) {
     const msg = questionnaireSource(db, scope, row.user_id, id, now);
     return msg && { template: view(row, now).template, text: msg.text, user: row.user_id };
   }
+  function completionRevision(scope: ConnectionScope, user: UserId) {
+    return lifecycle.transaction(scope, (db) => {
+      const state = readDeparture(db, scope, user);
+      if (!participantProfileAvailable(state)) return null;
+      const completed = db
+        .prepare('SELECT 1 FROM questionnaire_progress WHERE ' + subject + " AND state='completed'")
+        .get(scope.chatId, scope.generation, user);
+      return completed ? (state?.revision ?? 0) : null;
+    });
+  }
+
   return {
     participant,
-    completed(scope: ConnectionScope, user: UserId) {
-      return lifecycle.transaction(
-        scope,
-        (db) =>
-          participantProfileAvailable(readDeparture(db, scope, user)) &&
-          Boolean(
-            db
-              .prepare(
-                'SELECT 1 FROM questionnaire_progress WHERE ' + subject + " AND state='completed'",
-              )
-              .get(scope.chatId, scope.generation, user),
-          ),
+    completionRevision,
+    participating(scope: ConnectionScope, user: UserId) {
+      return lifecycle.transaction(scope, (db) =>
+        participantProfileAvailable(readDeparture(db, scope, user)),
       );
     },
     owns(scope: ConnectionScope, id: number) {

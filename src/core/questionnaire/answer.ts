@@ -135,10 +135,14 @@ export function questionnaireAnswerHandler(options: {
       )
     )
       return { outcome: 'failed' };
+    const completionRevision = store.completionRevision(scope, input.user);
+    if (completionRevision === null) return { outcome: 'interrupted' };
     return {
       outcome: 'completed',
       subjectIds: [input.user],
-      toolResultsCurrent: () => options.disclosed(work) && store.completed(scope, input.user),
+      toolResultsCurrent: () =>
+        options.disclosed(work) &&
+        store.completionRevision(scope, input.user) === completionRevision,
       result: { kind: 'complete', text: 'Спасибо! Анкета заполнена.', summary: measured },
     };
   };
