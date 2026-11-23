@@ -1,4 +1,5 @@
-import type { LlmClient } from '../../llm/types';
+import { messageInputCost, systemInputCost } from '../context/budget';
+import type { LlmClient, LlmRequest } from '../../llm/types';
 import type { AgentLoopInput, AgentLoopOptions } from '../agent-loop/types';
 import { createAttemptSummary } from '../agent-loop/summary';
 import { createAgentLoop } from '../agent-loop/service';
@@ -28,6 +29,18 @@ export interface AgentLoopQueueOptions extends Omit<ChatQueueOptions, 'handler' 
     work: QueueHandlerInput,
   ) => import('../../storage/trace-types').TracePayload['disclosure'];
 }
+function estimateRequestInput(request: LlmRequest) {
+  return (
+    request.messages.reduce((cost, message) => {
+      const structured =
+        message.role === 'tool' || (message.role === 'assistant' && message.toolCalls);
+      const text = structured ? JSON.stringify(message) : (message.text ?? '');
+      return cost + messageInputCost(Buffer.byteLength(text, 'utf8'));
+    }, systemInputCost(request.system)) +
+    (request.tools ? Buffer.byteLength(JSON.stringify(request.tools), 'utf8') : 0)
+  );
+}
+
 export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
   const settings = loopOptions(options.loopOptions ?? {});
   if (
@@ -59,6 +72,7 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
     config,
     ...(options.limits === undefined ? {} : { limits: options.limits }),
     ...(options.responseRate === undefined ? {} : { responseRate: options.responseRate }),
+    ...(options.tokenBudget ? { tokenBudget: true } : {}),
     handler: async (work) => {
       const zero = createAttemptSummary().snapshot(0);
       work.recordTrace({ summary: zero });
@@ -134,9 +148,18 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
           settings,
           (summary) =>
             work.recordTrace({ model: { name: modelName, invoked: 'possible' }, summary }),
-          () => {
+          (request, ordinal) => {
+            const reservation =
+              options.tokenBudget && work.route
+                ? {
+                    key: `job:${work.jobId}:${ordinal}`,
+                    purpose: 'direct' as const,
+                    input: estimateRequestInput(request),
+                    output: request.maxOutputTokens,
+                  }
+                : undefined;
             const admission = work.admitModelAttempt
-              ? work.admitModelAttempt(allowed, prepared.metadata?.messageIds)
+              ? work.admitModelAttempt(allowed, prepared.metadata?.messageIds, reservation)
               : work.isCurrent() && allowed();
             staleContext = admission === 'context_stale';
             return admission;

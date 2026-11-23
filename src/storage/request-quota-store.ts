@@ -37,7 +37,13 @@ export function admitRequestQuota(db: Database, work: QueueWork, limits: ChatLim
   db.prepare(
     `INSERT INTO request_quota_admissions(job_id,chat_id,generation,user_id,admitted_at) VALUES(?,?,?,?,?)`,
   ).run(id, scope.chatId, scope.generation, source.userId, now);
-  return true;
+  return 'charged' as const;
+}
+
+export function releaseRequestQuota(db: Database, work: QueueWork) {
+  db.prepare(
+    'DELETE FROM request_quota_admissions WHERE job_id=? AND chat_id=? AND generation=?',
+  ).run(work.id, work.scope.chatId, work.scope.generation);
 }
 
 export function pruneRequestQuota(

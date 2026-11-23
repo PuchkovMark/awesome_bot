@@ -90,3 +90,33 @@ test('раздельные резервы, нулевая и поздняя св
     await storage.close();
   }
 });
+
+test('два подключения делят последний резерв одного чата', async () => {
+  const fixture = storageFixture();
+  const first = await openStorage(fixture.path);
+  const second = await openStorage(fixture.path);
+  try {
+    const one = scopeFor(first, 'vk:race');
+    const two = scopeFor(second, one.chatId);
+    const firstStore = tokenBudgetStore(first);
+    const secondStore = tokenBudgetStore(second);
+    firstStore.update(one, true, { total: 1500 }, noon);
+    const start = Promise.withResolvers<void>();
+    const results = Promise.all([
+      start.promise.then(() => firstStore.reserve(one, true, attempt, noon)),
+      start.promise.then(() =>
+        secondStore.reserve(two, true, { ...attempt, key: 'job:2:1' }, noon),
+      ),
+    ]);
+    start.resolve();
+    expect((await results).filter(Boolean)).toHaveLength(1);
+    expect(secondStore.read(two, true, noon).total).toMatchObject({
+      reserved: 1500n,
+      remaining: 0,
+    });
+  } finally {
+    await first.close();
+    await second.close();
+    fixture.cleanup();
+  }
+});

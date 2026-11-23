@@ -15,6 +15,7 @@ import type {
 } from '../../storage/queue-types';
 import type { ChatLimits } from '../chat-limits/config';
 import type { AttemptAdmission } from '../agent-loop/types';
+import type { TokenReservation } from '../../storage/token-budget-store';
 export type {
   QueueAdmission,
   QueueConfig,
@@ -47,6 +48,7 @@ export interface QueueHandlerInput {
   readonly admitModelAttempt?: (
     allow: () => boolean,
     contextIds?: readonly number[],
+    reservation?: TokenReservation,
   ) => AttemptAdmission;
 }
 export type QueueHandler = (input: QueueHandlerInput) => Promise<QueueOutcome | QueueCompletion>;
@@ -73,6 +75,7 @@ export interface ChatQueueOptions {
   readonly logger?: SafeLogger;
   readonly limits?: Partial<ChatLimits>;
   readonly responseRate?: import('../chat-limits/response-rate-config').ResponseRateConfig;
+  readonly tokenBudget?: boolean;
   /** У привязанного к платформе воркера проверка непрерывности предшествует выдаче работы. */
   readonly platform?: string;
 }

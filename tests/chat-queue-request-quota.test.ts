@@ -1,4 +1,5 @@
 import { expect, test, vi } from 'vitest';
+import { tokenBudgetStore } from '../src/storage/token-budget-store';
 import { createAgentLoopQueue } from '../src/core/index';
 import type { LlmResult } from '../src/llm/types';
 import { openStorage } from '../src/storage/index';
@@ -124,5 +125,50 @@ test('повтор модели разрешён при занятой квот�
     await queue.stop();
     await storage.close();
     vi.useRealTimers();
+  }
+});
+
+test('отказ токен-бюджета и отказ F4.3 не расходуют второй лимит', async () => {
+  const storage = await openStorage(':memory:');
+  const scope = scopeFor(storage, 'vk:chat');
+  const budget = tokenBudgetStore(storage);
+  const needed = 128 + 32 + Buffer.byteLength('Тест') + ready.input.maxOutputTokens;
+  const complete = vi.fn(async () => response);
+  const queue = createAgentLoopQueue({
+    storage,
+    limits,
+    tokenBudget: true,
+    tracing: { messageRetentionDays: 30 },
+    modelName: 'synthetic',
+    client: { complete },
+    prepare: async () => ready,
+  });
+  const run = async (id: number) => {
+    await queue.admitRouted(scope, queueMessage(scope.chatId, String(id)), route);
+    await flushQueue();
+    return (await storage.traces.get(scope, id))?.payload.resultKind;
+  };
+  try {
+    await storage.chats.create(scope, { enabled: true, responseMode: 'normal', createdAt: 0 });
+    await queue.start();
+    budget.update(scope, true, { total: needed - 1 }, Date.now());
+    expect(await run(1)).toBe('token_budget_exhausted');
+    expect(complete).not.toHaveBeenCalled();
+    expect(budget.read(scope, true, Date.now()).total.reserved).toBe(0n);
+
+    budget.update(scope, true, { total: needed }, Date.now());
+    expect(await run(2)).toBe('complete');
+    expect(complete).toHaveBeenCalledOnce();
+    const used = budget.read(scope, true, Date.now()).total;
+
+    budget.update(scope, true, { total: needed * 3 }, Date.now());
+    expect(await run(3)).toBe('quota_exhausted');
+    const after = budget.read(scope, true, Date.now()).total;
+    expect(after.confirmed).toBe(used.confirmed);
+    expect(after.reserved).toBe(used.reserved);
+    expect(complete).toHaveBeenCalledOnce();
+  } finally {
+    await queue.stop();
+    await storage.close();
   }
 });

@@ -1,3 +1,4 @@
+import type { TokenReservation } from '../../storage/token-budget-store';
 import { publicationRow } from '../message-router/publication';
 import { initialTrace } from '../../storage/trace-store';
 import type { TracePayload } from '../../storage/trace-types';
@@ -314,9 +315,16 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
             route: work.route,
             ...disclosureVersion(work),
             isCurrent,
-            ...((limits && work.route) || responseRate || backend.historyConfigured
+            ...((limits && work.route) ||
+            responseRate ||
+            options.tokenBudget ||
+            backend.historyConfigured
               ? {
-                  admitModelAttempt: (allow: () => boolean, contextIds?: readonly number[]) =>
+                  admitModelAttempt: (
+                    allow: () => boolean,
+                    contextIds?: readonly number[],
+                    reservation?: TokenReservation,
+                  ) =>
                     backend.admitModelAttempt(
                       token,
                       work,
@@ -325,6 +333,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
                       Date.now,
                       contextIds,
                       responseRate,
+                      reservation,
                     ),
                 }
               : {}),
@@ -348,6 +357,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
         backend.renew(token, config.leaseMs);
         if (limits) backend.pruneQuotas(token, limits, platform);
         if (responseRate) backend.pruneResponseRate(token, responseRate);
+        if (options.tokenBudget) backend.pruneTokenBudget(token);
         renewAt = performance.now() + config.renewIntervalMs;
       }
       for (const task of [...tasks.values()])

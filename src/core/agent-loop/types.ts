@@ -33,7 +33,16 @@ export interface AgentLoopSummary {
 }
 export type AgentLoopErrorCode =
   Exclude<LlmErrorCode, 'rate_limit' | 'cancelled'> | 'invalid_input' | 'client_failure';
-export type AttemptAdmission = boolean | 'quota_exhausted' | 'context_stale';
+export interface AttemptReservation {
+  readonly cancelBeforeSend: () => void;
+}
+export type AttemptAdmission =
+  | boolean
+  | AttemptReservation
+  | 'quota_exhausted'
+  | 'token_budget_exhausted'
+  | 'initiative_budget_exhausted'
+  | 'context_stale';
 export type AgentLoopOutcome =
   | { readonly kind: 'complete'; readonly text: string }
   | { readonly kind: 'incomplete'; readonly partialText: string }
@@ -43,6 +52,8 @@ export type AgentLoopOutcome =
         | 'empty'
         | 'rate_limit'
         | 'quota_exhausted'
+        | 'token_budget_exhausted'
+        | 'initiative_budget_exhausted'
         | 'tools_not_supported'
         | 'cancelled'
         | 'deadline_exceeded';

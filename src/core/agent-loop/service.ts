@@ -18,7 +18,7 @@ export function createAgentLoop(
   client: LlmClient,
   options: AgentLoopOptions = {},
   onAttempt?: (summary: import('./types').AgentLoopSummary) => void,
-  allowAttempt?: () => AttemptAdmission,
+  allowAttempt?: (request: Readonly<LlmRequest>, ordinal: number) => AttemptAdmission,
 ): AgentLoop {
   const config = loopOptions(options);
   let invoke: LlmClient['complete'];
@@ -88,19 +88,38 @@ export function createAgentLoop(
           };
           const before = checkStopped();
           if (before) return finish(before);
-          const admission = allowAttempt ? allowAttempt() : true;
-          if (admission === 'quota_exhausted') return finish({ kind: admission });
-          if (admission !== true) return finish({ kind: 'cancelled' });
-          summary.beginAttempt();
-          attempts++;
-          onAttempt?.(summary.snapshot(Math.max(0, performance.now() - started)));
+          const admission = allowAttempt ? allowAttempt(request, attempts + 1) : true;
+          if (
+            admission === 'quota_exhausted' ||
+            admission === 'token_budget_exhausted' ||
+            admission === 'initiative_budget_exhausted'
+          ) {
+            return finish({ kind: admission });
+          }
+          if (admission === false || admission === 'context_stale') {
+            return finish({ kind: 'cancelled' });
+          }
+          const reservation = admission === true ? undefined : admission;
+          let invoked = false;
           let pending: Promise<ParsedAttempt>;
           try {
-            pending = Promise.resolve(invoke(request)).then(parseAttempt, () =>
-              parseAttempt(undefined),
-            );
-          } catch {
-            pending = Promise.resolve(parseAttempt(undefined));
+            const afterAdmission = checkStopped();
+            if (afterAdmission) return finish(afterAdmission);
+            summary.beginAttempt();
+            attempts++;
+            onAttempt?.(summary.snapshot(Math.max(0, performance.now() - started)));
+            const beforeSend = checkStopped();
+            if (beforeSend) return finish(beforeSend);
+            invoked = true;
+            try {
+              pending = Promise.resolve(invoke(request)).then(parseAttempt, () =>
+                parseAttempt(undefined),
+              );
+            } catch {
+              pending = Promise.resolve(parseAttempt(undefined));
+            }
+          } finally {
+            if (!invoked) reservation?.cancelBeforeSend();
           }
           const result = await Promise.race([pending, halted]);
           const after = checkStopped();

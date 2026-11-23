@@ -21,7 +21,14 @@ import type { QueueWork, QueueOutcome, QueueRecord } from './queue-types';
 import { StorageError } from './errors';
 import { requireInput, timestamp } from './validation';
 import { readChatControl } from './chat-control-store';
-import { admitRequestQuota, pruneRequestQuota } from './request-quota-store';
+import { admitRequestQuota, pruneRequestQuota, releaseRequestQuota } from './request-quota-store';
+import {
+  canReserveTokens,
+  deleteUnsentTokenReservation,
+  insertTokenReservation,
+  pruneTokenBudget,
+  type TokenReservation,
+} from './token-budget-store';
 import {
   createAutonomousQuotaStore,
   pruneAutonomousQuota,
@@ -538,22 +545,54 @@ export function createQueueBackend(
       now = Date.now,
       contextIds: readonly number[] = [],
       responseRate?: ResponseRateConfig,
+      reservation?: TokenReservation,
     ) {
       return transaction(token, (db) => {
         if (!running(db, token, work) || !allow()) return false;
+        const at = now();
         if (
           responseRate &&
           work.route?.isGroupChat &&
           !sources.has(work) &&
-          activeMentionFlood(db, work.scope, now()) !== null
+          activeMentionFlood(db, work.scope, at) !== null
         )
           return false;
         const ids = sources.get(work) ?? [...new Set([work.messageId, ...contextIds])];
-        if (!historySourcesVisible(db, work.scope.chatId, ids)) return 'context_stale' as const;
-        const result = limits && work.route ? admitRequestQuota(db, work, limits, now()) : true;
-        if (result === true) sources.set(work, ids);
-        return result;
+        if (!historySourcesVisible(db, work.scope.chatId, ids, at)) return 'context_stale' as const;
+        if (
+          reservation &&
+          !canReserveTokens(db, work.scope, work.route?.isGroupChat ?? false, reservation, at)
+        )
+          return reservation.purpose === 'initiative'
+            ? ('initiative_budget_exhausted' as const)
+            : ('token_budget_exhausted' as const);
+        const quota = limits && work.route ? admitRequestQuota(db, work, limits, at) : true;
+        if (quota === false || quota === 'quota_exhausted') return quota;
+        if (reservation) insertTokenReservation(db, work.scope, reservation, at);
+        sources.set(work, ids);
+
+        if (!reservation) return true;
+        const { key } = reservation;
+        return {
+          cancelBeforeSend() {
+            connection.run((database) =>
+              database
+                .transaction(() => {
+                  if (
+                    deleteUnsentTokenReservation(database, work.scope, key) &&
+                    quota === 'charged'
+                  ) {
+                    releaseRequestQuota(database, work);
+                  }
+                })
+                .immediate(),
+            );
+          },
+        };
       });
+    },
+    pruneTokenBudget(token: string, now = Date.now()) {
+      return transaction(token, (db) => pruneTokenBudget(db, now));
     },
     currentPublicationFlood(token: string, input: ResponsePublication, now = Date.now()): boolean {
       return transaction(token, () =>

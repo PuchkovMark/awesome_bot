@@ -1,4 +1,7 @@
 import { afterEach, expect, test, vi } from 'vitest';
+import { createAgentLoop } from '../src/core/agent-loop/service';
+import type { AttemptAdmission } from '../src/core/agent-loop/types';
+import type { LlmRequest, LlmResult } from '../src/llm/types';
 import { agentInput, failure, response, sequence } from './helpers/agent-loop';
 
 afterEach(() => {
@@ -114,4 +117,24 @@ test('повтор не дополняет историю ошибкой и не
   expect(second).not.toBe(first);
   expect(second?.messages).not.toBe(first?.messages);
   expect(JSON.stringify(second)).not.toContain('UNTRUSTED');
+});
+
+test('каждый повтор запрашивает допуск перед вызовом и останавливается при нехватке токенов', async () => {
+  clock();
+  const complete = vi.fn(async (): Promise<LlmResult> => ({
+    kind: 'error',
+    code: 'server',
+    message: 'Сбой',
+  }));
+  const admission = vi
+    .fn<(_request: Readonly<LlmRequest>, _ordinal: number) => AttemptAdmission>()
+    .mockReturnValueOnce(true)
+    .mockReturnValueOnce('token_budget_exhausted');
+  const loop = createAgentLoop({ complete }, { retryDelayMs: 5 }, undefined, admission);
+  const result = loop.run(agentInput());
+  await vi.advanceTimersByTimeAsync(5);
+  expect(await result).toMatchObject({ kind: 'token_budget_exhausted', summary: { attempts: 1 } });
+  expect(complete).toHaveBeenCalledOnce();
+  expect(admission.mock.calls.map(([, ordinal]) => ordinal)).toEqual([1, 2]);
+  expect(admission.mock.calls[0]?.[0].maxOutputTokens).toBe(agentInput().maxOutputTokens);
 });

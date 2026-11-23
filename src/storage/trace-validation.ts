@@ -98,6 +98,8 @@ export function validateTrace(value: unknown): asserts value is TracePayload {
     'empty',
     'rate_limit',
     'quota_exhausted',
+    'token_budget_exhausted',
+    'initiative_budget_exhausted',
     'tools_not_supported',
     'cancelled',
     'deadline_exceeded',
