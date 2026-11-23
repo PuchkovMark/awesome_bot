@@ -5,7 +5,7 @@
 - Статус: выполнено
 - Дата: 2026-11-23
 - Дата завершения: 2026-11-23
-- Связанные документы: [задача](../../tasks/completed/031-typescript-code-style.md), [утверждённый подход](../../plans/completed/031-typescript-code-style.md), [план замеров 032](../032-context-preparation-latency.md).
+- Связанные документы: [задача](../../tasks/completed/031-typescript-code-style.md), [утверждённый подход](../../plans/completed/031-typescript-code-style.md), [план замеров 032](032-context-preparation-latency.md).
 
 ## Упорядоченные шаги
 

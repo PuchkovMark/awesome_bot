@@ -29,6 +29,7 @@
 | № | Задача | Статус | Документы |
 | --- | --- | --- | --- |
 | 031 | Стиль и читаемость TypeScript | выполнено | [Задача](tasks/completed/031-typescript-code-style.md), [план фичи](plans/completed/031-typescript-code-style.md), [план реализации и приёмка](impl-plans/completed/031-typescript-code-style.md) |
+| 032 | Ускорить сборку истории для ответа бота | выполнено | [Задача](tasks/completed/032-context-preparation-latency.md), [план фичи](plans/completed/032-context-preparation-latency.md), [план реализации и замеры](impl-plans/completed/032-context-preparation-latency.md#итог-проверки) |
 
 ## Веха 0. Процесс и документация
 
