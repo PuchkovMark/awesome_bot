@@ -5,6 +5,7 @@ import { openStorage } from '../src/storage/index';
 import { queueBackend } from '../src/storage/queue-registry';
 import { scopeFor } from './helpers/connection-scope';
 import { storageFixture } from './helpers/storage-fixture';
+import { chatControlStore } from '../src/storage/chat-control-store';
 
 const token = 'active-queue';
 const noon = Date.UTC(2026, 10, 23, 12);
@@ -12,6 +13,37 @@ const minute = 60_000;
 const hour = 60 * minute;
 const day = 24 * hour;
 const limits = chatLimits({ autonomousPerHour: 1, autonomousPerDay: 2 });
+
+test('тихие часы сохраняются и используют текущую зону с переходом через полночь', async () => {
+  const file = storageFixture();
+  let storage = await openStorage(file.path);
+  try {
+    const scope = await active(storage, 'vk:chat');
+    const neighbor = await active(storage, 'vk:neighbor');
+    expect(chatControlStore(storage).read(scope).quietHours).toBeNull();
+    await storage.authorization.transaction(scope, (tx) => {
+      tx.updateTimezone('UTC');
+      tx.writeQuietHours({ start: 23 * 60, end: 7 * 60 });
+    });
+    expect(chatControlStore(storage).read(neighbor).quietHours).toBeNull();
+    await storage.close();
+    storage = await openStorage(file.path);
+    const restored = scopeFor(storage, scope.chatId);
+    const control = chatControlStore(storage);
+    const start = Date.UTC(2026, 10, 23, 23);
+    const end = Date.UTC(2026, 10, 24, 7);
+    expect(control.allowsAutonomous(restored, start - 1)).toBe(true);
+    expect(control.allowsAutonomous(restored, start)).toBe(false);
+    expect(control.allowsAutonomous(restored, end - 1)).toBe(false);
+    expect(control.allowsAutonomous(restored, end)).toBe(true);
+    await storage.authorization.transaction(restored, (tx) => tx.updateTimezone('Europe/Moscow'));
+    expect(control.allowsAutonomous(restored, start - 3 * hour)).toBe(false);
+    expect(control.allowsAutonomous(restored, end - 3 * hour)).toBe(true);
+  } finally {
+    await storage.close();
+    file.cleanup();
+  }
+});
 
 async function active(storage: Awaited<ReturnType<typeof openStorage>>, chatId: ChatId) {
   const scope = scopeFor(storage, chatId);

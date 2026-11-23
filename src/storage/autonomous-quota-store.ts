@@ -9,8 +9,15 @@ export type AutonomousReservation = { readonly [reservationBrand]: true };
 
 type ReservationKey = { readonly scope: ConnectionScope; readonly id: number };
 type Transaction = <T>(operation: (db: Database) => T) => T;
+const noReactionMs = 30 * 60_000;
 
-function quotaState(db: Database, scope: ConnectionScope, limits: ChatLimits, now: number) {
+export function autonomousQuotaState(
+  db: Database,
+  scope: ConnectionScope,
+  limits: ChatLimits,
+  now: number,
+  requireReaction = false,
+) {
   timestamp(now);
   const { chatId, generation } = scope;
   const { hourly, daily } = db
@@ -22,12 +29,16 @@ function quotaState(db: Database, scope: ConnectionScope, limits: ChatLimits, no
     hourly: number;
     daily: number;
   };
-  const { intervalFrom } = db
+  const last = db
     .prepare(
-      `SELECT max(coalesce(first_confirmed_at, CASE WHEN outcome='unknown' THEN attempted_at END)) AS intervalFrom
-    FROM autonomous_quota_reservations WHERE chat_id=? AND generation=?`,
+      `SELECT coalesce(first_confirmed_at, CASE WHEN outcome='unknown' THEN attempted_at END) AS intervalFrom,
+      reacted_at AS reactedAt
+      FROM autonomous_quota_reservations WHERE chat_id=? AND generation=?
+      AND (first_confirmed_at IS NOT NULL OR outcome='unknown')
+      ORDER BY intervalFrom DESC,id DESC LIMIT 1`,
     )
-    .get(chatId, generation) as { intervalFrom: number | null };
+    .get(chatId, generation) as { intervalFrom: number; reactedAt: number | null } | undefined;
+  const intervalFrom = last?.intervalFrom ?? null;
   const open = !!db
     .prepare(
       `SELECT 1 FROM autonomous_quota_reservations
@@ -41,8 +52,27 @@ function quotaState(db: Database, scope: ConnectionScope, limits: ChatLimits, no
     hourly < limits.autonomousPerHour &&
     daily < limits.autonomousPerDay &&
     (intervalUntil === null || now >= intervalUntil) &&
+    (!requireReaction ||
+      !last ||
+      last.reactedAt !== null ||
+      now >= last.intervalFrom + noReactionMs) &&
     allowsAutonomousReply(readChatControl(db, chatId), now);
   return { hourly, daily, open, intervalFrom, intervalUntil, allowed };
+}
+
+export function recordAutonomousReaction(
+  db: Database,
+  scope: ConnectionScope,
+  replyTo: string,
+  now: number,
+) {
+  db.prepare(
+    `UPDATE autonomous_quota_reservations SET reacted_at=?
+    WHERE chat_id=? AND generation=? AND first_confirmed_at<=? AND reacted_at IS NULL AND id=(
+      SELECT p.reservation_id FROM autonomous_reply_parts p JOIN messages m ON m.id=p.message_id
+      WHERE m.chat_id=? AND m.platform_message_id=?
+    )`,
+  ).run(now, scope.chatId, scope.generation, now, scope.chatId, replyTo);
 }
 
 export function createAutonomousQuotaStore(
@@ -63,16 +93,20 @@ export function createAutonomousQuotaStore(
   }
 
   return Object.freeze({
-    inspect(scope: ConnectionScope, now: number) {
+    inspect(scope: ConnectionScope, now: number, requireReaction = false) {
       return transaction((db) => {
         assertScope(db, scope);
-        return quotaState(db, scope, limits, now);
+        return autonomousQuotaState(db, scope, limits, now, requireReaction);
       });
     },
-    reserve(scope: ConnectionScope, now: number): AutonomousReservation | null {
+    reserve(
+      scope: ConnectionScope,
+      now: number,
+      requireReaction = false,
+    ): AutonomousReservation | null {
       const id = transaction((db) => {
         assertScope(db, scope);
-        if (!quotaState(db, scope, limits, now).allowed) return null;
+        if (!autonomousQuotaState(db, scope, limits, now, requireReaction).allowed) return null;
         const row = db
           .prepare(
             `INSERT INTO autonomous_quota_reservations(chat_id,generation,reserved_at,owner)
@@ -117,6 +151,36 @@ export function createAutonomousQuotaStore(
             )
             .run(now, ...parameters(reservation), attempt, now).changes === 1,
       );
+    },
+    recordDeliveredPart(
+      reservation: AutonomousReservation,
+      attempt: number,
+      platformMessageId: string,
+      now: number,
+    ) {
+      timestamp(now);
+      const { id, scope } = keyFor(reservation);
+      return transaction((db) => {
+        const updated = db
+          .prepare(
+            `UPDATE autonomous_quota_reservations
+          SET first_confirmed_at=coalesce(first_confirmed_at,?),attempted_at=NULL
+          WHERE id=? AND chat_id=? AND generation=? AND owner=? AND attempt=?
+            AND (attempted_at<=? OR first_confirmed_at IS NOT NULL)`,
+          )
+          .run(now, ...parameters(reservation), attempt, now);
+        if (updated.changes !== 1) return false;
+        const row = db
+          .prepare(
+            "SELECT id FROM messages WHERE chat_id=? AND platform_message_id=? AND role='assistant' AND purpose='conversation'",
+          )
+          .get(scope.chatId, platformMessageId) as { id: number } | undefined;
+        requireInput(row);
+        db.prepare(
+          'INSERT INTO autonomous_reply_parts(message_id,reservation_id) VALUES(?,?) ON CONFLICT DO NOTHING',
+        ).run(row.id, id);
+        return true;
+      });
     },
     rejectAttempt(reservation: AutonomousReservation, attempt: number) {
       requireInput(Number.isSafeInteger(attempt) && attempt > 0);
@@ -179,5 +243,11 @@ export function pruneAutonomousQuota(
       AND coalesce(first_confirmed_at,attempted_at)<=? AND (? IS NULL OR substr(chat_id,1,length(?))=?)
     ORDER BY reserved_at,id LIMIT 100)`,
     )
-    .run(now - autonomousDayMs, now - limits.autonomousIntervalMs, prefix, prefix, prefix).changes;
+    .run(
+      now - autonomousDayMs,
+      now - Math.max(limits.autonomousIntervalMs, noReactionMs),
+      prefix,
+      prefix,
+      prefix,
+    ).changes;
 }

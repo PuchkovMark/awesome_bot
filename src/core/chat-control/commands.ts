@@ -1,10 +1,12 @@
 import type { ChatId } from '../../contracts/index';
 import type { ResponseMode } from '../../storage/types';
 import type { ServiceCommand } from '../message-router/types';
+import type { QuietHours } from '../../storage/chat-control-store';
 
 export type ChatControlCommand =
   | { readonly kind: 'settings' | 'on' | 'off' | 'pause' | 'disableAutonomous' }
   | { readonly kind: 'mode'; readonly mode: ResponseMode }
+  | { readonly kind: 'quietHours'; readonly hours: QuietHours | null }
   | { readonly kind: 'extend'; readonly minutes: number };
 export type ChatControlRequest = {
   readonly command: ChatControlCommand | 'explain' | 'invalid';
@@ -39,6 +41,17 @@ export function parseChatBinding(value: string | undefined): ChatControlRequest[
     : undefined;
 }
 
+function quietHours(args: readonly string[]): ChatControlRequest['command'] {
+  if (args.length === 0) return { kind: 'settings' };
+  if (args.length !== 1) return 'invalid';
+  if (args[0] === 'выкл') return { kind: 'quietHours', hours: null };
+  const interval = /^([01]\d|2[0-3]):([0-5]\d)[–-]([01]\d|2[0-3]):([0-5]\d)$/u.exec(args[0]!);
+  if (!interval) return 'invalid';
+  const start = Number(interval[1]) * 60 + Number(interval[2]);
+  const end = Number(interval[3]) * 60 + Number(interval[4]);
+  return start === end ? 'invalid' : { kind: 'quietHours', hours: { start, end } };
+}
+
 export function parseChatControl(
   text: string,
   location: 'group' | 'private',
@@ -53,17 +66,26 @@ export function parseChatControl(
   const [name, ...args] = clean.split(/\s+/u);
   if (!name || (name === 'помолчи' && (location === 'private' || args.length))) return undefined;
   const kind = simple.get(name);
-  if (!kind && name !== '/режим' && name !== '/продлить-паузу') return undefined;
+  if (!kind && name !== '/режим' && name !== '/продлить-паузу' && name !== '/тихие-часы')
+    return undefined;
   if (location === 'group' && kind === 'on') return { command: 'invalid' };
   const target = location === 'private' ? parseChatBinding(args.shift()) : undefined;
   if (location === 'private' && !target) return { command: 'invalid' };
   let command: ChatControlRequest['command'] = 'invalid';
-  if (name === '/режим' && args.length === 1) {
+  if (name === '/тихие-часы') command = quietHours(args);
+  else if (name === '/режим' && args.length === 1) {
     const mode = modes.get(args[0]!);
     if (mode) command = { kind: 'mode', mode };
   } else if (name === '/продлить-паузу' && args.length === 1 && /^[1-9]\d*$/u.test(args[0]!)) {
     const minutes = Number(args[0]);
     if (Number.isSafeInteger(minutes)) command = { kind: 'extend', minutes };
-  } else if (kind && kind !== 'mode' && kind !== 'extend' && args.length === 0) command = { kind };
+  } else if (
+    kind &&
+    kind !== 'mode' &&
+    kind !== 'extend' &&
+    kind !== 'quietHours' &&
+    args.length === 0
+  )
+    command = { kind };
   return target ? { command, target } : { command };
 }

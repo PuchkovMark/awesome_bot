@@ -1,3 +1,4 @@
+import { autonomousReplies } from './023-autonomous-replies';
 import { chatAuthorLabels } from './022-chat-author-labels';
 import { connectionPauseReason } from './021-connection-pause-reason';
 import { chatTokenBudget } from './020-chat-token-budget';
@@ -48,4 +49,5 @@ export const migrations: readonly Migration[] = [
   chatTokenBudget,
   connectionPauseReason,
   chatAuthorLabels,
+  autonomousReplies,
 ];

@@ -221,6 +221,19 @@ test('команды VK сохраняют паузу, выключение от
         grantedBy: ownerId,
       }),
     );
+    event(201, '/тихие-часы 23:00-07:00', member);
+    await vi.waitFor(async () =>
+      expect(
+        (await storage.messages.list(scope, { limit: 10 })).some((row) => row.messageId === '201'),
+      ).toBe(true),
+    );
+    expect(controls.read(scope).quietHours).toBeNull();
+    event(202, '/тихие-часы 23:00–07:00', administrator);
+    await vi.waitFor(() =>
+      expect(controls.read(scope).quietHours).toEqual({ start: 1380, end: 420 }),
+    );
+    event(203, '/тихие-часы выкл', administrator);
+    await vi.waitFor(() => expect(controls.read(scope).quietHours).toBeNull());
     event(1, '/режим активный', member);
     event(2, '/режим активный', administrator);
     await vi.waitFor(() => expect(controls.read(scope).mode).toBe('active'));

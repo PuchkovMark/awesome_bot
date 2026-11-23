@@ -18,7 +18,9 @@ import {
   claimControlMessage,
   readChatControl,
   writeChatPause,
+  writeQuietHours,
   type ChatPause,
+  type QuietHours,
 } from './chat-control-store';
 import { createChatStore } from './chats';
 import type { ChatPatch } from './types';
@@ -100,6 +102,10 @@ export function createAuthorizationStore(connection: Connection): SyncAuthorizat
               writePause(pause: ChatPause) {
                 check();
                 writeChatPause(db, chatId, pause);
+              },
+              writeQuietHours(hours: QuietHours | null) {
+                check();
+                writeQuietHours(db, chatId, hours);
               },
               claimControlMessage(actorId: UserId, messageId: number) {
                 check(actorId);

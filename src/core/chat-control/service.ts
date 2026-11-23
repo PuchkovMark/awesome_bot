@@ -20,6 +20,9 @@ export function applyChatControl(
   switch (command.kind) {
     case 'settings':
       return { status: 'applied', state };
+    case 'quietHours':
+      tx.writeQuietHours(command.hours);
+      break;
     case 'mode':
       tx.updateControlSettings({ responseMode: command.mode }, now);
       break;
@@ -87,6 +90,13 @@ export function formatChatControl(
     `Режим: ${modeLabel[state.mode]}.`,
     `Самостоятельные реплики: ${pause}.`,
   ];
+  const hour = (minute: number) =>
+    `${String(Math.floor(minute / 60)).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')}`;
+  lines.push(
+    state.quietHours
+      ? `Тихие часы ${hour(state.quietHours.start)}–${hour(state.quietHours.end)} (${state.timezone}).`
+      : 'Тихие часы выключены.',
+  );
   if (
     !state.autonomousDisabled &&
     state.nextParticipantPause !== null &&

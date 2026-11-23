@@ -1,6 +1,6 @@
 import type { ChatId, UserId, GrantBasis, Timestamp } from '../contracts/index';
 import type { RecoveryCommand, RecoveryOperation } from './admin-recovery-store';
-import type { ChatControlState, ChatPause } from './chat-control-store';
+import type { ChatControlState, ChatPause, QuietHours } from './chat-control-store';
 import type { ChatPatch } from './types';
 
 export interface AdminGrant {
@@ -28,6 +28,7 @@ export interface AuthorizationTransaction {
     createdAt: Timestamp,
   ): void;
   writePause(pause: ChatPause): void;
+  writeQuietHours(hours: QuietHours | null): void;
   claimControlMessage(actorId: UserId, messageId: number): boolean;
   holder(basis: GrantBasis): UserId | null;
   bases(userId: UserId): readonly GrantBasis[];
