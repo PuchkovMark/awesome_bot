@@ -9,6 +9,7 @@ import {
 } from '../../src/core/index';
 import { createContextPreparation } from '../../src/core/prepare-context';
 import { responseRateConfig } from '../../src/core/chat-limits/response-rate-config';
+import { installStarterPersonas } from '../../src/storage/catalog-admin';
 import { queueBackend, registerQueue } from '../../src/storage/queue-registry';
 import { scopeFor } from '../helpers/connection-scope';
 import { contextCapabilities, contextFixture } from '../helpers/context';
@@ -143,6 +144,7 @@ async function measureTrial(profile: Profile) {
   });
 
   try {
+    installStarterPersonas(storage, 0);
     if (profile === 'parallelChats') {
       for (const chatId of ['vk:latency-b', 'vk:latency-c']) {
         const scope = scopeFor(storage, chatId);
@@ -239,7 +241,11 @@ async function measureTrial(profile: Profile) {
       const scope = requestScopes[index]!;
       expect(await storage.traces.get(scope, timeline.jobId!)).toMatchObject({
         outcome: 'completed',
-        payload: { summary: { attempts: 1 }, publication: { status: 'delivered' } },
+        payload: {
+          context: { persona: { version: { key: 'max', version: 1 } } },
+          summary: { attempts: 1 },
+          publication: { status: 'delivered' },
+        },
       });
       expect(await storage.messages.list(scope, { limit: 8 })).toContainEqual(
         expect.objectContaining({

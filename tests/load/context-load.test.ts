@@ -4,7 +4,7 @@ import Database from 'better-sqlite3';
 import { openStorage } from '../../src/storage/index';
 import { scopeFor } from '../helpers/connection-scope';
 import { storageFixture } from '../helpers/storage-fixture';
-import { catalogAdministration } from '../../src/storage/catalog-admin';
+import { catalogAdministration, installStarterPersonas } from '../../src/storage/catalog-admin';
 import { contextCapabilities, contextFixture } from '../helpers/context';
 import { createContextBuilder } from '../../src/core/context/index';
 import { recordQueueLoad, summarizeDurations } from '../helpers/queue-load-fixture';
@@ -84,6 +84,12 @@ test('50000 записей: индекс, ограниченные SQL-прое�
     db = new Database(f.path);
   try {
     await s.chats.create(scope, { enabled: true, responseMode: 'normal', createdAt: 0 });
+    installStarterPersonas(s, 0);
+    expect(
+      await s.authorization.transaction(scope, (tx) =>
+        tx.selectStarterPersona('vk:u', 'chipsik', 1),
+      ),
+    ).toEqual({ status: 'selected' });
     const admin = catalogAdministration(s);
     const v = await admin.append({
       kind: 'system_prompt',
@@ -153,6 +159,8 @@ test('50000 записей: индекс, ограниченные SQL-прое�
     expect(pages).toBeLessThanOrEqual(8);
     expect(bytes).toBeLessThanOrEqual(rows * 2 * 2048 * 4);
     expect(JSON.stringify(result.input)).not.toContain('ПОЗДНО');
+    expect(result.metadata.persona?.version).toMatchObject({ key: 'chipsik', version: 1 });
+    expect(result.metadata.estimatedTokens).toBeLessThanOrEqual(builder.config.inputBudgetTokens);
     const plan = db
       .prepare(
         "EXPLAIN QUERY PLAN SELECT id FROM messages WHERE chat_id='vk:loadctx' AND purpose='conversation' AND id<=? AND id<? ORDER BY id DESC LIMIT 32",
@@ -166,6 +174,7 @@ test('50000 записей: индекс, ограниченные SQL-прое�
       pages,
       rows,
       projectedBytes: bytes,
+      personaBytes: result.metadata.persona!.bytes,
     });
   } finally {
     db.close();

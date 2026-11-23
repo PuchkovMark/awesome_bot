@@ -238,6 +238,7 @@ test('публичный интерес из профиля исчезает в�
 test('повтор продолжения после ошибки сервера сохраняет ответ инструмента и одну ссылку на участника', async () => {
   const app = await fixture();
   try {
+    tokenBudgetStore(app.storage).update(app.scope, true, { total: 50000 }, app.start);
     app.complete
       .mockResolvedValueOnce(calls(tool('participant_card', 'card', { ref: 'current' })))
       .mockResolvedValueOnce({ kind: 'error', code: 'server', message: 'synthetic' })

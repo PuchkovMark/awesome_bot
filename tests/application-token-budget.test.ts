@@ -191,7 +191,7 @@ test('прямой отказ делит период уведомлений, а
     expect(sends.filter(({ text }) => text === refusal)).toHaveLength(1);
     expect(complete).not.toHaveBeenCalled();
 
-    budget.update(scope, false, { total: 7000 }, at);
+    budget.update(scope, false, { total: 10000 }, at);
     submit(55, 'Ещё один вопрос');
     await vi.waitFor(async () => {
       expect((await storage.traces.get(scope, 3))?.payload.publication.status).toBe('failed');
@@ -218,9 +218,9 @@ test('прямой отказ делит период уведомлений, а
     await vi.waitFor(() => expect(reports()).toHaveLength(1));
     expect(reports()[0]).toMatchObject({
       peer: owner,
-      text: expect.stringContaining('подтверждено 97 из 7000'),
+      text: expect.stringContaining('подтверждено 97 из 10000'),
     });
-    expect(reports()[0]?.text).toContain('Обновление профилей — подтверждено 17 из 350');
+    expect(reports()[0]?.text).toContain('Обновление профилей — подтверждено 17 из 500');
     expect(reports()[0]?.text).toContain('2026-11-23T12:00:00.000Z');
     expect(reports()[0]?.text).not.toContain('Синтетическое обращение');
     await shutdown?.();

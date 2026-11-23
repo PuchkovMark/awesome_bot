@@ -69,6 +69,7 @@ const tables = [
   'queue_turns',
   'queue_lease',
   'global_content_versions',
+  'starter_persona_versions',
   'local_content_versions',
   'chat_content_selections',
   'global_prompt_selection',

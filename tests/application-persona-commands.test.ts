@@ -1,4 +1,5 @@
 import { expect, test } from 'vitest';
+import { personaScenarios } from '../src/evals/personas';
 import { lifecycleBackend } from '../src/storage/lifecycle-store';
 import { fixture, mention, peer, until } from './helpers/application-response-fixture';
 
@@ -116,6 +117,37 @@ test('в молчаливой беседе доступна смена влад�
     );
     expect(await app.storage.versions.selected(privateScope, 'persona')).toBeNull();
     expect(app.complete).not.toHaveBeenCalled();
+  } finally {
+    await app.close();
+  }
+});
+
+test('полная карточка Чипсика помещается со штатными правилами обращения в беседе и личке', async () => {
+  const direct = personaScenarios.find(({ id }) => id === 'persona-chipsik')!;
+  const group = personaScenarios.find(({ id }) => id === 'persona-boundaries')!;
+  const app = await fixture({
+    profileNotice: 'Тестовое уведомление о профиле.',
+    modelContextTokens: 16384,
+    systemPrompt: direct.prompt,
+  });
+  try {
+    app.name(41, 'Тестовый', 'участник');
+    await command(app, '/персонаж Чипсик', 41, 41, 'отвечает Чипсик');
+    const privateMessage = app.submit(direct.input.text, 41, undefined, 41);
+    await app.published(privateMessage);
+    await command(app, '/персонаж Чипсик', 73, peer, 'отвечает Чипсик');
+    const meeting = group.history[0]!.text;
+    app.name(42, 'Тестовая', 'Вера');
+    await app.journaled(app.submit(meeting, 42));
+    const groupMessage = app.submit(`Пенёк, подскажи. ${group.input.text}`, 41);
+    await app.published(groupMessage);
+    expect(app.complete).toHaveBeenCalledTimes(2);
+    const request = JSON.stringify(app.complete.mock.calls.at(-1)![0].messages);
+    expect(request).toContain(meeting);
+    expect((await app.trace(groupMessage)).payload.context?.persona?.version).toMatchObject({
+      key: 'chipsik',
+      version: 1,
+    });
   } finally {
     await app.close();
   }

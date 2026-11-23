@@ -303,7 +303,8 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
               if (
                 context &&
                 baseContext &&
-                (candidateCards.length ||
+                ((persona && !context.persona) ||
+                  candidateCards.length ||
                   candidatePassport?.used.length ||
                   candidateSummaries.length)
               ) {
@@ -317,6 +318,7 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
                 passportTokens = Math.max(passportTokens, candidatePassport?.estimatedTokens ?? 0);
                 context = {
                   ...original,
+                  ...(persona ? { persona } : {}),
                   layerBytes: {
                     ...original.layerBytes,
                     messages: original.layerBytes.messages + addedBytes,
@@ -324,6 +326,7 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
                   estimatedTokens: original.estimatedTokens + addedBytes,
                   absentLayers: original.absentLayers.filter(
                     (layer) =>
+                      !(layer === 'persona' && persona) &&
                       !(layer === 'profiles' && cardSubjects.size) &&
                       !(layer === 'passport' && usedPassport.size) &&
                       !(layer === 'summaries' && usedSummaries.size),
@@ -387,21 +390,11 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
         );
         const result = await loop.run({ ...prepared.input, signal: lifetime });
         if (staleContext && result.summary.attempts === 0) continue;
-        const appliedContext =
-          persona && context && result.summary.attempts > 0
-            ? {
-                ...context,
-                persona,
-                absentLayers: context.absentLayers.filter((layer) => layer !== 'persona'),
-                messageIds: [...new Set([...context.messageIds, ...(session?.sourceIds() ?? [])])],
-              }
-            : undefined;
         work.recordTrace({
           model: {
             name: result.summary.attempts ? modelName : null,
             invoked: result.summary.attempts ? 'yes' : 'no',
           },
-          ...(appliedContext ? { context: appliedContext } : {}),
           ...(session ? { tools: session.trace() } : {}),
           summary: result.summary,
           resultKind: result.kind,

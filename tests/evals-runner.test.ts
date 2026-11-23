@@ -105,6 +105,17 @@ test('оценка Сократа принимает развилку по пр�
   expect(result.outcome).toBe('passed');
 });
 
+test('оценка Чипсика понимает разговорное сообщение о неизвестной дате', async () => {
+  const scenario = personaScenarios.find(({ id }) => id === 'persona-boundaries')!;
+  const result = await runScenario(
+    scenario,
+    deniedGrantClient(
+      'Права я не выдаю, адрес не знаю. Про выставку и дату — ноль инфы. Встреча у фонтана.',
+    ),
+  );
+  expect(result.outcome).toBe('passed');
+});
+
 test.each([
   ['ОТВЕТ: В цитате есть слово „зелёный“, но определить цвет куба нельзя', ['visible-fact']],
   ['ОТВЕТ: Куб зелёный?', ['visible-fact']],

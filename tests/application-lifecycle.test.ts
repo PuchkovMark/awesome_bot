@@ -18,6 +18,7 @@ import type { LogEvent, SafeLogger } from '../src/logger/index';
 import { openStorage } from '../src/storage/index';
 import { openConnection } from '../src/storage/connection';
 import { disclosureStore, type DisclosureInput } from '../src/storage/chat-disclosure-store';
+import { tokenBudgetStore } from '../src/storage/token-budget-store';
 import { storageFixture } from './helpers/storage-fixture';
 
 const ownerId = 'vk:73';
@@ -320,6 +321,7 @@ test('смена версии перед повтором закрывает в�
     await resolveApplicationChat({ databasePath: f.files.path, ownerId }, testGroup, 'continue');
     const scope = inspector.life.current(testGroup);
     await vi.waitFor(() => expect(store.gate(scope).version).toBe(version));
+    tokenBudgetStore(inspector.storage).update(scope, true, { total: 50000 }, Date.now());
     store.register(
       {
         ...testDisclosure,

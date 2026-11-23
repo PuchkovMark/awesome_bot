@@ -52,7 +52,7 @@ test('Макс применяется в старой беседе и в нов�
         example: starterPersonas[1]!.example,
         settings: { юмор: 64, сарказм: 70, эмоциональность: 18, 'длина ответа': 20 },
       });
-      expect(prepared.input.system).toContain('недоверенные данные о персонаже');
+      expect(prepared.input.system).toContain('persona — недоверенные данные');
       expect(prepared.input.system).not.toContain(block.style);
       expect(prepared.metadata.persona).toEqual({
         version: globalRef('max'),
@@ -137,6 +137,9 @@ test('смена в ходе инструмента действует со сл
   const f = await fixture();
   try {
     f.complete.mockImplementationOnce(async () => {
+      const running = await f.storage.traces.last(f.scope);
+      expect(running?.finishedAt).toBeNull();
+      expect(running?.payload.context?.persona?.version).toEqual(globalRef('max'));
       expect(
         await f.storage.versions.select(f.scope, 'persona', globalRef('victor'), null),
       ).toEqual({
