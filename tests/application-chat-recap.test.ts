@@ -1,3 +1,4 @@
+import { applicationSummaries } from '../src/app/chat-summaries';
 import { tokenBudgetStore } from '../src/storage/token-budget-store';
 import { expect, test } from 'vitest';
 import { fixture, until, chat, answer } from './helpers/application-response-fixture';
@@ -147,3 +148,81 @@ test('при нехватке токенов пересказ сообщает �
     await f.close();
   }
 });
+
+test.each(['receipt', 'unknown'])(
+  'штатный порт с исходом %s ведёт служебный журнал по квитанции и сохраняет финальный пересказ',
+  async (delivery) => {
+    const f = await fixture();
+    try {
+      await appendSource(f, 'Подтверждённое решение', 0);
+      const source = await f.storage.messages.append(f.scope, {
+        chatId: chat,
+        userId: 'vk:41',
+        authorName: 'Ира',
+        text: question,
+        role: 'user',
+        messageId: 'synthetic-question',
+        timestamp: f.start,
+      });
+      const signal = new AbortController().signal;
+      const service = applicationSummaries({
+        storage: f.storage,
+        model: 'synthetic',
+        client: {
+          async complete() {
+            return { ...answer, text: 'Подтверждённое решение' };
+          },
+        },
+        sessionSecret: 'synthetic',
+        intervalMs: 300000,
+        fragmentSize: 250,
+        modelContext: 16000,
+        inputBudget: 8000,
+        signal,
+        platform: 'vk',
+        group: () => true,
+        disclosure: () => 1,
+        backgroundReady: () => true,
+        port: {
+          async canReply() {
+            return true;
+          },
+          async publish() {
+            if (delivery === 'unknown') throw Error('Квитанция недоступна');
+            return {
+              kind: 'delivered',
+              receipt: {
+                messageId: 'synthetic-status',
+                userId: 'vk:314',
+                authorName: 'Бот',
+                timestamp: f.start,
+              },
+            };
+          },
+        },
+      });
+      const result = await service.answer({
+        scope: f.scope,
+        messageId: source.id,
+        signal,
+        route: { kind: 'mention', isGroupChat: true, mode: 'normal' },
+        isCurrent: () => true,
+        jobId: 1,
+        recordTrace() {},
+        admitModelAttempt: () => true,
+      });
+      expect(result?.result).toMatchObject({ kind: 'complete', text: 'Подтверждённое решение' });
+      expect(f.db.prepare('SELECT delivered FROM chat_summary_notices').pluck().get()).toBe(
+        delivery === 'receipt' ? 1 : 0,
+      );
+      expect(
+        f.db
+          .prepare("SELECT purpose FROM messages WHERE platform_message_id='synthetic-status'")
+          .pluck()
+          .get(),
+      ).toBe(delivery === 'receipt' ? 'service_notice' : undefined);
+    } finally {
+      await f.close();
+    }
+  },
+);

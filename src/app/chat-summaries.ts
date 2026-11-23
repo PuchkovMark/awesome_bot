@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import type { ChatId, ConnectionScope } from '../contracts/index';
+import type { ChatId, ConnectionScope, PublishedPart } from '../contracts/index';
 import type { LlmClient } from '../llm/types';
 import { createLlmSessionId } from '../llm/session';
 import { estimateRequestInput } from '../core/context/budget';
@@ -146,23 +146,31 @@ export function applicationSummaries(options: {
     )
       return;
     const text = 'собираю, минутку';
-    await options.port.publish({
-      ...guard,
-      scope,
-      kind: 'notice',
-      text,
-      replyToMessageId: source,
-      beforeSend: current,
-      confirmPart(part) {
-        life.transaction(scope, (db) => {
-          noticeBackend(storage).recordAnswer(scope, part, part.text, source, current);
-          db.prepare(
-            "UPDATE messages SET purpose='service_notice' WHERE chat_id=? AND platform_message_id=? AND role='assistant'",
-          ).run(scope.chatId, part.messageId);
-          store.confirmNotice(scope, work.messageId);
-        });
-      },
-    });
+    let confirmed = false;
+    const confirmPart = (part: PublishedPart) => {
+      if (confirmed || !current()) return;
+      life.transaction(scope, (db) => {
+        noticeBackend(storage).recordAnswer(scope, part, part.text, source, current);
+        db.prepare(
+          "UPDATE messages SET purpose='service_notice' WHERE chat_id=? AND platform_message_id=? AND role='assistant'",
+        ).run(scope.chatId, part.messageId);
+        store.confirmNotice(scope, work.messageId);
+      });
+      confirmed = true;
+    };
+    const result = await options.port
+      .publish({
+        ...guard,
+        scope,
+        kind: 'notice',
+        text,
+        replyToMessageId: source,
+        beforeSend: current,
+        confirmPart,
+      })
+      .catch(() => null);
+    if (result?.kind === 'delivered' && 'receipt' in result)
+      confirmPart({ ...result.receipt, text, replyToMessageId: source });
   }
   return {
     async run() {
