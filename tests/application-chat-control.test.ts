@@ -232,7 +232,7 @@ test('команды VK сохраняют паузу, выключение от
     await vi.waitFor(() =>
       expect(controls.read(scope).quietHours).toEqual({ start: 1380, end: 420 }),
     );
-    event(203, '/тихие-часы выкл', administrator);
+    event(203, `/тихие-часы ${target} выкл`, owner, owner);
     await vi.waitFor(() => expect(controls.read(scope).quietHours).toBeNull());
     event(1, '/режим активный', member);
     event(2, '/режим активный', administrator);

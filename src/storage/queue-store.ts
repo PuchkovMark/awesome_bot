@@ -196,7 +196,7 @@ export function createQueueBackend(
       !responseRate ||
       !responseSlotAvailable(db, work.scope, responseRate.responsesPerMinute, now)
     )
-      return 'initiative_quota';
+      return 'initiative_rate';
     return undefined;
   }
   function running(db: Database, token: string, work: QueueWork): boolean {
@@ -615,9 +615,12 @@ export function createQueueBackend(
           const stale =
             lifecycle.assertScope(db, scope).revision !== pending.revision ||
             state.responseRevision !== pending.controlRevision;
-          const answer = stale
-            ? { denial: 'initiative_mode' as const }
-            : questionEvidence(db, scope.chatId, pending.messageId, now);
+          const answer =
+            pending.expiresAt <= now
+              ? { denial: 'initiative_expired' as const }
+              : stale
+                ? { denial: 'initiative_mode' as const }
+                : questionEvidence(db, scope.chatId, pending.messageId, now);
           const evidence = 'id' in answer ? answer.id : undefined;
           const denial =
             'denial' in answer
@@ -636,7 +639,7 @@ export function createQueueBackend(
               scope.generation,
               pending.messageId,
               now,
-              Math.min(now + config.maxQueueAgeMs, pending.expiresAt),
+              Math.max(now, Math.min(now + config.maxQueueAgeMs, pending.expiresAt)),
               denial ? 'terminal' : 'queued',
               denial ? 'interrupted' : null,
               pending.disclosureVersion,

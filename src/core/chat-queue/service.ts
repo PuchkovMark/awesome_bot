@@ -39,6 +39,7 @@ interface Task {
   timer: ReturnType<typeof setTimeout>;
   done: boolean;
   publishing: boolean;
+  initiativeDenial?: import('../../storage/queue-types').InitiativeDenial;
 }
 function disclosureVersion(work: QueueWork) {
   return work.disclosureVersion === undefined ? {} : { disclosureVersion: work.disclosureVersion };
@@ -186,6 +187,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
       const relevant = completion?.outcome === actual ? completion : undefined;
       const initiativeDenial =
         completion?.initiativeDenial ??
+        task.initiativeDenial ??
         (task.work.route?.kind === 'initiative'
           ? backend.checkInitiativePublication(token, task.work)
           : undefined);
@@ -348,8 +350,8 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
                     allow: () => boolean,
                     contextIds?: readonly number[],
                     reservation?: TokenReservation,
-                  ) =>
-                    backend.admitModelAttempt(
+                  ) => {
+                    const admission = backend.admitModelAttempt(
                       token,
                       work,
                       limits,
@@ -358,7 +360,13 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
                       contextIds,
                       responseRate,
                       reservation,
-                    ),
+                    );
+                    if (admission === false && work.route?.kind === 'initiative' && !task.done) {
+                      const denial = backend.checkInitiative(token, work, limits, responseRate);
+                      if (denial) task.initiativeDenial = denial;
+                    }
+                    return admission;
+                  },
                 }
               : {}),
           }),

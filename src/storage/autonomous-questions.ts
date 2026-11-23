@@ -2,6 +2,7 @@ import type { Database } from 'better-sqlite3';
 import type { ChatId, ConnectionScope } from '../contracts/index';
 import {
   meetingAnswer,
+  meetingChanged,
   meetingQuestion,
   sensitiveDialogue,
 } from '../core/message-router/autonomous-rules';
@@ -49,7 +50,12 @@ interface WaitingQuestion {
 }
 
 export function dueQuestions(db: Database, now: number, platform?: string) {
-  db.prepare('DELETE FROM autonomous_questions WHERE expires_at<=?').run(now);
+  db.prepare(
+    `DELETE FROM autonomous_questions AS q WHERE eligible_at<=? AND expires_at<=?
+    AND NOT EXISTS (
+      SELECT 1 FROM chat_connections c WHERE c.chat_id=q.chat_id AND c.generation=q.generation AND c.state='active'
+    )`,
+  ).run(now, now);
   const prefix = platform ? platform + ':' : null;
   return db
     .prepare(
@@ -106,6 +112,7 @@ export function questionEvidence(
   if (candidates.length > 256) return { denial: 'initiative_source' };
   let evidence: { id: number; answer: string } | undefined;
   for (const candidate of candidates) {
+    if (meetingChanged(question, candidate.text)) return { denial: 'initiative_source' };
     const answer = meetingAnswer(question, candidate.text);
     if (!answer) continue;
     if (evidence && evidence.answer !== answer) return { denial: 'initiative_source' };

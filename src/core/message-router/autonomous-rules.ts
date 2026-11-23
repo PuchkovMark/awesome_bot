@@ -21,11 +21,15 @@ const freeMention =
 
 const normalized = (text: string) =>
   text.normalize('NFC').toLowerCase().replaceAll('ё', 'е').trim().replace(/\s+/gu, ' ');
+const ownText = (text: string) => normalized(ownNameText(text.replace(/^\s*>.*$/gmu, '')));
 export const sensitiveDialogue = (text: string) => danger.test(normalized(text));
 
 export type MeetingQuestion = { readonly asks: 'time' | 'place'; readonly anchor: string };
 export function meetingQuestion(text: string): MeetingQuestion | undefined {
-  const input = normalized(text);
+  return parseMeetingQuestion(ownText(text));
+}
+
+function parseMeetingQuestion(input: string): MeetingQuestion | undefined {
   const place = asksTime.exec(input)?.[1];
   if (place) return { asks: 'time', anchor: place };
   const clock = asksPlace.exec(input)?.[1];
@@ -45,6 +49,15 @@ export function meetingAnswer(question: MeetingQuestion, text: string): string |
       : undefined;
 }
 
+export function meetingChanged(question: MeetingQuestion, text: string): boolean {
+  const line = normalized(text);
+  return (
+    line.includes(question.anchor) &&
+    /(?:^|[^\p{L}])(?:встреч\p{L}*|сбор\p{L}*)(?!\p{L})/u.test(line) &&
+    /(?:^|[^\p{L}])(?:отмен\p{L}*|перенес\p{L}*|перенос\p{L}*|не встречаемся)(?!\p{L})/u.test(line)
+  );
+}
+
 export function autonomousCause(message: IncomingMessage): InitiativeCause | undefined {
   if (
     message.isBot !== false ||
@@ -56,10 +69,8 @@ export function autonomousCause(message: IncomingMessage): InitiativeCause | und
     sensitiveDialogue(message.text)
   )
     return undefined;
-  const ownText = ownNameText(message.text.replace(/^\s*>.*$/gmu, ''));
-  // Положительные шаблоны принимают только собственный текст, включая нейтральную пунктуацию.
-  const text = normalized(ownText);
+  const text = ownText(message.text);
   if (help.test(text)) return 'help';
   if (freeMention.test(text)) return 'free_mention';
-  return meetingQuestion(text) ? 'unanswered' : undefined;
+  return parseMeetingQuestion(text) ? 'unanswered' : undefined;
 }

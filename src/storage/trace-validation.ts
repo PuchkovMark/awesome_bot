@@ -147,6 +147,7 @@ export function validateTrace(value: unknown): asserts value is TracePayload {
     'initiative_source',
     'initiative_flood',
     'initiative_quota',
+    'initiative_rate',
     'initiative_expired',
   ]);
   if (p.route !== null) {

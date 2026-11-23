@@ -77,6 +77,31 @@ export function checkCatalogBoundary(root = process.cwd()) {
               }));
           if (!allowed) result.privileged = true;
         }
+        if (p === resolve(root, 'src/storage/autonomous-questions.ts')) {
+          const parent = node.parent;
+          const bindings =
+            ts.isImportDeclaration(parent) &&
+            !parent.importClause?.name &&
+            parent.importClause?.namedBindings;
+          const allowed =
+            bindings &&
+            ts.isNamedImports(bindings) &&
+            bindings.elements.every((element) => {
+              const imported = (element.propertyName ?? element.name).text;
+              return (
+                (file === resolve(root, 'src/storage/queue-store.ts') &&
+                  [
+                    'dueQuestions',
+                    'initiativeDenial',
+                    'questionEvidence',
+                    'removeWaitingQuestion',
+                    'waitForQuestion',
+                  ].includes(imported)) ||
+                (file === resolve(root, 'src/storage/chats.ts') && imported === 'cancelInitiatives')
+              );
+            });
+          if (!allowed) result.privileged = true;
+        }
         for (const [moduleName, factory] of [
           ['queue-registry.ts', 'registerQueue'],
           ['queue-store.ts', 'createQueueBackend'],

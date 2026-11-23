@@ -11,6 +11,7 @@ export type InitiativeDenial =
   | 'initiative_source'
   | 'initiative_flood'
   | 'initiative_quota'
+  | 'initiative_rate'
   | 'initiative_expired';
 export interface QueueConfig {
   readonly maxConcurrentChats: number;
@@ -72,7 +73,6 @@ export interface QueueWork {
   readonly disclosureVersion?: number;
   readonly controlRevision?: number;
   readonly initiativeEvidenceId?: number;
-  readonly initiativeRevision?: number;
   readonly expiresAt?: number;
 }
 export type QueueMessage = MessageInput;

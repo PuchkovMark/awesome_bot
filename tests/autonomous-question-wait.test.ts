@@ -97,7 +97,11 @@ test('ожидание остаётся вне очереди и после ко
   try {
     const source = await f.send(event('source', 'Встречаемся у фонтана в 18:30.', noon - 1000));
     await f.at(noon);
-    const q = event('question', 'Во сколько встречаемся у фонтана?', noon);
+    const q = event(
+      'question',
+      '> Вопрос с прошлой недели\nВо сколько встречаемся у фонтана?',
+      noon,
+    );
     expect((await f.send(q)).decision).toMatchObject({ initiative: 'unanswered' });
     expect((await f.send(q)).admission?.status).toBe('duplicate');
     await f.at(noon + 119999);
@@ -122,7 +126,7 @@ test('ожидание остаётся вне очереди и после ко
   }
 });
 
-test.each(['ответ', 'конфликт', 'удаление', 'истечение', 'пауза VK'] as const)(
+test.each(['ответ', 'конфликт', 'отмена', 'удаление', 'истечение', 'пауза VK'] as const)(
   'отложенный повод даёт молчание при условии %s',
   async (condition) => {
     const f = await fixture();
@@ -130,6 +134,8 @@ test.each(['ответ', 'конфликт', 'удаление', 'истечен
       await f.send(event('source', 'Встречаемся у фонтана в 18:30.', noon - 1000));
       if (condition === 'конфликт')
         await f.send(event('conflict', 'Встречаемся у фонтана в 19:00.', noon - 1000));
+      if (condition === 'отмена')
+        await f.send(event('cancel', 'Встречу у фонтана отменили.', noon - 1000));
       await f.at(noon);
       await f.send(event('question', 'Во сколько встречаемся у фонтана?', noon));
       await f.at(noon + 1000);
@@ -148,12 +154,17 @@ test.each(['ответ', 'конфликт', 'удаление', 'истечен
       if (condition === 'пауза VK') await f.restart('vk');
       await f.at(noon + (condition === 'истечение' ? 300000 : 120000));
       expect(f.handler).not.toHaveBeenCalled();
-      if (condition === 'ответ' || condition === 'конфликт' || condition === 'удаление') {
+      if (condition !== 'пауза VK') {
         expect(
           (await f.storage.traces.get(f.life.current(chatId), 1))?.payload.publication,
         ).toMatchObject({
           status: 'suppressed',
-          reason: condition === 'ответ' ? 'initiative_answered' : 'initiative_source',
+          reason:
+            condition === 'ответ'
+              ? 'initiative_answered'
+              : condition === 'истечение'
+                ? 'initiative_expired'
+                : 'initiative_source',
         });
       }
     } finally {

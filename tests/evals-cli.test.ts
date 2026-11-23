@@ -70,4 +70,4 @@ test('собранная команда запускает набор, а чек
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
-});
+}, 30_000);

@@ -84,6 +84,7 @@ test.each([
     const before = f.sends.length;
     const trace = await f.trace(f.submit(help));
     expect(trace.payload.publication.status).toBe('suppressed');
+    if (which === 'rate') expect(trace.payload.publication.reason).toBe('initiative_rate');
     expect(f.complete).not.toHaveBeenCalled();
     expect(f.sends).toHaveLength(before);
     expect(f.db.prepare('SELECT * FROM autonomous_quota_reservations').all()).toEqual([]);

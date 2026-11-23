@@ -153,20 +153,23 @@ test('единственное исключение реестра — реги�
   }
 });
 
-test.each(['queue-registry.ts', 'queue-store.ts', 'token-budget-store.ts', 'lifecycle-store.ts'])(
-  'инфраструктура %s недоступна через транзитивный импорт',
-  (module) => {
-    const f = fixture();
-    try {
-      f.put('src/storage/' + module, 'export const admin=1;');
-      f.put('src/helper.ts', `export * from './storage/${module.replace(/\.ts$/, '')}';`);
-      f.put('src/core/context.ts', "import '../helper';");
-      expect(checkCatalogBoundary(f.directory)).toHaveLength(1);
-    } finally {
-      f.cleanup();
-    }
-  },
-);
+test.each([
+  'queue-registry.ts',
+  'queue-store.ts',
+  'token-budget-store.ts',
+  'lifecycle-store.ts',
+  'autonomous-questions.ts',
+])('инфраструктура %s недоступна через транзитивный импорт', (module) => {
+  const f = fixture();
+  try {
+    f.put('src/storage/' + module, 'export const admin=1;');
+    f.put('src/helper.ts', `export * from './storage/${module.replace(/\.ts$/, '')}';`);
+    f.put('src/core/context.ts', "import '../helper';");
+    expect(checkCatalogBoundary(f.directory)).toHaveLength(1);
+  } finally {
+    f.cleanup();
+  }
+});
 
 test('чтение через Storage не делает сервис решений владельца доступным инструментам', () => {
   const f = fixture();
