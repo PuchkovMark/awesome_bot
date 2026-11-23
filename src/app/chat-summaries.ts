@@ -13,6 +13,8 @@ import { tokenBudgetStore } from '../storage/token-budget-store';
 import { lifecycleBackend } from '../storage/lifecycle-store';
 import { summaryEngine, type SummaryRun } from '../core/chat-summaries/worker';
 import { SummaryFailure } from '../core/chat-summaries/compress';
+import { localDay } from '../core/chat-summaries/calendar';
+import type { PreparedSummaries } from '../core/context/summaries';
 
 export function applicationSummaries(options: {
   storage: Storage;
@@ -139,6 +141,34 @@ export function applicationSummaries(options: {
           if (!signal.aborted) throw error;
         });
       }
+    },
+    context(
+      scope: ConnectionScope,
+      cutoff: number,
+      timezone: string,
+      now: number,
+    ): PreparedSummaries | undefined {
+      if (!store.hasComposites(scope)) return;
+      const today = localDay(now, timezone);
+      const periods = [1, 2, 3].map((n) => ({
+        level: 'day' as const,
+        period: localDay(now, timezone, -n),
+      }));
+      const choices = [
+        ...periods,
+        {
+          level: 'rolling' as const,
+          period: { ...today, from: localDay(now, timezone, -7).from, to: today.from },
+        },
+      ];
+      const entries = choices.flatMap(({ period, level }) => {
+        const ids = store.ids(scope, period, cutoff);
+        const entry = engine.ready(scope, period, level, cutoff, ids)?.entry;
+        return entry?.text ? [{ ...entry, timezone, ids }] : [];
+      });
+      return entries.length
+        ? { entries, inputBudget: options.inputBudget, current: (ids) => store.current(scope, ids) }
+        : undefined;
     },
   };
 }

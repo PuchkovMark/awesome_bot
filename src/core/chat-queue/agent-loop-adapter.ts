@@ -1,3 +1,8 @@
+import {
+  composeSummaries,
+  type ContextSummary,
+  type PreparedSummaries,
+} from '../context/summaries';
 import type { PassportRevision, PassportSection } from '../../contracts/chat-passport';
 import { composePassport, type PreparedPassport } from '../context/passport';
 import {
@@ -29,6 +34,7 @@ export type QueuePreparation =
       readonly addressPreference?: AddressPreferenceReference;
       readonly participantCards?: PreparedCards;
       readonly passport?: PreparedPassport;
+      readonly summaries?: PreparedSummaries;
     }
   | Exclude<PreparationResult, { kind: 'ready' }>;
 export interface AgentLoopQueueOptions extends Omit<ChatQueueOptions, 'handler' | 'config'> {
@@ -161,6 +167,13 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
           ? createParticipantCardComposer(cards, options.modelInputLimit)
           : undefined;
         const passport = prepared.passport;
+        const summaries = prepared.summaries;
+        const usedSummaries = new Map<number, ContextSummary>();
+        let candidateSummaries: readonly ContextSummary[] = [];
+        const summaryCurrent = () =>
+          summaries?.current([...usedSummaries.keys(), ...candidateSummaries.map((s) => s.id)]) ??
+          true;
+        const messageIndex = prepared.input.messages.length - 1;
         const usedRefs = new Map<CardReference['value'], CardReference>();
         const cardSubjects = new Set<UserId>();
         const cardSources = new Set<number>();
@@ -188,6 +201,7 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
                 ...usedRefs.values(),
                 ...candidateCards.flatMap(({ refs }) => refs),
               ])) ||
+            !summaryCurrent() ||
             !passportCurrent(attempted ? candidatePassport?.used : passport?.entries)
           ) {
             staleContext = true;
@@ -214,17 +228,18 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
           settings,
         });
         const guardedSession: LoopTools | undefined =
-          session && (cards || passport)
+          session && (cards || passport || summaries)
             ? {
                 ...session,
-                current: () => session.current() && cardsCurrent() && passportCurrent(),
-                ...(passport
+                current: () =>
+                  session.current() && cardsCurrent() && passportCurrent() && summaryCurrent(),
+                ...(passport || summaries
                   ? {
                       beginBatch(request, remaining, steps) {
                         // Результат инструмента использует место до добавления необязательных разделов.
                         if (!passportBase) return session.beginBatch(request, remaining, steps);
                         const messages = request.messages.slice();
-                        messages[passport.messageIndex] = passportBase;
+                        messages[messageIndex] = passportBase;
                         session.beginBatch({ ...request, messages }, remaining, steps);
                       },
                     }
@@ -262,6 +277,7 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
             if (admission === 'context_stale') staleContext = true;
             if (admission === true || (admission !== null && typeof admission === 'object')) {
               attempted = true;
+              for (const s of candidateSummaries) usedSummaries.set(s.id, s);
               for (const card of candidateCards) {
                 cardSubjects.add(card.owner);
                 for (const id of card.sourceIds) cardSources.add(id);
@@ -272,9 +288,11 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
               if (
                 context &&
                 prepared.metadata &&
-                (candidateCards.length || candidatePassport?.used.length)
+                (candidateCards.length ||
+                  candidatePassport?.used.length ||
+                  candidateSummaries.length)
               ) {
-                const index = cards?.messageIndex ?? passport!.messageIndex;
+                const index = messageIndex;
                 const original = prepared.metadata;
                 addedBytes = Math.max(
                   addedBytes,
@@ -292,8 +310,18 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
                   absentLayers: original.absentLayers.filter(
                     (layer) =>
                       !(layer === 'profiles' && cardSubjects.size) &&
-                      !(layer === 'passport' && usedPassport.size),
+                      !(layer === 'passport' && usedPassport.size) &&
+                      !(layer === 'summaries' && usedSummaries.size),
                   ),
+                  ...(usedSummaries.size
+                    ? {
+                        summaries: [...usedSummaries.values()].map(({ id, level, text }) => ({
+                          id,
+                          level,
+                          bytes: Buffer.byteLength(text),
+                        })),
+                      }
+                    : {}),
                   ...(usedPassport.size
                     ? {
                         passport: {
@@ -305,13 +333,14 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
                 };
                 work.recordTrace({ context: { ...context, messageIds: ids } });
               }
+              candidateSummaries = [];
               candidatePassport = undefined;
               candidateCards = [];
             }
             return admission;
           },
           guardedSession,
-          compose || passport
+          compose || passport || summaries
             ? (request) => {
                 const result = compose?.(request);
                 candidateCards = result?.used ?? [];
@@ -323,11 +352,21 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
                 candidatePassport = currentPassport
                   ? composePassport(currentPassport, withCards, options.modelInputLimit)
                   : undefined;
+                const withPassport = candidatePassport?.request ?? withCards;
+                const enriched = summaries
+                  ? composeSummaries(
+                      summaries.entries,
+                      messageIndex,
+                      withPassport,
+                      Math.min(summaries.inputBudget, options.modelInputLimit ?? Infinity),
+                    )
+                  : undefined;
+                candidateSummaries = enriched?.used ?? [];
                 passportBase =
-                  passport && candidatePassport?.used.length
-                    ? withCards.messages[passport.messageIndex]
+                  candidatePassport?.used.length || candidateSummaries.length
+                    ? withCards.messages[messageIndex]
                     : undefined;
-                return candidatePassport?.request ?? withCards;
+                return enriched?.request ?? withPassport;
               }
             : undefined,
         );
@@ -356,8 +395,16 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
           outcome,
           result,
           ...(prepared.addressPreference ? { addressPreference: prepared.addressPreference } : {}),
-          ...(session
-            ? { toolResultsCurrent: session.current, toolSourceIds: session.sourceIds() }
+          ...(session || usedSummaries.size
+            ? {
+                toolResultsCurrent: () => (session?.current() ?? true) && summaryCurrent(),
+                toolSourceIds: [
+                  ...new Set([
+                    ...(session?.sourceIds() ?? []),
+                    ...[...usedSummaries.values()].flatMap((s) => s.ids),
+                  ]),
+                ],
+              }
             : {}),
           ...(usedPassport.size ? { passportCurrent: () => passportCurrent() } : {}),
           ...(cardSubjects.size

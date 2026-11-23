@@ -184,8 +184,15 @@ export function validateTrace(value: unknown): asserts value is TracePayload {
         'reply',
         'absentLayers',
       ],
-      ['passport'],
+      ['passport', 'summaries'],
     );
+    if (Object.hasOwn(c, 'summaries'))
+      list(c.summaries, 4, (value) => {
+        const s = plain(value, ['level', 'id', 'bytes']);
+        one(s.level, ['day', 'rolling']);
+        num(s.id);
+        num(s.bytes);
+      });
     if (Object.hasOwn(c, 'passport')) {
       const passport = plain(c.passport, ['sections', 'estimatedTokens']);
       list(passport.sections, passportSections.length, (section) => one(section, passportSections));

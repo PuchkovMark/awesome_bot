@@ -46,6 +46,12 @@ export interface ContextBuilderOptions {
   readonly now?: () => number;
   readonly participantCards?: ContextCardReader;
   readonly passport?: PassportContextReader;
+  readonly summaries?: (
+    scope: ConnectionScope,
+    cutoff: number,
+    timezone: string,
+    timestamp: number,
+  ) => import('./summaries').PreparedSummaries | undefined;
   readonly addressForm?: (
     scope: ConnectionScope,
     userId: UserId,
@@ -357,6 +363,12 @@ export function createContextBuilder(options: ContextBuilderOptions) {
       options.passport && isGroupChat && route.kind !== 'initiative'
         ? preparePassport(options.passport, scope, currentMessage.text, messages.length - 1, config)
         : undefined;
+    const summaries = options.summaries?.(
+      scope,
+      currentJournalId,
+      settings.timezone,
+      currentMessage.timestamp,
+    );
     const metadata = Object.freeze({
       version: Object.freeze({ ...systemPrompt.ref }),
       cutoffId: currentJournalId,
@@ -389,6 +401,7 @@ export function createContextBuilder(options: ContextBuilderOptions) {
       metadata,
       ...(participantCards ? { participantCards } : {}),
       ...(passport ? { passport } : {}),
+      ...(summaries ? { summaries } : {}),
       ...(address ? { addressPreference: address.reference } : {}),
       ...(authorLabels.size ? { authorLabels: Object.freeze([...authorLabels]) } : {}),
     };

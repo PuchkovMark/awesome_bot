@@ -421,6 +421,7 @@ export async function runApplication(
           queue.stats().depthRunning === 0,
       });
       const preparation = createContextPreparation({
+        summaries: summaries.context,
         storage,
         config: config.context,
         logger,

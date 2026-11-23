@@ -115,6 +115,11 @@ export function appendParticipantCards(text: string, parts: readonly string[]) {
   return text.slice(0, -1) + ',"participantCards":[' + parts.join(',') + ']}';
 }
 
+export function appendSummaries(text: string, rows: readonly object[]) {
+  if (!text.startsWith(dataPrefix) || !text.endsWith('}')) return undefined;
+  return text.slice(0, -1) + ',"chatSummaries":' + JSON.stringify(rows) + '}';
+}
+
 export function appendPassport(text: string, sections: Partial<Record<PassportSection, string>>) {
   if (!text.startsWith(dataPrefix) || !text.endsWith('}')) return undefined;
   return text.slice(0, -1) + ',"chatPassport":' + JSON.stringify(sections) + '}';

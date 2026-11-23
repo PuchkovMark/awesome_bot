@@ -15,6 +15,7 @@ export interface ContextMetadata {
   readonly messageIds: readonly number[];
   readonly layerBytes: Readonly<{ system: number; environment: number; messages: number }>;
   readonly estimatedTokens: number;
+  readonly summaries?: readonly { id: number; level: string; bytes: number }[];
   readonly passport?: {
     readonly sections: readonly PassportSection[];
     readonly estimatedTokens: number;
@@ -34,6 +35,7 @@ export type PreparationResult =
       readonly addressPreference?: AddressPreferenceReference;
       readonly participantCards?: PreparedCards;
       readonly passport?: PreparedPassport;
+      readonly summaries?: import('./summaries').PreparedSummaries;
     }
   | { readonly kind: 'failed'; readonly reason: PreparationFailure }
   | { readonly kind: 'cancelled' | 'unavailable' | 'deadline_exceeded' };
