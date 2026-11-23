@@ -61,8 +61,12 @@ export function createContextMessageFormatter(
       // В группе запись становится элементом общего массива history.
       return { role: entry.message.role, text: group ? data : `${dataPrefix}"history":${data}}` };
     },
-    messages(history: readonly AgentLoopMessage[], replyJson: string): readonly AgentLoopMessage[] {
-      const latest = replyPrefix + replyJson + suffix;
+    messages(
+      history: readonly AgentLoopMessage[],
+      replyJson: string,
+      evidenceField = '',
+    ): readonly AgentLoopMessage[] {
+      const latest = replyPrefix + replyJson + evidenceField + suffix;
       if (group) {
         return [
           { role: 'user', text: prefix + history.map((entry) => entry.text).join(',') + latest },

@@ -1,5 +1,17 @@
 import type { ConnectionScope } from '../contracts/index';
 import type { MessageInput, StoredMessage } from './types';
+import type { InitiativeCause } from '../core/message-router/autonomous-rules';
+export type InitiativeDenial =
+  | 'initiative_mode'
+  | 'initiative_pause'
+  | 'initiative_quiet_hours'
+  | 'initiative_other_bot'
+  | 'initiative_sensitive'
+  | 'initiative_answered'
+  | 'initiative_source'
+  | 'initiative_flood'
+  | 'initiative_quota'
+  | 'initiative_expired';
 export interface QueueConfig {
   readonly maxConcurrentChats: number;
   readonly maxQueuedPerChat: number;
@@ -59,18 +71,29 @@ export interface QueueWork {
   readonly route: RouteMetadata | null;
   readonly disclosureVersion?: number;
   readonly controlRevision?: number;
+  readonly initiativeEvidenceId?: number;
+  readonly initiativeRevision?: number;
+  readonly expiresAt?: number;
 }
 export type QueueMessage = MessageInput;
 
-export interface RouteMetadata {
+export interface DirectRoute {
   readonly kind: 'direct_message' | 'mention' | 'reply' | 'name';
   readonly mode: 'normal' | 'active';
   readonly isGroupChat: boolean;
 }
+export type RouteMetadata =
+  | DirectRoute
+  | {
+      readonly kind: 'initiative';
+      readonly mode: 'active';
+      readonly isGroupChat: true;
+      readonly cause: InitiativeCause;
+    };
 
 export interface RoutedQueueDecision {
-  readonly initiative?: import('../core/message-router/autonomous-rules').InitiativeCause;
-  readonly route: RouteMetadata | null;
+  readonly initiative?: InitiativeCause;
+  readonly route: DirectRoute | null;
   readonly reason:
     | 'direct_message'
     | 'mention'

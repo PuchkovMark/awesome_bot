@@ -138,12 +138,26 @@ export function validateTrace(value: unknown): asserts value is TracePayload {
     'publication_failed',
     'journal_failed',
     'partial_delivery',
+    'initiative_mode',
+    'initiative_pause',
+    'initiative_quiet_hours',
+    'initiative_other_bot',
+    'initiative_sensitive',
+    'initiative_answered',
+    'initiative_source',
+    'initiative_flood',
+    'initiative_quota',
+    'initiative_expired',
   ]);
   if (p.route !== null) {
-    const r = plain(p.route, ['kind', 'mode', 'isGroupChat']);
-    one(r.kind, ['direct_message', 'mention', 'reply', 'name']);
+    const r = plain(p.route, ['kind', 'mode', 'isGroupChat'], ['cause']);
+    one(r.kind, ['direct_message', 'mention', 'reply', 'name', 'initiative']);
     one(r.mode, ['normal', 'active']);
     requireInput(typeof r.isGroupChat === 'boolean');
+    if (r.kind === 'initiative') {
+      requireInput(r.mode === 'active' && r.isGroupChat === true);
+      one(r.cause, ['help', 'free_mention', 'unanswered']);
+    } else requireInput(!Object.hasOwn(r, 'cause'));
   }
   if (p.prompt !== null) {
     const v = plain(p.prompt, ['area', 'kind', 'key', 'version']);

@@ -15,6 +15,7 @@ const fields = [
   'timestamp',
   'attachmentCount',
   'isGroupChat',
+  'senderBot',
 ];
 export function validateMessage(message: MessageInput): void {
   object(message, fields);
@@ -29,6 +30,8 @@ export function validateMessage(message: MessageInput): void {
   string(message.text);
   requireInput(message.role === 'user' || message.role === 'assistant');
   if (message.isGroupChat !== undefined) requireInput(typeof message.isGroupChat === 'boolean');
+  if (message.senderBot !== undefined)
+    requireInput([true, false, 'unknown'].includes(message.senderBot));
   timestamp(message.timestamp);
   if (message.attachmentCount !== undefined && message.attachmentCount !== null)
     requireInput(Number.isSafeInteger(message.attachmentCount) && message.attachmentCount >= 0);
@@ -68,8 +71,8 @@ export function createMessageStore(
         const inserted = db
           .prepare(
             `INSERT INTO messages
-          (chat_id, platform_message_id, user_id, author_name, role, text, reply_to_message_id, timestamp, attachment_count)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (chat_id, platform_message_id, user_id, author_name, role, text, reply_to_message_id, timestamp, attachment_count, sender_bot)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(chat_id, platform_message_id) DO NOTHING RETURNING id`,
           )
           .get(
@@ -82,6 +85,7 @@ export function createMessageStore(
             message.replyToMessageId ?? null,
             message.timestamp,
             message.attachmentCount ?? null,
+            typeof message.senderBot === 'boolean' ? Number(message.senderBot) : null,
           ) as { id: number } | undefined;
         if (inserted) {
           if (message.isGroupChat && message.role === 'user') {

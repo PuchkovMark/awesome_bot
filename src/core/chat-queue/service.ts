@@ -181,6 +181,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
       const publicationKind = relevant?.preparationFailure ?? relevant?.result?.kind ?? actual;
       const canPublish =
         !!options.onSettled &&
+        !relevant?.initiativeDenial &&
         actual !== 'interrupted' &&
         actual !== 'expired' &&
         actual !== 'message_missing' &&
@@ -193,7 +194,9 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
           tableVersion: 1,
           reaction: 'silence',
           status: canPublish ? 'pending_checks' : 'suppressed',
-          reason: canPublish ? 'none' : options.onSettled ? 'guard' : 'no_port',
+          reason:
+            relevant?.initiativeDenial ??
+            (canPublish ? 'none' : options.onSettled ? 'guard' : 'no_port'),
         },
       };
       const committed = backend.finish(token, task.work, actual, {
@@ -206,6 +209,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
       emit();
       if (
         options.onSettled &&
+        !relevant?.initiativeDenial &&
         committed &&
         committed !== 'interrupted' &&
         committed !== 'expired' &&
@@ -301,6 +305,13 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
             return;
           }
         }
+        if (work.route?.kind === 'initiative') {
+          const initiativeDenial = backend.checkInitiative(token, work);
+          if (initiativeDenial) {
+            finish(task, 'failed', { outcome: 'failed', initiativeDenial });
+            return;
+          }
+        }
         const outcome: unknown = await handler(
           Object.freeze({
             jobId: work.id,
@@ -314,6 +325,9 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
             signal: controller.signal,
             route: work.route,
             ...disclosureVersion(work),
+            ...(work.initiativeEvidenceId === undefined
+              ? {}
+              : { initiativeEvidenceId: work.initiativeEvidenceId }),
             isCurrent,
             ...((limits && work.route) ||
             responseRate ||
@@ -371,6 +385,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
         const expired = backend.expire(token);
         counters.expired = add(counters.expired, expired.length);
         expired.forEach(wait);
+        if (options.autonomousReplies) backend.promoteQuestions(token, config, platform);
         while (tasks.size < config.maxConcurrentChats) {
           const work = backend.take(
             token,
@@ -464,6 +479,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
         }
       : undefined;
   const service: ChatQueue = {
+    ...(options.autonomousReplies ? { autonomousReplies: true } : {}),
     ...(responseBudget ? { responseBudget: Object.freeze(responseBudget) } : {}),
     signal: lifetime.signal,
     wakeHistoryMaintenance() {
@@ -513,6 +529,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
           config,
           guard,
           responseRate,
+          options.autonomousReplies,
         );
         if (result.admission.status === 'queue_full') counters.rejected = add(counters.rejected, 1);
         emit();

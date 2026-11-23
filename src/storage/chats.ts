@@ -13,6 +13,7 @@ import {
   timezone,
 } from './validation';
 import { revokeOrdinaryWork } from './chat-control-store';
+import { cancelInitiatives } from './autonomous-questions';
 
 const patchFields = ['title', 'responseMode', 'enabled', 'timezone'] as const;
 const columns = `chat_id AS chatId, title,
@@ -100,6 +101,14 @@ export function createChatStore(connection: Connection): SyncStore<ChatStore> {
             db.prepare(
               `UPDATE chats SET ${keys.map((key) => `${mapping[key]} = ?`).join(', ')} WHERE chat_id = ?`,
             ).run(...values, chatId);
+            if (
+              (patch.enabled === false && before.enabled) ||
+              (before.responseMode === 'active' &&
+                patch.responseMode !== undefined &&
+                patch.responseMode !== 'active')
+            ) {
+              cancelInitiatives(db, chatId);
+            }
             if (
               (patch.enabled === false && before.enabled) ||
               (patch.responseMode === 'silent' && before.responseMode !== 'silent')

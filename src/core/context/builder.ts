@@ -28,6 +28,7 @@ export interface ContextWork {
   readonly route: ContextRoute | null;
   readonly signal: AbortSignal;
   readonly isCurrent: () => boolean;
+  readonly initiativeEvidenceId?: number;
 }
 export interface ContextBuilderOptions {
   readonly messages: ContextMessageReader;
@@ -115,10 +116,22 @@ export function createContextBuilder(options: ContextBuilderOptions) {
       if (label) authorLabels.add(label);
     }
     includeAuthor(currentMessage);
+    let evidenceField = '';
+    const evidenceId = work.initiativeEvidenceId;
+    if (route.kind === 'initiative' && route.cause === 'unanswered') {
+      if (evidenceId === undefined || evidenceId >= currentJournalId)
+        return { kind: 'unavailable' };
+      const evidence = await options.messages.get(scope, evidenceId);
+      if (!isWorkCurrent()) return { kind: 'cancelled' };
+      if (!evidence) return { kind: 'unavailable' };
+      includeAuthor(evidence);
+      evidenceField = ',"initiativeEvidence":' + formatter.serializeEntry({ message: evidence });
+    }
     // Неиспользованный резерв окружения не увеличивает окно истории.
     const fixedInputCost =
       systemInputCost(system) +
       messageInputCost(formatter.fixedLatestTextBytes) +
+      Buffer.byteLength(evidenceField) +
       config.environmentReserveTokens -
       environmentBytes;
     const inputCostWithReply = (replyJson: string) =>
@@ -182,7 +195,7 @@ export function createContextBuilder(options: ContextBuilderOptions) {
 
     const includedReplyId =
       replyState === 'included' || replyState === 'truncated' ? replyJournalId : undefined;
-    const replyCount = includedReplyId === undefined ? 0 : 1;
+    const replyCount = Number(includedReplyId !== undefined) + Number(evidenceField !== '');
     const history: { readonly journalId: number; readonly serialized: AgentLoopMessage }[] = [];
     let inputCost = inputCostWithReply(replyJson);
 
@@ -211,7 +224,7 @@ export function createContextBuilder(options: ContextBuilderOptions) {
       for (const message of page) {
         scannedMessages++;
         beforeJournalId = message.id;
-        if (message.id === replyJournalId) continue;
+        if (message.id === replyJournalId || message.id === evidenceId) continue;
 
         const serialized = formatter.serializeHistoryEntry({
           message,
@@ -258,6 +271,7 @@ export function createContextBuilder(options: ContextBuilderOptions) {
         .messages(
           history.map((entry) => entry.serialized),
           replyJson,
+          evidenceField,
         )
         .map((message) => Object.freeze(message)),
     );
@@ -271,6 +285,7 @@ export function createContextBuilder(options: ContextBuilderOptions) {
       messageIds: Object.freeze([
         ...history.map((entry) => entry.journalId),
         ...(includedReplyId === undefined ? [] : [includedReplyId]),
+        ...(evidenceField ? [evidenceId!] : []),
         currentJournalId,
       ]),
       layerBytes: Object.freeze({

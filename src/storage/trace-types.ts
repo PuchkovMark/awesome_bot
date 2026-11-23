@@ -18,7 +18,8 @@ export interface TracePublication {
     | 'author_label_disclosure'
     | 'publication_failed'
     | 'journal_failed'
-    | 'partial_delivery';
+    | 'partial_delivery'
+    | import('./queue-types').InitiativeDenial;
 }
 export interface TracePayload {
   readonly disclosure?: { readonly version: number | null; readonly allowed: boolean };

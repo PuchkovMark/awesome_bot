@@ -1,6 +1,8 @@
 import type { CapabilitySnapshot } from '../../contracts/capabilities';
+import type { InitiativeCause } from '../message-router/autonomous-rules';
 export interface ContextRoute {
-  readonly kind: 'direct_message' | 'mention' | 'reply' | 'name';
+  readonly kind: 'direct_message' | 'mention' | 'reply' | 'name' | 'initiative';
+  readonly cause?: InitiativeCause;
   readonly mode: 'normal' | 'active';
   readonly isGroupChat: boolean;
 }
@@ -33,9 +35,17 @@ export function formatEnvironment(input: {
     !/^[a-z][a-z0-9_-]{0,31}$/.test(input.platform) ||
     !Number.isSafeInteger(input.now) ||
     input.now < 0 ||
-    !['direct_message', 'mention', 'reply', 'name'].includes(r.kind) ||
+    !['direct_message', 'mention', 'reply', 'name', 'initiative'].includes(r.kind) ||
     !['normal', 'active'].includes(r.mode) ||
     typeof r.isGroupChat !== 'boolean'
+  )
+    throw new TypeError('Context: invalid_environment');
+  if (
+    r.kind === 'initiative' &&
+    (!r.isGroupChat ||
+      r.mode !== 'active' ||
+      !r.cause ||
+      !['help', 'free_mention', 'unanswered'].includes(r.cause))
   )
     throw new TypeError('Context: invalid_environment');
   const formats = c.textFormats.filter((f) => ['plain', 'markdown', 'html'].includes(f));
@@ -60,6 +70,7 @@ export function formatEnvironment(input: {
     chat: r.isGroupChat ? 'group' : 'direct',
     mode: r.isGroupChat ? r.mode : 'normal',
     reason: r.kind,
+    ...(r.kind === 'initiative' ? { initiative: r.cause } : {}),
     support,
     maxMessageLength,
     textFormats: [...new Set(formats)],

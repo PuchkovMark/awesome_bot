@@ -10,6 +10,7 @@ export interface MessageInput {
   readonly text: string;
   readonly attachmentCount?: number | null;
   readonly isGroupChat?: boolean;
+  readonly senderBot?: import('../contracts/index').KnownBoolean;
   readonly replyToMessageId?: PlatformMessageId;
   readonly timestamp: Timestamp;
 }

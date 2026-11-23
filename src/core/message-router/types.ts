@@ -1,6 +1,6 @@
 import type { IncomingMessage, AuthorizationAction, BotRole } from '../../contracts/index';
 import type { ChatSettings } from '../../storage/types';
-import type { RouteMetadata } from '../../storage/queue-types';
+import type { DirectRoute } from '../../storage/queue-types';
 import type { InitiativeCause } from './autonomous-rules';
 export interface ServiceCommand {
   readonly action: AuthorizationAction;
@@ -8,9 +8,9 @@ export interface ServiceCommand {
   readonly replayRequest?: boolean;
 }
 export interface RoutingInput {
-  readonly considerInitiative?: boolean;
   readonly message: IncomingMessage;
   readonly settings: Pick<ChatSettings, 'enabled' | 'responseMode'>;
+  readonly considerInitiative?: boolean;
   readonly service?: {
     readonly command: ServiceCommand;
     readonly role: BotRole;
@@ -20,8 +20,8 @@ export interface RoutingInput {
 export type RoutingDecision =
   | {
       readonly kind: 'ordinary';
-      readonly reason: RouteMetadata['kind'];
-      readonly route: RouteMetadata;
+      readonly reason: DirectRoute['kind'];
+      readonly route: DirectRoute;
     }
   | { readonly kind: 'service'; readonly reason: 'service' }
   | {

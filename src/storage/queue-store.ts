@@ -33,6 +33,7 @@ import {
 } from './token-budget-store';
 import {
   createAutonomousQuotaStore,
+  recordAutonomousReaction,
   pruneAutonomousQuota,
   restoreAutonomousQuota,
 } from './autonomous-quota-store';
@@ -51,6 +52,15 @@ import type { NoticeBackend } from './notice-types';
 import type { FloodNotice, ResponsePublication, ResponsePublicationAdmission } from './queue-types';
 import type { ResponseRateConfig } from '../core/chat-limits/response-rate-config';
 import type { ChatLimits } from '../core/chat-limits/config';
+import {
+  dueQuestions,
+  initiativeDenial,
+  questionEvidence,
+  removeWaitingQuestion,
+  waitForQuestion,
+} from './autonomous-questions';
+import type { DirectRoute, InitiativeDenial } from './queue-types';
+import type { InitiativeCause } from '../core/message-router/autonomous-rules';
 export function createQueueBackend(
   connection: Connection,
   lifecycle: LifecycleBackend,
@@ -109,6 +119,51 @@ export function createQueueBackend(
       'INSERT INTO queue_turns(chat_id,generation,served) VALUES(?,?,?) ON CONFLICT(chat_id) DO UPDATE SET served=excluded.served',
     ).run(scope.chatId, scope.generation, row.sequence);
   }
+  function canQueue(db: Database, chatId: string, config: QueueConfig, now: number) {
+    const { total, local } = db
+      .prepare(
+        `SELECT count(*) AS total,count(CASE WHEN chat_id=? THEN 1 END) AS local
+      FROM queue_jobs WHERE state='queued' AND expires_at>?`,
+      )
+      .get(chatId, now) as { total: number; local: number };
+    return total < config.maxQueuedTotal && local < config.maxQueuedPerChat;
+  }
+  function initializeTurn(db: Database, scope: ConnectionScope) {
+    if (
+      !db
+        .prepare(
+          "SELECT 1 FROM queue_jobs WHERE chat_id=? AND state IN ('queued','running') LIMIT 1",
+        )
+        .get(scope.chatId)
+    )
+      turn(db, scope);
+  }
+  function initiativeRoute(cause: InitiativeCause): RouteMetadata {
+    return { kind: 'initiative', mode: 'active', isGroupChat: true, cause };
+  }
+  function currentInitiative(
+    db: Database,
+    work: QueueWork,
+    now: number,
+  ): InitiativeDenial | undefined {
+    if (work.route?.kind !== 'initiative') return undefined;
+    const revision = db
+      .prepare('SELECT initiative_revision AS revision FROM queue_jobs WHERE id=?')
+      .get(work.id) as { revision: number | null } | undefined;
+    if (
+      revision?.revision == null ||
+      revision.revision !== lifecycle.assertScope(db, work.scope).revision
+    )
+      return 'initiative_mode';
+    return initiativeDenial(
+      db,
+      work.scope.chatId,
+      work.messageId,
+      work.initiativeEvidenceId,
+      work.route.cause === 'unanswered',
+      now,
+    );
+  }
   function running(db: Database, token: string, work: QueueWork): boolean {
     return (
       currentWork(db, work) &&
@@ -136,6 +191,7 @@ export function createQueueBackend(
       config: QueueConfig,
       guard?: import('./queue-types').RoutedAdmissionGuard,
       responseRate?: ResponseRateConfig,
+      autonomous = false,
     ): RoutedAdmission {
       return transaction(token, () =>
         lifecycle.transaction(scope, (db) => {
@@ -150,6 +206,14 @@ export function createQueueBackend(
             (snapshot) => {
               const settings = createChatStore(connection).get(scope.chatId);
               requireInput(settings);
+              if (
+                autonomous &&
+                message.isGroupChat &&
+                message.senderBot === false &&
+                message.replyToMessageId
+              ) {
+                recordAutonomousReaction(db, scope, message.replyToMessageId, snapshot.receivedAt);
+              }
               const value: unknown =
                 gate && !gate.respond
                   ? { route: null, reason: 'forbidden' }
@@ -230,11 +294,28 @@ export function createQueueBackend(
                   ? { initiative: result.initiative }
                   : {}),
               });
-              return chosen.route !== null;
+              if (!autonomous || !chosen.initiative) return chosen.route !== null;
+              if (chosen.initiative !== 'unanswered') return true;
+              if (
+                snapshot.receivedAt < snapshot.message.timestamp + 300_000 &&
+                Number.isSafeInteger(snapshot.message.timestamp + 300_000)
+              ) {
+                waitForQuestion(
+                  db,
+                  scope,
+                  snapshot.message.id,
+                  snapshot.message.timestamp,
+                  lifecycle.assertScope(db, scope).revision,
+                  readChatControl(db, scope.chatId).responseRevision,
+                  gate?.version ?? null,
+                );
+              }
+              return false;
             },
             config,
           );
-          const route = (chosen as import('./queue-types').RoutedQueueDecision | null)?.route;
+          const routed = chosen as import('./queue-types').RoutedQueueDecision | null;
+          const route = routed?.route;
           if (admission.status === 'queued' && route) {
             const revision = readChatControl(db, scope.chatId).responseRevision;
             db.prepare(
@@ -245,6 +326,18 @@ export function createQueueBackend(
               route.isGroupChat ? 1 : 0,
               gate?.version ?? null,
               revision,
+              admission.jobId,
+            );
+          }
+          if (autonomous && admission.status === 'queued' && routed?.initiative) {
+            db.prepare(
+              `UPDATE queue_jobs SET route_mode='active',route_group=1,disclosure_version=?,
+              control_revision=?,initiative_cause=?,initiative_revision=? WHERE id=?`,
+            ).run(
+              gate?.version ?? null,
+              readChatControl(db, scope.chatId).responseRevision,
+              routed.initiative,
+              lifecycle.assertScope(db, scope).revision,
               admission.jobId,
             );
           }
@@ -292,25 +385,9 @@ export function createQueueBackend(
           }
           requireInput(typeof result === 'boolean');
           if (!result) return { status: 'not_needed', messageId: appended.id };
-          const count = (chat: string | null) =>
-            (
-              db
-                .prepare(
-                  "SELECT count(*) AS n FROM queue_jobs WHERE state='queued' AND expires_at>? AND (? IS NULL OR chat_id=?)",
-                )
-                .get(now, chat, chat) as { n: number }
-            ).n;
-          if (
-            count(null) >= config.maxQueuedTotal ||
-            count(scope.chatId) >= config.maxQueuedPerChat
-          )
+          if (!canQueue(db, scope.chatId, config, now))
             return { status: 'queue_full', messageId: appended.id };
-          const pending = db
-            .prepare(
-              "SELECT id FROM queue_jobs WHERE chat_id=? AND state IN ('queued','running') LIMIT 1",
-            )
-            .get(scope.chatId);
-          if (!pending) turn(db, scope);
+          initializeTurn(db, scope);
           const inserted = db
             .prepare(
               "INSERT INTO queue_jobs(chat_id,generation,message_id,received_at,expires_at,state) VALUES(?,?,?,?,?,'queued') RETURNING id",
@@ -494,12 +571,79 @@ export function createQueueBackend(
         return rows.map((row) => Math.max(0, now - row.receivedAt));
       });
     },
+    promoteQuestions(token: string, config: QueueConfig, platform?: string, now = Date.now()) {
+      transaction(token, (db) => {
+        for (const pending of dueQuestions(db, now, platform)) {
+          const scope = lifecycle.restore(pending);
+          const route = initiativeRoute('unanswered');
+          const state = readChatControl(db, scope.chatId);
+          const stale =
+            lifecycle.assertScope(db, scope).revision !== pending.revision ||
+            state.responseRevision !== pending.controlRevision;
+          const answer = stale
+            ? { denial: 'initiative_mode' as const }
+            : questionEvidence(db, scope.chatId, pending.messageId, now);
+          const evidence = 'id' in answer ? answer.id : undefined;
+          const denial =
+            'denial' in answer
+              ? answer.denial
+              : initiativeDenial(db, scope.chatId, pending.messageId, evidence, true, now);
+          if (!denial && !canQueue(db, scope.chatId, config, now)) continue;
+          if (!denial) initializeTurn(db, scope);
+          const job = db
+            .prepare(
+              `INSERT INTO queue_jobs(chat_id,generation,message_id,received_at,expires_at,
+            state,outcome,route_mode,route_group,disclosure_version,control_revision,initiative_cause,initiative_evidence,initiative_revision)
+            VALUES(?,?,?,?,?,?,?,'active',1,?,?,'unanswered',?,?) RETURNING id`,
+            )
+            .get(
+              scope.chatId,
+              scope.generation,
+              pending.messageId,
+              now,
+              Math.min(now + config.maxQueueAgeMs, pending.expiresAt),
+              denial ? 'terminal' : 'queued',
+              denial ? 'interrupted' : null,
+              pending.disclosureVersion,
+              pending.controlRevision,
+              evidence ?? null,
+              pending.revision,
+            ) as { id: number };
+          if (denial) {
+            const trace = initialTrace(route);
+            const settings = traces.config();
+            startTrace(
+              db,
+              { id: job.id, scope, route, messageId: pending.messageId, receivedAt: now },
+              settings,
+              now,
+            );
+            db.prepare(
+              "UPDATE response_traces SET finished_at=?,outcome='interrupted',payload=? WHERE job_id=?",
+            ).run(
+              now,
+              encodeTrace(
+                {
+                  ...trace,
+                  resultKind: 'interrupted',
+                  publication: { ...trace.publication, status: 'suppressed', reason: denial },
+                },
+                settings.maxRecordBytes,
+              ),
+              job.id,
+            );
+          }
+          removeWaitingQuestion(db, pending.messageId);
+        }
+      });
+    },
     take(token: string, excluded: readonly string[] = [], platform?: string): QueueWork | null {
       return transaction(token, (db) => {
         const prefix = platform === undefined ? null : platform + ':';
         const row = db
           .prepare(
-            `SELECT j.id,j.chat_id AS chatId,j.generation,j.message_id AS messageId,j.received_at AS receivedAt,j.route_kind AS routeKind,j.route_mode AS routeMode,j.route_group AS routeGroup,j.disclosure_version AS disclosureVersion,j.control_revision AS controlRevision
+            `SELECT j.id,j.chat_id AS chatId,j.generation,j.message_id AS messageId,j.received_at AS receivedAt,j.route_kind AS routeKind,j.route_mode AS routeMode,j.route_group AS routeGroup,j.disclosure_version AS disclosureVersion,j.control_revision AS controlRevision,
+          j.initiative_cause AS initiativeCause,j.initiative_evidence AS evidenceId,j.expires_at AS expiresAt
           FROM queue_jobs j JOIN chat_connections c ON c.chat_id=j.chat_id AND c.generation=j.generation
           LEFT JOIN chats s ON s.chat_id=j.chat_id LEFT JOIN queue_turns t ON t.chat_id=j.chat_id
           WHERE j.state='queued' AND j.expires_at>? AND c.state='active' AND coalesce(s.enabled,1)=1
@@ -510,7 +654,7 @@ export function createQueueBackend(
           )
           .get(Date.now(), prefix, prefix, prefix, JSON.stringify(excluded)) as
           | {
-              routeKind: RouteMetadata['kind'] | null;
+              routeKind: DirectRoute['kind'] | null;
               routeMode: RouteMetadata['mode'] | null;
               routeGroup: number | null;
               disclosureVersion: number | null;
@@ -520,6 +664,9 @@ export function createQueueBackend(
               generation: number;
               messageId: number;
               receivedAt: number;
+              initiativeCause: InitiativeCause | null;
+              evidenceId: number | null;
+              expiresAt: number;
             }
           | undefined;
         if (!row) return null;
@@ -530,8 +677,9 @@ export function createQueueBackend(
           scope,
           messageId: row.messageId,
           receivedAt: row.receivedAt,
-          route:
-            row.routeKind && row.routeMode && row.routeGroup !== null
+          route: row.initiativeCause
+            ? Object.freeze(initiativeRoute(row.initiativeCause))
+            : row.routeKind && row.routeMode && row.routeGroup !== null
               ? Object.freeze({
                   kind: row.routeKind,
                   mode: row.routeMode,
@@ -539,6 +687,8 @@ export function createQueueBackend(
                 })
               : null,
           controlRevision: row.controlRevision,
+          expiresAt: row.expiresAt,
+          ...(row.evidenceId === null ? {} : { initiativeEvidenceId: row.evidenceId }),
           ...(row.disclosureVersion === null ? {} : { disclosureVersion: row.disclosureVersion }),
         });
         runningRevisions.set(work, lifecycle.assertScope(db, scope).revision);
@@ -548,6 +698,18 @@ export function createQueueBackend(
     },
     valid(token: string, work: QueueWork): boolean {
       return transaction(token, (db) => running(db, token, work));
+    },
+    checkInitiative(token: string, work: QueueWork, now = Date.now()) {
+      return transaction(token, (db) => {
+        if (work.route?.kind !== 'initiative') return undefined;
+        if (
+          work.route.cause === 'unanswered' &&
+          work.expiresAt !== undefined &&
+          work.expiresAt <= now
+        )
+          return 'initiative_expired' as const;
+        return currentInitiative(db, work, now);
+      });
     },
     admitModelAttempt(
       token: string,

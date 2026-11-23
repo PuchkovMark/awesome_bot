@@ -74,6 +74,7 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
     ...(options.limits === undefined ? {} : { limits: options.limits }),
     ...(options.responseRate === undefined ? {} : { responseRate: options.responseRate }),
     ...(options.tokenBudget ? { tokenBudget: true } : {}),
+    ...(options.autonomousReplies ? { autonomousReplies: true } : {}),
     handler: async (work) => {
       const zero = createAttemptSummary().snapshot(0);
       work.recordTrace({ summary: zero });

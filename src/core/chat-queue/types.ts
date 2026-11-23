@@ -45,6 +45,7 @@ export interface QueueHandlerInput {
   readonly route: import('../../storage/queue-types').RouteMetadata | null;
   readonly isCurrent: () => boolean;
   readonly disclosureVersion?: number;
+  readonly initiativeEvidenceId?: number;
   readonly admitModelAttempt?: (
     allow: () => boolean,
     contextIds?: readonly number[],
@@ -57,6 +58,7 @@ export interface QueueCompletion {
   readonly preparationFailure?: import('../context/types').PreparationFailure;
   readonly result?: import('../agent-loop/types').AgentLoopResult;
   readonly authorLabels?: readonly string[];
+  readonly initiativeDenial?: import('../../storage/queue-types').InitiativeDenial;
 }
 export interface QueueSettlement extends Omit<
   QueueHandlerInput,
@@ -77,6 +79,7 @@ export interface ChatQueueOptions {
   readonly limits?: Partial<ChatLimits>;
   readonly responseRate?: import('../chat-limits/response-rate-config').ResponseRateConfig;
   readonly tokenBudget?: boolean;
+  readonly autonomousReplies?: boolean;
   /** У привязанного к платформе воркера проверка непрерывности предшествует выдаче работы. */
   readonly platform?: string;
 }
