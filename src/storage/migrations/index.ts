@@ -1,3 +1,4 @@
+import { chatTokenBudget } from './020-chat-token-budget';
 import { responseRateAndFlood } from './019-response-rate-and-flood';
 import { chatHistoryRetention } from './018-chat-history-retention';
 import { chatControl } from './016-chat-control';
@@ -42,4 +43,5 @@ export const migrations: readonly Migration[] = [
   chatLimits,
   chatHistoryRetention,
   responseRateAndFlood,
+  chatTokenBudget,
 ];

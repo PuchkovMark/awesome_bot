@@ -1,3 +1,4 @@
+import { createTokenBudgetStore, registerTokenBudgets } from './token-budget-store';
 import { createHistoryClearStore, registerHistoryClear } from './history-retention-store';
 import { requireInput } from './validation';
 import { createTraceBackend, registerTraces } from './trace-store';
@@ -62,6 +63,7 @@ export async function openStorage(
     registerAdminRecovery(storage, createAdminRecoveryStore(connection, backend));
     registerChatControl(storage, createChatControlStore(connection, backend));
     registerTraces(storage, traces);
+    registerTokenBudgets(storage, createTokenBudgetStore(backend));
     registerNotices(storage, createNoticeBackend(connection, backend));
     registerQueue(storage, queue);
     registerLifecycle(storage, backend);
