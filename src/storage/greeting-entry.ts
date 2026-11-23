@@ -41,7 +41,7 @@ export function rememberGreetingCandidate(
 ) {
   if (!admittedEvent(db, scope, sourceAt, now, sequence)) return;
   db.prepare(
-    `INSERT INTO greeting_candidates VALUES(?,?,?,?,?)
+    `INSERT INTO greeting_candidates(chat_id,generation,user_id,source_at,source_sequence) VALUES(?,?,?,?,?)
     ON CONFLICT(chat_id,generation,user_id)
     DO UPDATE SET source_at=excluded.source_at,source_sequence=excluded.source_sequence
     WHERE (excluded.source_at,coalesce(excluded.source_sequence,0)) >
@@ -81,12 +81,9 @@ export function recordGreetingEntry(
         )
         .run(scope.chatId, scope.generation, now, now + 30_000).lastInsertRowid,
     );
-  db.prepare('INSERT INTO greeting_members VALUES(?,?,?,?) ON CONFLICT DO NOTHING').run(
-    window,
-    user,
-    now,
-    Number(returning),
-  );
+  db.prepare(
+    'INSERT INTO greeting_members(window_id,user_id,confirmed_at,was_returning) VALUES(?,?,?,?) ON CONFLICT DO NOTHING',
+  ).run(window, user, now, Number(returning));
 }
 
 export function forgetGreetingEntry(db: Database, scope: ConnectionScope, user: UserId) {

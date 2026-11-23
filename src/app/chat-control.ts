@@ -33,7 +33,10 @@ export function createChatControlHandlers(options: {
       if (typeof request.command === 'string')
         return { action: 'chat.configure', minimumRole: 'admin' } as const;
       if (request.command.kind === 'pause' && replyToOther) return null;
-      if (request.command.kind === 'greeting' && (replyToOther || message.hasForwarded))
+      if (
+        (request.command.kind === 'greeting' || request.command.kind === 'invitation') &&
+        (replyToOther || message.hasForwarded)
+      )
         return null;
       return chatControlAction(request.command);
     },
@@ -45,7 +48,10 @@ export function createChatControlHandlers(options: {
       const request = parseChatControl(message.text, 'group');
       if (!request || typeof request.command === 'string') return;
       const command = request.command;
-      const messageId = command.kind === 'greeting' ? Number(message.messageId) : undefined;
+      const messageId =
+        command.kind === 'greeting' || command.kind === 'invitation'
+          ? Number(message.messageId)
+          : undefined;
       if (
         messageId !== undefined &&
         (!Number.isSafeInteger(messageId) ||

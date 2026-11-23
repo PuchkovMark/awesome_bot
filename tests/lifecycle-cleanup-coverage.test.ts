@@ -79,6 +79,8 @@ const others = [
   'profile_command_expiry',
   'profile_command_event_expiry',
   'greeting_due',
+  'questionnaire_invitation_send',
+  'questionnaire_invitation_due',
   'greeting_scope',
   'greeting_member',
   'greeting_disabled_chat',

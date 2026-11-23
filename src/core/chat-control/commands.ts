@@ -6,7 +6,7 @@ import type { QuietHours } from '../../storage/chat-control-store';
 export type ChatControlCommand =
   | { readonly kind: 'settings' | 'on' | 'off' | 'pause' | 'disableAutonomous' }
   | { readonly kind: 'mode'; readonly mode: ResponseMode }
-  | { readonly kind: 'greeting'; readonly enabled: boolean }
+  | { readonly kind: 'greeting' | 'invitation'; readonly enabled: boolean }
   | { readonly kind: 'quietHours'; readonly hours: QuietHours | null }
   | { readonly kind: 'extend'; readonly minutes: number };
 export type ChatControlRequest = {
@@ -67,7 +67,10 @@ export function parseChatControl(
   const [name, ...args] = clean.split(/\s+/u);
   if (!name || (name === 'помолчи' && (location === 'private' || args.length))) return undefined;
   const kind = simple.get(name);
-  if (!kind && !['/режим', '/продлить-паузу', '/тихие-часы', '/приветствие'].includes(name))
+  if (
+    !kind &&
+    !['/режим', '/продлить-паузу', '/тихие-часы', '/приветствие', '/приглашение'].includes(name)
+  )
     return undefined;
   if (location === 'group' && kind === 'on') return { command: 'invalid' };
   const target = location === 'private' ? parseChatBinding(args.shift()) : undefined;
@@ -75,11 +78,14 @@ export function parseChatControl(
   let command: ChatControlRequest['command'] = 'invalid';
   if (name === '/тихие-часы') command = quietHours(args);
   else if (
-    name === '/приветствие' &&
+    (name === '/приветствие' || name === '/приглашение') &&
     args.length === 1 &&
     (args[0] === 'вкл' || args[0] === 'выкл')
   )
-    command = { kind: 'greeting', enabled: args[0] === 'вкл' };
+    command = {
+      kind: name === '/приветствие' ? 'greeting' : 'invitation',
+      enabled: args[0] === 'вкл',
+    };
   else if (name === '/режим' && args.length === 1) {
     const mode = modes.get(args[0]!);
     if (mode) command = { kind: 'mode', mode };
@@ -92,6 +98,7 @@ export function parseChatControl(
     kind !== 'extend' &&
     kind !== 'quietHours' &&
     kind !== 'greeting' &&
+    kind !== 'invitation' &&
     args.length === 0
   )
     command = { kind };

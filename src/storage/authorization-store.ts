@@ -19,7 +19,7 @@ import {
   readChatControl,
   writeChatPause,
   writeQuietHours,
-  writeGreeting,
+  writeWelcomeSetting,
   type ChatPause,
   type QuietHours,
 } from './chat-control-store';
@@ -106,7 +106,11 @@ export function createAuthorizationStore(connection: Connection): SyncAuthorizat
               },
               writeGreeting(enabled: boolean, now: number, sequence?: number) {
                 check();
-                writeGreeting(db, chatId, enabled, now, sequence);
+                writeWelcomeSetting(db, chatId, 'greeting', enabled, now, sequence);
+              },
+              writeInvitation(enabled: boolean, now: number, sequence?: number) {
+                check();
+                writeWelcomeSetting(db, chatId, 'invitation', enabled, now, sequence);
               },
               writeQuietHours(hours: QuietHours | null) {
                 check();

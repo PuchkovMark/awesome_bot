@@ -46,6 +46,7 @@ test('миграция сохраняет старую очередь, а вык
       mode: 'active',
       autonomousDisabled: false,
       responseRevision: 0,
+      invitationEnabledAt: null,
     });
     expect((await storage.messages.list(current, { limit: 5 }))[0]?.text).toBe(
       'Синтетическая реплика',
@@ -62,6 +63,8 @@ test('миграция сохраняет старую очередь, а вык
     try {
       const context = auth.context({ scope: current, userId: ownerId, kind: 'owner' });
       await auth.controlChat(context, { kind: 'pause' }, () => true, 10);
+      await auth.controlChat(context, { kind: 'greeting', enabled: true }, () => true, 20);
+      await auth.controlChat(context, { kind: 'invitation', enabled: true }, () => true, 21);
       const received = store.capture(current);
       await auth.controlChat(context, { kind: 'off' }, () => true, 11);
       const whileOff = store.capture(current);
@@ -82,16 +85,21 @@ test('миграция сохраняет старую очередь, а вык
       pausedUntil: 900100,
       nextParticipantPause: 1800100,
       responseRevision: 1,
+      invitationEnabledAt: 0,
+      greetingEnabledAt: 0,
     });
     const replacement = life.decide(life.owner(chat, ownerId), 'new');
     expect(chatControlStore(storage).read(replacement)).toMatchObject({
       pausedUntil: null,
       responseRevision: 0,
+      invitationEnabledAt: null,
+      greetingEnabledAt: null,
       mode: 'normal',
     });
     expect(chatControlStore(storage).read(life.current(neighbor))).toMatchObject({
       enabled: true,
       mode: 'normal',
+      invitationEnabledAt: null,
     });
     expect(diagnostic.prepare('SELECT count(*) AS n FROM chat_control_commands').get()).toEqual({
       n: 0,

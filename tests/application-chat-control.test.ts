@@ -256,6 +256,26 @@ test('команды VK сохраняют паузу, выключение от
       ).toBe(true),
     );
     expect(controls.read(scope).greetingEnabledAt).toBeNull();
+    event(209, '/приглашение вкл', member);
+    await vi.waitFor(async () =>
+      expect(
+        (await storage.messages.list(scope, { limit: 20 })).some((row) => row.messageId === '209'),
+      ).toBe(true),
+    );
+    expect(controls.read(scope).invitationEnabledAt).toBeNull();
+    event(210, '/приглашение вкл', administrator);
+    await vi.waitFor(() => expect(controls.read(scope).invitationEnabledFrom).toBe(210));
+    expect(controls.read(scope).greetingEnabledAt).toBeNull();
+    event(211, '/приглашение выкл', administrator);
+    await vi.waitFor(() => expect(controls.read(scope).invitationEnabledAt).toBeNull());
+    event(210, '/приглашение вкл', administrator);
+    event(212, 'Маркер после повтора приглашения', administrator);
+    await vi.waitFor(async () =>
+      expect(
+        (await storage.messages.list(scope, { limit: 20 })).some((row) => row.messageId === '212'),
+      ).toBe(true),
+    );
+    expect(controls.read(scope).invitationEnabledAt).toBeNull();
     event(202, '/тихие-часы 23:00–07:00', administrator);
     await vi.waitFor(() =>
       expect(controls.read(scope).quietHours).toEqual({ start: 1380, end: 420 }),

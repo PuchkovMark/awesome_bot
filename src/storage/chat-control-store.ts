@@ -15,6 +15,8 @@ export interface ChatControlState {
   readonly responseRevision: number;
   readonly greetingEnabledAt: number | null;
   readonly greetingEnabledFrom: number | null;
+  readonly invitationEnabledAt: number | null;
+  readonly invitationEnabledFrom: number | null;
   readonly quietHours: QuietHours | null;
 }
 export interface QuietHours {
@@ -33,7 +35,8 @@ export function readChatControl(db: Database, chatId: ChatId): ChatControlState 
       `SELECT coalesce(s.enabled,1) AS enabled,coalesce(s.response_mode,'normal') AS mode,
     coalesce(s.timezone,'Europe/Moscow') AS timezone,k.paused_until AS pausedUntil,k.next_participant_pause AS nextParticipantPause,
     coalesce(k.autonomous_disabled,0) AS autonomousDisabled,coalesce(k.response_revision,0) AS responseRevision,
-    k.greeting_enabled_at AS greetingEnabledAt,k.greeting_enabled_from AS greetingEnabledFrom,k.quiet_start AS quietStart,k.quiet_end AS quietEnd
+    k.greeting_enabled_at AS greetingEnabledAt,k.greeting_enabled_from AS greetingEnabledFrom,
+    k.invitation_enabled_at AS invitationEnabledAt,k.invitation_enabled_from AS invitationEnabledFrom,k.quiet_start AS quietStart,k.quiet_end AS quietEnd
     FROM chat_connections c LEFT JOIN chats s USING(chat_id) LEFT JOIN chat_controls k USING(chat_id,generation)
     WHERE c.chat_id=?`,
     )
@@ -56,35 +59,59 @@ export function readChatControl(db: Database, chatId: ChatId): ChatControlState 
   };
 }
 
-export function writeGreeting(
+export function writeWelcomeSetting(
   db: Database,
   chatId: ChatId,
+  setting: 'greeting' | 'invitation',
   enabled: boolean,
   now: number,
   sequence?: number,
 ) {
   timestamp(now);
   requireInput(sequence === undefined || (Number.isSafeInteger(sequence) && sequence > 0));
+  const at = setting + '_enabled_at';
+  const from = setting + '_enabled_from';
   db.prepare(
-    `INSERT INTO chat_controls(chat_id,generation,greeting_enabled_at,greeting_enabled_from)
+    `INSERT INTO chat_controls(chat_id,generation,${at},${from})
     SELECT chat_id,generation,?,? FROM chat_connections WHERE chat_id=?
-    ON CONFLICT(chat_id,generation) DO UPDATE SET greeting_enabled_at=
-      CASE WHEN excluded.greeting_enabled_at IS NULL THEN NULL
-      ELSE coalesce(chat_controls.greeting_enabled_at,excluded.greeting_enabled_at) END,
-      greeting_enabled_from=CASE WHEN excluded.greeting_enabled_at IS NULL THEN NULL
-      WHEN chat_controls.greeting_enabled_at IS NULL THEN excluded.greeting_enabled_from
-      ELSE chat_controls.greeting_enabled_from END`,
+    ON CONFLICT(chat_id,generation) DO UPDATE SET ${at}=
+      CASE WHEN excluded.${at} IS NULL THEN NULL
+      ELSE coalesce(chat_controls.${at},excluded.${at}) END,
+      ${from}=CASE WHEN excluded.${at} IS NULL THEN NULL
+      WHEN chat_controls.${at} IS NULL THEN excluded.${from}
+      ELSE chat_controls.${from} END`,
   ).run(
     enabled ? Math.floor(now / 1000) * 1000 : null,
     enabled ? (sequence ?? null) : null,
     chatId,
   );
-  if (!enabled) {
-    db.prepare('DELETE FROM greeting_candidates WHERE chat_id=?').run(chatId);
+  if (enabled) return;
+  const cancelled = setting === 'invitation' ? 'invitation<>0' : 'invitation=2';
+  db.prepare(`UPDATE greeting_candidates SET invitation=0 WHERE chat_id=? AND ${cancelled}`).run(
+    chatId,
+  );
+  db.prepare(
+    `UPDATE greeting_members SET invitation=0 WHERE ${cancelled} AND window_id IN
+    (SELECT id FROM greeting_windows WHERE chat_id=? AND invitation_state='waiting')`,
+  ).run(chatId);
+  if (setting === 'greeting') {
+    db.prepare('UPDATE greeting_candidates SET greet=0 WHERE chat_id=?').run(chatId);
+    db.prepare(
+      `UPDATE greeting_members SET greet=0 WHERE window_id IN
+      (SELECT id FROM greeting_windows WHERE chat_id=? AND state='waiting')`,
+    ).run(chatId);
     db.prepare(
       "UPDATE greeting_windows SET state='skipped' WHERE chat_id=? AND state='waiting'",
     ).run(chatId);
+  } else {
+    db.prepare(
+      `UPDATE greeting_windows SET invitation_state='skipped'
+      WHERE chat_id=? AND invitation_state='waiting'`,
+    ).run(chatId);
   }
+  db.prepare('DELETE FROM greeting_candidates WHERE chat_id=? AND greet=0 AND invitation=0').run(
+    chatId,
+  );
 }
 
 export function writeQuietHours(db: Database, chatId: ChatId, hours: QuietHours | null) {
