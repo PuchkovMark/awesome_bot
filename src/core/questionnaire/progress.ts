@@ -1,6 +1,9 @@
 import type { ConnectionScope, UserId } from '../../contracts/index';
 import type { Storage } from '../../storage/types';
-import { questionnaireProgressStore } from '../../storage/questionnaire-progress-store';
+import {
+  questionnaireProgressStore,
+  type QuestionnaireCommand,
+} from '../../storage/questionnaire-progress-store';
 import { questionnaireStore } from '../../storage/questionnaire-store';
 import type { QuestionnaireInvitationSource } from '../greetings/invitation';
 import { privateQuestionnaire } from '../questionnaires/private-template';
@@ -23,6 +26,11 @@ export function createQuestionnaireProgress(storage: Storage) {
       return {
         ...actor,
         open: (now: number) => actor.open(now, () => revision(scope, user)),
+        command: (
+          action: QuestionnaireCommand,
+          event: { readonly sequence: number; readonly at: number },
+          now: number,
+        ) => actor.command(action, event, now, () => revision(scope, user)),
       };
     },
     invitations(entry?: QuestionnaireInvitationSource): QuestionnaireInvitationSource {

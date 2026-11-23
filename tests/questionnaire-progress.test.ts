@@ -87,6 +87,37 @@ test('у подключённой до редактора группы без н
   }
 });
 
+test('служебная отмена привязана к событию и после перезапуска сохраняет новую попытку', async () => {
+  const f = await profileFixture();
+  try {
+    const scope = await f.chat();
+    f.deliver(scope);
+    const progress = createQuestionnaireProgress(f.storage);
+    const actor = progress.participant(scope, alice);
+    const another = progress.participant(scope, twin);
+    const event = (sequence: number) => ({ sequence, at: 20 + sequence });
+    expect(actor.command('open', event(1), 25)).toMatchObject({ kind: 'showing' });
+    expect(another.command('open', event(2), 25)).toMatchObject({ kind: 'showing' });
+    expect(actor.command('pause', event(3), 25)).toEqual({ kind: 'paused' });
+    expect(another.current(25)?.state).toBe('showing');
+    expect(actor.command('open', event(4), 25)).toMatchObject({ kind: 'showing' });
+    const former = actor.current(25)!.attempt;
+    expect(actor.command('cancel', event(5), 26)).toEqual({ kind: 'cancelled' });
+    expect(actor.command('open', event(6), 27)).toMatchObject({ kind: 'showing' });
+    const current = actor.current(27)!.attempt;
+    expect(current).not.toBe(former);
+    await f.reopen();
+    const restored = createQuestionnaireProgress(f.storage).participant(
+      scopeFor(f.storage, group),
+      alice,
+    );
+    expect(restored.command('cancel', event(5), 28)).toEqual({ kind: 'duplicate' });
+    expect(restored.current(28)).toMatchObject({ attempt: current, state: 'showing' });
+  } finally {
+    await f.close();
+  }
+});
+
 async function setup() {
   const f = await profileFixture();
   const scope = await f.chat();

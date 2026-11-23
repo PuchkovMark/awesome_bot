@@ -12,11 +12,25 @@ import {
 import { profileAdmitted } from './personal-data-store';
 import { participantProfileAvailable, readDeparture } from './participant-departures';
 import { questionnaireStore } from './questionnaire-store';
+import { claimControlMessage, readChatControl } from './chat-control-store';
 import { timestamp } from './validation';
 
 const subject = 'chat_id=? AND generation=? AND user_id=?';
 
 type State = 'showing' | 'dispatching' | 'active' | 'paused' | 'processing' | 'completed';
+export type QuestionnaireCommand = 'open' | 'pause' | 'cancel';
+type CommandResult =
+  | { readonly kind: 'showing'; readonly presentation: string }
+  | {
+      readonly kind:
+        | Exclude<State, 'showing'>
+        | 'cancelled'
+        | 'idle'
+        | 'unconfigured'
+        | 'duplicate'
+        | 'forbidden'
+        | 'profile_required';
+    };
 interface Row {
   attempt: string;
   presentation: string;
@@ -47,7 +61,7 @@ export function questionnaireProgressStore(storage: Storage) {
       return db.prepare('SELECT * FROM questionnaire_progress WHERE ' + subject).get(...key) as
         Row | undefined;
     }
-    return {
+    const actor = {
       current(now: number) {
         timestamp(now);
         return lifecycle.transaction(scope, (db) => {
@@ -165,6 +179,44 @@ export function questionnaireProgressStore(storage: Storage) {
         return lifecycle.transaction(scope, (db) =>
           acceptQuestionnaireInput(db, scope, user, messageId, receivedAt, attempt),
         );
+      },
+    };
+    return {
+      ...actor,
+      command(
+        action: QuestionnaireCommand,
+        event: { readonly sequence: number; readonly at: number },
+        now: number,
+        revision: () => QuestionnaireRevision | null,
+      ): CommandResult {
+        timestamp(now);
+        return lifecycle.transaction(scope, (db) => {
+          const state = readChatControl(db, scope.chatId);
+          if (!state.enabled || state.mode === 'silent') return { kind: 'forbidden' };
+          if (!profileAdmitted(db, scope, user, event.at, 'write'))
+            return { kind: 'profile_required' };
+          if (!claimControlMessage(db, scope.chatId, user, event.sequence))
+            return { kind: 'duplicate' };
+
+          const existing = actor.current(now);
+          if (existing?.state === 'completed') return { kind: 'completed' };
+          if (action === 'cancel')
+            return { kind: existing && actor.cancel(existing.attempt) ? 'cancelled' : 'idle' };
+          if (action === 'pause') {
+            if (!existing) return { kind: 'idle' };
+            actor.pause(existing.attempt);
+            return { kind: 'paused' };
+          }
+          const next = !existing
+            ? actor.open(now, revision)
+            : existing.state === 'paused'
+              ? actor.resume(existing.attempt, now)
+              : existing;
+          if (!next) return { kind: 'unconfigured' };
+          return next.state === 'showing'
+            ? { kind: 'showing', presentation: next.presentation }
+            : { kind: next.state };
+        });
       },
     };
   }

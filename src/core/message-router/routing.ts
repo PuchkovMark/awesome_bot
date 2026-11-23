@@ -17,7 +17,11 @@ export function routeMessage(input: RoutingInput): RoutingDecision {
     return silent('invalid_input');
   if (service) {
     const action = service.command.action;
-    const privatePreference = ['reminder.manage', 'profile.self.address'].includes(action);
+    const privatePreference = [
+      'reminder.manage',
+      'profile.self.address',
+      'onboarding.self.manage',
+    ].includes(action);
     const passport = action === 'chat.passport.read' || action === 'chat.passport.edit';
     const participantCommand =
       service.command.minimumRole === 'member' &&
