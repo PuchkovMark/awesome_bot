@@ -5,7 +5,7 @@
 - Статус: выполнено
 - Дата: 2026-11-23
 - Дата завершения: 2026-11-23
-- Связанные документы: [план фичи](../../plans/completed/045-new-member-greeting.md), [F8.4 в дорожной карте](../../roadmap.md#веха-8-знакомство), [реестр участников 039](039-participant-registry.md), [шаблон анкеты 044](../044-legacy-introduction-questionnaire.md).
+- Связанные документы: [план фичи](../../plans/completed/045-new-member-greeting.md), [F8.4 в дорожной карте](../../roadmap.md#веха-8-знакомство), [реестр участников 039](039-participant-registry.md), [шаблон анкеты 044](044-legacy-introduction-questionnaire.md).
 
 ## Проблема или цель
 

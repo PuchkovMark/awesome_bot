@@ -5,7 +5,7 @@
 - Статус: в работе
 - Дата: 2026-11-23
 - Дата завершения: —
-- Связанные документы: [план реализации](../impl-plans/050-new-member-questionnaire-invitations.md), [план фичи](../plans/050-new-member-questionnaire-invitations.md), [F8.7 в дорожной карте](../roadmap.md#веха-8-знакомство), [вопросы анкеты 044](044-legacy-introduction-questionnaire.md), [приветствие 045](completed/045-new-member-greeting.md).
+- Связанные документы: [план реализации](../impl-plans/050-new-member-questionnaire-invitations.md), [план фичи](../plans/050-new-member-questionnaire-invitations.md), [F8.7 в дорожной карте](../roadmap.md#веха-8-знакомство), [вопросы анкеты 044](completed/044-legacy-introduction-questionnaire.md), [приветствие 045](completed/045-new-member-greeting.md).
 
 ## Проблема или цель
 

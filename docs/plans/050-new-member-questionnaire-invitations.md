@@ -5,7 +5,7 @@
 - Статус: утверждено
 - Дата: 2026-11-23
 - Дата завершения: —
-- Связанные документы: [план реализации](../impl-plans/050-new-member-questionnaire-invitations.md), [утверждённая задача](../tasks/050-new-member-questionnaire-invitations.md), [приветствие 045](../tasks/completed/045-new-member-greeting.md), [шаблон 044](../tasks/044-legacy-introduction-questionnaire.md), [знакомство](../specs/onboarding.md), [решения](../decisions.md).
+- Связанные документы: [план реализации](../impl-plans/050-new-member-questionnaire-invitations.md), [утверждённая задача](../tasks/050-new-member-questionnaire-invitations.md), [приветствие 045](../tasks/completed/045-new-member-greeting.md), [шаблон 044](../tasks/completed/044-legacy-introduction-questionnaire.md), [знакомство](../specs/onboarding.md), [решения](../decisions.md).
 
 ## Подход и ключевые решения
 
