@@ -91,7 +91,7 @@ export function createJobModelAttempts(work: QueueHandlerInput, allow: () => boo
       if (!current()) return;
       const admitted = reserve(request, ids, { protect: protectedTokens });
       if (typeof admitted !== 'object') return;
-      if (!current() || !allow()) {
+      if (!allow() || !current()) {
         admitted.cancelBeforeSend();
         return;
       }
@@ -139,9 +139,9 @@ export function createJobDelegation(options: {
   let helperSteps = 0;
   const current = (ids: readonly number[]) =>
     !signal.aborted &&
-    options.isLoopCurrent() &&
     work.isCurrent() &&
-    options.materials.visible(ids);
+    options.materials.visible(ids) &&
+    options.isLoopCurrent();
   const execute = createDelegation({
     ...options.materials,
     sessionId: initial.sessionId,

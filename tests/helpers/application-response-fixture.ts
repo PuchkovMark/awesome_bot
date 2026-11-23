@@ -45,6 +45,7 @@ export async function fixture(
     summaryFragmentSize?: number;
     modelContextTokens?: number;
     model?: string;
+    systemPrompt?: string;
     auxiliaryModel?: string;
     modelClients?: { client?: LlmClient; auxiliaryClient?: LlmClient };
     upload?: (peer: number, data: Buffer) => Promise<string>;
@@ -98,7 +99,7 @@ export async function fixture(
     readFile: () => '',
   });
   const path = join(files.directory, 'prompt.txt');
-  await writeFile(path, 'Синтетическая инструкция.');
+  await writeFile(path, options.systemPrompt ?? 'Синтетическая инструкция.');
   expect(await initializePrompt(config, path)).toBeNull();
 
   const storage = await openStorage(files.path);
@@ -390,22 +391,25 @@ export async function fixture(
       failSend(fault: typeof sendFault) {
         sendFault = fault;
       },
-      async trace(id: number): Promise<TraceRecord> {
+      async trace(id: number, timeout = 1800): Promise<TraceRecord> {
         let result: Awaited<ReturnType<typeof storage.traces.get>> = null;
-        await until(async () => {
-          const job = db
-            .prepare(
-              `SELECT j.id FROM queue_jobs j JOIN messages m ON j.message_id=m.id
+        await vi.waitFor(
+          async () => {
+            const job = db
+              .prepare(
+                `SELECT j.id FROM queue_jobs j JOIN messages m ON j.message_id=m.id
             WHERE j.chat_id=? AND m.platform_message_id=?`,
-            )
-            .get(chat, String(id)) as { id: number } | undefined;
-          expect(job).toBeDefined();
-          result = await storage.traces.get(scope, job!.id);
-          expect(result?.finishedAt).not.toBeNull();
-          expect(result?.payload.publication.status).toBeDefined();
-          expect(result?.payload.publication.status).not.toBe('pending_checks');
-          expect(result?.payload.publication.status).not.toBe('allowed');
-        });
+              )
+              .get(chat, String(id)) as { id: number } | undefined;
+            expect(job).toBeDefined();
+            result = await storage.traces.get(scope, job!.id);
+            expect(result?.finishedAt).not.toBeNull();
+            expect(result?.payload.publication.status).toBeDefined();
+            expect(result?.payload.publication.status).not.toBe('pending_checks');
+            expect(result?.payload.publication.status).not.toBe('allowed');
+          },
+          { timeout, interval: 5 },
+        );
         return result!;
       },
       close,
