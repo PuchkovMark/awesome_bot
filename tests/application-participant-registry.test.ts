@@ -232,6 +232,9 @@ async function fixture() {
       registry(target: number) {
         return registry.read(life.current(chatId(target)));
       },
+      departure(target: number) {
+        return registry.departure(life.current(chatId(target)), 'vk:41');
+      },
       people(target: number) {
         return budgets.read(life.current(chatId(target)), true, now).people;
       },
@@ -327,6 +330,34 @@ test('две беседы получают по одному снимку, со�
     expect(f.full(peer)).toEqual([0, 2, 0, 0]);
     expect(f.full(neighbor)).toEqual([0]);
     expect(f.registry(peer)).toMatchObject({ lastAttemptComplete: true, needsSync: false });
+    expect(f.departure(peer)).toMatchObject({ departedAt: start + 20_000, returnedAt: null });
+    expect(f.departure(neighbor)).toBeUndefined();
+  } finally {
+    await f.close();
+  }
+});
+
+test('отказ VK сохраняет допуск, первая достоверная полная сверка запускает срок', async () => {
+  const f = await fixture();
+  try {
+    await f.ownerResume(peer);
+    await until(() => expect(f.people(peer)).toBe(2));
+    f.restricted.add(peer);
+    f.names.set(peer, [42]);
+    f.at(start + 3_600_000);
+    await until(() => expect(f.registry(peer).lastAttemptComplete).toBe(false));
+    expect(f.departure(peer)).toBeUndefined();
+    f.at(start + 3_601_000);
+    f.restricted.delete(peer);
+    await until(() =>
+      expect(f.departure(peer)).toMatchObject({
+        departedAt: start + 3_601_000,
+        returnedAt: null,
+      }),
+    );
+    expect(f.registry(peer).participants).toContainEqual(
+      expect.objectContaining({ userId: 'vk:41', status: 'absent' }),
+    );
   } finally {
     await f.close();
   }

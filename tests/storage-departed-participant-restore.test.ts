@@ -174,7 +174,7 @@ test.each(['достигнута граница', 'начата новая ан�
   },
 );
 
-test('при недостатке свежих сведений копия закрыта до принятой полной сверки', async () => {
+test('при недостатке свежих сведений копия закрыта до подтверждения технического состояния', async () => {
   const s = await setup();
   try {
     await s.backup();
@@ -212,10 +212,20 @@ test('при недостатке свежих сведений копия за�
           at + 1,
         ),
       ).toBe(true);
-      expect(restored.profileFacts.read(scope, alice).facts[0]?.value).toBe('Старый профиль');
-      expect(await restored.messages.get(scope, s.response.id)).not.toBeNull();
+      expect(restored.profileFacts.read(scope, alice).facts).toEqual([]);
+      expect(await restored.messages.get(scope, s.response.id)).toBeNull();
     } finally {
       await restored.close();
+    }
+    s.event('joined', start + 1800);
+    s.reconcile(start + 1801);
+    const verified = await openStorage(s.path);
+    try {
+      const scope = scopeFor(verified, group);
+      expect(verified.profileFacts.read(scope, alice).facts[0]?.value).toBe('Старый профиль');
+      expect(await verified.messages.get(scope, s.response.id)).not.toBeNull();
+    } finally {
+      await verified.close();
     }
   } finally {
     await s.close();

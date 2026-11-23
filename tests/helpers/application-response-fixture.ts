@@ -47,6 +47,7 @@ export async function fixture(
     existingChat?: (path: string) => void;
     userRequests?: number;
     active?: boolean;
+    administrationIntervalMs?: number;
     greetings?: {
       readonly members?: readonly number[];
       readonly rules?: string;
@@ -256,6 +257,11 @@ export async function fixture(
       },
       client: { complete },
       onboardingIntervalMs: 5,
+      ...(options.administrationIntervalMs === undefined
+        ? {}
+        : {
+            administrationIntervalMs: options.administrationIntervalMs,
+          }),
       ...(options.greetings
         ? {
             greetingIntervalMs: 5,

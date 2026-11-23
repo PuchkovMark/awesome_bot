@@ -87,6 +87,7 @@ const tables = [
 const others = [
   'participant_departures_due',
   'departed_profile_answers_message',
+  'personal_answer_sources_answer',
   'questionnaire_release_job',
   'questionnaire_removed_input',
   'chat_passport_prompt_expiry',

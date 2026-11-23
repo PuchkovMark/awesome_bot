@@ -119,6 +119,7 @@ test('срок скрывает и очищает профиль, анкету �
     const root = await answer(f.storage, scope, '30', 'Сведения из профиля');
     const mixed = await answer(f.storage, scope, '31', 'Производнаязаключение');
     const independent = await answer(f.storage, scope, '32', 'Обычный ответ');
+    const ambiguous = await answer(f.storage, scope, '33', 'Старый ответ без источников');
     const otherAnswer = await answer(f.storage, other, '30', 'Ответ соседней беседы');
     const privacy = personalDataStore(f.storage);
     db.transaction(() => {
@@ -132,6 +133,7 @@ test('срок скрывает и очищает профиль, анкету �
       db.prepare('SELECT 1 FROM personal_visible_messages WHERE id=?').get(id);
     expect(visible(root)).toBeDefined();
     expect(visible(mixed)).toBeDefined();
+    expect(visible(ambiguous)).toBeDefined();
 
     clock.mockReturnValue(start + 350);
     observe(f.storage, scope, alice, 'left', start + 350);
@@ -139,6 +141,7 @@ test('срок скрывает и очищает профиль, анкету �
     expect(invitations.state(scope, alice)).toBe('unavailable');
     expect(visible(root)).toBeUndefined();
     expect(visible(mixed)).toBeUndefined();
+    expect(visible(ambiguous)).toBeUndefined();
     expect(commands.current(list, Date.now())).toBe(false);
     expect(await f.storage.contextMessages.search(scope, 'Производнаязаключение', 5, 500)).toEqual(
       [],
@@ -148,6 +151,7 @@ test('срок скрывает и очищает профиль, анкету �
     expect(invitations.state(scope, alice)).toBe('completed');
     expect(visible(root)).toBeDefined();
     expect(visible(mixed)).toBeDefined();
+    expect(visible(ambiguous)).toBeDefined();
     expect(commands.current(list, Date.now())).toBe(false);
 
     clock.mockReturnValue(departure + 1);
@@ -160,6 +164,8 @@ test('срок скрывает и очищает профиль, анкету �
     expect(db.transaction(() => purgeDepartedProfiles(db, deadline, 1)).immediate()).toBe(1);
     expect(stored(root)).toBeUndefined();
     expect(stored(mixed)).toBeUndefined();
+    expect(stored(ambiguous)).toBeDefined();
+    expect(visible(ambiguous)).toBeUndefined();
     expect(visible(independent)).toBeDefined();
     expect(visible(ordinary)).toBeDefined();
     expect(visible(otherAnswer)).toBeDefined();
@@ -201,6 +207,13 @@ test('срок скрывает и очищает профиль, анкету �
     ).toBe('Личные данные');
     clock.mockReturnValue(deadline + 2);
     observe(f.storage, restored, alice, 'joined', deadline + 2);
+    expect(
+      db
+        .prepare(
+          'SELECT disputed,retired FROM departed_profile_answers WHERE chat_id=? AND user_id=? AND answer_id=?',
+        )
+        .get(group, alice, ambiguous),
+    ).toEqual({ disputed: 1, retired: 1 });
     expect(
       createQuestionnaireProgress(f.storage).invitations(invitationEntry).state(restored, alice),
     ).toBe('available');

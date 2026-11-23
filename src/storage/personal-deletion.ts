@@ -2,7 +2,6 @@ import { randomBytes } from 'node:crypto';
 import type { Database } from 'better-sqlite3';
 import type { ConnectionScope, UserId } from '../contracts/index';
 import { requireInput, timestamp } from './validation';
-import { releaseDepartedAnswers } from './participant-derived-data';
 
 export function deletionRequest(
   db: Database,
@@ -146,7 +145,9 @@ export function confirmDeletion(
     `INSERT OR IGNORE INTO personal_hidden_messages
     SELECT answer_id,?,1 FROM departed_profile_answers WHERE chat_id=? AND generation=? AND user_id=?`,
   ).run(code, chat, scope.generation, user);
-  releaseDepartedAnswers(db, scope, user);
+  db.prepare(
+    'DELETE FROM departed_profile_answers WHERE chat_id=? AND generation=? AND user_id=?',
+  ).run(chat, scope.generation, user);
   invalidateDependentData(db, chat, code);
   db.prepare(
     `DELETE FROM profile_facts WHERE chat_id=? AND (user_id=? OR source_user_id=? OR source_message_id IN (${inputs}))`,

@@ -58,8 +58,8 @@ export function startParticipantDeparture(
       departed_at=CASE WHEN returned_at IS NULL THEN coalesce(departed_at,excluded.departed_at)
                        ELSE excluded.departed_at END,
       purged_at=CASE WHEN returned_at IS NULL THEN purged_at ELSE NULL END,
-      returned_at=NULL,needs_verification=0
-    WHERE returned_at IS NOT NULL OR departed_at IS NULL OR needs_verification=1`,
+      returned_at=NULL
+    WHERE returned_at IS NOT NULL OR departed_at IS NULL`,
     )
     .run(args);
   if (!changed.changes) return;
@@ -123,15 +123,21 @@ export function returnDepartedParticipant(
   confirmedAt: number,
 ) {
   const state = readDeparture(db, scope, user);
-  if (!state || participantProfileAvailable(state)) return;
+  if (!state || state.returnedAt !== null || (state.departedAt !== null && at < state.departedAt))
+    return;
   const row = { ...scope, ...state, user };
-  if (state.departedAt !== null && state.departedAt <= confirmedAt - departureGraceMs)
-    expireDeparture(db, row, confirmedAt);
+  const erased =
+    state.purgedAt !== null ||
+    (state.departedAt !== null &&
+      state.departedAt <= confirmedAt - departureGraceMs &&
+      expireDeparture(db, row, confirmedAt) > 0);
+  // Для профиля из копии требуется подтверждение истории участия.
+  const needsVerification = erased ? 0 : state.needsVerification;
   db.prepare(
-    `UPDATE participant_departures SET revision=revision+1,returned_at=@at,needs_verification=0
+    `UPDATE participant_departures SET revision=revision+1,returned_at=@at,needs_verification=@needsVerification
     WHERE ${subject}`,
-  ).run({ ...scope, user, at });
-  releaseDepartedAnswers(db, scope, user);
+  ).run({ ...scope, user, at, needsVerification });
+  if (!needsVerification) releaseDepartedAnswers(db, scope, user);
 }
 
 export function applyDepartureSnapshot(
@@ -144,7 +150,7 @@ export function applyDepartureSnapshot(
   const returning = db
     .prepare(
       `SELECT user_id FROM participant_departures WHERE chat_id=@chatId AND generation=@generation
-    AND (returned_at IS NULL OR needs_verification=1)
+    AND returned_at IS NULL
     AND user_id IN (SELECT value FROM json_each(@members))`,
     )
     .pluck()

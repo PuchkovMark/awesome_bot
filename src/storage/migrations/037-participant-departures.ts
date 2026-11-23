@@ -31,10 +31,13 @@ CREATE TABLE departed_profile_answers (
   generation INTEGER NOT NULL,
   user_id TEXT NOT NULL,
   answer_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  disputed INTEGER NOT NULL CHECK(disputed IN (0,1)),
+  retired INTEGER NOT NULL DEFAULT 0 CHECK(retired IN (0,1)),
   PRIMARY KEY(chat_id,generation,user_id,answer_id),
   FOREIGN KEY(chat_id,generation,user_id) REFERENCES participant_departures(chat_id,generation,user_id) ON DELETE CASCADE
 ) STRICT;
 CREATE INDEX departed_profile_answers_message ON departed_profile_answers(answer_id);
+CREATE INDEX personal_answer_sources_answer ON personal_answer_sources(answer_id);
 ${hideDepartedAnswersSql('returned_at IS NULL')};
 DROP VIEW personal_visible_messages;
 CREATE VIEW personal_visible_messages AS SELECT * FROM messages

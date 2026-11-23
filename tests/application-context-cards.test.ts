@@ -4,6 +4,7 @@ import type { LlmRequest } from '../src/llm/types';
 import { lifecycleBackend } from '../src/storage/lifecycle-store';
 import { personalDataStore } from '../src/storage/personal-data-store';
 import { participantRegistryStore } from '../src/storage/participant-registry';
+import { departureGraceMs } from '../src/storage/participant-departures';
 import * as profileReader from '../src/storage/profile-fact-reader';
 import { answer, fixture, mention, until } from './helpers/application-response-fixture';
 
@@ -297,6 +298,46 @@ test('скрытие карточки при выходе блокирует с�
     expect(facts(app.complete.mock.calls[1]![0])?.[0]?.facts?.[0]?.value).toBe(visible);
     app.holds[1]!.release();
     await app.published(next);
+  } finally {
+    await app.close();
+  }
+});
+
+test('таймер очищает профиль на границе срока при выключенном боте', async () => {
+  const app = await fixture({ profileNotice: notice, active: true, administrationIntervalMs: 15 });
+  try {
+    const registry = participantRegistryStore(app.storage);
+    app.at(1000);
+    app.membership('chat_invite_user_by_link', 41);
+    await until(() =>
+      expect(registry.read(app.scope).participants).toContainEqual(
+        expect.objectContaining({ userId: alice, status: 'present' }),
+      ),
+    );
+    app.at(2000);
+    await profile(app, app.scope, alice, 'visible', visible);
+    await app.storage.chats.update(app.scope, { enabled: false });
+    app.at(3000);
+    app.membership('chat_kick_user', 41, 41);
+    await until(() =>
+      expect(registry.departure(app.scope, alice)?.departedAt).toBe(app.start + 3000),
+    );
+    const count = () =>
+      app.db
+        .prepare('SELECT count(*) FROM profile_facts WHERE chat_id=? AND user_id=?')
+        .pluck()
+        .get(app.scope.chatId, alice);
+    app.at(3000 + departureGraceMs - 1);
+    expect(count()).toBe(1);
+    expect(registry.departure(app.scope, alice)?.purgedAt).toBeNull();
+    app.at(3000 + departureGraceMs);
+    await until(() => expect(count()).toBe(0));
+    expect(registry.departure(app.scope, alice)?.purgedAt).toBe(
+      app.start + 3000 + departureGraceMs,
+    );
+    expect((await app.storage.chats.get(app.scope))?.enabled).toBe(false);
+    expect(app.sends).toEqual([]);
+    expect(app.complete).not.toHaveBeenCalled();
   } finally {
     await app.close();
   }
