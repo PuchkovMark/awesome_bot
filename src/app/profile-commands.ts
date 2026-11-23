@@ -20,7 +20,7 @@ const deliveryHint = 'Откройте личный диалог с сообще
 const serviceCommand = {
   action: 'profile.self.manage',
   minimumRole: 'member',
-  privateInput: true,
+  journalLabel: 'Личная команда профиля',
 } as const;
 
 function parseEdit(text: string): { position: number; change: ProfileCommandChange } | null {

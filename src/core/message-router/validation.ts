@@ -13,6 +13,10 @@ export function validIncoming(message: IncomingMessage): boolean {
     (message.hasForwarded === undefined || typeof message.hasForwarded === 'boolean') &&
     [true, false, 'unknown'].includes(message.isBot) &&
     typeof message.text === 'string' &&
+    (message.botReplyText === undefined || typeof message.botReplyText === 'string') &&
+    (message.literalText === undefined || typeof message.literalText === 'string') &&
+    (message.unverifiedReplyToMessageId === undefined ||
+      typeof message.unverifiedReplyToMessageId === 'string') &&
     typeof message.chatId === 'string' &&
     typeof message.userId === 'string' &&
     typeof message.messageId === 'string' &&

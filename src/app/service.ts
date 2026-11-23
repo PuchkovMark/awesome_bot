@@ -40,6 +40,7 @@ import { parseAdminRecoveryCommand } from '../core/admin-recovery/commands';
 import { adminRecoveryStore } from '../storage/admin-recovery-store';
 import { chatControlStore } from '../storage/chat-control-store';
 import { createChatControlHandlers } from './chat-control';
+import { createChatPassport } from './chat-passport';
 import { createHistoryHandlers } from './history-retention';
 import type { ChatLimits } from '../core/chat-limits/config';
 import { createTokenBudgetMembership } from '../core/chat-limits/token-budget-membership';
@@ -233,6 +234,7 @@ export async function runApplication(
       async function checkAdministration() {
         while (!signal.aborted) {
           profiles.prune(Date.now());
+          passports.prune(Date.now());
           const moreProfiles = privacy.purgeExpired(Date.now()) === 100;
           const moreMessages = privacy.cleanup(Date.now()) === 100;
           if (moreProfiles || moreMessages) {
@@ -469,6 +471,7 @@ export async function runApplication(
         onboarding,
         signal,
       });
+      const passports = createChatPassport({ storage, authorization, channel, lifecycle, signal });
       const address = createAddressPreferenceHandlers({ storage, channel, signal });
       const pausedChats = createPausedChatCommands({ channel, lifecycle, ownerId, signal });
       const router = createMessageRouter({
@@ -483,7 +486,8 @@ export async function runApplication(
             .finally(() => floodPublications.delete(operation));
           floodPublications.add(operation);
         },
-        recognizeCommand: (message, replyToOther) =>
+        recognizeCommand: (message, replyToOther, scope) =>
+          passports.recognize(scope, message) ??
           (isUsageCommand(message.text)
             ? ({ action: 'usage.read', minimumRole: 'owner' } as const)
             : null) ??
@@ -501,6 +505,8 @@ export async function runApplication(
         identity: (scope, message) =>
           commandAuthorization.context({ scope, userId: message.userId }),
         async executeCommand(context, message, isCurrent, replayOnly) {
+          if (passports.recognize(context.scope, message))
+            return passports.execute(context, message, isCurrent);
           if (profiles.recognize(message)) return profiles.group(context.scope, message, isCurrent);
           if (groupPersonalCommand(message)) {
             const peerId = vkLocalId(context.scope.chatId),
@@ -536,6 +542,9 @@ export async function runApplication(
             lifecycle.observeAdminMembership(scope, userId, present, messageId, at);
           },
           command(message, isCurrent) {
+            if (passports.beforePersonalCommands(message)) return undefined;
+            const passportAction = passports.privateCommand(message);
+            if (passportAction) return passportAction;
             const profileAction = profiles.private(message, isCurrent);
             if (profileAction) return profileAction;
             const personalAction = !isVkGroupChat(message.peerId) && personal(message, isCurrent);

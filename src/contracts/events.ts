@@ -18,10 +18,16 @@ export interface IncomingMessage {
   readonly isAdmin: KnownBoolean;
   readonly isBot: KnownBoolean;
   readonly text: NeutralText;
+  /** Исходный текст для служебной обработки, если адаптер снял адресацию. */
+  readonly literalText?: NeutralText;
   readonly messageId: PlatformMessageId;
   readonly replyToMessageId?: PlatformMessageId;
+  /** Непроверенная ссылка позволяет отклонить действие, но не подтверждает ответ. */
+  readonly unverifiedReplyToMessageId?: PlatformMessageId;
   readonly isReplyToBot: boolean;
   readonly replyAddress?: 'bot' | 'other' | 'unknown';
+  /** Подсказка для выбора служебного маршрута. Сама по себе не подтверждает reply. */
+  readonly botReplyText?: NeutralText;
   readonly soleBotMention?: boolean;
   readonly hasOtherAddress?: boolean;
   readonly hasForwarded?: boolean;

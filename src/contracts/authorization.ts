@@ -6,6 +6,7 @@ export type GrantBasis = 'creator' | 'inviter' | 'explicit';
 export type AuthorizationAction =
   | 'chat.configure'
   | 'chat.history.clear'
+  | 'chat.passport.read'
   | 'chat.passport.edit'
   | 'chat.persona.select'
   | 'chat.onboarding.configure'

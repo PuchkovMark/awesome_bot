@@ -274,7 +274,11 @@ async function verifyReply(
       (embedded.from_id != null && embedded.from_id !== authorId)
     )
       return undefined;
-    return { cmid: reply.cmid, authorId };
+    return {
+      cmid: reply.cmid,
+      authorId,
+      ...(typeof parent?.text === 'string' ? { text: parent.text } : {}),
+    };
   } catch {
     return undefined;
   }

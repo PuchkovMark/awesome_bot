@@ -266,6 +266,26 @@ export function createVkChannel(
         });
       }
     },
+    async deliverGroupControl(
+      scope: ConnectionScope,
+      text: string,
+      guard: PublicationGuard,
+    ): Promise<PublishedPart | null> {
+      const peer = vkLocalId(scope.chatId);
+      if (peer === undefined || !isVkGroupChat(peer) || !guard.isCurrent()) return null;
+      let part: PublishedPart | null = null;
+      const outcome = await outbound.send({
+        ...guard,
+        chatId: scope.chatId,
+        text,
+        kind: 'service',
+        sendId: randomInt(1, 0x80000000),
+        confirmPart(receipt) {
+          part = receipt;
+        },
+      });
+      return outcome.kind === 'delivered' ? part : null;
+    },
     async sendGreeting(
       scope: ConnectionScope,
       text: string,

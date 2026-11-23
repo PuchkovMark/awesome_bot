@@ -319,7 +319,7 @@ export async function fixture(
         listener.onUpdates([{ type: 'message_new', group_id: group, object: { message: row } }]);
         return row.conversation_message_id;
       },
-      async restart(resume = false) {
+      async restart(resume = false, neighbors: readonly number[] = []) {
         stop.abort();
         receiptHold?.release();
         for (const hold of holds) hold.release();
@@ -329,7 +329,12 @@ export async function fixture(
         running = launch();
         await ready.promise;
         if (resume)
-          await resolveApplicationChat({ databasePath: files.path, ownerId }, chat, 'continue');
+          for (const destination of [peer, ...neighbors])
+            await resolveApplicationChat(
+              { databasePath: files.path, ownerId },
+              `vk:${destination}`,
+              'continue',
+            );
       },
       async connectGroup(destination: number) {
         const id = `vk:${destination}` as const;

@@ -106,7 +106,7 @@ export interface ChatQueue {
     message: MessageInput,
     decision: RoutedQueueCallback,
     guard?: RoutedAdmissionGuard,
-    privateInput?: true,
+    serviceInput?: true,
   ): Promise<RoutedAdmission>;
   stop(): Promise<void>;
   traceStats(): Readonly<Record<import('../response-tracing/metrics').TraceEvent, number>>;

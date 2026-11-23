@@ -229,7 +229,7 @@ export function createQueueBackend(
       guard?: import('./queue-types').RoutedAdmissionGuard,
       responseRate?: ResponseRateConfig,
       autonomous = false,
-      privateInput?: true,
+      serviceInput?: true,
     ): RoutedAdmission {
       return transaction(token, () =>
         lifecycle.transaction(scope, (db) => {
@@ -295,9 +295,9 @@ export function createQueueBackend(
                     routed.reason === 'not_addressed' &&
                     ['help', 'free_mention', 'unanswered'].includes(routed.initiative),
                 );
-              if (privateInput || routed.privateCommand === true) {
+              if (serviceInput || routed.privateCommand === true) {
                 requireInput(
-                  routed.route === null && (privateInput || routed.reason === 'service'),
+                  routed.route === null && (serviceInput || routed.reason === 'service'),
                 );
                 db.prepare(
                   "UPDATE messages SET purpose='service_notice' WHERE chat_id=? AND id=?",

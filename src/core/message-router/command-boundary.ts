@@ -15,9 +15,13 @@ export async function commandAccess(
   const denied = { command, role: 'member', allowed: false } as const;
   const participantCommand =
     command.minimumRole === 'member' &&
-    ['chat.pause', 'profile.self.manage', 'profile.self.address', 'reminder.manage'].includes(
-      command.action,
-    );
+    [
+      'chat.pause',
+      'chat.passport.read',
+      'profile.self.manage',
+      'profile.self.address',
+      'reminder.manage',
+    ].includes(command.action);
   if (
     !auth ||
     !context ||

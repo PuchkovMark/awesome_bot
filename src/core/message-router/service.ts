@@ -29,7 +29,8 @@ export interface RouterOptions {
   readonly authorization?: RouterAuthorization;
   readonly recognizeCommand?: (
     message: IncomingMessage,
-    replyToOther?: boolean,
+    replyToOther: boolean | undefined,
+    scope: ConnectionScope,
   ) => ServiceCommand | null;
   readonly identity?: (
     scope: ConnectionScope,
@@ -82,7 +83,7 @@ export function createMessageRouter(options: RouterOptions) {
         })
       ).settings;
       if (isCurrent && !isCurrent()) return { decision: null, admission: null };
-      const command = options.recognizeCommand?.(message, replyToOther) ?? null;
+      const command = options.recognizeCommand?.(message, replyToOther, scope) ?? null;
       if (command) context ??= options.identity?.(scope, message);
       const service = command
         ? await commandAccess(options.authorization, context, scope, message, command)
@@ -101,7 +102,7 @@ export function createMessageRouter(options: RouterOptions) {
         senderBot: message.isBot,
         role: 'user' as const,
         attachmentCount: message.attachments.length,
-        text: command?.privateInput ? 'Личная команда профиля' : message.text,
+        text: command?.journalLabel ?? message.text,
         timestamp: message.timestamp,
         ...(message.replyToMessageId ? { replyToMessageId: message.replyToMessageId } : {}),
       };
@@ -129,7 +130,7 @@ export function createMessageRouter(options: RouterOptions) {
           };
         },
         disclosure,
-        command?.privateInput,
+        command?.journalLabel === undefined ? undefined : true,
       );
       const decision = result.decision ? fromDecision(result.decision) : null;
       if (decision) {

@@ -563,7 +563,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
       armTick();
       if (failure) throw failure;
     },
-    async admitRouted(scope, message, decision, guard, privateInput) {
+    async admitRouted(scope, message, decision, guard, serviceInput) {
       if (phase !== 'running') return { admission: { status: 'stopped' }, decision: null };
       if (platform !== undefined && !scope.chatId.startsWith(platform + ':'))
         throw new QueueError('invalid_input');
@@ -577,7 +577,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
           guard,
           responseRate,
           options.autonomousReplies,
-          privateInput,
+          serviceInput,
         );
         if (result.admission.status === 'queue_full') counters.rejected = add(counters.rejected, 1);
         emit();
