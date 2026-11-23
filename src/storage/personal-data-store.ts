@@ -21,7 +21,12 @@ function parameters(scope: ConnectionScope, userId: UserId) {
 }
 const subject = 'chat_id=@chat AND generation=@generation AND user_id=@user';
 
-function admitted(db: Database, scope: ConnectionScope, userId: UserId, sourceTime: number) {
+export function profileAdmitted(
+  db: Database,
+  scope: ConnectionScope,
+  userId: UserId,
+  sourceTime: number,
+) {
   timestamp(sourceTime);
   const row = db
     .prepare(
@@ -55,7 +60,7 @@ export function createPersonalDataStore(connection: Connection, lifecycle: Lifec
       ).run(scope.chatId, messageId, JSON.stringify(sources));
     },
     profileAllowed(scope: ConnectionScope, userId: UserId, sourceTime: number) {
-      return lifecycle.transaction(scope, (db) => admitted(db, scope, userId, sourceTime));
+      return lifecycle.transaction(scope, (db) => profileAdmitted(db, scope, userId, sourceTime));
     },
     withProfileAdmission<T>(
       scope: ConnectionScope,
@@ -64,7 +69,7 @@ export function createPersonalDataStore(connection: Connection, lifecycle: Lifec
       operation: (db: Database) => T,
     ) {
       return lifecycle.transaction(scope, (db) =>
-        admitted(db, scope, userId, sourceTime) ? operation(db) : undefined,
+        profileAdmitted(db, scope, userId, sourceTime) ? operation(db) : undefined,
       );
     },
     hasData(scope: ConnectionScope, userId: UserId) {

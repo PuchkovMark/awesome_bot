@@ -61,3 +61,23 @@ export interface ProfileFactInput {
 }
 
 export type ProfileFactWriteResult = 'recorded' | 'duplicate' | 'blocked';
+
+export interface PublicProfileFact {
+  readonly fieldKey: string;
+  readonly value: string;
+  readonly sourceKind: FactSourceKind;
+  readonly reliability: FactReliability;
+}
+
+declare const profileReadReference: unique symbol;
+export type ProfileReadReference = { readonly [profileReadReference]: true };
+
+export interface PublicProfile {
+  readonly facts: readonly PublicProfileFact[];
+  readonly reference: ProfileReadReference;
+}
+
+export interface PublicInterestMatches {
+  readonly matches: readonly { readonly userId: UserId; readonly fact: PublicProfileFact }[];
+  readonly reference: ProfileReadReference;
+}

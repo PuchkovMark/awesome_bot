@@ -1,4 +1,4 @@
-import type { ScopedStorage } from '../../storage/scoped-types';
+import type { ScopedAuthorizationTransaction, ScopedStorage } from '../../storage/scoped-types';
 import { createReasonMaintenance } from './maintenance';
 import type { AuthorizationScheduler } from './maintenance';
 import type {
@@ -11,6 +11,7 @@ import type {
 } from '../../contracts/index';
 import type { AppConfig } from '../../config/types';
 import type { AuthorizationTransaction, RevocationAudit } from '../../storage/index';
+import type { ProfileFactInput, ProfileFactWriteResult } from '../../storage/participant-types';
 import type { RecoveryOperation } from '../../storage/admin-recovery-store';
 import { chatControlAction, type ChatControlCommand } from '../chat-control/commands';
 import { applyChatControl, type ChatControlResult } from '../chat-control/service';
@@ -79,7 +80,7 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
     context: AuthorizationContext,
     action: unknown,
     subjectId: UserId | undefined,
-    operation: (tx: AuthorizationTransaction) => AuthorizationResult<T>,
+    operation: (tx: ScopedAuthorizationTransaction) => AuthorizationResult<T>,
     flags?: { readonly allowInitialOwnerSettings: boolean },
   ): Promise<AuthorizationResult<T>> {
     if (disposed || !authority.contains(context)) return deny('invalid_context');
@@ -119,6 +120,21 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
       return guarded(context, action, subjectId, () => ({ allowed: true, value: undefined }), {
         allowInitialOwnerSettings: action === 'usage.read' || action === 'usage.configure',
       });
+    },
+    async changeProfileFact(
+      context: AuthorizationContext,
+      input: ProfileFactInput,
+    ): Promise<AuthorizationResult<ProfileFactWriteResult>> {
+      if (disposed || !authority.contains(context)) return deny('invalid_context');
+      if (context.kind !== 'chat') return deny('wrong_scope');
+      if (!input || typeof input !== 'object') return deny('invalid_context');
+      const snapshot = { ...input };
+      const action =
+        context.userId === snapshot.subjectId ? 'profile.self.manage' : 'profile.admin.add';
+      return guarded(context, action, snapshot.subjectId, (tx) => ({
+        allowed: true,
+        value: tx.changeProfileFact(context.userId, snapshot),
+      }));
     },
     async setTimezone(
       context: AuthorizationContext,

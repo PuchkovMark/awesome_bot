@@ -1,5 +1,5 @@
 import type { VersionStore } from './version-types';
-import type { ConnectionScope } from '../contracts/index';
+import type { ConnectionScope, UserId } from '../contracts/index';
 import type {
   AppendResult,
   ChatInput,
@@ -11,11 +11,38 @@ import type {
   StoredMessage,
 } from './types';
 import type { AuthorizationTransaction } from './authorization-types';
+import type {
+  ProfileFactInput,
+  ProfileFactWriteResult,
+  ProfileReadReference,
+  PublicInterestMatches,
+  PublicProfile,
+} from './participant-types';
+
+export interface ScopedAuthorizationTransaction extends AuthorizationTransaction {
+  changeProfileFact(actorId: UserId, input: ProfileFactInput): ProfileFactWriteResult;
+}
+
+export interface ProfileFactWriter {
+  record(
+    scope: ConnectionScope,
+    actorId: UserId,
+    sourceKind: 'self' | 'admin' | 'inferred',
+    input: ProfileFactInput,
+  ): ProfileFactWriteResult;
+}
+
 export interface ScopedStorage {
   readonly traces: import('./trace-types').TraceReader;
   readonly contextState: import('./context-types').ContextStateReader;
   readonly contextMessages: import('./context-types').ContextMessageReader &
     import('./context-reader').ContextSearch;
+  /** Только сведения, разрешённые аудитории чата. Личная выгрузка относится к F5.8. */
+  readonly profileFacts: {
+    read(scope: ConnectionScope, subjectId: UserId): PublicProfile;
+    searchInterests(scope: ConnectionScope, interest: string): PublicInterestMatches;
+    isCurrent(scope: ConnectionScope, reference: ProfileReadReference): boolean;
+  };
   readonly queue: import('./queue-types').QueueStore;
   readonly versions: VersionStore;
   readonly messages: {
@@ -31,7 +58,7 @@ export interface ScopedStorage {
   readonly authorization: {
     transaction<T>(
       scope: ConnectionScope,
-      callback: (tx: AuthorizationTransaction) => T,
+      callback: (tx: ScopedAuthorizationTransaction) => T,
     ): Promise<T>;
     pruneReasons(
       now: number,

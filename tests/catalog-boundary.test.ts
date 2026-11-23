@@ -162,6 +162,7 @@ test.each([
   'reminder-store.ts',
   'participant-registry.ts',
   'address-preference-store.ts',
+  'profile-fact-store.ts',
 ])('инфраструктура %s недоступна через транзитивный импорт', (module) => {
   const f = fixture();
   try {

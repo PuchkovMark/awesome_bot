@@ -110,6 +110,7 @@ export function checkCatalogBoundary(root = process.cwd()) {
           ['reminder-store.ts', 'registerReminders'],
           ['participant-registry.ts', 'registerParticipantRegistry'],
           ['address-preference-store.ts', 'registerAddressPreferences'],
+          ['profile-fact-store.ts', 'registerProfileInference'],
         ]) {
           if (p === resolve(root, 'src/storage/' + moduleName)) {
             const parent = node.parent;
@@ -133,7 +134,9 @@ export function checkCatalogBoundary(root = process.cwd()) {
                   (moduleName === 'participant-registry.ts' &&
                     (e.propertyName ?? e.name).text === 'createParticipantRegistry') ||
                   (moduleName === 'address-preference-store.ts' &&
-                    (e.propertyName ?? e.name).text === 'createAddressPreferenceStore'),
+                    (e.propertyName ?? e.name).text === 'createAddressPreferenceStore') ||
+                  (moduleName === 'profile-fact-store.ts' &&
+                    (e.propertyName ?? e.name).text === 'createProfileFactStore'),
               );
             const registryType =
               moduleName === 'queue-store.ts' &&
