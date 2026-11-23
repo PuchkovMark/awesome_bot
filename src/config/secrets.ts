@@ -2,7 +2,9 @@ import type { Redact } from './types.js';
 
 // Объединение интервалов закрывает в том числе пересекающиеся секреты.
 export function createRedactor(values: readonly string[]): Redact {
-  const secrets = [...new Set(values.filter((value) => typeof value === 'string' && value.length > 0))];
+  const secrets = [
+    ...new Set(values.filter((value) => typeof value === 'string' && value.length > 0)),
+  ];
   return (text) => {
     const intervals: Array<[number, number]> = [];
     for (const secret of secrets) {

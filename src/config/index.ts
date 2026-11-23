@@ -28,16 +28,21 @@ export function readConfigParameters(options: ConfigOptions = {}) {
   try {
     file = parseEnv(readFile(resolve(cwd, options.envFile ?? '.env')));
   } catch (error) {
-    const missing = typeof error === 'object' && error !== null
-      && Object.getOwnPropertyDescriptor(error, 'code')?.value === 'ENOENT';
+    const missing =
+      typeof error === 'object' &&
+      error !== null &&
+      Object.getOwnPropertyDescriptor(error, 'code')?.value === 'ENOENT';
     if (!missing || options.envFile !== undefined) {
       throw new ConfigError(missing ? 'env_file_missing' : 'env_file_unreadable');
     }
   }
 
-  const values: ConfigValues = Object.fromEntries(configParameters.map(key => [key, env[key] ?? file[key]]));
+  const values: ConfigValues = Object.fromEntries(
+    configParameters.map((key) => [key, env[key] ?? file[key]]),
+  );
   const secretParameters = ['VK_TOKEN', 'OPENCODE_API_KEY', 'LLM_SESSION_SECRET'] as const;
-  const secrets = secretParameters.flatMap(key => [env[key], file[key]])
+  const secrets = secretParameters
+    .flatMap((key) => [env[key], file[key]])
     .filter((value): value is string => typeof value === 'string');
   return { cwd, values, redact: createRedactor(secrets) };
 }
@@ -51,11 +56,22 @@ export function requiredParameter(values: ConfigValues, parameter: ConfigParamet
   return value;
 }
 
-export function positiveParameter(values: ConfigValues, parameter: ConfigParameter, fallback?: number, unit = 1): number {
+export function positiveParameter(
+  values: ConfigValues,
+  parameter: ConfigParameter,
+  fallback?: number,
+  unit = 1,
+): number {
   const raw = values[parameter];
   if (raw === undefined && fallback === undefined) throw new ConfigError('missing', [parameter]);
-  const value = raw === undefined ? fallback! : (typeof raw === 'string' && /^[0-9]+$/.test(raw) ? Number(raw) : NaN);
-  if (!Number.isSafeInteger(value) || value <= 0 || !Number.isSafeInteger(value * unit)) throw new ConfigError('invalid', [parameter]);
+  const value =
+    raw === undefined
+      ? fallback!
+      : typeof raw === 'string' && /^[0-9]+$/.test(raw)
+        ? Number(raw)
+        : NaN;
+  if (!Number.isSafeInteger(value) || value <= 0 || !Number.isSafeInteger(value * unit))
+    throw new ConfigError('invalid', [parameter]);
   return value;
 }
 
@@ -67,8 +83,16 @@ export function ownerParameter(values: ConfigValues): UserId {
 
 export function versionParameters(values: ConfigValues) {
   return Object.freeze({
-    textMaxLength: positiveParameter(values, 'VERSION_TEXT_MAX_LENGTH', defaultVersionLimits.textMaxLength),
-    maxPerEntity: positiveParameter(values, 'VERSION_MAX_PER_ENTITY', defaultVersionLimits.maxPerEntity),
+    textMaxLength: positiveParameter(
+      values,
+      'VERSION_TEXT_MAX_LENGTH',
+      defaultVersionLimits.textMaxLength,
+    ),
+    maxPerEntity: positiveParameter(
+      values,
+      'VERSION_MAX_PER_ENTITY',
+      defaultVersionLimits.maxPerEntity,
+    ),
   });
 }
 
@@ -85,7 +109,12 @@ export function baseConfig(values: ConfigValues): AppConfig {
     authorization: Object.freeze({
       ownerId,
       reasonMaxLength: positiveParameter(values, 'ADMIN_REVOCATION_REASON_MAX_LENGTH', 500),
-      reasonRetentionDays: positiveParameter(values, 'ADMIN_REVOCATION_REASON_RETENTION_DAYS', 90, 86_400_000),
+      reasonRetentionDays: positiveParameter(
+        values,
+        'ADMIN_REVOCATION_REASON_RETENTION_DAYS',
+        90,
+        86_400_000,
+      ),
     }),
     vk: Object.freeze({ token }),
     llm: Object.freeze({ provider: 'opencode', apiKey, model }),
