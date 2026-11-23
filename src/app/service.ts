@@ -396,11 +396,12 @@ export async function runApplication(
         }
       };
       const passport = chatPassportStore(storage);
+      const auxiliaryClient =
+        dependencies.auxiliaryClient ??
+        createLlmClient({ ...config.llm, model: config.auxiliaryModel });
       const summaries = applicationSummaries({
         storage,
-        client:
-          dependencies.auxiliaryClient ??
-          createLlmClient({ ...config.llm, model: config.auxiliaryModel }),
+        client: auxiliaryClient,
         model: config.auxiliaryModel,
         sessionSecret: config.sessionSecret,
         ...config.summaries,
@@ -483,7 +484,7 @@ export async function runApplication(
         storage,
         logger,
         modelName: config.llm.model,
-        tools: applicationTools(storage, channel, authorization),
+        tools: applicationTools(storage, channel, authorization, auxiliaryClient),
         modelInputLimit: config.context.modelContextTokens - preparation.config.maxOutputTokens,
         tracing: config.tracing,
         limits: dependencies.chatLimits ?? {},

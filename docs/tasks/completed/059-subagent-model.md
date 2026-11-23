@@ -2,10 +2,10 @@
 
 - Номер: 059
 - Название: Claude Haiku 5.5 для субагентов
-- Статус: утверждено
+- Статус: выполнено
 - Дата: 2026-11-23
-- Дата завершения: —
-- Связанные документы: [план реализации](../impl-plans/059-subagent-model.md), [план фичи](../plans/059-subagent-model.md), [дорожная карта](../roadmap.md#технические-задачи), [исходная задача делегирования 036](completed/036-universal-subagents.md), [план сводок 056](../plans/completed/056-chat-history-summaries.md), [цикл ответа](../specs/agent-loop.md#делегирование-в-пользовательском-обращении), [клиент модели](../specs/architecture.md#клиент-модели-f21).
+- Дата завершения: 2026-11-24
+- Связанные документы: [план реализации](../../impl-plans/completed/059-subagent-model.md), [план фичи](../../plans/completed/059-subagent-model.md), [дорожная карта](../../roadmap.md#технические-задачи), [исходная задача делегирования 036](036-universal-subagents.md), [план сводок 056](../../plans/completed/056-chat-history-summaries.md), [цикл ответа](../../specs/agent-loop.md#делегирование-в-пользовательском-обращении), [клиент модели](../../specs/architecture.md#клиент-модели-f21).
 
 ## Проблема или цель
 
@@ -27,7 +27,7 @@
 
 ## Затрагиваемые спецификации
 
-[Архитектура](../specs/architecture.md), [цикл ответа](../specs/agent-loop.md), [оценочные сценарии](../specs/evals.md).
+[Архитектура](../../specs/architecture.md), [цикл ответа](../../specs/agent-loop.md), [оценочные сценарии](../../specs/evals.md).
 
 ## Открытые вопросы
 

@@ -1,4 +1,4 @@
-import type { LlmClient, LlmRequest } from '../../llm/types';
+import type { LlmClient, LlmRequest, LlmUsage } from '../../llm/types';
 import {
   createDelegation,
   type DelegateResult,
@@ -7,6 +7,7 @@ import {
 import { toolAuthorization } from '../../tools/authorization';
 import type { ToolContext } from '../../contracts/tool';
 import type { QueueHandlerInput } from './types';
+import type { AgentLoopOptions } from '../agent-loop/types';
 import { estimateRequestInput, messageInputCost } from '../context/budget';
 
 const resultEnvelopeBytes = 4096;
@@ -50,6 +51,8 @@ export function finalRequestReserve(request: LlmRequest, pending: readonly strin
 /** Создаётся один раз для задания. Родитель и помощники делят ordinal, допуск и срок. */
 export function createJobModelAttempts(work: QueueHandlerInput, allow: () => boolean) {
   let ordinal = 0;
+  // Повтор сохраняет объект запроса. Продолжение после чтения получает новый.
+  const helperUsage = new Map<LlmRequest, LlmUsage[]>();
   function reserve(
     request: LlmRequest,
     ids: readonly number[],
@@ -77,29 +80,34 @@ export function createJobModelAttempts(work: QueueHandlerInput, allow: () => boo
   }
   return {
     reserve,
+    helperSummary: () => [...helperUsage.values()],
     async helper(
       client: LlmClient,
       request: LlmRequest,
       ids: readonly number[],
       protectedTokens: number,
-      startUsage?: () => (usage: import('../../llm/types').LlmUsage) => void,
+      current: () => boolean,
     ) {
+      if (!current()) return;
       const admitted = reserve(request, ids, { protect: protectedTokens });
       if (typeof admitted !== 'object') return;
-      if (work.signal.aborted || request.signal?.aborted || !work.isCurrent() || !allow()) {
+      if (!allow() || !current()) {
         admitted.cancelBeforeSend();
         return;
       }
-      const onUsage = startUsage?.();
+      const step = helperUsage.get(request) ?? [];
+      helperUsage.set(request, step);
+      const slot = step.push({ input: null, output: null }) - 1;
       let result;
       try {
         result = await client.complete(request);
       } catch {
-        onUsage?.({ input: null, output: null });
-        throw Error('Сбой модели помощника.');
+        return { kind: 'error', code: 'network', message: 'Сбой модели помощника.' } as const;
       }
-      onUsage?.('usage' in result ? result.usage : { input: null, output: null });
-      if ('usage' in result) admitted.recordUsage(result.usage);
+      if ('usage' in result) {
+        step[slot] = result.usage;
+        admitted.recordUsage(result.usage);
+      }
       return result;
     },
   };
@@ -113,8 +121,8 @@ export function createJobDelegation(options: {
   materials: Pick<DelegationHost, 'resolve' | 'visible' | 'allowedTools' | 'read'>;
   principal: ToolContext;
   signal: AbortSignal;
-  maxSteps: number;
-  startUsage?: () => (usage: import('../../llm/types').LlmUsage) => void;
+  settings: Required<AgentLoopOptions>;
+  isLoopCurrent: () => boolean;
   parentSteps: () => number;
   finalRequest: () => { request: LlmRequest; pending: readonly string[] };
 }) {
@@ -129,14 +137,20 @@ export function createJobDelegation(options: {
   const initial = options.finalRequest().request;
   const signal = AbortSignal.any([work.signal, options.signal]);
   let helperSteps = 0;
+  const current = (ids: readonly number[]) =>
+    !signal.aborted &&
+    work.isCurrent() &&
+    options.materials.visible(ids) &&
+    options.isLoopCurrent();
   const execute = createDelegation({
     ...options.materials,
     sessionId: initial.sessionId,
     maxOutputTokens: initial.maxOutputTokens,
     signal,
-    visible: (ids) => work.isCurrent() && options.materials.visible(ids),
+    retry: options.settings,
+    visible: current,
     takeHelperStep() {
-      if (helperSteps + options.parentSteps() + 1 >= options.maxSteps) return false;
+      if (helperSteps + options.parentSteps() + 1 >= options.settings.maxSteps) return false;
       helperSteps++;
       return true;
     },
@@ -147,7 +161,7 @@ export function createJobDelegation(options: {
         request,
         ids,
         finalRequestReserve(final.request, final.pending),
-        options.startUsage,
+        () => current(ids),
       );
     },
   });

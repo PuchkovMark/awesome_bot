@@ -27,6 +27,7 @@ function fixture(changes: Partial<DelegationHost> = {}) {
   const host: DelegationHost = {
     sessionId: 'opaque',
     maxOutputTokens: 1024,
+    retry: { retryServerErrors: true, retryDelayMs: 1, maxAttemptsPerStep: 2 },
     signal: controller.signal,
     resolve: (ref) => (ref === 'a' ? { ref, text: 'факт А', messageIds: [17] } : undefined),
     visible: () => true,
@@ -142,6 +143,44 @@ test('отмена завершает ветвь даже при зависше�
     status: 'cancelled',
     answer: '',
   });
+});
+const serverError = { kind: 'error', code: 'server', message: 'synthetic' } as const;
+
+test.each([
+  { retryServerErrors: false, maxAttemptsPerStep: 2, attempts: 1, status: 'unavailable' },
+  { retryServerErrors: true, maxAttemptsPerStep: 1, attempts: 1, status: 'limit' },
+  { retryServerErrors: true, maxAttemptsPerStep: 2, attempts: 2, status: 'limit' },
+])('серверная ошибка даёт $status после $attempts попыток', async (policy) => {
+  const { retryServerErrors, maxAttemptsPerStep, attempts, status } = policy;
+  const step = vi.fn(() => true);
+  const f = fixture({
+    takeHelperStep: step,
+    retry: { retryServerErrors, maxAttemptsPerStep, retryDelayMs: 1 },
+  });
+  f.attempt.mockResolvedValue(serverError);
+  expect(await f.execute(prompt('проверь', ['a']))).toMatchObject({ status });
+  expect(f.attempt).toHaveBeenCalledTimes(attempts);
+  expect(step).toHaveBeenCalledTimes(1);
+});
+
+test.each(['source', 'signal'] as const)('отзыв в паузе повтора: %s', async (reason) => {
+  let visible = true;
+  const f = fixture({
+    visible: () => visible,
+    retry: { retryServerErrors: true, maxAttemptsPerStep: 2, retryDelayMs: 20 },
+  });
+  const errored = Promise.withResolvers<void>();
+  f.attempt.mockImplementation(async () => {
+    errored.resolve();
+    return serverError;
+  });
+  const result = f.execute(prompt('проверь', ['a']));
+  await errored.promise;
+  await Promise.resolve();
+  if (reason === 'source') visible = false;
+  else f.controller.abort();
+  expect(await result).toMatchObject({ status: 'cancelled' });
+  expect(f.attempt).toHaveBeenCalledTimes(1);
 });
 test('резерв покрывает сериализованный ответ ветви и не раскрывает технические ID', () => {
   const base: LlmRequest = {

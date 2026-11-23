@@ -5,7 +5,7 @@
 - Статус: выполнено
 - Дата: 2026-11-23
 - Дата завершения: 2026-11-23
-- Связанные документы: [задача](../../tasks/completed/056-chat-history-summaries.md), [утверждённый план фичи](../../plans/completed/056-chat-history-summaries.md), [выбор модели для помощников](../../plans/059-subagent-model.md), [контекст](../../specs/context.md), [хранилище](../../specs/storage.md), [приватность](../../specs/privacy.md).
+- Связанные документы: [задача](../../tasks/completed/056-chat-history-summaries.md), [утверждённый план фичи](../../plans/completed/056-chat-history-summaries.md), [выбор модели для помощников](../../plans/completed/059-subagent-model.md), [контекст](../../specs/context.md), [хранилище](../../specs/storage.md), [приватность](../../specs/privacy.md).
 
 ## Упорядоченные шаги
 

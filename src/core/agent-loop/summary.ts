@@ -55,8 +55,9 @@ export function createAttemptSummary() {
     },
     snapshot(
       durationMs: number,
-      helpers: readonly { input: number | null; output: number | null }[] = [],
+      helperSteps: ReadonlyArray<readonly { input: number | null; output: number | null }[]> = [],
     ): AgentLoopSummary {
+      const helpers = helperSteps.flat();
       const helperTotals = (which: 'input' | 'output', base: TokenCounter): TokenCounter => {
         let { knownTokens, unknownAttempts, overflowed } = base;
         for (const h of helpers) {
@@ -72,9 +73,9 @@ export function createAttemptSummary() {
         return Object.freeze({ knownTokens, unknownAttempts, overflowed });
       };
       return Object.freeze({
-        steps: perStep.length + helpers.length,
+        steps: perStep.length + helperSteps.length,
         attempts: attempts + helpers.length,
-        attemptsPerStep: Object.freeze([...perStep, ...helpers.map(() => 1)]),
+        attemptsPerStep: Object.freeze([...perStep, ...helperSteps.map((step) => step.length)]),
         durationMs,
         usage: Object.freeze({
           input: helperTotals('input', input.snapshot()),

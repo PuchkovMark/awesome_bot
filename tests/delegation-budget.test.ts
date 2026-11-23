@@ -46,6 +46,7 @@ test('две ветви делят остаток, финал используе
     }
     expect(typeof take('main', 10)).toBe('object');
     expect(typeof take('a', 30, { protect: 80 })).toBe('object');
+    expect(take('a-retry', 30, { protect: 80 })).toBe('token_budget_exhausted');
     expect(take('b', 30, { protect: 80 })).toBe('token_budget_exhausted');
     expect(store.read(scope, true, now).total).toMatchObject({
       reserved: 120n,

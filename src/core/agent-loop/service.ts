@@ -182,7 +182,8 @@ export function createAgentLoop(
               ...request,
               messages: [...request.messages, ...transcript.slice(request.messages.length)],
             });
-            tools.beginBatch(batchRequest(), pendingIds, parentStep + 1);
+            const isLoopCurrent = () => !checkStopped();
+            tools.beginBatch(batchRequest(), pendingIds, parentStep + 1, isLoopCurrent);
             const execute = (call: LlmToolCall) => {
               const cached = executions.get(call.id);
               if (cached) {
@@ -211,7 +212,7 @@ export function createAgentLoop(
               if (!results || !safeCurrent()) return finish(stopped ?? { kind: 'cancelled' });
               for (const [index, call] of batch.entries())
                 transcript.push({ role: 'tool', callId: call.id, text: results[index]! });
-              tools.beginBatch(batchRequest(), pendingIds.slice(i), parentStep + 1);
+              tools.beginBatch(batchRequest(), pendingIds.slice(i), parentStep + 1, isLoopCurrent);
             }
             parentStep++;
             stepAttempts = 0;
