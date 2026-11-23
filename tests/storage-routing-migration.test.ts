@@ -37,14 +37,13 @@ test('версия 7 сохраняет данные, FK и checksums; оба р
       'local_content_versions',
       'chat_content_selections',
     ];
-    const saved = savedTables.map((t) =>
-      db
-        .prepare(
-          t === 'chat_connections'
-            ? 'SELECT *,NULL AS pause_reason,0 AS erased_author_number FROM chat_connections'
-            : 'SELECT * FROM ' + t,
-        )
-        .all(),
+    const addedColumns: Partial<Record<string, string>> = {
+      chat_connections: ',NULL AS pause_reason,0 AS erased_author_number',
+      profile_facts:
+        ",NULL AS generation,NULL AS source_at,NULL AS event_key,'' AS interest_key,'set' AS change_kind",
+    };
+    const saved = savedTables.map((table) =>
+      db.prepare('SELECT *' + (addedColumns[table] ?? '') + ' FROM ' + table).all(),
     );
     const history = db.prepare('SELECT * FROM schema_migrations').all();
     const jobs = db.prepare('SELECT * FROM queue_jobs').all();
