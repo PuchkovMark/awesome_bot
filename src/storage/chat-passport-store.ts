@@ -53,12 +53,11 @@ export function createChatPassportStore(connection: Connection, lifecycle: Lifec
       if (!revisions.length) return true;
       return lifecycle.transaction(scope, (db) => {
         const read = db
-          .prepare(
-            `SELECT revision FROM chat_passport_sections WHERE ${sectionScope} AND text IS NOT NULL`,
-          )
+          .prepare(`SELECT revision FROM chat_passport_sections WHERE ${sectionScope}`)
           .pluck();
         return revisions.every(
-          ({ section, revision }) => read.get(scope.chatId, scope.generation, section) === revision,
+          ({ section, revision }) =>
+            (read.get(scope.chatId, scope.generation, section) ?? 0) === revision,
         );
       });
     },

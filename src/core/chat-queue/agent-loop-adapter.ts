@@ -172,6 +172,7 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
         let addedBytes = 0;
         let context = prepared.metadata;
         let staleContext = false;
+        let attempted = false;
         const cardsCurrent = () => cards?.current([...usedRefs.values()]) ?? true;
         const passportCurrent = (extra: readonly PassportRevision[] = []) => {
           try {
@@ -187,7 +188,7 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
                 ...usedRefs.values(),
                 ...candidateCards.flatMap(({ refs }) => refs),
               ])) ||
-            !passportCurrent(candidatePassport?.used)
+            !passportCurrent(attempted ? candidatePassport?.used : passport?.entries)
           ) {
             staleContext = true;
             return false;
@@ -221,8 +222,9 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
                   ? {
                       beginBatch(request, remaining, steps) {
                         // Результат инструмента использует место до добавления необязательных разделов.
+                        if (!passportBase) return session.beginBatch(request, remaining, steps);
                         const messages = request.messages.slice();
-                        if (passportBase) messages[passport.messageIndex] = passportBase;
+                        messages[passport.messageIndex] = passportBase;
                         session.beginBatch({ ...request, messages }, remaining, steps);
                       },
                     }
@@ -259,6 +261,7 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
                   : work.isCurrent() && allowed();
             if (admission === 'context_stale') staleContext = true;
             if (admission === true || (admission !== null && typeof admission === 'object')) {
+              attempted = true;
               for (const card of candidateCards) {
                 cardSubjects.add(card.owner);
                 for (const id of card.sourceIds) cardSources.add(id);
@@ -313,8 +316,12 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
                 const result = compose?.(request);
                 candidateCards = result?.used ?? [];
                 const withCards = result?.request ?? request;
-                candidatePassport = passport
-                  ? composePassport(passport, withCards, options.modelInputLimit)
+                const currentPassport =
+                  passport && attempted
+                    ? { ...passport, entries: passport.readEntries() }
+                    : passport;
+                candidatePassport = currentPassport
+                  ? composePassport(currentPassport, withCards, options.modelInputLimit)
                   : undefined;
                 passportBase =
                   passport && candidatePassport?.used.length

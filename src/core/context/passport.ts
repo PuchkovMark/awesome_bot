@@ -46,12 +46,9 @@ export interface PassportContextReader {
   current(scope: ConnectionScope, revisions: readonly PassportRevision[]): boolean;
 }
 
-interface PassportText extends PassportRevision {
-  readonly text: string;
-}
-
 export interface PreparedPassport {
-  readonly entries: readonly PassportText[];
+  readonly entries: readonly PassportEntry[];
+  readEntries(): readonly PassportEntry[];
   readonly messageIndex: number;
   readonly inputBudgetTokens: number;
   readonly modelContextTokens: number;
@@ -67,14 +64,16 @@ export function preparePassport(
 ): PreparedPassport | undefined {
   const candidates = passportCandidates(text);
   if (!candidates.length) return undefined;
-  const snapshot = reader.read(scope);
-  const entries = candidates.flatMap((key) => {
-    const entry = snapshot.find(({ section }) => section === key);
-    return entry?.text ? [{ section: key, revision: entry.revision, text: entry.text }] : [];
-  });
-  if (!entries.length) return undefined;
+  function readEntries() {
+    const snapshot = reader.read(scope);
+    return candidates.map(
+      (section) =>
+        snapshot.find((entry) => entry.section === section) ?? { section, revision: 0, text: null },
+    );
+  }
   return {
-    entries,
+    entries: readEntries(),
+    readEntries,
     messageIndex,
     inputBudgetTokens: config.inputBudgetTokens,
     modelContextTokens: config.modelContextTokens,
@@ -89,7 +88,7 @@ export function composePassport(
 ): { request: LlmRequest; used: readonly PassportRevision[]; estimatedTokens: number } {
   const empty = { request, used: [], estimatedTokens: 0 };
   const target = request.messages[plan.messageIndex];
-  if (target?.role !== 'user') return empty;
+  if (target?.role !== 'user' || !plan.entries.some(({ text }) => text)) return empty;
   const base = estimateRequestInput(request);
   const allowance = Math.min(
     Math.floor(plan.inputBudgetTokens / 10),
@@ -102,6 +101,7 @@ export function composePassport(
   let composed = request;
   let estimatedTokens = 0;
   for (const { section, revision, text } of plan.entries) {
+    if (!text) continue;
     const candidate = { ...blocks, [section]: text };
     const combined = appendPassport(target.text, candidate);
     if (combined === undefined) return empty;

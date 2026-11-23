@@ -146,6 +146,7 @@ const plan = (
   flags: Partial<PreparedPassport> = {},
 ): PreparedPassport => ({
   entries,
+  readEntries: () => entries,
   messageIndex: 0,
   modelContextTokens: c.modelContextTokens,
   inputBudgetTokens: c.inputBudgetTokens,
@@ -228,6 +229,7 @@ test('нейтральное обращение сохраняет запрос 
     if (scoped.kind !== 'ready') throw Error(scoped.kind);
     expect(scoped.passport?.entries).toEqual([
       { section: 'rules', revision: 1, text: 'Локальное правило.' },
+      { section: 'glossary', revision: 0, text: null },
     ]);
     expect(read).toHaveBeenCalledOnce();
     const privateInput = await builder.prepare(f.work(question.id, false));

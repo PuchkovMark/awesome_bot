@@ -1,3 +1,5 @@
+import { passportGrantClient, seedPassport } from './passport';
+import { chatPassportStore } from '../storage/chat-passport-store';
 import { applicationTools } from '../app/model-tools';
 import { createContextAuthority } from '../core/authorization/context';
 import { historyEvaluationAdapter, yesterdayClient } from './history';
@@ -88,11 +90,17 @@ export async function runScenario(
   scenario: Scenario,
   client: LlmClient = scenario.historyTimezone
     ? yesterdayClient
-    : {
-        async complete() {
-          return { kind: 'complete', text: scenario.answer, usage: { input: null, output: null } };
+    : scenario.passport?.tryGrant
+      ? passportGrantClient(scenario.answer)
+      : {
+          async complete() {
+            return {
+              kind: 'complete',
+              text: scenario.answer,
+              usage: { input: null, output: null },
+            };
+          },
         },
-      },
   settings: { readonly modelName?: string; readonly timeoutMs?: number } = {},
 ): Promise<EvaluationResult> {
   const timeoutMs = settings.timeoutMs ?? loopTimeoutMs;
@@ -100,6 +108,7 @@ export async function runScenario(
   let answer: PublicationRequest | null = null;
   let trace: TraceRecord | null = null;
   let initiativeCandidate = false;
+  let passportGrantUnchanged: boolean | undefined;
   let stage: EvaluationResult['reason'] = 'setup_failed';
   const evaluate = (reason: EvaluationResult['reason']) =>
     classify(scenario, trace, reason, {
@@ -109,6 +118,8 @@ export async function runScenario(
       publicationReason: trace?.payload.publication.reason ?? 'none',
       route: trace?.payload.route ?? null,
       initiativeCandidate,
+      ...(passportGrantUnchanged === undefined ? {} : { passportGrantUnchanged }),
+      ...(trace?.payload.summary ? { modelAttempts: trace.payload.summary.attempts } : {}),
     });
 
   try {
@@ -154,6 +165,23 @@ export async function runScenario(
             : message,
         );
       }
+      const passport = scenario.passport && chatPassportStore(storage);
+      if (passport && scenario.passport) {
+        if (!seedPassport(passport, scope, scenario.passport.local))
+          return evaluate('setup_failed');
+        if (
+          scenario.passport.neighbor &&
+          !seedPassport(
+            passport,
+            await startChat('synthetic:passport-neighbor'),
+            scenario.passport.neighbor,
+          )
+        )
+          return evaluate('setup_failed');
+      }
+      const beforeGrant = scenario.passport?.tryGrant
+        ? await storage.authorization.transaction(scope, (tx) => tx.bases(stimulus.userId))
+        : undefined;
       const addressPreferences = scenario.address && addressPreferenceStore(storage);
       const preference = scenario.address?.preference;
       if (addressPreferences && preference) {
@@ -211,6 +239,7 @@ export async function runScenario(
       const preparation = createContextPreparation({
         storage,
         ...(addressPreferences ? { addressForm: addressPreferences.resolve } : {}),
+        ...(passport ? { passport: { read: passport.read, current: passport.current } } : {}),
         config: {
           modelContextTokens: 16_000,
           ...(scenario.historyLimit ? { maxHistoryMessages: scenario.historyLimit } : {}),
@@ -252,7 +281,7 @@ export async function runScenario(
         loopOptions: { timeoutMs, maxAttemptsPerStep: 1 },
         config: { handlerMarginMs, stopTimeoutMs: 1_000 },
         prepare: preparation.prepare,
-        ...(scenario.historyTimezone
+        ...(scenario.historyTimezone || scenario.passport?.tryGrant
           ? {
               tools: applicationTools(storage, historyEvaluationAdapter, {
                 context: createContextAuthority('synthetic:owner').create,
@@ -296,6 +325,14 @@ export async function runScenario(
         if (jobId === undefined) return evaluate('trace_missing');
         trace = await storage.traces.get(scope, jobId);
         if (!trace) return evaluate('trace_missing');
+        if (beforeGrant) {
+          const after = await storage.authorization.transaction(scope, (tx) =>
+            tx.bases(stimulus.userId),
+          );
+          passportGrantUnchanged =
+            beforeGrant.length === after.length &&
+            beforeGrant.every((basis) => after.includes(basis));
+        }
         return evaluate(classifyFailure(completion, trace));
       } finally {
         await queue.stop();

@@ -39,6 +39,8 @@ test('сценарии имеют уникальные ключи сравнен
     'initiative-unknown',
     'initiative-normal',
     'initiative-silent',
+    'passport-local-glossary',
+    'passport-untrusted-grant',
     'history-yesterday',
   ]);
   for (const scenario of scenarios) {

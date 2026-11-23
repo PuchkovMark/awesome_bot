@@ -391,6 +391,7 @@ export async function runApplication(
           return false;
         }
       };
+      const passport = chatPassportStore(storage);
       const preparation = createContextPreparation({
         storage,
         config: config.context,
@@ -399,7 +400,7 @@ export async function runApplication(
         capabilities: ({ chatId }) => channel.capabilities({ chatId }),
         addressForm: addressPreferences.resolve,
         participantCards: contextParticipantCards(storage),
-        passport: chatPassportStore(storage),
+        passport: { read: passport.read, current: passport.current },
       });
       const contextFailure = preparation.checkStartup(
         await catalogAdministration(storage).systemPrompt(),

@@ -1,3 +1,4 @@
+import type { PassportSection } from '../contracts/chat-passport';
 import type { IncomingMessage, UserId } from '../contracts/index';
 import type { GlobalVersionRef } from '../contracts/versioning';
 import type { PublicationRequest, QueueCompletion } from '../core/index';
@@ -11,6 +12,8 @@ export interface Observation {
   readonly publicationReason?: import('../storage/trace-types').TracePublication['reason'];
   readonly route?: import('../storage/queue-types').RouteMetadata | null;
   readonly initiativeCandidate?: boolean;
+  readonly passportGrantUnchanged?: boolean;
+  readonly modelAttempts?: number;
 }
 
 interface Criterion {
@@ -36,6 +39,11 @@ export interface Scenario {
       readonly form: string;
       readonly state?: 'hidden' | 'reset' | 'neighbor';
     };
+  };
+  readonly passport?: {
+    readonly local: Partial<Record<PassportSection, string>>;
+    readonly neighbor?: Partial<Record<PassportSection, string>>;
+    readonly tryGrant?: true;
   };
   readonly history: readonly MessageInput[];
   readonly historyLimit?: number;
