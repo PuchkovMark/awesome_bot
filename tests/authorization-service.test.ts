@@ -1,8 +1,8 @@
-import { createAuthorizationService, scopeForService, scopeFor } from './helpers/connection-scope.js';
+import { createAuthorizationService, scopeForService, scopeFor } from './helpers/connection-scope';
 import { expect, test } from 'vitest';
 
-import type { AuthorizationContext } from '../src/contracts/index.js';
-import { authConfig, authorizationFixture } from './helpers/authorization-fixture.js';
+import type { AuthorizationContext } from '../src/contracts/index';
+import { authConfig, authorizationFixture } from './helpers/authorization-fixture';
 
 test('назначения, совмещение оснований и защита от обычного снятия', async () => {
   const f = await authorizationFixture(); const { service: s, storage, owner, member } = f;

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { Database } from 'better-sqlite3';
-import { safeError, StorageError } from './errors.js';
-import { migrations, type Migration } from './migrations/index.js';
+import { safeError, StorageError } from './errors';
+import { migrations, type Migration } from './migrations/index';
 
 interface AppliedMigration { version: number; name: string; checksum: string }
 function checksum(migration: Migration): string {

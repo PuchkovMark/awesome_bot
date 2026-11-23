@@ -1,4 +1,4 @@
-import type { AgentLoopSummary, TokenCounter } from './types.js';
+import type { AgentLoopSummary, TokenCounter } from './types';
 
 export function usageCount(value: unknown): number | null {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;

@@ -1,11 +1,11 @@
 import Database from 'better-sqlite3';
 import { expect,test } from 'vitest';
-import { createAuthorizationService,createLifecycleService } from '../src/core/index.js';
-import { openStorage } from '../src/storage/index.js';
-import { chatControlStore } from '../src/storage/chat-control-store.js';
-import { migrate } from '../src/storage/migrate.js';
-import { migrations } from '../src/storage/migrations/index.js';
-import { storageFixture } from './helpers/storage-fixture.js';
+import { createAuthorizationService,createLifecycleService } from '../src/core/index';
+import { openStorage } from '../src/storage/index';
+import { chatControlStore } from '../src/storage/chat-control-store';
+import { migrate } from '../src/storage/migrate';
+import { migrations } from '../src/storage/migrations/index';
+import { storageFixture } from './helpers/storage-fixture';
 
 const chat='vk:2000000010', neighbor='vk:2000000011', ownerId='vk:1';
 

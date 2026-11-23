@@ -1,4 +1,4 @@
-import type { ChatId, PlatformMessageId, Timestamp, UserId } from './identifiers.js';
+import type { ChatId, PlatformMessageId, Timestamp, UserId } from './identifiers';
 
 export type KnownBoolean = boolean | 'unknown';
 export type NeutralText = string;

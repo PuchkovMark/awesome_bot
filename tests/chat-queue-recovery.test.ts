@@ -1,11 +1,11 @@
 import { expect,test,vi } from 'vitest';
-import { openStorage } from '../src/storage/index.js';
-import { createChatQueue } from '../src/core/index.js';
-import { queueConfig } from '../src/core/chat-queue/validation.js';
-import { queueBackend } from '../src/storage/queue-registry.js';
-import { scopeFor } from './helpers/connection-scope.js';
-import { storageFixture } from './helpers/storage-fixture.js';
-import { queueMessage,flushQueue } from './helpers/chat-queue.js';
+import { openStorage } from '../src/storage/index';
+import { createChatQueue } from '../src/core/index';
+import { queueConfig } from '../src/core/chat-queue/validation';
+import { queueBackend } from '../src/storage/queue-registry';
+import { scopeFor } from './helpers/connection-scope';
+import { storageFixture } from './helpers/storage-fixture';
+import { queueMessage,flushQueue } from './helpers/chat-queue';
 test('running после перезапуска конечен без повтора, queued сохраняет исходное поколение',async()=>{
  const f=storageFixture();let storage=await openStorage(f.path);let q:ReturnType<typeof createChatQueue>|undefined;
  try{

@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { scenarios } from '../src/evals/scenarios.js';
+import { scenarios } from '../src/evals/scenarios';
 
 test('сценарии имеют уникальные ключи сравнения и шаги проверки в VK', () => {
   expect(scenarios.map(scenario => scenario.id)).toEqual([

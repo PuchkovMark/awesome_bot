@@ -1,15 +1,15 @@
-import type { ScopedStorage } from '../../storage/scoped-types.js';
-import { createReasonMaintenance } from './maintenance.js';
-import type { AuthorizationScheduler } from './maintenance.js';
-import type { AuthorizationContext, AuthorizationDecision, AuthorizationDenial, ConnectionScope, GrantBasis, UserId } from '../../contracts/index.js';
-import type { AppConfig } from '../../config/types.js';
-import type { AuthorizationTransaction, RevocationAudit } from '../../storage/index.js';
-import type { RecoveryOperation } from '../../storage/admin-recovery-store.js';
-import { chatControlAction, type ChatControlCommand } from '../chat-control/commands.js';
-import { applyChatControl, type ChatControlResult } from '../chat-control/service.js';
-import { createContextAuthority } from './context.js';
-import { botRole, evaluatePolicy } from './policy.js';
-import { platformOf, validId, validTime } from './validation.js';
+import type { ScopedStorage } from '../../storage/scoped-types';
+import { createReasonMaintenance } from './maintenance';
+import type { AuthorizationScheduler } from './maintenance';
+import type { AuthorizationContext, AuthorizationDecision, AuthorizationDenial, ConnectionScope, GrantBasis, UserId } from '../../contracts/index';
+import type { AppConfig } from '../../config/types';
+import type { AuthorizationTransaction, RevocationAudit } from '../../storage/index';
+import type { RecoveryOperation } from '../../storage/admin-recovery-store';
+import { chatControlAction, type ChatControlCommand } from '../chat-control/commands';
+import { applyChatControl, type ChatControlResult } from '../chat-control/service';
+import { createContextAuthority } from './context';
+import { botRole, evaluatePolicy } from './policy';
+import { platformOf, validId, validTime } from './validation';
 
 export type AuthorizationResult<T> = { readonly allowed: true; readonly value: T } | { readonly allowed: false; readonly code: AuthorizationDenial; readonly maxLength?: number };
 export interface AuthorizationOptions {

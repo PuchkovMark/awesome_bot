@@ -1,21 +1,21 @@
-import type {LlmClient} from '../../llm/types.js';
-import type {AgentLoopInput,AgentLoopOptions} from '../agent-loop/types.js';
-import {createAttemptSummary} from '../agent-loop/summary.js';
-import {createAgentLoop} from '../agent-loop/service.js';
-import {loopOptions} from '../agent-loop/validation.js';
-import {createChatQueue} from './service.js';
-import {queueConfig} from './validation.js';
-import {QueueError} from './errors.js';
-import type {ChatQueueOptions,QueueHandlerInput,QueueConfig,QueueCompletion} from './types.js';
-import type {PreparationResult} from '../context/types.js';
-export type QueuePreparation={readonly kind:'ready';readonly input:Omit<AgentLoopInput,'signal'>;readonly metadata?:import('../context/types.js').ContextMetadata}|Exclude<PreparationResult,{kind:'ready'}>;
+import type {LlmClient} from '../../llm/types';
+import type {AgentLoopInput,AgentLoopOptions} from '../agent-loop/types';
+import {createAttemptSummary} from '../agent-loop/summary';
+import {createAgentLoop} from '../agent-loop/service';
+import {loopOptions} from '../agent-loop/validation';
+import {createChatQueue} from './service';
+import {queueConfig} from './validation';
+import {QueueError} from './errors';
+import type {ChatQueueOptions,QueueHandlerInput,QueueConfig,QueueCompletion} from './types';
+import type {PreparationResult} from '../context/types';
+export type QueuePreparation={readonly kind:'ready';readonly input:Omit<AgentLoopInput,'signal'>;readonly metadata?:import('../context/types').ContextMetadata}|Exclude<PreparationResult,{kind:'ready'}>;
 export interface AgentLoopQueueOptions extends Omit<ChatQueueOptions,'handler'|'config'> {
  readonly modelName:string;readonly client:LlmClient;readonly loopOptions?:AgentLoopOptions;
  readonly config?:Omit<Partial<QueueConfig>,'loopTimeoutMs'>;
  readonly preparationTimeoutMs?:number;readonly postPreparationMarginMs?:number;
  readonly signal?:AbortSignal;
  readonly prepare:(work:QueueHandlerInput)=>Promise<QueuePreparation>;
- readonly disclosure?:(work:QueueHandlerInput)=>import('../../storage/trace-types.js').TracePayload['disclosure'];
+ readonly disclosure?:(work:QueueHandlerInput)=>import('../../storage/trace-types').TracePayload['disclosure'];
 }
 export function createAgentLoopQueue(options:AgentLoopQueueOptions){
  const settings=loopOptions(options.loopOptions??{});

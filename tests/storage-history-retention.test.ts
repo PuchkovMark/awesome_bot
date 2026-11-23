@@ -1,12 +1,12 @@
 import Database from 'better-sqlite3';
 import { expect, test, vi } from 'vitest';
-import { queueConfig } from '../src/core/chat-queue/validation.js';
-import { historyClearStore } from '../src/storage/history-retention-store.js';
-import { openStorage } from '../src/storage/index.js';
-import { lifecycleBackend } from '../src/storage/lifecycle-store.js';
-import { queueBackend } from '../src/storage/queue-registry.js';
-import { scopeFor } from './helpers/connection-scope.js';
-import { storageFixture } from './helpers/storage-fixture.js';
+import { queueConfig } from '../src/core/chat-queue/validation';
+import { historyClearStore } from '../src/storage/history-retention-store';
+import { openStorage } from '../src/storage/index';
+import { lifecycleBackend } from '../src/storage/lifecycle-store';
+import { queueBackend } from '../src/storage/queue-registry';
+import { scopeFor } from './helpers/connection-scope';
+import { storageFixture } from './helpers/storage-fixture';
 
 const day = 86_400_000;
 const epoch = 1_800_000_000_000;

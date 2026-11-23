@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
-import {migrate} from '../../src/storage/migrate.js';
-import {migrations} from '../../src/storage/migrations/index.js';
-import {participantFixture} from './participant-fixture.js';
+import {migrate} from '../../src/storage/migrate';
+import {migrations} from '../../src/storage/migrations/index';
+import {participantFixture} from './participant-fixture';
 export const legacyPrompt='LEGACY_PRIVATE_PROMPT_016';
 export const sharedPrompt='Общие правила без индивидуальных настроек.';
 export function legacyChatPromptFixture(db:Database.Database,selected=true){

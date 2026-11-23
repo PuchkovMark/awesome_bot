@@ -1,4 +1,4 @@
-import type { ConnectionScope } from '../../contracts/index.js';
+import type { ConnectionScope } from '../../contracts/index';
 
 export interface IntroductionGuard {
   readonly signal: AbortSignal;

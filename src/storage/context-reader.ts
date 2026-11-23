@@ -1,9 +1,9 @@
-import {historyBounds} from './history-retention-store.js';
-import type {Connection} from './connection.js';
-import type {LifecycleBackend} from './lifecycle-store.js';
-import type {ContextMessageReader,ContextRecord} from './context-types.js';
-import {readMessage,createMessageStore} from './messages.js';
-import {requireInput} from './validation.js';
+import {historyBounds} from './history-retention-store';
+import type {Connection} from './connection';
+import type {LifecycleBackend} from './lifecycle-store';
+import type {ContextMessageReader,ContextRecord} from './context-types';
+import {readMessage,createMessageStore} from './messages';
+import {requireInput} from './validation';
 function positive(n:number,max=Number.MAX_SAFE_INTEGER){requireInput(Number.isSafeInteger(n)&&n>0&&n<=max);}
 const projection=`id,chat_id AS chatId,platform_message_id AS messageId,user_id AS userId,role,
  coalesce(CAST(substr(CAST(text AS BLOB),1,?) AS TEXT),'') AS text,coalesce(CAST(substr(CAST(author_name AS BLOB),1,?) AS TEXT),'') AS authorName,
@@ -16,7 +16,7 @@ function result(row:Row,limit:number):ContextRecord {
  return {...rest,text:text.slice(0,limit).join(''),authorName:name.slice(0,limit).join(''),...(replyToMessageId!==null?{replyToMessageId}:{}),truncated:text.length>limit||name.length>limit||textBytes>limit*4||nameBytes>limit*4};
 }
 export interface ContextSearch {
- search(scope:import('../contracts/index.js').ConnectionScope,query:string,limit:number,textLimit:number):Promise<readonly ContextRecord[]>;
+ search(scope:import('../contracts/index').ConnectionScope,query:string,limit:number,textLimit:number):Promise<readonly ContextRecord[]>;
 }
 export function createContextReader(connection:Connection,lifecycle:LifecycleBackend):ContextMessageReader & ContextSearch {
  const reader=createMessageStore(connection,true);

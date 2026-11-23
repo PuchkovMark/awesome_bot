@@ -1,9 +1,9 @@
 import { expect, test, vi } from 'vitest';
-import { openStorage } from '../src/storage/index.js';
-import { queueBackend } from '../src/storage/queue-registry.js';
-import { createChatQueue, createLifecycleService } from '../src/core/index.js';
-import { queueMessage } from './helpers/chat-queue.js';
-import { storageFixture } from './helpers/storage-fixture.js';
+import { openStorage } from '../src/storage/index';
+import { queueBackend } from '../src/storage/queue-registry';
+import { createChatQueue, createLifecycleService } from '../src/core/index';
+import { queueMessage } from './helpers/chat-queue';
+import { storageFixture } from './helpers/storage-fixture';
 test('отдельные соединения: второй владелец, продление, истечение, старый маркер', async () => {
   const f = storageFixture(); const a = await openStorage(f.path), b = await openStorage(f.path);
   vi.useFakeTimers(); vi.setSystemTime(1000);
@@ -42,7 +42,7 @@ test('начальная пауза защищена владением и пр�
     });
     await expect(rejected.start()).rejects.toMatchObject({ code: 'owned' });
     expect(life.isAdmissionCurrent(admission)).toBe(true);
-    const { queueConfig } = await import('../src/core/chat-queue/validation.js');
+    const { queueConfig } = await import('../src/core/chat-queue/validation');
     expect(first.admit('owner', scope, queueMessage('vk:1', '1'), () => true, queueConfig()).status).toBe('queued');
     const neighbor = first.admit('owner', other, { ...queueMessage('other:1', '1'), userId: 'other:u' }, () => true, queueConfig());
     first.release('owner');

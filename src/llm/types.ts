@@ -1,4 +1,4 @@
-import type { ObjectParameterSchema } from '../contracts/json.js';
+import type { ObjectParameterSchema } from '../contracts/json';
 
 /** Только транспортные данные. Разрешения и execute остаются в харнесе. */
 export interface LlmToolDescription {

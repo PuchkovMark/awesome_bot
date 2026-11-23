@@ -1,9 +1,9 @@
 import {expect,test,vi} from 'vitest';
-import {openStorage} from '../src/storage/index.js';
-import {createMessageRouter,createAgentLoopQueue,createPublicationService} from '../src/core/index.js';
-import {scopeFor} from './helpers/connection-scope.js';
-import {flushQueue} from './helpers/chat-queue.js';
-import type {IncomingMessage} from '../src/contracts/index.js';
+import {openStorage} from '../src/storage/index';
+import {createMessageRouter,createAgentLoopQueue,createPublicationService} from '../src/core/index';
+import {scopeFor} from './helpers/connection-scope';
+import {flushQueue} from './helpers/chat-queue';
+import type {IncomingMessage} from '../src/contracts/index';
 const message:IncomingMessage={kind:'message',chatId:'vk:a',userId:'vk:u',authorName:'',isGroupChat:true,isAdmin:false,isBot:false,text:'Пенек помоги',messageId:'1',isMentioned:false,isReplyToBot:false,timestamp:0,attachments:[]};
 const prepare=async()=>({kind:'ready' as const,input:{system:'',messages:[{role:'user' as const,text:'hi'}],maxOutputTokens:5,sessionId:'opaque'}});
 for(const mode of ['normal','active'] as const)for(const kind of ['complete','incomplete','refused','empty','rate_limit'] as const)test(`связка ${mode}/${kind}`,async()=>{
@@ -30,9 +30,9 @@ test('server исчерпывает попытки в active без любого
  try{await q.start();await createMessageRouter({storage,queue:q}).receive(scope,message);await flushQueue();await vi.advanceTimersByTimeAsync(1000);expect(client.complete).toHaveBeenCalledTimes(2);expect(publish).not.toHaveBeenCalled();expect(await storage.queue.get(scope,1)).toMatchObject({state:'terminal',outcome:'failed'});}finally{await q.stop();await storage.close();vi.useRealTimers();}
 });
 test('queue_full и ошибка цикла делят период; дубль переполненного входа не повторяет уведомление',async()=>{
- const storage=await openStorage(':memory:'),scope=scopeFor(storage,'vk:a');let release:(value:import('../src/llm/types.js').LlmResult)=>void=()=>{};let calls=0;
+ const storage=await openStorage(':memory:'),scope=scopeFor(storage,'vk:a');let release:(value:import('../src/llm/types').LlmResult)=>void=()=>{};let calls=0;
  const error={kind:'error',code:'rate_limit',message:'SECRET'} as const;
- const client={async complete(){if(++calls===1)return await new Promise<import('../src/llm/types.js').LlmResult>(r=>{release=r;});return error;}};
+ const client={async complete(){if(++calls===1)return await new Promise<import('../src/llm/types').LlmResult>(r=>{release=r;});return error;}};
  const publish=vi.fn(async()=>({kind:'delivered' as const,receipt:{messageId:'notice',userId:'vk:bot' as const,authorName:'',timestamp:1}}));
  const publication=createPublicationService({storage,port:{async canReply(){return true;},publish}});const q=createAgentLoopQueue({modelName:'synthetic-model',tracing:{messageRetentionDays:30},storage,prepare,client,config:{maxQueuedPerChat:1},onSettled:publication.onSettled});const router=createMessageRouter({storage,queue:q,onQueueFull:publication.queueFull});
  try{await q.start();await router.receive(scope,message);await flushQueue();await router.receive(scope,{...message,messageId:'2'});expect((await router.receive(scope,{...message,messageId:'3'})).admission?.status).toBe('queue_full');expect(publish).toHaveBeenCalledOnce();

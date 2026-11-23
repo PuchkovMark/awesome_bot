@@ -1,13 +1,13 @@
 import Database from 'better-sqlite3';
 import { expect, test } from 'vitest';
-import type { ConnectionScope, UserId } from '../src/contracts/index.js';
-import { chatLimits } from '../src/core/chat-limits/config.js';
-import { queueConfig } from '../src/core/chat-queue/validation.js';
-import { openStorage } from '../src/storage/index.js';
-import { queueBackend } from '../src/storage/queue-registry.js';
-import { queueMessage } from './helpers/chat-queue.js';
-import { scopeFor } from './helpers/connection-scope.js';
-import { storageFixture } from './helpers/storage-fixture.js';
+import type { ConnectionScope, UserId } from '../src/contracts/index';
+import { chatLimits } from '../src/core/chat-limits/config';
+import { queueConfig } from '../src/core/chat-queue/validation';
+import { openStorage } from '../src/storage/index';
+import { queueBackend } from '../src/storage/queue-registry';
+import { queueMessage } from './helpers/chat-queue';
+import { scopeFor } from './helpers/connection-scope';
+import { storageFixture } from './helpers/storage-fixture';
 
 const token = 'test-queue';
 const route = () => ({ reason: 'mention', route: { kind: 'mention', mode: 'normal', isGroupChat: true } } as const);

@@ -1,10 +1,10 @@
 import { randomInt } from 'node:crypto';
 import type { Database } from 'better-sqlite3';
-import type { ChatId, ConnectionScope, UserId } from '../contracts/index.js';
-import type { Connection } from './connection.js';
-import type { LifecycleBackend } from './lifecycle-store.js';
-import type { Storage } from './types.js';
-import { compositeId, requireInput, timestamp } from './validation.js';
+import type { ChatId, ConnectionScope, UserId } from '../contracts/index';
+import type { Connection } from './connection';
+import type { LifecycleBackend } from './lifecycle-store';
+import type { Storage } from './types';
+import { compositeId, requireInput, timestamp } from './validation';
 
 export type RecoveryReason = 'unavailable' | 'unconfirmed' | 'interrupted';
 export interface RecoveryOperation {

@@ -1,7 +1,7 @@
 import { expect,test } from 'vitest';
-import { openStorage } from '../src/storage/index.js';
-import { createLifecycleService } from '../src/core/index.js';
-import type { LifecycleObservation } from '../src/contracts/index.js';
+import { openStorage } from '../src/storage/index';
+import { createLifecycleService } from '../src/core/index';
+import type { LifecycleObservation } from '../src/contracts/index';
 test('неопределённость сохраняется до решения владельца; контекст нельзя скопировать',async()=>{
  const storage=await openStorage(':memory:');let observation:LifecycleObservation={confidence:'confirmed',bot:'present'};
  const service=createLifecycleService({storage,ownerId:'vk:owner',source:{async observe(){return observation;}}});

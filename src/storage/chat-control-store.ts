@@ -1,9 +1,9 @@
 import type { Database } from 'better-sqlite3';
-import type { ChatId, ConnectionScope, UserId } from '../contracts/index.js';
-import type { Connection } from './connection.js';
-import type { LifecycleBackend } from './lifecycle-store.js';
-import type { ResponseMode, Storage } from './types.js';
-import { requireInput, timestamp } from './validation.js';
+import type { ChatId, ConnectionScope, UserId } from '../contracts/index';
+import type { Connection } from './connection';
+import type { LifecycleBackend } from './lifecycle-store';
+import type { ResponseMode, Storage } from './types';
+import { requireInput, timestamp } from './validation';
 
 export interface ChatControlState {
   readonly enabled: boolean;

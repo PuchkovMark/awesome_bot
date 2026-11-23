@@ -1,7 +1,7 @@
-import type {AuthorizationContext,ConnectionScope} from '../../contracts/index.js';
-import type {Storage} from '../../storage/index.js';
-import type {createAuthorizationService} from '../authorization/service.js';
-import {traceBackend} from '../../storage/trace-store.js';
+import type {AuthorizationContext,ConnectionScope} from '../../contracts/index';
+import type {Storage} from '../../storage/index';
+import type {createAuthorizationService} from '../authorization/service';
+import {traceBackend} from '../../storage/trace-store';
 /** Только доверенная композиция: проверка личности и чтение выполняются в одной транзакции. */
 export function createTraceDiagnostics(options:{readonly storage:Storage;readonly authorization:Pick<Awaited<ReturnType<typeof createAuthorizationService>>,'readDiagnostics'>}){
  const backend=traceBackend(options.storage);

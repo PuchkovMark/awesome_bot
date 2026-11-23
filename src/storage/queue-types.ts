@@ -1,5 +1,5 @@
-import type { ConnectionScope } from '../contracts/index.js';
-import type { MessageInput, StoredMessage } from './types.js';
+import type { ConnectionScope } from '../contracts/index';
+import type { MessageInput, StoredMessage } from './types';
 export interface QueueConfig {
   readonly maxConcurrentChats: number;
   readonly maxQueuedPerChat: number;
@@ -38,7 +38,7 @@ export type QueueMessage = MessageInput;
 export interface RouteMetadata { readonly kind:'direct_message'|'mention'|'reply'|'name'; readonly mode:'normal'|'active'; readonly isGroupChat:boolean }
 
 export interface RoutedQueueDecision { readonly route:RouteMetadata|null; readonly reason:'direct_message'|'mention'|'reply'|'name'|'service'|'disabled'|'silent'|'sender_bot'|'sender_unknown'|'invalid_input'|'not_addressed'|'forbidden'|'reply_unknown'|'reply_other'|'mention_flood' }
-export type RoutedQueueCallback=(input:QueueRoutingSnapshot & {readonly settings:import('./types.js').ChatSettings})=>RoutedQueueDecision;
+export type RoutedQueueCallback=(input:QueueRoutingSnapshot & {readonly settings:import('./types').ChatSettings})=>RoutedQueueDecision;
 export interface FloodNotice {
  readonly messageId:number;
  readonly receivedAt:number;
@@ -60,11 +60,11 @@ export interface ResponsePublication {
  readonly flood?:FloodNotice;
 }
 export type ResponsePublicationAdmission =
- | {readonly allowed:true;readonly permit?:import('./notice-types.js').NoticePermit}
+ | {readonly allowed:true;readonly permit?:import('./notice-types').NoticePermit}
  | {readonly allowed:false;readonly reason:'guard'|'response_rate'|'notice_period'};
 export interface ResponsePublicationBudget {
  currentFlood(input:ResponsePublication):boolean;
  start(input:ResponsePublication,isCurrent:()=>boolean):ResponsePublicationAdmission;
- finish(input:ResponsePublication,outcome:import('./response-rate-store.js').ResponseRateOutcome):void;
+ finish(input:ResponsePublication,outcome:import('./response-rate-store').ResponseRateOutcome):void;
 }
 export type RoutedAdmissionGuard = () => { readonly journal: boolean; readonly respond: boolean; readonly version: number | null; readonly ordinary?:boolean };

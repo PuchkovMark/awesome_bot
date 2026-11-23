@@ -1,4 +1,4 @@
-import type { ParticipantRecord, ParticipantProfileRecord, ProfileFactRecord } from '../../src/storage/index.js';
+import type { ParticipantRecord, ParticipantProfileRecord, ProfileFactRecord } from '../../src/storage/index';
 export const participant: ParticipantRecord = {
   chatId: 'test-a:chat', userId: 'test-a:user', joinedAt: null,
   role: 'unknown', roleObservedAt: null, status: 'unknown', statusObservedAt: null, lastSeenAt: null,

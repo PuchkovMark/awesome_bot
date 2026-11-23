@@ -1,6 +1,6 @@
-import type {AgentLoopMessage} from '../agent-loop/types.js';
-import type {ContextConfig} from './config.js';
-import {dataMarkerBytes} from './format.js';
+import type {AgentLoopMessage} from '../agent-loop/types';
+import type {ContextConfig} from './config';
+import {dataMarkerBytes} from './format';
 export const contextSeparator='\n\nОкружение харнеса:\n';
 export function estimateInput(system:string,messages:readonly AgentLoopMessage[]):number {
  return 128+Buffer.byteLength(system,'utf8')+messages.reduce((n,m)=>n+32+Buffer.byteLength(m.text,'utf8'),0);

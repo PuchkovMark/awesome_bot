@@ -1,4 +1,4 @@
-import type { LlmMessage, LlmRequest, LlmResult, LlmToolDescription } from '../src/llm/index.js';
+import type { LlmMessage, LlmRequest, LlmResult, LlmToolDescription } from '../src/llm/index';
 const tool: LlmToolDescription = { name: 'lookup', description: 'Поиск', parameters: { type: 'object' } };
 const message: LlmMessage = { role: 'tool', callId: 'one', text: 'Ответ' };
 const request: LlmRequest = { system: '', messages: [message], tools: [tool], maxOutputTokens: 1, sessionId: 'opaque' };

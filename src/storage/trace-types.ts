@@ -1,7 +1,7 @@
-import type {ConnectionScope} from '../contracts/index.js';
-import type {ContextMetadata,PreparationFailure} from '../core/context/types.js';
-import type {AgentLoopSummary} from '../core/agent-loop/types.js';
-import type {RouteMetadata} from './queue-types.js';
+import type {ConnectionScope} from '../contracts/index';
+import type {ContextMetadata,PreparationFailure} from '../core/context/types';
+import type {AgentLoopSummary} from '../core/agent-loop/types';
+import type {RouteMetadata} from './queue-types';
 export interface TracePublication {
  readonly rowId:string;readonly tableVersion:1;readonly reaction:'answer'|'notice'|'silence';
  readonly status:'pending_checks'|'allowed'|'suppressed'|'delivered'|'failed'|'unknown';

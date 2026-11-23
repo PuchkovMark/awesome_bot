@@ -1,8 +1,8 @@
-import {participantFixture} from './helpers/participant-fixture.js';
+import {participantFixture} from './helpers/participant-fixture';
 import Database from 'better-sqlite3';
 import {expect,test} from 'vitest';
-import {migrate} from '../src/storage/migrate.js';
-import {migrations} from '../src/storage/migrations/index.js';
+import {migrate} from '../src/storage/migrate';
+import {migrations} from '../src/storage/migrations/index';
 
 test('версия 7 сохраняет данные, FK и checksums; оба режима становятся normal',()=>{
  const db=new Database(':memory:');db.pragma('foreign_keys=ON');

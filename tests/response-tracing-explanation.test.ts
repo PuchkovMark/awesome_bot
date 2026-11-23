@@ -1,11 +1,11 @@
 import Database from 'better-sqlite3';
 import { expect,test } from 'vitest';
-import { createAuthorizationService } from '../src/core/authorization/service.js';
-import { createTraceDiagnostics } from '../src/core/response-tracing/diagnostics.js';
-import { initialTrace } from '../src/storage/trace-store.js';
-import { openStorage } from '../src/storage/index.js';
-import { scopeFor } from './helpers/connection-scope.js';
-import { storageFixture } from './helpers/storage-fixture.js';
+import { createAuthorizationService } from '../src/core/authorization/service';
+import { createTraceDiagnostics } from '../src/core/response-tracing/diagnostics';
+import { initialTrace } from '../src/storage/trace-store';
+import { openStorage } from '../src/storage/index';
+import { scopeFor } from './helpers/connection-scope';
+import { storageFixture } from './helpers/storage-fixture';
 
 test('сводка выбирает последний доставленный ответ, пропускает уведомление и не копирует текст',async()=>{
   const files=storageFixture(), storage=await openStorage(files.path), db=new Database(files.path);

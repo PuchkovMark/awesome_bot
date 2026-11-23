@@ -7,7 +7,8 @@ export function createSkeletonFixture(): { directory: string; cleanup: () => voi
   try {
     for (const path of [
       'package.json', 'package-lock.json', 'tsconfig.json', 'tsconfig.build.json',
-      'eslint.config.mjs', 'vitest.config.ts', 'src', 'scripts', 'tests',
+      '.gitignore', 'eslint.config.mjs', 'vitest.config.ts', 'vitest.queue-load.config.ts',
+      'src', 'scripts', 'tests',
     ]) {
       cpSync(resolve(path), join(directory, path), { recursive: true });
     }

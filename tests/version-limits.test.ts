@@ -1,6 +1,6 @@
 import {expect,test} from 'vitest';
-import {loadConfig} from '../src/config/index.js';
-import {defaultVersionLimits,versionLimits,versionText} from '../src/storage/version-limits.js';
+import {loadConfig} from '../src/config/index';
+import {defaultVersionLimits,versionLimits,versionText} from '../src/storage/version-limits';
 const env={VK_TOKEN:'synthetic',OPENCODE_API_KEY:'synthetic',LLM_MODEL:'model',BOT_OWNER_ID:'vk:owner'};
 test('общие defaults, Unicode и буквальная граница',()=>{
  expect(loadConfig({env,readFile:()=>''}).config.versioning).toEqual(defaultVersionLimits);
@@ -16,7 +16,7 @@ test('значения файла и приоритет env',()=>{
 });
 
 test('ошибки getter и неизвестные options безопасны и не открывают БД',async()=>{
- const {openStorage}=await import('../src/storage/index.js');const {storageFixture}=await import('./helpers/storage-fixture.js');const {existsSync}=await import('node:fs');const f=storageFixture();
+ const {openStorage}=await import('../src/storage/index');const {storageFixture}=await import('./helpers/storage-fixture');const {existsSync}=await import('node:fs');const f=storageFixture();
  try{
   await expect(openStorage(f.path,{get versioning():never{throw new Error('private text');}})).rejects.toMatchObject({code:'invalid_input',message:'Storage: invalid_input'});
   expect(()=>versionLimits({get textMaxLength():never{throw new Error('private text');},maxPerEntity:1})).toThrow('Storage: invalid_input');

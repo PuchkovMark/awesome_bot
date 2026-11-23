@@ -1,11 +1,11 @@
 import type { Database } from 'better-sqlite3';
-import type { ConnectionScope } from '../contracts/lifecycle.js';
-import type { ContentKind, LocalContentKind, ContentVersion, VersionInput, VersionRef, GlobalVersionRef, VersionLimits, AppendVersionResult, SelectionResult } from '../contracts/versioning.js';
-import type { Connection } from './connection.js';
-import type { LifecycleBackend } from './lifecycle-store.js';
-import {object,requireInput,string,timestamp} from './validation.js';
-import {versionText} from './version-limits.js';
-import {StorageError} from './errors.js';
+import type { ConnectionScope } from '../contracts/lifecycle';
+import type { ContentKind, LocalContentKind, ContentVersion, VersionInput, VersionRef, GlobalVersionRef, VersionLimits, AppendVersionResult, SelectionResult } from '../contracts/versioning';
+import type { Connection } from './connection';
+import type { LifecycleBackend } from './lifecycle-store';
+import {object,requireInput,string,timestamp} from './validation';
+import {versionText} from './version-limits';
+import {StorageError} from './errors';
 const kinds=['system_prompt','persona','greeting_template'];
 function snapshot(value:unknown,keys:readonly string[]) {object(value,keys);return {...value};}
 function kind(value:unknown,local=false):asserts value is ContentKind {requireInput(kinds.includes(value as string)&&(!local||value!=='system_prompt'));}

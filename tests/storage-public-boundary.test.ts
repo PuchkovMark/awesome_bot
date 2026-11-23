@@ -4,7 +4,7 @@ import {expect,test} from 'vitest';
 
 test('все публичные запросные методы требуют обязательную область; alias и вложенный chatId не обходят проверку',()=>{
  const path=resolve('src/storage/boundary-fixture.ts');
- const fixture=`import type {ConnectionScope} from '../contracts/lifecycle.js';
+ const fixture=`import type {ConnectionScope} from '../contracts/lifecycle';
  type OldId=string;
  export interface Bare { get(renamed:OldId):Promise<void> }
  export interface Optional { get(scope?:ConnectionScope):Promise<void> }
@@ -15,7 +15,7 @@ test('все публичные запросные методы требуют �
  `;
  const host=ts.createCompilerHost({});const original=host.getSourceFile.bind(host);
  host.getSourceFile=(p,version,...args)=>p===path?ts.createSourceFile(p,fixture,version,true):original(p,version,...args);
- const program=ts.createProgram([resolve('src/storage/types.ts'),path],{target:ts.ScriptTarget.ES2024,module:ts.ModuleKind.NodeNext,moduleResolution:ts.ModuleResolutionKind.NodeNext,strict:true,skipLibCheck:true},host);
+ const program=ts.createProgram([resolve('src/storage/types.ts'),path],{target:ts.ScriptTarget.ES2024,module:ts.ModuleKind.ESNext,moduleResolution:ts.ModuleResolutionKind.Bundler,strict:true,skipLibCheck:true},host);
  const checker=program.getTypeChecker();
  const scopeFile=program.getSourceFile(resolve('src/contracts/lifecycle.ts'))!;
  const scopeSymbol=checker.getExportsOfModule(checker.getSymbolAtLocation(scopeFile)!).find(s=>s.name==='ConnectionScope')!;

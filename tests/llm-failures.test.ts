@@ -1,6 +1,6 @@
 import { afterEach, expect, test, vi } from 'vitest';
-import { createLlmClient } from '../src/llm/index.js';
-import { fakeClient, llmConfig, llmRequest } from './helpers/llm-http.js';
+import { createLlmClient } from '../src/llm/index';
+import { fakeClient, llmConfig, llmRequest } from './helpers/llm-http';
 
 afterEach(() => { vi.restoreAllMocks(); });
 test.each([[401, 'authentication'], [403, 'forbidden'], [429, 'rate_limit'], [500, 'server'], [503, 'server'], [302, 'http'], [400, 'http'], [204, 'http']])('HTTP %s: безопасная категория и одна попытка', async (status, code) => {

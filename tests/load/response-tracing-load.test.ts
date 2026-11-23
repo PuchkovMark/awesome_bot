@@ -1,12 +1,12 @@
 import {expect,test} from 'vitest';
-import {openStorage} from '../../src/storage/index.js';
-import {createChatQueue} from '../../src/core/chat-queue/service.js';
-import {queueConfig} from '../../src/core/chat-queue/validation.js';
-import {createTraceMaintenance} from '../../src/core/response-tracing/diagnostics.js';
-import {scopeFor} from '../helpers/connection-scope.js';
-import {queueMessage,flushQueue} from '../helpers/chat-queue.js';
-import {storageFixture} from '../helpers/storage-fixture.js';
-import {recordQueueLoad} from '../helpers/queue-load-fixture.js';
+import {openStorage} from '../../src/storage/index';
+import {createChatQueue} from '../../src/core/chat-queue/service';
+import {queueConfig} from '../../src/core/chat-queue/validation';
+import {createTraceMaintenance} from '../../src/core/response-tracing/diagnostics';
+import {scopeFor} from '../helpers/connection-scope';
+import {queueMessage,flushQueue} from '../helpers/chat-queue';
+import {storageFixture} from '../helpers/storage-fixture';
+import {recordQueueLoad} from '../helpers/queue-load-fixture';
 test('крупные трассировки, четыре чата и очистка укладываются в владение',async()=>{
  const f=storageFixture(),s=await openStorage(f.path);const config=queueConfig({maxQueuedTotal:200,maxQueuedPerChat:40});let completed=0,maxWriteMs=0;
  const scopes=Array.from({length:4},(_,i)=>scopeFor(s,'vk:trace'+i));

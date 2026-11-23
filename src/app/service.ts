@@ -1,32 +1,32 @@
-import { createVkChannel } from '../channels/index.js';
-import type { ApplicationConfig } from '../config/application.js';
+import { createVkChannel } from '../channels/index';
+import type { ApplicationConfig } from '../config/application';
 import {
   createAgentLoopQueue, createAuthorizationService, createContextPreparation, createLifecycleService,
   createMessageRouter, createPublicationService, QueueError,
-} from '../core/index.js';
-import type { ChatQueue } from '../core/index.js';
-import { createLlmClient, createLlmSessionId } from '../llm/index.js';
-import type { LlmClient } from '../llm/index.js';
-import type { SafeLogger } from '../logger/index.js';
-import type { ApplicationFailure } from '../logger/types.js';
-import { catalogAdministration } from '../storage/catalog-admin.js';
-import { openStorage } from '../storage/index.js';
-import type { Storage } from '../storage/index.js';
-import { unconfirmedLifecycleSource } from './setup.js';
-import { createChatOnboarding } from '../core/chat-onboarding/service.js';
-import { canonicalTimezone, parseTimezoneCommand } from '../core/chat-onboarding/timezone.js';
-import { vkLocalId } from '../channels/vk/outbound.js';
-import { describeVkRights, vkIntroductionReplayWindowMs } from '../channels/vk/introduction.js';
-import { isVkGroupChat } from '../channels/vk/normalize.js';
-import type { ConnectionScope } from '../contracts/index.js';
+} from '../core/index';
+import type { ChatQueue } from '../core/index';
+import { createLlmClient, createLlmSessionId } from '../llm/index';
+import type { LlmClient } from '../llm/index';
+import type { SafeLogger } from '../logger/index';
+import type { ApplicationFailure } from '../logger/types';
+import { catalogAdministration } from '../storage/catalog-admin';
+import { openStorage } from '../storage/index';
+import type { Storage } from '../storage/index';
+import { unconfirmedLifecycleSource } from './setup';
+import { createChatOnboarding } from '../core/chat-onboarding/service';
+import { canonicalTimezone, parseTimezoneCommand } from '../core/chat-onboarding/timezone';
+import { vkLocalId } from '../channels/vk/outbound';
+import { describeVkRights, vkIntroductionReplayWindowMs } from '../channels/vk/introduction';
+import { isVkGroupChat } from '../channels/vk/normalize';
+import type { ConnectionScope } from '../contracts/index';
 import { setTimeout as delay } from 'node:timers/promises';
-import { createAdminRecoveryService } from '../core/admin-recovery/service.js';
-import { parseAdminRecoveryCommand } from '../core/admin-recovery/commands.js';
-import { adminRecoveryStore } from '../storage/admin-recovery-store.js';
-import { chatControlStore } from '../storage/chat-control-store.js';
-import { createChatControlHandlers } from './chat-control.js';
-import { createHistoryHandlers } from './history-retention.js';
-import type { ChatLimits } from '../core/chat-limits/config.js';
+import { createAdminRecoveryService } from '../core/admin-recovery/service';
+import { parseAdminRecoveryCommand } from '../core/admin-recovery/commands';
+import { adminRecoveryStore } from '../storage/admin-recovery-store';
+import { chatControlStore } from '../storage/chat-control-store';
+import { createChatControlHandlers } from './chat-control';
+import { createHistoryHandlers } from './history-retention';
+import type { ChatLimits } from '../core/chat-limits/config';
 
 interface ApplicationDependencies {
   readonly vk?: Parameters<typeof createVkChannel>[1];

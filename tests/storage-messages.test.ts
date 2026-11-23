@@ -1,10 +1,10 @@
-import { asyncStore } from '../src/storage/legacy-types.js';
+import { asyncStore } from '../src/storage/legacy-types';
 import { afterEach, expect, test } from 'vitest';
-import type { MessageInput } from '../src/storage/types.js';
-import { openConnection, type Connection } from '../src/storage/connection.js';
-import { migrate } from '../src/storage/migrate.js';
-import { createMessageStore } from '../src/storage/messages.js';
-import { storageFixture } from './helpers/storage-fixture.js';
+import type { MessageInput } from '../src/storage/types';
+import { openConnection, type Connection } from '../src/storage/connection';
+import { migrate } from '../src/storage/migrate';
+import { createMessageStore } from '../src/storage/messages';
+import { storageFixture } from './helpers/storage-fixture';
 
 const connections: Connection[] = [];
 afterEach(() => { for (const connection of connections.splice(0)) connection.close(); });

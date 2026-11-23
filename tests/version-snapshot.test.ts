@@ -1,9 +1,9 @@
 import {expect,test} from 'vitest';
-import {openStorage} from '../src/storage/index.js';
-import {scopeFor} from './helpers/connection-scope.js';
-import {catalogAdministration} from '../src/storage/catalog-admin.js';
-import type {ContentVersion,VersionRef,GlobalVersionRef} from '../src/contracts/versioning.js';
-import {storageFixture} from './helpers/storage-fixture.js';
+import {openStorage} from '../src/storage/index';
+import {scopeFor} from './helpers/connection-scope';
+import {catalogAdministration} from '../src/storage/catalog-admin';
+import type {ContentVersion,VersionRef,GlobalVersionRef} from '../src/contracts/versioning';
+import {storageFixture} from './helpers/storage-fixture';
 function coherent(value:ContentVersion|null){expect(value).not.toBeNull();expect(value!.text).toBe(value!.ref.version===1?'A':'B');}
 test.each(['local','global','system'] as const)('согласованный снимок при смене выбора через другое соединение: %s',async area=>{
  const f=storageFixture(),one=await openStorage(f.path),two=await openStorage(f.path);try{

@@ -1,11 +1,11 @@
 import Database from 'better-sqlite3';
 import { expect, test } from 'vitest';
-import { createLifecycleService } from '../src/core/index.js';
-import { disclosureStore, type DisclosureInput } from '../src/storage/chat-disclosure-store.js';
-import { openStorage } from '../src/storage/index.js';
-import { migrate } from '../src/storage/migrate.js';
-import { migrations } from '../src/storage/migrations/index.js';
-import { storageFixture } from './helpers/storage-fixture.js';
+import { createLifecycleService } from '../src/core/index';
+import { disclosureStore, type DisclosureInput } from '../src/storage/chat-disclosure-store';
+import { openStorage } from '../src/storage/index';
+import { migrate } from '../src/storage/migrate';
+import { migrations } from '../src/storage/migrations/index';
+import { storageFixture } from './helpers/storage-fixture';
 
 const initial = {
   provider: 'OpenCode Go', dataPolicy: 'history', storagePolicy: 'old',

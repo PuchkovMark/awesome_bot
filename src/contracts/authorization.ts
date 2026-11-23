@@ -1,5 +1,5 @@
-import type { ConnectionScope } from './lifecycle.js';
-import type { ChatId, PlatformId, UserId } from './identifiers.js';
+import type { ConnectionScope } from './lifecycle';
+import type { ChatId, PlatformId, UserId } from './identifiers';
 
 export type BotRole = 'member' | 'admin' | 'owner';
 export type GrantBasis = 'creator' | 'inviter' | 'explicit';

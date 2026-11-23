@@ -1,10 +1,10 @@
 import {expect,test,vi} from 'vitest';
-import {openStorage} from '../src/storage/index.js';
-import {noticeBackend} from '../src/storage/notice-store.js';
-import {noticeInterval} from '../src/core/message-router/notice-config.js';
-import {scopeFor} from './helpers/connection-scope.js';
-import {queueMessage} from './helpers/chat-queue.js';
-import {storageFixture} from './helpers/storage-fixture.js';
+import {openStorage} from '../src/storage/index';
+import {noticeBackend} from '../src/storage/notice-store';
+import {noticeInterval} from '../src/core/message-router/notice-config';
+import {scopeFor} from './helpers/connection-scope';
+import {queueMessage} from './helpers/chat-queue';
+import {storageFixture} from './helpers/storage-fixture';
 const route={kind:'name',mode:'normal',isGroupChat:true} as const;
 test('период, подтверждение, коллизия и отсутствие в контексте',async()=>{
  const s=await openStorage(':memory:'),scope=scopeFor(s,'vk:a');try{

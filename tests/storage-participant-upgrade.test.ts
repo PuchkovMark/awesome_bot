@@ -1,11 +1,11 @@
-import { openStorage, scopeFor } from './helpers/connection-scope.js';
+import { openStorage, scopeFor } from './helpers/connection-scope';
 import { expect, test } from 'vitest';
 
-import { openConnection } from '../src/storage/connection.js';
-import { migrate } from '../src/storage/migrate.js';
-import { migrations } from '../src/storage/migrations/index.js';
-import { storageFixture } from './helpers/storage-fixture.js';
-import { participantFixture } from './helpers/participant-fixture.js';
+import { openConnection } from '../src/storage/connection';
+import { migrate } from '../src/storage/migrate';
+import { migrations } from '../src/storage/migrations/index';
+import { storageFixture } from './helpers/storage-fixture';
+import { participantFixture } from './helpers/participant-fixture';
 
 const oldMessage = { chatId: 'a:old', userId: 'a:u', messageId: 'one', authorName: 'Имя', role: 'user', text: 'старыйкот', timestamp: 0 } as const;
 test('F1.4 → версия 3 сохраняет историю, настройки, FTS, новые данные и прежние миграции', async () => {

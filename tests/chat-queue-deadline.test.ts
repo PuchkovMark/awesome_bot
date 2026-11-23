@@ -1,8 +1,8 @@
 import { expect,test,vi } from 'vitest';
-import { openStorage } from '../src/storage/index.js';
-import { createChatQueue } from '../src/core/index.js';
-import { scopeFor } from './helpers/connection-scope.js';
-import { queueMessage,flushQueue } from './helpers/chat-queue.js';
+import { openStorage } from '../src/storage/index';
+import { createChatQueue } from '../src/core/index';
+import { scopeFor } from './helpers/connection-scope';
+import { queueMessage,flushQueue } from './helpers/chat-queue';
 test('общий срок обработчика 130 секунд, поздний успех не меняет сводку',async()=>{
  vi.useFakeTimers();const storage=await openStorage(':memory:'),scope=scopeFor(storage,'vk:a');let resolve!:(x:'completed')=>void;let signal!:AbortSignal;
  const q=createChatQueue({tracing:{messageRetentionDays:30},storage,handler:w=>{signal=w.signal;return new Promise(r=>{resolve=r;});}});
@@ -15,7 +15,7 @@ test('общий срок обработчика 130 секунд, поздни�
 });
 test('потеря владения прекращает запуск, поздний результат старого владельца не фиксируется',async()=>{
  vi.useFakeTimers();vi.setSystemTime(1000);const storage=await openStorage(':memory:'),scope=scopeFor(storage,'vk:a');
- const {queueBackend}=await import('../src/storage/queue-registry.js');let finish!:(x:'completed')=>void;
+ const {queueBackend}=await import('../src/storage/queue-registry');let finish!:(x:'completed')=>void;
  const q=createChatQueue({tracing:{messageRetentionDays:30},storage,handler:()=>new Promise(r=>{finish=r;})});
  try{
  await q.start();await q.admit(scope,queueMessage('vk:a','1'),()=>true);await flushQueue();

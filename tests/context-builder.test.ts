@@ -1,7 +1,7 @@
 import {expect,test} from 'vitest';
-import {contextFixture} from './helpers/context.js';
-import {createContextBuilder} from '../src/core/context/index.js';
-import {estimateInput} from '../src/core/context/budget.js';
+import {contextFixture} from './helpers/context';
+import {createContextBuilder} from '../src/core/context/index';
+import {estimateInput} from '../src/core/context/budget';
 test('история заканчивается исходной записью, reply вне окна не дублируется',async()=>{
  const f=await contextFixture();try{
  const parent=await f.put('parent','цитируемое');await f.put('history','обычная история');const current=await f.put('trigger','вопрос',{replyToMessageId:'parent'});await f.put('late','человек уже ответил',{timestamp:0});

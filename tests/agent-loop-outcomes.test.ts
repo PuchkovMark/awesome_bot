@@ -1,6 +1,6 @@
 import { expect, test, vi } from 'vitest';
-import { createAgentLoop } from '../src/core/index.js';
-import { agentInput, failure, response, sequence } from './helpers/agent-loop.js';
+import { createAgentLoop } from '../src/core/index';
+import { agentInput, failure, response, sequence } from './helpers/agent-loop';
 
 test('полный текст сохраняется буквально, шаг и попытка учтены', async () => {
   const { loop, complete } = sequence([response()]);

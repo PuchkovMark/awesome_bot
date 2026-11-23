@@ -1,10 +1,10 @@
 import { expect, test } from 'vitest';
-import { chatLimits } from '../src/core/chat-limits/config.js';
-import type { ChatId } from '../src/contracts/index.js';
-import { openStorage } from '../src/storage/index.js';
-import { queueBackend } from '../src/storage/queue-registry.js';
-import { scopeFor } from './helpers/connection-scope.js';
-import { storageFixture } from './helpers/storage-fixture.js';
+import { chatLimits } from '../src/core/chat-limits/config';
+import type { ChatId } from '../src/contracts/index';
+import { openStorage } from '../src/storage/index';
+import { queueBackend } from '../src/storage/queue-registry';
+import { scopeFor } from './helpers/connection-scope';
+import { storageFixture } from './helpers/storage-fixture';
 
 const token = 'active-queue';
 const noon = Date.UTC(2026, 10, 23, 12);

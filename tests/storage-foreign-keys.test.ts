@@ -1,6 +1,6 @@
 import { expect, test, vi } from 'vitest';
-import { openConnection } from '../src/storage/connection.js';
-import { storageFixture } from './helpers/storage-fixture.js';
+import { openConnection } from '../src/storage/connection';
+import { storageFixture } from './helpers/storage-fixture';
 
 test('FK включены до callback на каждом новом соединении, включая повторное открытие', async () => {
   const fixture = storageFixture();

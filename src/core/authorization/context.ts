@@ -1,5 +1,5 @@
-import type { AuthorizationContext, ConnectionScope, UserId } from '../../contracts/index.js';
-import { platformOf, validId } from './validation.js';
+import type { AuthorizationContext, ConnectionScope, UserId } from '../../contracts/index';
+import { platformOf, validId } from './validation';
 
 declare const membershipBrand: unique symbol;
 export interface MembershipConfirmation { readonly [membershipBrand]: true }

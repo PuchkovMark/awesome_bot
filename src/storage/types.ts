@@ -1,5 +1,5 @@
-import type { ScopedStorage } from './scoped-types.js';
-import type { ChatId, UserId, PlatformMessageId, Timestamp } from '../contracts/index.js';
+import type { ScopedStorage } from './scoped-types';
+import type { ChatId, UserId, PlatformMessageId, Timestamp } from '../contracts/index';
 
 export interface MessageInput {
   readonly chatId: ChatId;

@@ -1,4 +1,4 @@
-import type { ChatId, UserId } from '../../contracts/index.js';
+import type { ChatId, UserId } from '../../contracts/index';
 
 export type AdminRecoveryCommand =
   | {readonly kind:'list'}

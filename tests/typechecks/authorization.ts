@@ -1,4 +1,4 @@
-import type { AuthorizationAction, AuthorizationContext, BotRole, GrantBasis } from '../../src/contracts/index.js';
+import type { AuthorizationAction, AuthorizationContext, BotRole, GrantBasis } from '../../src/contracts/index';
 const role: BotRole = 'owner';
 const basis: GrantBasis = 'creator';
 const action: AuthorizationAction = 'admin.revoke';

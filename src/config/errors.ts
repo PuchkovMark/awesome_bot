@@ -1,5 +1,5 @@
-import { configParameters } from './types.js';
-import type { ConfigParameter } from './types.js';
+import { configParameters } from './types';
+import type { ConfigParameter } from './types';
 
 export const configErrorCodes = [
   'missing',

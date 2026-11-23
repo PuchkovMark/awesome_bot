@@ -1,5 +1,5 @@
-import type {ChatInput,ChatPatch,ChatSettings} from '../src/storage/index.js';
-import type {ChatInput as InternalInput,ChatPatch as InternalPatch,ChatSettings as InternalSettings} from '../src/storage/legacy-types.js';
+import type {ChatInput,ChatPatch,ChatSettings} from '../src/storage/index';
+import type {ChatInput as InternalInput,ChatPatch as InternalPatch,ChatSettings as InternalSettings} from '../src/storage/legacy-types';
 export function removedChatField(settings:ChatSettings,internal:InternalSettings){
  // @ts-expect-error Индивидуальный промпт удалён из входа создания.
  const input:ChatInput={responseMode:'normal',enabled:true,createdAt:0,systemPrompt:'x'};

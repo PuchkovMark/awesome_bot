@@ -1,6 +1,6 @@
-import type { IncomingMessage } from '../contracts/index.js';
-import type { MessageInput } from '../storage/index.js';
-import type { Observation, Scenario } from './types.js';
+import type { IncomingMessage } from '../contracts/index';
+import type { MessageInput } from '../storage/index';
+import type { Observation, Scenario } from './types';
 
 const chatId = 'synthetic:main';
 const userId = 'synthetic:member';

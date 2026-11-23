@@ -1,6 +1,6 @@
-import { openStorage, scopeFor } from './helpers/connection-scope.js';
+import { openStorage, scopeFor } from './helpers/connection-scope';
 import { afterEach, expect, test } from 'vitest';
-import { type ChatInput, type ChatPatch, type Storage } from '../src/storage/index.js';
+import { type ChatInput, type ChatPatch, type Storage } from '../src/storage/index';
 
 const opened: Storage[] = [];
 const chatStores=new WeakMap<object,Storage>();

@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { expect, test } from 'vitest';
-import { migrate } from '../src/storage/migrate.js';
+import { migrate } from '../src/storage/migrate';
 
 test('FTS синхронизирует вставку, обновление и удаление', () => {
   const db = new Database(':memory:');

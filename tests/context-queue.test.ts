@@ -1,9 +1,9 @@
-import {lifecycleBackend} from '../src/storage/lifecycle-store.js';
-import {createContextBuilder} from '../src/core/context/index.js';
+import {lifecycleBackend} from '../src/storage/lifecycle-store';
+import {createContextBuilder} from '../src/core/context/index';
 import {expect,test,vi} from 'vitest';
-import {contextFixture} from './helpers/context.js';
-import {flushQueue,queueMessage} from './helpers/chat-queue.js';
-import {createAgentLoopQueue} from '../src/core/chat-queue/agent-loop-adapter.js';
+import {contextFixture} from './helpers/context';
+import {flushQueue,queueMessage} from './helpers/chat-queue';
+import {createAgentLoopQueue} from '../src/core/chat-queue/agent-loop-adapter';
 test('отказ подготовки не вызывает клиент и сохраняется отдельно от результата цикла',async()=>{
  const f=await contextFixture();const complete=vi.fn();const settled=vi.fn();const q=createAgentLoopQueue({modelName:'synthetic-model',tracing:{messageRetentionDays:30},storage:f.storage,client:{complete},prepare:async()=>({kind:'failed',reason:'current_message_too_large'}),onSettled:settled});
  try{await q.start();await q.admit(f.scope,queueMessage(f.scope.chatId,'a'),()=>true);await flushQueue();expect(complete).not.toHaveBeenCalled();expect(settled.mock.calls[0]?.[1]).toEqual({outcome:'failed',preparationFailure:'current_message_too_large'});expect(await f.storage.queue.get(f.scope,1)).toMatchObject({state:'terminal',outcome:'failed'});}finally{await q.stop();await f.storage.close();}

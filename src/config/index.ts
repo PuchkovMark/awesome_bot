@@ -1,15 +1,15 @@
-import { defaultVersionLimits } from '../storage/version-limits.js';
+import { defaultVersionLimits } from '../storage/version-limits';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseEnv } from 'node:util';
-import { ConfigError } from './errors.js';
-import { createRedactor } from './secrets.js';
-import { configParameters, logLevels } from './types.js';
-import type { UserId } from '../contracts/index.js';
-import type { AppConfig, ConfigParameter, LoadedConfig, LogLevel } from './types.js';
+import { ConfigError } from './errors';
+import { createRedactor } from './secrets';
+import { configParameters, logLevels } from './types';
+import type { UserId } from '../contracts/index';
+import type { AppConfig, ConfigParameter, LoadedConfig, LogLevel } from './types';
 
-export { ConfigError } from './errors.js';
-export type { AppConfig, LoadedConfig, LogLevel, Redact } from './types.js';
+export { ConfigError } from './errors';
+export type { AppConfig, LoadedConfig, LogLevel, Redact } from './types';
 
 export interface ConfigOptions {
   env?: Readonly<Record<string, string | undefined>>;

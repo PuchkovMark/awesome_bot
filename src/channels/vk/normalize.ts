@@ -1,4 +1,4 @@
-import type { Attachment, ChatId, IncomingMessage, KnownBoolean, MembershipEvent } from '../../contracts/index.js';
+import type { Attachment, ChatId, IncomingMessage, KnownBoolean, MembershipEvent } from '../../contracts/index';
 
 const chatPeerStart = 2_000_000_000;
 const attachmentKinds = new Set([

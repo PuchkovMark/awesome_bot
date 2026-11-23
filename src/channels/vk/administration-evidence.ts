@@ -1,9 +1,9 @@
-import type { ConnectionScope, KnownBoolean, LifecycleObservation, UserId } from '../../contracts/index.js';
-import type { AdministrationInvite } from '../../storage/lifecycle-store.js';
-import type { VkApi } from './api.js';
-import { isVkGroupChat, vkId, vkRecord } from './normalize.js';
-import { vkLocalId } from './outbound.js';
-import type { VkRequestGuard } from './rate-limit.js';
+import type { ConnectionScope, KnownBoolean, LifecycleObservation, UserId } from '../../contracts/index';
+import type { AdministrationInvite } from '../../storage/lifecycle-store';
+import type { VkApi } from './api';
+import { isVkGroupChat, vkId, vkRecord } from './normalize';
+import { vkLocalId } from './outbound';
+import type { VkRequestGuard } from './rate-limit';
 
 function humanId(value: unknown): number | undefined {
   const id=vkId(value);

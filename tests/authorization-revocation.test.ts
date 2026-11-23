@@ -1,7 +1,7 @@
-import { createAuthorizationService, scopeForService, scopeFor } from './helpers/connection-scope.js';
+import { createAuthorizationService, scopeForService, scopeFor } from './helpers/connection-scope';
 import { expect, test } from 'vitest';
 
-import { authConfig, authorizationFixture } from './helpers/authorization-fixture.js';
+import { authConfig, authorizationFixture } from './helpers/authorization-fixture';
 
 test('отзыв снимает все основания, сохраняет запрет и не обходится синхронизацией', async () => {
   let time = 100;

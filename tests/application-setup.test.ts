@@ -1,12 +1,12 @@
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
-import { initializePrompt, resolveApplicationChat } from '../src/app/setup.js';
-import { loadApplicationConfig, loadPromptConfig, loadResolutionConfig } from '../src/config/application.js';
-import { createLifecycleService } from '../src/core/index.js';
-import { catalogAdministration } from '../src/storage/catalog-admin.js';
-import { openStorage } from '../src/storage/index.js';
-import { storageFixture } from './helpers/storage-fixture.js';
+import { initializePrompt, resolveApplicationChat } from '../src/app/setup';
+import { loadApplicationConfig, loadPromptConfig, loadResolutionConfig } from '../src/config/application';
+import { createLifecycleService } from '../src/core/index';
+import { catalogAdministration } from '../src/storage/catalog-admin';
+import { openStorage } from '../src/storage/index';
+import { storageFixture } from './helpers/storage-fixture';
 
 test('настройка приложения редактирует оба значения секрета и проверяет данные до запуска', () => {
   const env = {

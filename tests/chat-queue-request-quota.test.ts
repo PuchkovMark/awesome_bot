@@ -1,9 +1,9 @@
 import { expect, test, vi } from 'vitest';
-import { createAgentLoopQueue } from '../src/core/index.js';
-import type { LlmResult } from '../src/llm/types.js';
-import { openStorage } from '../src/storage/index.js';
-import { flushQueue, queueMessage } from './helpers/chat-queue.js';
-import { scopeFor } from './helpers/connection-scope.js';
+import { createAgentLoopQueue } from '../src/core/index';
+import type { LlmResult } from '../src/llm/types';
+import { openStorage } from '../src/storage/index';
+import { flushQueue, queueMessage } from './helpers/chat-queue';
+import { scopeFor } from './helpers/connection-scope';
 
 const route = () => ({ reason: 'mention', route: { kind: 'mention', mode: 'normal', isGroupChat: true } } as const);
 const ready = { kind: 'ready', input: { system: '', messages: [{ role: 'user', text: 'Тест' }], maxOutputTokens: 1, sessionId: 'test' } } as const;

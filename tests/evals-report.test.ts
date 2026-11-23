@@ -2,9 +2,9 @@ import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
-import { writeLocalReport } from '../src/evals/report.js';
-import { runScenario } from '../src/evals/runner.js';
-import { scenarios } from '../src/evals/scenarios.js';
+import { writeLocalReport } from '../src/evals/report';
+import { runScenario } from '../src/evals/runner';
+import { scenarios } from '../src/evals/scenarios';
 
 test('отчёт сохраняет метаданные и каждый повтор, исходный файл защищён от перезаписи', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'awesome-eval-report-'));

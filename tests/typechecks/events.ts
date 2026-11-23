@@ -1,4 +1,4 @@
-import type { ChatId, IncomingEvent, IncomingMessage, MembershipEvent, OutgoingMessage } from '../../src/contracts/index.js';
+import type { ChatId, IncomingEvent, IncomingMessage, MembershipEvent, OutgoingMessage } from '../../src/contracts/index';
 
 export const message: IncomingMessage = {
   kind: 'message', chatId: 'test-a:chat', userId: 'test-a:user', authorName: 'Имя',

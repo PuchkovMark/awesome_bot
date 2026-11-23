@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest';
-import { createAuthorizationService, createLifecycleService } from '../src/core/index.js';
-import { adminRecoveryStore } from '../src/storage/admin-recovery-store.js';
-import { openStorage } from '../src/storage/index.js';
+import { createAuthorizationService, createLifecycleService } from '../src/core/index';
+import { adminRecoveryStore } from '../src/storage/admin-recovery-store';
+import { openStorage } from '../src/storage/index';
 
 const chat='vk:2000000010', ownerId='vk:1', subject='vk:73';
 const config={ownerId,reasonMaxLength:500,reasonRetentionDays:90} as const;

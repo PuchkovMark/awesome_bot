@@ -1,12 +1,12 @@
-import type { VersionStore } from './version-types.js';
-import type { ConnectionScope } from '../contracts/index.js';
-import type { AppendResult, ChatInput, ChatPatch, ChatSettings, CreateChatResult, HistoryQuery, MessageInput, StoredMessage } from './types.js';
-import type { AuthorizationTransaction } from './authorization-types.js';
+import type { VersionStore } from './version-types';
+import type { ConnectionScope } from '../contracts/index';
+import type { AppendResult, ChatInput, ChatPatch, ChatSettings, CreateChatResult, HistoryQuery, MessageInput, StoredMessage } from './types';
+import type { AuthorizationTransaction } from './authorization-types';
 export interface ScopedStorage {
-  readonly traces:import('./trace-types.js').TraceReader;
-  readonly contextState: import('./context-types.js').ContextStateReader;
-  readonly contextMessages: import('./context-types.js').ContextMessageReader & import('./context-reader.js').ContextSearch;
-  readonly queue: import('./queue-types.js').QueueStore;
+  readonly traces:import('./trace-types').TraceReader;
+  readonly contextState: import('./context-types').ContextStateReader;
+  readonly contextMessages: import('./context-types').ContextMessageReader & import('./context-reader').ContextSearch;
+  readonly queue: import('./queue-types').QueueStore;
   readonly versions:VersionStore;
   readonly messages: {
     get(scope:ConnectionScope,id:number):Promise<StoredMessage|null>;

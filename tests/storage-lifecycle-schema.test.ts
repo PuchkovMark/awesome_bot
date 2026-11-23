@@ -1,8 +1,8 @@
 import Database from 'better-sqlite3';
 import { expect, test } from 'vitest';
-import { migrate } from '../src/storage/migrate.js';
-import { migrations } from '../src/storage/migrations/index.js';
-import { advanceClock } from '../src/storage/lifecycle-clock.js';
+import { migrate } from '../src/storage/migrate';
+import { migrations } from '../src/storage/migrations/index';
+import { advanceClock } from '../src/storage/lifecycle-clock';
 
 test('счётчик независим от чатов по схеме; миграция сохраняет версию 4 с журналом без настроек', () => {
   const db = new Database(':memory:'); db.pragma('foreign_keys=ON');

@@ -1,10 +1,10 @@
 import { setTimeout as delay } from 'node:timers/promises';
-import type { ChatId, ConnectionScope } from '../../contracts/index.js';
-import { disclosureStore, type DisclosureGate, type DisclosurePublication, type DisclosureReason } from '../../storage/chat-disclosure-store.js';
-import type { Storage } from '../../storage/index.js';
-import type { createLifecycleService } from '../lifecycle/service.js';
-import { introductionText } from './introduction-text.js';
-import type { IntroductionGuard, IntroductionPort } from './ports.js';
+import type { ChatId, ConnectionScope } from '../../contracts/index';
+import { disclosureStore, type DisclosureGate, type DisclosurePublication, type DisclosureReason } from '../../storage/chat-disclosure-store';
+import type { Storage } from '../../storage/index';
+import type { createLifecycleService } from '../lifecycle/service';
+import { introductionText } from './introduction-text';
+import type { IntroductionGuard, IntroductionPort } from './ports';
 
 export function createChatOnboarding(options: {
   storage: Storage;

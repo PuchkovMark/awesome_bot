@@ -1,7 +1,7 @@
 import {expect,test} from 'vitest';
-import {traceConfig} from '../src/core/response-tracing/config.js';
-import {initialTrace,minimalTrace} from '../src/storage/trace-store.js';
-import {encodeTrace} from '../src/storage/trace-validation.js';
+import {traceConfig} from '../src/core/response-tracing/config';
+import {initialTrace,minimalTrace} from '../src/storage/trace-store';
+import {encodeTrace} from '../src/storage/trace-validation';
 test('срок сообщений обязателен и больше срока трассировки',()=>{
  expect(traceConfig({messageRetentionDays:30})).toEqual({messageRetentionDays:30,retentionDays:7,maxRecordBytes:65536});
  for(const c of [{messageRetentionDays:7},{messageRetentionDays:6},{messageRetentionDays:30,maxRecordBytes:100},{messageRetentionDays:Infinity}])expect(()=>traceConfig(c)).toThrow('invalid_configuration');

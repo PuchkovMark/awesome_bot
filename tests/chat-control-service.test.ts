@@ -1,9 +1,9 @@
 import { expect,test } from 'vitest';
-import { authorizationFixture } from './helpers/authorization-fixture.js';
-import { scopeFor } from './helpers/connection-scope.js';
-import { chatControlStore } from '../src/storage/chat-control-store.js';
-import { parseChatControl } from '../src/core/chat-control/commands.js';
-import { routeMessage } from '../src/core/message-router/routing.js';
+import { authorizationFixture } from './helpers/authorization-fixture';
+import { scopeFor } from './helpers/connection-scope';
+import { chatControlStore } from '../src/storage/chat-control-store';
+import { parseChatControl } from '../src/core/chat-control/commands';
+import { routeMessage } from '../src/core/message-router/routing';
 
 const quarter=15*60_000;
 const current=()=>true;

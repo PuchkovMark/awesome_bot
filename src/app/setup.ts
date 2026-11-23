@@ -1,14 +1,14 @@
 import { readFile } from 'node:fs/promises';
-import type { loadApplicationConfig, loadPromptConfig, loadResolutionConfig } from '../config/application.js';
-import type { ChatId, LifecycleSource } from '../contracts/index.js';
-import { createLifecycleService, validateContextStartup } from '../core/index.js';
-import type { ApplicationFailure } from '../logger/types.js';
-import { catalogAdministration } from '../storage/catalog-admin.js';
-import { openStorage } from '../storage/index.js';
-import { disclosureStore, type DisclosureInput } from '../storage/chat-disclosure-store.js';
-import { adminRecoveryStore } from '../storage/admin-recovery-store.js';
-import { createVkChannel } from '../channels/index.js';
-import { isVkGroupChat } from '../channels/vk/normalize.js';
+import type { loadApplicationConfig, loadPromptConfig, loadResolutionConfig } from '../config/application';
+import type { ChatId, LifecycleSource } from '../contracts/index';
+import { createLifecycleService, validateContextStartup } from '../core/index';
+import type { ApplicationFailure } from '../logger/types';
+import { catalogAdministration } from '../storage/catalog-admin';
+import { openStorage } from '../storage/index';
+import { disclosureStore, type DisclosureInput } from '../storage/chat-disclosure-store';
+import { adminRecoveryStore } from '../storage/admin-recovery-store';
+import { createVkChannel } from '../channels/index';
+import { isVkGroupChat } from '../channels/vk/normalize';
 
 export const unconfirmedLifecycleSource: LifecycleSource = {
   async observe() { return { confidence: 'unavailable', bot: 'unknown' }; },

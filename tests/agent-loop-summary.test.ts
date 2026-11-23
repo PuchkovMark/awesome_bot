@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
-import { createAttemptSummary } from '../src/core/agent-loop/summary.js';
-import { loopOptions } from '../src/core/agent-loop/validation.js';
+import { createAttemptSummary } from '../src/core/agent-loop/summary';
+import { loopOptions } from '../src/core/agent-loop/validation';
 
 test('шаги и попытки различаются, известный ноль отличается от неизвестного расхода', () => {
   const summary = createAttemptSummary();

@@ -3,7 +3,7 @@ import {cpSync,symlinkSync,writeFileSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {expect,test} from 'vitest';
-import {storageFixture} from './helpers/storage-fixture.js';
+import {storageFixture} from './helpers/storage-fixture';
 test('ESM-версии без исходников: лимиты, выбор, перезапуск и очистка',()=>{
  const f=storageFixture();try{
   cpSync('dist',join(f.directory,'dist'),{recursive:true});symlinkSync(resolve('node_modules'),join(f.directory,'node_modules'),'dir');writeFileSync(join(f.directory,'package.json'),'{"type":"module"}');

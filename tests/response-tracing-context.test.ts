@@ -1,8 +1,8 @@
 import {expect,test,vi} from 'vitest';
-import {contextFixture} from './helpers/context.js';
-import {createContextPreparation} from '../src/core/prepare-context.js';
-import {createAgentLoopQueue} from '../src/core/chat-queue/agent-loop-adapter.js';
-import {flushQueue,queueMessage} from './helpers/chat-queue.js';
+import {contextFixture} from './helpers/context';
+import {createContextPreparation} from '../src/core/prepare-context';
+import {createAgentLoopQueue} from '../src/core/chat-queue/agent-loop-adapter';
+import {flushQueue,queueMessage} from './helpers/chat-queue';
 test('трассировка сохраняет использованный снимок, имя модели и usage без текста',async()=>{
  const f=await contextFixture();const prep=createContextPreparation({...f.options,storage:f.storage});let inputVersion=0;
  const q=createAgentLoopQueue({modelName:'test-model',tracing:{messageRetentionDays:30},storage:f.storage,prepare:async work=>{
@@ -15,6 +15,6 @@ test('прерванный вызов имеет неизвестный расх
  try{await q.start();await q.admitRouted(f.scope,queueMessage(f.scope.chatId,'m'),()=>({reason:'name',route:{kind:'name',mode:'normal',isGroupChat:true}}));await flushQueue();const running=await f.storage.traces.get(f.scope,1);expect(running?.payload.model.invoked).toBe('possible');expect(running?.payload.summary?.usage.input.unknownAttempts).toBe(1);await vi.advanceTimersByTimeAsync(130000);expect((await f.storage.traces.get(f.scope,1))?.payload.summary?.usage.input.unknownAttempts).toBe(1);expect((await f.storage.traces.get(f.scope,1))?.payload.publication).toMatchObject({rowId:'unsuccessful',reaction:'silence',status:'suppressed'});}finally{await q.stop();await f.storage.close();vi.useRealTimers();}
 });
 test('отсутствие порта имеет конечное решение молчать',async()=>{
- const f=await contextFixture();const {createChatQueue}=await import('../src/core/chat-queue/service.js');const q=createChatQueue({tracing:{messageRetentionDays:30},storage:f.storage,handler:async()=> 'completed'});
+ const f=await contextFixture();const {createChatQueue}=await import('../src/core/chat-queue/service');const q=createChatQueue({tracing:{messageRetentionDays:30},storage:f.storage,handler:async()=> 'completed'});
  try{await q.start();await q.admit(f.scope,queueMessage(f.scope.chatId,'m'),()=>true);await flushQueue();const t=await f.storage.traces.get(f.scope,1);expect(t?.payload.publication).toMatchObject({reaction:'silence',status:'suppressed',reason:'no_port'});expect(t?.payload.summary?.usage.input).toEqual({knownTokens:0,unknownAttempts:0,overflowed:false});}finally{await q.stop();await f.storage.close();}
 });

@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { chatLimits } from '../src/core/chat-limits/config.js';
+import { chatLimits } from '../src/core/chat-limits/config';
 
 test('лимиты используют утверждённые значения и снимок конфигурации', () => {
   expect(chatLimits()).toEqual({

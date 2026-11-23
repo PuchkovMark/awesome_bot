@@ -1,10 +1,10 @@
-import { installAuthorities } from './lifecycle-store.js';
-import type { SyncStore } from './legacy-types.js';
-import type { ChatId } from '../contracts/index.js';
-import type { Connection } from './connection.js';
-import type { ChatInput, ChatPatch, ChatSettings, ChatStore } from './legacy-types.js';
-import { compositeId, mode, nullableString, object, requireInput, timestamp, timezone } from './validation.js';
-import { revokeOrdinaryWork } from './chat-control-store.js';
+import { installAuthorities } from './lifecycle-store';
+import type { SyncStore } from './legacy-types';
+import type { ChatId } from '../contracts/index';
+import type { Connection } from './connection';
+import type { ChatInput, ChatPatch, ChatSettings, ChatStore } from './legacy-types';
+import { compositeId, mode, nullableString, object, requireInput, timestamp, timezone } from './validation';
+import { revokeOrdinaryWork } from './chat-control-store';
 
 const patchFields = ['title', 'responseMode', 'enabled', 'timezone'] as const;
 const columns = `chat_id AS chatId, title,

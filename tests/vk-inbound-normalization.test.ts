@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeVkIncoming, parseVkIncoming } from '../src/channels/vk/normalize.js';
+import { normalizeVkIncoming, parseVkIncoming } from '../src/channels/vk/normalize';
 
 const groupId = 314;
 const peer = 2_000_000_004;

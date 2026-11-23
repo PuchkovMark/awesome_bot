@@ -1,4 +1,4 @@
-import type { ChatId } from './identifiers.js';
+import type { ChatId } from './identifiers';
 export type ContentKind = 'system_prompt' | 'persona' | 'greeting_template';
 export type LocalContentKind = Exclude<ContentKind, 'system_prompt'>;
 export interface GlobalVersionRef { readonly area:'global'; readonly kind:ContentKind; readonly key:string; readonly version:number }

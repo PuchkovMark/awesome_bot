@@ -1,5 +1,5 @@
 import { isAbsolute } from 'node:path';
-import { StorageError } from './errors.js';
+import { StorageError } from './errors';
 
 export function requireInput(condition: unknown): asserts condition {
   if (!condition) throw new StorageError('invalid_input');

@@ -1,7 +1,7 @@
 import {expect,test} from 'vitest';
-import {authorizationFixture} from './helpers/authorization-fixture.js';
-import {scopeFor} from './helpers/connection-scope.js';
-import {createTraceDiagnostics} from '../src/core/response-tracing/diagnostics.js';
+import {authorizationFixture} from './helpers/authorization-fixture';
+import {scopeFor} from './helpers/connection-scope';
+import {createTraceDiagnostics} from '../src/core/response-tracing/diagnostics';
 test('диагностика проверяет личность, актуальную роль, беседу и выключение в транзакции',async()=>{
  const f=await authorizationFixture();try{
  const d=createTraceDiagnostics({storage:f.storage,authorization:f.service});

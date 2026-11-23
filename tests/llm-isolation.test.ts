@@ -1,7 +1,7 @@
 import { expect, test, vi } from 'vitest';
-import { createLlmClient } from '../src/llm/index.js';
-import type { LlmRequest } from '../src/llm/index.js';
-import { completion, llmConfig, llmRequest } from './helpers/llm-http.js';
+import { createLlmClient } from '../src/llm/index';
+import type { LlmRequest } from '../src/llm/index';
+import { completion, llmConfig, llmRequest } from './helpers/llm-http';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;

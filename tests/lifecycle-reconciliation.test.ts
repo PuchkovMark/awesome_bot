@@ -1,10 +1,10 @@
 import {expect,test} from 'vitest';
-import {openStorage} from '../src/storage/index.js';
-import { openConnection } from '../src/storage/connection.js';
-import { lifecycleBackend } from '../src/storage/lifecycle-store.js';
-import {createLifecycleService} from '../src/core/index.js';
-import type {LifecycleObservation} from '../src/contracts/index.js';
-import { storageFixture } from './helpers/storage-fixture.js';
+import {openStorage} from '../src/storage/index';
+import { openConnection } from '../src/storage/connection';
+import { lifecycleBackend } from '../src/storage/lifecycle-store';
+import {createLifecycleService} from '../src/core/index';
+import type {LifecycleObservation} from '../src/contracts/index';
+import { storageFixture } from './helpers/storage-fixture';
 function deferred(){let resolve!:(value:LifecycleObservation)=>void;const promise=new Promise<LifecycleObservation>(r=>{resolve=r;});return{promise,resolve};}
 const observed=(creatorId:'vk:a'|'vk:b'):LifecycleObservation=>({confidence:'confirmed',bot:'present',creatorId});
 test.each([false,true])('два пересекающихся запроса: поздний ответ не перезаписывает принятый, reverse=%s',async reverse=>{
@@ -47,7 +47,7 @@ test('повреждённый ответ и ошибка источника п�
 });
 
 test('отзыв во время сверки инвалидирует ответ и подтверждение участия; отмена не возвращает основания',async()=>{
- const {createAuthorizationService}=await import('../src/core/index.js');
+ const {createAuthorizationService}=await import('../src/core/index');
  const storage=await openStorage(':memory:');const response=deferred();let call=0;
  const life=createLifecycleService({storage,ownerId:'vk:owner',source:{observe(){return ++call===2?response.promise:Promise.resolve(observed('vk:a'));}}});
  const auth=await createAuthorizationService({config:{ownerId:'vk:owner',reasonMaxLength:500,reasonRetentionDays:90},store:storage.authorization,now:()=>100});

@@ -1,8 +1,8 @@
-import {openStorage} from '../../src/storage/index.js';
-import {scopeFor} from './connection-scope.js';
-import {catalogAdministration} from '../../src/storage/catalog-admin.js';
-import type {CapabilitySnapshot} from '../../src/contracts/capabilities.js';
-import {createContextBuilder} from '../../src/core/context/index.js';
+import {openStorage} from '../../src/storage/index';
+import {scopeFor} from './connection-scope';
+import {catalogAdministration} from '../../src/storage/catalog-admin';
+import type {CapabilitySnapshot} from '../../src/contracts/capabilities';
+import {createContextBuilder} from '../../src/core/context/index';
 export function contextCapabilities(chatId:`${string}:${string}`):CapabilitySnapshot {
  return {context:{chatId},observedAt:0,support:{send:'supported',typing:'unknown',reply:'supported',getUserName:'unknown',adminInfo:'unknown',membershipEvents:'unknown',directMessage:'unknown'},maxMessageLength:'unknown',textFormats:['plain']};
 }

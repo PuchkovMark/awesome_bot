@@ -1,13 +1,13 @@
 import {expect,test} from 'vitest';
 import Database from 'better-sqlite3';
-import {migrate} from '../src/storage/migrate.js';
-import {migrations} from '../src/storage/migrations/index.js';
-import {legacyChatPromptFixture,legacyPrompt,sharedPrompt} from './helpers/legacy-chat-prompt-fixture.js';
-import {storageFixture} from './helpers/storage-fixture.js';
-import {openStorage} from '../src/storage/index.js';
-import {scopeFor} from './helpers/connection-scope.js';
-import {createContextPreparation} from '../src/core/prepare-context.js';
-import {contextCapabilities} from './helpers/context.js';
+import {migrate} from '../src/storage/migrate';
+import {migrations} from '../src/storage/migrations/index';
+import {legacyChatPromptFixture,legacyPrompt,sharedPrompt} from './helpers/legacy-chat-prompt-fixture';
+import {storageFixture} from './helpers/storage-fixture';
+import {openStorage} from '../src/storage/index';
+import {scopeFor} from './helpers/connection-scope';
+import {createContextPreparation} from '../src/core/prepare-context';
+import {contextCapabilities} from './helpers/context';
 const columns=(db:Database.Database)=>(db.prepare('PRAGMA table_info(chats)').all() as {name:string}[]).map(v=>v.name);
 test('новая БД не содержит индивидуального столбца; повторная миграция идемпотентна',()=>{
  const db=new Database(':memory:');try{migrate(db);expect(columns(db)).toEqual(['chat_id','title','timezone','enabled','created_at','response_mode']);const saved=db.serialize();migrate(db);expect(db.serialize()).toEqual(saved);}finally{db.close();}

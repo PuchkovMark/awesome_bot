@@ -1,10 +1,10 @@
-import { createAuthorizationService, openStorage, scopeFor, scopeForService } from './helpers/connection-scope.js';
+import { createAuthorizationService, openStorage, scopeFor, scopeForService } from './helpers/connection-scope';
 import { expect, test } from 'vitest';
 
 
-import { openConnection } from '../src/storage/connection.js';
-import { authConfig } from './helpers/authorization-fixture.js';
-import { storageFixture } from './helpers/storage-fixture.js';
+import { openConnection } from '../src/storage/connection';
+import { authConfig } from './helpers/authorization-fixture';
+import { storageFixture } from './helpers/storage-fixture';
 
 test('ошибка SQL-аудита откатывает отзыв; после перезапуска очистка сохраняет минимальный след', async () => {
   const f = storageFixture();

@@ -1,12 +1,12 @@
-import type { createVkChannel } from '../channels/vk/channel.js';
-import { isVkGroupChat, vkChatId, type VkIncoming } from '../channels/vk/normalize.js';
-import type { AuthorizationContext, ChatId, IncomingMessage, UserId } from '../contracts/index.js';
-import { parseHistoryCommand } from '../core/history-retention/commands.js';
-import { createHistoryClearService } from '../core/history-retention/service.js';
-import type { createAuthorizationService } from '../core/authorization/service.js';
-import type { createLifecycleService } from '../core/lifecycle/service.js';
-import { chatControlStore } from '../storage/chat-control-store.js';
-import type { Storage } from '../storage/index.js';
+import type { createVkChannel } from '../channels/vk/channel';
+import { isVkGroupChat, vkChatId, type VkIncoming } from '../channels/vk/normalize';
+import type { AuthorizationContext, ChatId, IncomingMessage, UserId } from '../contracts/index';
+import { parseHistoryCommand } from '../core/history-retention/commands';
+import { createHistoryClearService } from '../core/history-retention/service';
+import type { createAuthorizationService } from '../core/authorization/service';
+import type { createLifecycleService } from '../core/lifecycle/service';
+import { chatControlStore } from '../storage/chat-control-store';
+import type { Storage } from '../storage/index';
 
 export function createHistoryHandlers(options: {
   readonly storage: Storage;

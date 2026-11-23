@@ -1,9 +1,9 @@
-import type { AuthorizationContext, ChatId } from '../../contracts/index.js';
-import type { createAuthorizationService } from '../authorization/service.js';
-import { historyClearStore } from '../../storage/history-retention-store.js';
-import type { HistoryClearOrigin } from '../../storage/history-retention-store.js';
-import type { Storage } from '../../storage/index.js';
-import type { HistoryCommand } from './commands.js';
+import type { AuthorizationContext, ChatId } from '../../contracts/index';
+import type { createAuthorizationService } from '../authorization/service';
+import { historyClearStore } from '../../storage/history-retention-store';
+import type { HistoryClearOrigin } from '../../storage/history-retention-store';
+import type { Storage } from '../../storage/index';
+import type { HistoryCommand } from './commands';
 
 export function createHistoryClearService(options: {
   readonly storage: Storage;

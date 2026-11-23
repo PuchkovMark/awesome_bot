@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest';
-import { runScenario } from '../src/evals/runner.js';
-import { scenarios } from '../src/evals/scenarios.js';
-import type { LlmRequest } from '../src/llm/types.js';
+import { runScenario } from '../src/evals/runner';
+import { scenarios } from '../src/evals/scenarios';
+import type { LlmRequest } from '../src/llm/types';
 
 test('ограниченная история, версия и опубликованный ответ воспроизводятся в отдельной БД', async () => {
   const scenario = scenarios.find(item => item.id === 'limited-history')!;

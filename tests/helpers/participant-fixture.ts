@@ -1,6 +1,6 @@
 import type { Database } from 'better-sqlite3';
-import { openConnection } from '../../src/storage/connection.js';
-import { migrate } from '../../src/storage/migrate.js';
+import { openConnection } from '../../src/storage/connection';
+import { migrate } from '../../src/storage/migrate';
 
 // Только технические проверки схемы; не прикладной репозиторий профилей.
 export function participantFixture(db: Database) {

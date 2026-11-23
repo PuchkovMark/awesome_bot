@@ -1,6 +1,6 @@
 import { expect, test, vi } from 'vitest';
-import { createLlmSessionId } from '../src/llm/index.js';
-import type { ConnectionScope } from '../src/contracts/lifecycle.js';
+import { createLlmSessionId } from '../src/llm/index';
+import type { ConnectionScope } from '../src/contracts/lifecycle';
 
 // Синтетическая область: функция не является проверкой актуальности подключения.
 const scope = (chatId: string, generation: number) => ({ chatId, generation }) as ConnectionScope;

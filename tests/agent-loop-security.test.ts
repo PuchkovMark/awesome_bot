@@ -1,6 +1,6 @@
 import { afterEach, expect, test, vi } from 'vitest';
-import { createAgentLoop } from '../src/core/index.js';
-import { agentInput, failure, response, sequence } from './helpers/agent-loop.js';
+import { createAgentLoop } from '../src/core/index';
+import { agentInput, failure, response, sequence } from './helpers/agent-loop';
 
 afterEach(() => { vi.restoreAllMocks(); });
 test('ошибка и сводка не сериализуют произвольные поля клиента', async () => {

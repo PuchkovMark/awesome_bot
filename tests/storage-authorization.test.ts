@@ -1,12 +1,12 @@
-import { openStorage, scopeFor } from './helpers/connection-scope.js';
+import { openStorage, scopeFor } from './helpers/connection-scope';
 import { expect, test } from 'vitest';
 
-import type { AuthorizationTransaction } from '../src/storage/index.js';
-import { openConnection } from '../src/storage/connection.js';
-import { migrate } from '../src/storage/migrate.js';
-import { migrations } from '../src/storage/migrations/index.js';
-import { participantFixture } from './helpers/participant-fixture.js';
-import { storageFixture } from './helpers/storage-fixture.js';
+import type { AuthorizationTransaction } from '../src/storage/index';
+import { openConnection } from '../src/storage/connection';
+import { migrate } from '../src/storage/migrate';
+import { migrations } from '../src/storage/migrations/index';
+import { participantFixture } from './helpers/participant-fixture';
+import { storageFixture } from './helpers/storage-fixture';
 
 async function memory() {
   const s = await openStorage(':memory:');

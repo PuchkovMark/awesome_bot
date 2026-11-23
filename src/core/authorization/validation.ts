@@ -1,4 +1,4 @@
-import type { ChatId, UserId } from '../../contracts/index.js';
+import type { ChatId, UserId } from '../../contracts/index';
 
 export function validId(value: unknown): value is ChatId | UserId {
   return typeof value === 'string' && /^[a-z][a-z0-9_-]*:[^\s]+$/.test(value);

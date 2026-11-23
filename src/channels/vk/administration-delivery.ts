@@ -1,8 +1,8 @@
-import type { UserId } from '../../contracts/index.js';
-import type { VkApi } from './api.js';
-import { isVkGroupChat, vkRecord } from './normalize.js';
-import { createVkOutbound, vkLocalId } from './outbound.js';
-import type { VkRequestGuard } from './rate-limit.js';
+import type { UserId } from '../../contracts/index';
+import type { VkApi } from './api';
+import { isVkGroupChat, vkRecord } from './normalize';
+import { createVkOutbound, vkLocalId } from './outbound';
+import type { VkRequestGuard } from './rate-limit';
 
 export function createVkAdministrationDelivery(api: Pick<VkApi,'request'>, outbound: ReturnType<typeof createVkOutbound>,
   owner: UserId, groupId: number) {

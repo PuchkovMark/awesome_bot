@@ -1,13 +1,13 @@
 import Database from 'better-sqlite3';
 import { expect, test, vi } from 'vitest';
-import { createAgentLoopQueue } from '../src/core/index.js';
-import { createContextPreparation } from '../src/core/prepare-context.js';
-import type { LlmClient, LlmResult } from '../src/llm/types.js';
-import { catalogAdministration } from '../src/storage/catalog-admin.js';
-import { openStorage } from '../src/storage/index.js';
-import { scopeFor } from './helpers/connection-scope.js';
-import { contextCapabilities } from './helpers/context.js';
-import { storageFixture } from './helpers/storage-fixture.js';
+import { createAgentLoopQueue } from '../src/core/index';
+import { createContextPreparation } from '../src/core/prepare-context';
+import type { LlmClient, LlmResult } from '../src/llm/types';
+import { catalogAdministration } from '../src/storage/catalog-admin';
+import { openStorage } from '../src/storage/index';
+import { scopeFor } from './helpers/connection-scope';
+import { contextCapabilities } from './helpers/context';
+import { storageFixture } from './helpers/storage-fixture';
 
 const chat='vk:1' as const, day=86_400_000, epoch=1_800_000_000_000;
 const route=()=>({reason:'mention',route:{kind:'mention',mode:'normal',isGroupChat:true}} as const);

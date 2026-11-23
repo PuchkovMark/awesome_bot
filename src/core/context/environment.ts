@@ -1,4 +1,4 @@
-import type {CapabilitySnapshot} from '../../contracts/capabilities.js';
+import type {CapabilitySnapshot} from '../../contracts/capabilities';
 export interface ContextRoute {readonly kind:'direct_message'|'mention'|'reply'|'name';readonly mode:'normal'|'active';readonly isGroupChat:boolean}
 export function formatEnvironment(input:{readonly now:number;readonly timezone:string;readonly platform:string;readonly capabilities:CapabilitySnapshot;readonly route:ContextRoute}):string {
  const {capabilities:c,route:r}=input;

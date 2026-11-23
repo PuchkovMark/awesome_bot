@@ -1,5 +1,5 @@
-import type {StoredMessage} from '../../storage/context-types.js';
-import type {AgentLoopMessage} from '../agent-loop/types.js';
+import type {StoredMessage} from '../../storage/context-types';
+import type {AgentLoopMessage} from '../agent-loop/types';
 export interface ContextEntry {readonly message:StoredMessage;readonly truncated?:boolean}
 
 const dataMarker = { kind: 'untrusted_chat_data' } as const;

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createVkApi, createVkApiCall } from '../src/channels/vk/api.js';
-import { createVkRateLimiter, VkRequestCancelled } from '../src/channels/vk/rate-limit.js';
+import { createVkApi, createVkApiCall } from '../src/channels/vk/api';
+import { createVkRateLimiter, VkRequestCancelled } from '../src/channels/vk/rate-limit';
 
 function clockFixture() {
   let now = 0;

@@ -1,9 +1,9 @@
-import { scopeFor, scopeForService } from './helpers/connection-scope.js';
+import { scopeFor, scopeForService } from './helpers/connection-scope';
 import { expect, test } from 'vitest';
-import type { ToolContext, UserId, AuthorizationContext } from '../src/contracts/index.js';
-import { toolAuthorization } from '../src/tools/index.js';
-import { FakeAdapter } from './helpers/fake-adapters.js';
-import { authorizationFixture } from './helpers/authorization-fixture.js';
+import type { ToolContext, UserId, AuthorizationContext } from '../src/contracts/index';
+import { toolAuthorization } from '../src/tools/index';
+import { FakeAdapter } from './helpers/fake-adapters';
+import { authorizationFixture } from './helpers/authorization-fixture';
 
 // Только тестовый инструмент. Ни isAdmin, ни параметры модели не являются источником роли/области.
 async function fixture() {

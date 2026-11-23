@@ -1,5 +1,5 @@
-import type { QueueBackend } from './queue-store.js';
-import { StorageError } from './errors.js';
+import type { QueueBackend } from './queue-store';
+import { StorageError } from './errors';
 const backends = new WeakMap<object, QueueBackend>();
 export function registerQueue(storage: object, backend: QueueBackend) { backends.set(storage, backend); }
 /** Только сборка ядра; не экспортируется публичным storage/index. */

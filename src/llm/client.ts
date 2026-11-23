@@ -1,8 +1,8 @@
-import { llmFailure } from './errors.js';
-import { llmUserAgent, normalizeResponse, opencodeGoEndpoint } from './opencode.js';
-import { nonblank, positiveInteger, prepareRequest } from './validation.js';
-import type { PreparedRequest } from './validation.js';
-import type { LlmClient, LlmClientOptions, LlmConfig, LlmFailure, LlmRequest, LlmResult } from './types.js';
+import { llmFailure } from './errors';
+import { llmUserAgent, normalizeResponse, opencodeGoEndpoint } from './opencode';
+import { nonblank, positiveInteger, prepareRequest } from './validation';
+import type { PreparedRequest } from './validation';
+import type { LlmClient, LlmClientOptions, LlmConfig, LlmFailure, LlmRequest, LlmResult } from './types';
 
 function httpFailure(status: number): LlmFailure {
   if (status === 401) return llmFailure('authentication');

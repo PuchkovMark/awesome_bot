@@ -1,7 +1,7 @@
 import {expect,test} from 'vitest';
-import {openStorage} from '../src/storage/index.js';
-import {catalogAdministration} from '../src/storage/catalog-admin.js';
-import type {ContentKind,GlobalVersionRef} from '../src/contracts/versioning.js';
+import {openStorage} from '../src/storage/index';
+import {catalogAdministration} from '../src/storage/catalog-admin';
+import type {ContentKind,GlobalVersionRef} from '../src/contracts/versioning';
 test('общие виды, конфликты, точный выбор/откат и оба лимита',async()=>{
  const storage=await openStorage(':memory:',{versioning:{textMaxLength:2,maxPerEntity:2}}),admin=catalogAdministration(storage);
  try{
@@ -25,7 +25,7 @@ test('общие виды, конфликты, точный выбор/отка�
 });
 
 test('ошибка SQL при сохранении версии откатывает вставку и позволяет повтор',async()=>{
- const {storageFixture}=await import('./helpers/storage-fixture.js');const {default:Database}=await import('better-sqlite3');const {scopeFor}=await import('./helpers/connection-scope.js');
+ const {storageFixture}=await import('./helpers/storage-fixture');const {default:Database}=await import('better-sqlite3');const {scopeFor}=await import('./helpers/connection-scope');
  const f=storageFixture(),storage=await openStorage(f.path),db=new Database(f.path),admin=catalogAdministration(storage),scope=scopeFor(storage,'vk:a');
  try{
   for(const area of ['global','local']){

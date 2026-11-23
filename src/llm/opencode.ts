@@ -1,6 +1,6 @@
-import { llmFailure } from './errors.js';
-import { isRecord, nonblank, transportCalls } from './validation.js';
-import type { LlmResult, LlmUsage } from './types.js';
+import { llmFailure } from './errors';
+import { isRecord, nonblank, transportCalls } from './validation';
+import type { LlmResult, LlmUsage } from './types';
 
 export const opencodeGoEndpoint = 'https://opencode.ai/inference/go/openai/v1/chat/completions';
 export const llmUserAgent = 'awesome_bot/0.0.0';

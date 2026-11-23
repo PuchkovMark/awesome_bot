@@ -1,7 +1,7 @@
 import { vi } from 'vitest';
-import { createAgentLoop } from '../../src/core/index.js';
-import type { AgentLoopInput, AgentLoopOptions } from '../../src/core/index.js';
-import type { LlmRequest, LlmResult } from '../../src/llm/types.js';
+import { createAgentLoop } from '../../src/core/index';
+import type { AgentLoopInput, AgentLoopOptions } from '../../src/core/index';
+import type { LlmRequest, LlmResult } from '../../src/llm/types';
 export function agentInput(patch: Partial<AgentLoopInput> = {}): AgentLoopInput {
   return { system: 'Системные инструкции', messages: [{ role: 'user', text: 'Привет\n' }], maxOutputTokens: 128, sessionId: 'synthetic', ...patch };
 }

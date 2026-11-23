@@ -1,9 +1,9 @@
 import { expect, test, vi } from 'vitest';
-import { ConfigError } from '../src/config/errors.js';
-import { createRedactor } from '../src/config/secrets.js';
-import { createLogger, reportConfigError } from '../src/logger/index.js';
-import type { LogEvent } from '../src/logger/types.js';
-import { captureLogs } from './helpers/log-output.js';
+import { ConfigError } from '../src/config/errors';
+import { createRedactor } from '../src/config/secrets';
+import { createLogger, reportConfigError } from '../src/logger/index';
+import type { LogEvent } from '../src/logger/types';
+import { captureLogs } from './helpers/log-output';
 
 const secret = 'unique-test-api-secret';
 const humanText = 'Человек написал приватное сообщение';

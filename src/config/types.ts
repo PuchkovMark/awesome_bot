@@ -1,4 +1,4 @@
-import type { UserId } from '../contracts/index.js';
+import type { UserId } from '../contracts/index';
 
 export const configParameters = [
   'VK_TOKEN',
@@ -24,7 +24,7 @@ export const logLevels = ['debug', 'info', 'warn', 'error', 'fatal', 'silent'] a
 export type LogLevel = (typeof logLevels)[number];
 
 export interface AppConfig {
-  readonly versioning: import('../contracts/versioning.js').VersionLimits;
+  readonly versioning: import('../contracts/versioning').VersionLimits;
   readonly authorization: {
     readonly ownerId: UserId;
     readonly reasonMaxLength: number;

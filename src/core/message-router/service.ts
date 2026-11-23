@@ -1,13 +1,13 @@
-import { createRouterMetrics } from './metrics.js';
-import type {SafeLogger} from '../../logger/types.js';
-import type {ConnectionScope,IncomingMessage,AuthorizationContext} from '../../contracts/index.js';
-import type {Storage} from '../../storage/index.js';
-import type {ChatQueue} from '../chat-queue/types.js';
-import type {RoutingDecision,ServiceCommand} from './types.js';
-import {routeMessage} from './routing.js';
-import {validIncoming} from './validation.js';
-import {commandAccess,type RouterAuthorization} from './command-boundary.js';
-import type {FloodNotice,RoutedQueueDecision,RouteMetadata,RoutedAdmissionGuard} from '../../storage/queue-types.js';
+import { createRouterMetrics } from './metrics';
+import type {SafeLogger} from '../../logger/types';
+import type {ConnectionScope,IncomingMessage,AuthorizationContext} from '../../contracts/index';
+import type {Storage} from '../../storage/index';
+import type {ChatQueue} from '../chat-queue/types';
+import type {RoutingDecision,ServiceCommand} from './types';
+import {routeMessage} from './routing';
+import {validIncoming} from './validation';
+import {commandAccess,type RouterAuthorization} from './command-boundary';
+import type {FloodNotice,RoutedQueueDecision,RouteMetadata,RoutedAdmissionGuard} from '../../storage/queue-types';
 function fromDecision(value:RoutedQueueDecision):RoutingDecision {
  if(value.route)return {kind:'ordinary',reason:value.route.kind,route:value.route};
  if(value.reason==='service')return {kind:'service',reason:'service'};

@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createVkChannel } from '../src/channels/index.js';
-import { createVkApi, createVkApiCall } from '../src/channels/vk/api.js';
-import type { VkApiCall } from '../src/channels/vk/api.js';
-import type { VkPollTransport } from '../src/channels/vk/long-poll.js';
-import { createVkRateLimiter } from '../src/channels/vk/rate-limit.js';
-import type { ChatId } from '../src/contracts/index.js';
-import { createAgentLoopQueue, createLifecycleService, createMessageRouter, createPublicationService } from '../src/core/index.js';
-import { openStorage } from '../src/storage/index.js';
-import { flushQueue } from './helpers/chat-queue.js';
+import { createVkChannel } from '../src/channels/index';
+import { createVkApi, createVkApiCall } from '../src/channels/vk/api';
+import type { VkApiCall } from '../src/channels/vk/api';
+import type { VkPollTransport } from '../src/channels/vk/long-poll';
+import { createVkRateLimiter } from '../src/channels/vk/rate-limit';
+import type { ChatId } from '../src/contracts/index';
+import { createAgentLoopQueue, createLifecycleService, createMessageRouter, createPublicationService } from '../src/core/index';
+import { openStorage } from '../src/storage/index';
+import { flushQueue } from './helpers/chat-queue';
 
 const groupId = 314;
 const owner = 'vk:73';

@@ -1,5 +1,5 @@
-import type { ChatId } from '../../contracts/index.js';
-import { parseChatBinding } from '../chat-control/commands.js';
+import type { ChatId } from '../../contracts/index';
+import { parseChatBinding } from '../chat-control/commands';
 
 export interface HistoryTarget { readonly chatId: ChatId; readonly generation: number }
 export type HistoryCommand =

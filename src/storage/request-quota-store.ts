@@ -1,8 +1,8 @@
 import type { Database } from 'better-sqlite3';
-import type { ChatLimits } from '../core/chat-limits/config.js';
-import type { UserId } from '../contracts/index.js';
-import type { QueueWork } from './queue-types.js';
-import { timestamp } from './validation.js';
+import type { ChatLimits } from '../core/chat-limits/config';
+import type { UserId } from '../contracts/index';
+import type { QueueWork } from './queue-types';
+import { timestamp } from './validation';
 
 export function admitRequestQuota(db: Database, work: QueueWork, limits: ChatLimits, now: number) {
   timestamp(now);

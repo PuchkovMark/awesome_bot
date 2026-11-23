@@ -1,8 +1,8 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
-import { openConnection } from '../src/storage/connection.js';
-import { storageFixture } from './helpers/storage-fixture.js';
+import { openConnection } from '../src/storage/connection';
+import { storageFixture } from './helpers/storage-fixture';
 
 for (const memory of [true, false]) {
   test(`реальный драйвер и FTS5: memory=${memory}`, async () => {

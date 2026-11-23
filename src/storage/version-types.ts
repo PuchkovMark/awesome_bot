@@ -1,5 +1,5 @@
-import type { ConnectionScope } from '../contracts/lifecycle.js';
-import type { AppendVersionResult, ContentVersion, GlobalVersionRef, LocalContentKind, SelectionResult, VersionInput, VersionRef } from '../contracts/versioning.js';
+import type { ConnectionScope } from '../contracts/lifecycle';
+import type { AppendVersionResult, ContentVersion, GlobalVersionRef, LocalContentKind, SelectionResult, VersionInput, VersionRef } from '../contracts/versioning';
 export interface VersionStore {
  append(scope:ConnectionScope,input:VersionInput<LocalContentKind>):Promise<AppendVersionResult>;
  get(scope:ConnectionScope,ref:VersionRef):Promise<ContentVersion|null>;

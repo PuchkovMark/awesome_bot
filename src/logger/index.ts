@@ -1,12 +1,12 @@
 import pino from 'pino';
 import type { DestinationStream } from 'pino';
-import { createRedactor } from '../config/secrets.js';
-import { logLevels } from '../config/types.js';
-import type { LogLevel, Redact } from '../config/types.js';
-import { errorCategory, errorText, ownData, safeEvent } from './sanitize.js';
-import type { EventLevel, SafeLogger } from './types.js';
+import { createRedactor } from '../config/secrets';
+import { logLevels } from '../config/types';
+import type { LogLevel, Redact } from '../config/types';
+import { errorCategory, errorText, ownData, safeEvent } from './sanitize';
+import type { EventLevel, SafeLogger } from './types';
 
-export type { LogEvent, SafeLogger } from './types.js';
+export type { LogEvent, SafeLogger } from './types';
 
 export interface LoggerOptions {
   level?: LogLevel;

@@ -1,8 +1,8 @@
 import { expect,test,vi } from 'vitest';
-import { openStorage } from '../src/storage/index.js';
-import { createAgentLoopQueue } from '../src/core/index.js';
-import { scopeFor } from './helpers/connection-scope.js';
-import { queueMessage,flushQueue } from './helpers/chat-queue.js';
+import { openStorage } from '../src/storage/index';
+import { createAgentLoopQueue } from '../src/core/index';
+import { scopeFor } from './helpers/connection-scope';
+import { queueMessage,flushQueue } from './helpers/chat-queue';
 const prepare=async()=>({kind:'ready' as const,input:{system:'',messages:[{role:'user' as const,text:'private'}],maxOutputTokens:1,sessionId:'opaque'}});
 test('rate_limit конечен, server повторяется только внутри цикла, очередь продолжает',async()=>{
  vi.useFakeTimers();const storage=await openStorage(':memory:');const scope=scopeFor(storage,'vk:a');

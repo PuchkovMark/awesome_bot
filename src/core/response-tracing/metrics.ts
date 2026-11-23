@@ -1,4 +1,4 @@
-import type {SafeLogger} from '../../logger/types.js';
+import type {SafeLogger} from '../../logger/types';
 export type TraceEvent='full_write_failed'|'size_exceeded'|'minimal_saved'|'trace_write_failed';
 export function createTraceMetrics(logger?:SafeLogger){
  const counts={full_write_failed:0,size_exceeded:0,minimal_saved:0,trace_write_failed:0};

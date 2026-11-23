@@ -1,12 +1,12 @@
-import {participantFixture} from './helpers/participant-fixture.js';
+import {participantFixture} from './helpers/participant-fixture';
 import Database from 'better-sqlite3';
 import {expect,test} from 'vitest';
-import {migrate} from '../src/storage/migrate.js';
-import {migrations} from '../src/storage/migrations/index.js';
-import {openStorage} from '../src/storage/index.js';
-import {scopeFor} from './helpers/connection-scope.js';
-import {createLifecycleService} from '../src/core/index.js';
-import {storageFixture} from './helpers/storage-fixture.js';
+import {migrate} from '../src/storage/migrate';
+import {migrations} from '../src/storage/migrations/index';
+import {openStorage} from '../src/storage/index';
+import {scopeFor} from './helpers/connection-scope';
+import {createLifecycleService} from '../src/core/index';
+import {storageFixture} from './helpers/storage-fixture';
 test('миграция 6 сохраняет данные версии 5 и проверяет все ссылки',()=>{
  const db=new Database(':memory:');db.pragma('foreign_keys=ON');try{
   migrate(db,migrations.slice(0,5));

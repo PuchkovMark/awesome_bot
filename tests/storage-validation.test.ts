@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { compositeId, databasePath, timestamp, timezone } from '../src/storage/validation.js';
+import { compositeId, databasePath, timestamp, timezone } from '../src/storage/validation';
 
 for (const value of ['', 'relative.sqlite', undefined, 42]) {
   test(`неверный путь ${String(value)}`, () => expect(() => databasePath(value)).toThrow('invalid_input'));

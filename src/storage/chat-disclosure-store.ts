@@ -1,10 +1,10 @@
 import { randomInt } from 'node:crypto';
 import type { Database } from 'better-sqlite3';
-import type { ConnectionScope } from '../contracts/index.js';
-import type { Connection } from './connection.js';
-import type { LifecycleBackend } from './lifecycle-store.js';
-import type { Storage } from './types.js';
-import { object, requireInput, timestamp } from './validation.js';
+import type { ConnectionScope } from '../contracts/index';
+import type { Connection } from './connection';
+import type { LifecycleBackend } from './lifecycle-store';
+import type { Storage } from './types';
+import { object, requireInput, timestamp } from './validation';
 
 export interface DisclosureInput {
   readonly provider: string;

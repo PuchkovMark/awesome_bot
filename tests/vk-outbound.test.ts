@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { PublishedPart } from '../src/contracts/index.js';
-import { VkApiError } from '../src/channels/vk/api.js';
-import type { VkApiCall } from '../src/channels/vk/api.js';
-import { createVkOutbound } from '../src/channels/vk/outbound.js';
-import { splitVkText, vkMessageLength } from '../src/channels/vk/outbound-text.js';
-import { VkRequestCancelled } from '../src/channels/vk/rate-limit.js';
+import type { PublishedPart } from '../src/contracts/index';
+import { VkApiError } from '../src/channels/vk/api';
+import type { VkApiCall } from '../src/channels/vk/api';
+import { createVkOutbound } from '../src/channels/vk/outbound';
+import { splitVkText, vkMessageLength } from '../src/channels/vk/outbound-text';
+import { VkRequestCancelled } from '../src/channels/vk/rate-limit';
 
 const groupId = 314;
 const sourceId = '7';

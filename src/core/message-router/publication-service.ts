@@ -1,14 +1,14 @@
-import type {ConnectionScope, PublishedPart} from '../../contracts/index.js';
-import type {Storage} from '../../storage/index.js';
-import type {FloodNotice,ResponsePublication,ResponsePublicationAdmission,ResponsePublicationBudget,RouteMetadata} from '../../storage/queue-types.js';
-import type {QueueCompletion,QueueSettlement} from '../chat-queue/types.js';
-import type {NoticeReceipt,NoticePermit} from '../../storage/notice-types.js';
-import type {TracePublication} from '../../storage/trace-types.js';
-import {traceBackend} from '../../storage/trace-store.js';
-import {noticeBackend} from '../../storage/notice-store.js';
-import {lifecycleBackend} from '../../storage/lifecycle-store.js';
-import {noticeInterval} from './notice-config.js';
-import {publicationDecision,publicationRow,noticeTemplate} from './publication.js';
+import type {ConnectionScope, PublishedPart} from '../../contracts/index';
+import type {Storage} from '../../storage/index';
+import type {FloodNotice,ResponsePublication,ResponsePublicationAdmission,ResponsePublicationBudget,RouteMetadata} from '../../storage/queue-types';
+import type {QueueCompletion,QueueSettlement} from '../chat-queue/types';
+import type {NoticeReceipt,NoticePermit} from '../../storage/notice-types';
+import type {TracePublication} from '../../storage/trace-types';
+import {traceBackend} from '../../storage/trace-store';
+import {noticeBackend} from '../../storage/notice-store';
+import {lifecycleBackend} from '../../storage/lifecycle-store';
+import {noticeInterval} from './notice-config';
+import {publicationDecision,publicationRow,noticeTemplate} from './publication';
 export interface PublicationGuard {
  readonly signal:AbortSignal;
  readonly isCurrent:()=>boolean;
@@ -50,7 +50,7 @@ export function createPublicationService(options:{readonly storage:Storage;reado
   let permit:NoticePermit|undefined,traceFailed=false;
   let scope=work.scope, closed=false;
   let budget:ResponsePublicationBudget|undefined, meter:ResponsePublication|undefined, started=false;
-  let meteredOutcome:import('../../storage/response-rate-store.js').ResponseRateOutcome='unknown';
+  let meteredOutcome:import('../../storage/response-rate-store').ResponseRateOutcome='unknown';
   const denial:{reason?:Extract<ResponsePublicationAdmission,{allowed:false}>['reason']}={};
   const rowId=publicationRow(work.route,outcome);
   const save=(pub:TracePublication):boolean=>{

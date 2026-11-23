@@ -1,10 +1,10 @@
 import type { Database } from 'better-sqlite3';
-import type { ChatId, ConnectionScope, KnownBoolean, LifecycleObservation, UserId } from '../contracts/index.js';
-import type { Connection } from './connection.js';
-import { advanceClock } from './lifecycle-clock.js';
-import { StorageError } from './errors.js';
-import { compositeId, requireInput, timestamp } from './validation.js';
-import { setAdminPresence } from './admin-recovery-store.js';
+import type { ChatId, ConnectionScope, KnownBoolean, LifecycleObservation, UserId } from '../contracts/index';
+import type { Connection } from './connection';
+import { advanceClock } from './lifecycle-clock';
+import { StorageError } from './errors';
+import { compositeId, requireInput, timestamp } from './validation';
+import { setAdminPresence } from './admin-recovery-store';
 
 interface State { chatId: ChatId; generation: number; revision: number; state: 'active' | 'uncertain'; creatorId:string|null; inviterId:string|null }
 interface Expected { chatId: ChatId; generation: number | null; revision: number | null; clock: number }
@@ -252,7 +252,7 @@ export function createLifecycleBackend(connection: Connection) {
         for(const userId of observation.departedIds??[])db.prepare("DELETE FROM bot_admin_grants WHERE chat_id=? AND user_id=? AND basis='explicit'").run(chatId,userId);
         if(observation.members?.complete) {
           const present=new Set(observation.members.ids);
-          const explicit=db.prepare("SELECT user_id AS userId FROM bot_admin_grants WHERE chat_id=? AND basis='explicit'").all(chatId) as {userId:import('../contracts/index.js').UserId}[];
+          const explicit=db.prepare("SELECT user_id AS userId FROM bot_admin_grants WHERE chat_id=? AND basis='explicit'").all(chatId) as {userId:import('../contracts/index').UserId}[];
           for(const member of explicit)if(!present.has(member.userId))db.prepare("DELETE FROM bot_admin_grants WHERE chat_id=? AND user_id=? AND basis='explicit'").run(chatId,member.userId);
         }
         if(observation.creatorId!=null||observation.creatorChanged) {

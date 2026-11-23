@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { completion, fakeClient, llmRequest } from './helpers/llm-http.js';
+import { completion, fakeClient, llmRequest } from './helpers/llm-http';
 
 test.each([
   [completion('  Буквально\n'), 'complete'], [completion('часть', 'length'), 'incomplete'],

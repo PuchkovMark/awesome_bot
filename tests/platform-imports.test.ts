@@ -31,7 +31,7 @@ for (const layer of ['core', 'tools', 'contracts']) {
   });
 
   test.each([
-    "import './neutral.js';",
+    "import './neutral';",
     "import 'node:fs';",
     "import 'vk-io-extra';",
     "void import('node:fs');",

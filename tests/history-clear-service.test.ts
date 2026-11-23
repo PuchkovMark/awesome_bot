@@ -1,10 +1,10 @@
 import Database from 'better-sqlite3';
 import { expect, test, vi } from 'vitest';
-import { createAuthorizationService } from '../src/core/authorization/service.js';
-import { createHistoryClearService } from '../src/core/history-retention/service.js';
-import { openStorage } from '../src/storage/index.js';
-import { scopeFor } from './helpers/connection-scope.js';
-import { storageFixture } from './helpers/storage-fixture.js';
+import { createAuthorizationService } from '../src/core/authorization/service';
+import { createHistoryClearService } from '../src/core/history-retention/service';
+import { openStorage } from '../src/storage/index';
+import { scopeFor } from './helpers/connection-scope';
+import { storageFixture } from './helpers/storage-fixture';
 
 const chat='vk:2000000001', ownerId='vk:1', first='vk:2', second='vk:3', outsider='vk:4';
 const clear={kind:'request'} as const;

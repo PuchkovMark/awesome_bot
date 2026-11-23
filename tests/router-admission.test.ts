@@ -1,10 +1,10 @@
 import {expect,test,vi} from 'vitest';
-import {openStorage} from '../src/storage/index.js';
-import {createChatQueue} from '../src/core/chat-queue/service.js';
-import {createMessageRouter} from '../src/core/message-router/service.js';
-import {scopeFor} from './helpers/connection-scope.js';
-import {flushQueue} from './helpers/chat-queue.js';
-import type {IncomingMessage} from '../src/contracts/index.js';
+import {openStorage} from '../src/storage/index';
+import {createChatQueue} from '../src/core/chat-queue/service';
+import {createMessageRouter} from '../src/core/message-router/service';
+import {scopeFor} from './helpers/connection-scope';
+import {flushQueue} from './helpers/chat-queue';
+import type {IncomingMessage} from '../src/contracts/index';
 const incoming:IncomingMessage={kind:'message',chatId:'vk:a',userId:'vk:u',authorName:'',isGroupChat:true,isAdmin:false,isBot:false,text:'Пенек помоги',messageId:'1',isMentioned:false,isReplyToBot:false,timestamp:0,attachments:[]};
 test('роутер журналирует до решения, дубли не повторяются, silent/unknown не запускают обработчик',async()=>{
  const storage=await openStorage(':memory:'),scope=scopeFor(storage,'vk:a'),handler=vi.fn(async()=> 'completed' as const);const queue=createChatQueue({tracing:{messageRetentionDays:30},storage,handler});await queue.start();

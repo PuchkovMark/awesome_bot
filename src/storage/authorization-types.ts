@@ -1,7 +1,7 @@
-import type { ChatId, UserId, GrantBasis, Timestamp } from '../contracts/index.js';
-import type { RecoveryCommand, RecoveryOperation } from './admin-recovery-store.js';
-import type { ChatControlState,ChatPause } from './chat-control-store.js';
-import type { ChatPatch } from './types.js';
+import type { ChatId, UserId, GrantBasis, Timestamp } from '../contracts/index';
+import type { RecoveryCommand, RecoveryOperation } from './admin-recovery-store';
+import type { ChatControlState,ChatPause } from './chat-control-store';
+import type { ChatPatch } from './types';
 
 export interface AdminGrant {
   readonly userId: UserId;
@@ -38,4 +38,4 @@ export interface AuthorizationTransaction {
   recoveryCommand(ownerId: UserId, commandId: number): RecoveryOperation | undefined;
   recordRecovery(input: RecoveryCommand, result: RecoveryOperation['result'], at: Timestamp): RecoveryOperation;
 }
-export type AuthorizationStore = import('./scoped-types.js').ScopedStorage['authorization'];
+export type AuthorizationStore = import('./scoped-types').ScopedStorage['authorization'];

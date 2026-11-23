@@ -1,8 +1,8 @@
 import {expect,test} from 'vitest';
-import {routeMessage} from '../src/core/message-router/routing.js';
-import {directlyAddressesName} from '../src/core/message-router/name-address.js';
-import {publicationDecision} from '../src/core/message-router/publication.js';
-import type {IncomingMessage} from '../src/contracts/index.js';
+import {routeMessage} from '../src/core/message-router/routing';
+import {directlyAddressesName} from '../src/core/message-router/name-address';
+import {publicationDecision} from '../src/core/message-router/publication';
+import type {IncomingMessage} from '../src/contracts/index';
 export const incoming:IncomingMessage={kind:'message',chatId:'vk:a',userId:'vk:u',authorName:'',isGroupChat:true,isAdmin:false,isBot:false,text:'Пенек помоги с задачей',messageId:'1',isMentioned:false,isReplyToBot:false,timestamp:0,attachments:[]};
 for(const mode of ['silent','normal','active'] as const)for(const isBot of [false,true,'unknown'] as const)test(`${mode} ${isBot}`,()=>{
  const result=routeMessage({message:{...incoming,isBot},settings:{enabled:true,responseMode:mode}});

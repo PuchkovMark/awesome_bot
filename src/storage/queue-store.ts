@@ -1,30 +1,30 @@
-import { acceptsHistoryInput, applyHistoryRetention, historySourcesVisible, pruneHistoryMessages } from './history-retention-store.js';
-import {initialTrace,startTrace,minimalTrace} from './trace-store.js';
-import type {TraceBackend} from './trace-store.js';
-import type {TracePayload} from './trace-types.js';
-import {encodeTrace} from './trace-validation.js';
-import { createChatStore } from './chats.js';
-import type { RoutedQueueCallback, RoutedAdmission, RouteMetadata } from './queue-types.js';
-import { createMessageStore, readMessage, validateMessage } from './messages.js';
-import type { MessageInput } from './types.js';
-import type { QueueConfig, QueueDecision, QueueAdmission } from './queue-types.js';
+import { acceptsHistoryInput, applyHistoryRetention, historySourcesVisible, pruneHistoryMessages } from './history-retention-store';
+import {initialTrace,startTrace,minimalTrace} from './trace-store';
+import type {TraceBackend} from './trace-store';
+import type {TracePayload} from './trace-types';
+import {encodeTrace} from './trace-validation';
+import { createChatStore } from './chats';
+import type { RoutedQueueCallback, RoutedAdmission, RouteMetadata } from './queue-types';
+import { createMessageStore, readMessage, validateMessage } from './messages';
+import type { MessageInput } from './types';
+import type { QueueConfig, QueueDecision, QueueAdmission } from './queue-types';
 import type { Database } from 'better-sqlite3';
-import type { ConnectionScope } from '../contracts/index.js';
-import type { Connection } from './connection.js';
-import type { LifecycleBackend } from './lifecycle-store.js';
-import type { QueueWork, QueueOutcome, QueueRecord } from './queue-types.js';
-import { StorageError } from './errors.js';
-import { requireInput, timestamp } from './validation.js';
-import { readChatControl } from './chat-control-store.js';
-import { admitRequestQuota, pruneRequestQuota } from './request-quota-store.js';
-import { createAutonomousQuotaStore, pruneAutonomousQuota, restoreAutonomousQuota } from './autonomous-quota-store.js';
-import { activeMentionFlood, admitMention, pruneMentionFlood } from './mention-flood-store.js';
-import { finishResponse, noticePeriodAvailable, pruneResponseRate, recoverResponseRate, responseAlreadyStarted, responseSlotAvailable, startResponse } from './response-rate-store.js';
-import type { ResponseRateOutcome } from './response-rate-store.js';
-import type { NoticeBackend } from './notice-types.js';
-import type { FloodNotice, ResponsePublication, ResponsePublicationAdmission } from './queue-types.js';
-import type { ResponseRateConfig } from '../core/chat-limits/response-rate-config.js';
-import type { ChatLimits } from '../core/chat-limits/config.js';
+import type { ConnectionScope } from '../contracts/index';
+import type { Connection } from './connection';
+import type { LifecycleBackend } from './lifecycle-store';
+import type { QueueWork, QueueOutcome, QueueRecord } from './queue-types';
+import { StorageError } from './errors';
+import { requireInput, timestamp } from './validation';
+import { readChatControl } from './chat-control-store';
+import { admitRequestQuota, pruneRequestQuota } from './request-quota-store';
+import { createAutonomousQuotaStore, pruneAutonomousQuota, restoreAutonomousQuota } from './autonomous-quota-store';
+import { activeMentionFlood, admitMention, pruneMentionFlood } from './mention-flood-store';
+import { finishResponse, noticePeriodAvailable, pruneResponseRate, recoverResponseRate, responseAlreadyStarted, responseSlotAvailable, startResponse } from './response-rate-store';
+import type { ResponseRateOutcome } from './response-rate-store';
+import type { NoticeBackend } from './notice-types';
+import type { FloodNotice, ResponsePublication, ResponsePublicationAdmission } from './queue-types';
+import type { ResponseRateConfig } from '../core/chat-limits/response-rate-config';
+import type { ChatLimits } from '../core/chat-limits/config';
 export function createQueueBackend(connection: Connection, lifecycle: LifecycleBackend,traces:TraceBackend,messageRetentionDays?:number) {
   const retentionMs=messageRetentionDays===undefined?undefined:messageRetentionDays*86_400_000;
   const sources = new WeakMap<QueueWork, readonly number[]>();
@@ -66,21 +66,21 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
     transaction,
     historyConfigured:retentionMs!==undefined,
     admitRouted(token:string,scope:ConnectionScope,message:MessageInput,decision:RoutedQueueCallback,config:QueueConfig,
-      guard?: import('./queue-types.js').RoutedAdmissionGuard,responseRate?:ResponseRateConfig):RoutedAdmission {
+      guard?: import('./queue-types').RoutedAdmissionGuard,responseRate?:ResponseRateConfig):RoutedAdmission {
      return transaction(token,()=>lifecycle.transaction(scope,db=>{
       const gate = guard?.();
       if (gate && !gate.journal) return {admission:{status:'paused'},decision:null};
-      let chosen:import('./queue-types.js').RoutedQueueDecision|null=null;
+      let chosen:import('./queue-types').RoutedQueueDecision|null=null;
       let floodNotice:FloodNotice|undefined;
       const admission=this.admit(token,scope,message,snapshot=>{
        const settings=createChatStore(connection).get(scope.chatId);requireInput(settings);
        const value:unknown=gate && !gate.respond ? {route:null,reason:'forbidden'} : decision(Object.freeze({...snapshot,settings:Object.freeze(settings)}));
        if(value instanceof Promise){void value.catch(()=>{});throw new StorageError('invalid_input');}
        requireInput(value!==null&&typeof value==='object');
-       const routed=value as import('./queue-types.js').RoutedQueueDecision;
+       const routed=value as import('./queue-types').RoutedQueueDecision;
        requireInput(['direct_message','mention','reply','name','service','disabled','silent','sender_bot','sender_unknown','invalid_input','not_addressed','forbidden','reply_unknown','reply_other','mention_flood'].includes(routed.reason));
        if(routed.route!==null){requireInput(['direct_message','mention','reply','name'].includes(routed.route.kind)&&['normal','active'].includes(routed.route.mode)&&typeof routed.route.isGroupChat==='boolean'&&routed.reason===routed.route.kind);}
-       const result:import('./queue-types.js').RoutedQueueDecision=gate?.ordinary===false&&routed.route
+       const result:import('./queue-types').RoutedQueueDecision=gate?.ordinary===false&&routed.route
          ? {route:null,reason:'silent'} : routed;
        const route=result.route;
        if(responseRate&&route?.isGroupChat){
@@ -98,7 +98,7 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
        }
        chosen=Object.freeze({reason:result.reason,route:route===null?null:Object.freeze({...route})});return chosen.route!==null;
       },config);
-      const route=(chosen as import('./queue-types.js').RoutedQueueDecision|null)?.route;
+      const route=(chosen as import('./queue-types').RoutedQueueDecision|null)?.route;
       if(admission.status==='queued'&&route) {
         const revision=readChatControl(db,scope.chatId).responseRevision;
         db.prepare('UPDATE queue_jobs SET route_kind=?,route_mode=?,route_group=?,disclosure_version=?,control_revision=? WHERE id=?')
@@ -132,7 +132,7 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
         return {status:'queued',messageId:appended.id,jobId:inserted.id};
       }));
     },
-    acquire(token: string, leaseMs: number, safetyMs: number,config?:import('../core/response-tracing/config.js').TraceConfig,report?:(event:import('../core/response-tracing/metrics.js').TraceEvent)=>void,pausePlatform?:string) {
+    acquire(token: string, leaseMs: number, safetyMs: number,config?:import('../core/response-tracing/config').TraceConfig,report?:(event:import('../core/response-tracing/metrics').TraceEvent)=>void,pausePlatform?:string) {
       requireInput(typeof token === 'string' && token.length > 0); timestamp(leaseMs); timestamp(safetyMs);
       return connection.run(db => db.transaction(() => {
         const now = Date.now(); timestamp(now + leaseMs);

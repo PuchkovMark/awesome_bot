@@ -1,5 +1,5 @@
 import type { Database } from 'better-sqlite3';
-import { participantFixture } from './participant-fixture.js';
+import { participantFixture } from './participant-fixture';
 export function seedLargeQueueChat(db:Database, generation:number, count:number) {
  const pf=participantFixture(db);
  db.transaction(()=>{

@@ -1,6 +1,6 @@
 import {expect,test} from 'vitest';
-import {openStorage} from '../src/storage/index.js';
-import {scopeFor} from './helpers/connection-scope.js';
+import {openStorage} from '../src/storage/index';
+import {scopeFor} from './helpers/connection-scope';
 test('граница записи, курсор и ограниченная цитата независимо от timestamp',async()=>{
  const s=await openStorage(':memory:');try{
  const scope=scopeFor(s,'vk:a');const put=(messageId:string,timestamp:number,text='кот')=>s.messages.append(scope,{chatId:scope.chatId,userId:'vk:u',messageId,timestamp,text,authorName:'Имя',role:'user'});

@@ -1,11 +1,11 @@
 import Database from 'better-sqlite3';
 import { expect, test } from 'vitest';
-import { createAuthorizationService, createLifecycleService } from '../src/core/index.js';
-import { adminRecoveryStore } from '../src/storage/admin-recovery-store.js';
-import { openStorage } from '../src/storage/index.js';
-import { migrate } from '../src/storage/migrate.js';
-import { migrations } from '../src/storage/migrations/index.js';
-import { storageFixture } from './helpers/storage-fixture.js';
+import { createAuthorizationService, createLifecycleService } from '../src/core/index';
+import { adminRecoveryStore } from '../src/storage/admin-recovery-store';
+import { openStorage } from '../src/storage/index';
+import { migrate } from '../src/storage/migrate';
+import { migrations } from '../src/storage/migrations/index';
+import { storageFixture } from './helpers/storage-fixture';
 
 const chat='vk:2000000010', other='vk:2000000011', ownerId='vk:1', userId='vk:2';
 const config={ownerId,reasonMaxLength:500,reasonRetentionDays:90} as const;

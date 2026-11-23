@@ -1,6 +1,6 @@
 import { link, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
-import type { EvaluationResult } from './types.js';
+import type { EvaluationResult } from './types';
 
 export async function writeLocalReport(path: string, results: readonly EvaluationResult[], now = new Date()): Promise<void> {
   const attempts = new Map<string, number>();

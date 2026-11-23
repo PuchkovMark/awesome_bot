@@ -1,12 +1,12 @@
-import type { UserId, GrantBasis } from '../contracts/index.js';
-import type { Connection } from './connection.js';
-import type { SyncAuthorizationStore, AuthorizationTransaction, RevocationAudit, AdminGrant } from './legacy-authorization-types.js';
-import { compositeId, requireInput, string, timestamp, timezone } from './validation.js';
-import { StorageError } from './errors.js';
-import { findRecoveryCommand, recordRecoveryCommand, type RecoveryCommand, type RecoveryOperation } from './admin-recovery-store.js';
-import { claimControlMessage,readChatControl,writeChatPause,type ChatPause } from './chat-control-store.js';
-import { createChatStore } from './chats.js';
-import type { ChatPatch } from './types.js';
+import type { UserId, GrantBasis } from '../contracts/index';
+import type { Connection } from './connection';
+import type { SyncAuthorizationStore, AuthorizationTransaction, RevocationAudit, AdminGrant } from './legacy-authorization-types';
+import { compositeId, requireInput, string, timestamp, timezone } from './validation';
+import { StorageError } from './errors';
+import { findRecoveryCommand, recordRecoveryCommand, type RecoveryCommand, type RecoveryOperation } from './admin-recovery-store';
+import { claimControlMessage,readChatControl,writeChatPause,type ChatPause } from './chat-control-store';
+import { createChatStore } from './chats';
+import type { ChatPatch } from './types';
 
 const allBases: readonly GrantBasis[] = ['creator', 'inviter', 'explicit'];
 export function createAuthorizationStore(connection: Connection): SyncAuthorizationStore {

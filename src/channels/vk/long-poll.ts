@@ -1,7 +1,7 @@
 import { setTimeout as delay } from 'node:timers/promises';
-import { VkApiError, vkCursor } from './api.js';
-import type { VkApi } from './api.js';
-import { vkRecord } from './normalize.js';
+import { VkApiError, vkCursor } from './api';
+import type { VkApi } from './api';
+import { vkRecord } from './normalize';
 
 const waitSeconds = 25;
 const accessDenied = new Set([5, 7, 15, 27]);

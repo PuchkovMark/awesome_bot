@@ -1,7 +1,7 @@
 import { resolve } from 'node:path';
-import { contextConfig } from '../core/context/config.js';
-import { responseRateConfig } from '../core/chat-limits/response-rate-config.js';
-import { traceConfig } from '../core/response-tracing/config.js';
+import { contextConfig } from '../core/context/config';
+import { responseRateConfig } from '../core/chat-limits/response-rate-config';
+import { traceConfig } from '../core/response-tracing/config';
 import {
   baseConfig,
   ConfigError,
@@ -10,8 +10,8 @@ import {
   readConfigParameters,
   requiredParameter,
   versionParameters,
-} from './index.js';
-import type { ConfigOptions, ConfigValues } from './index.js';
+} from './index';
+import type { ConfigOptions, ConfigValues } from './index';
 
 function databasePath(cwd: string, values: ConfigValues) {
   const path = requiredParameter(values, 'DATABASE_PATH');

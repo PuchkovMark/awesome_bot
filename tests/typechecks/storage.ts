@@ -1,5 +1,5 @@
-import type { ConnectionScope } from '../../src/contracts/index.js';
-import type { ChatInput, ChatPatch, MessageInput, Storage } from '../../src/storage/index.js';
+import type { ConnectionScope } from '../../src/contracts/index';
+import type { ChatInput, ChatPatch, MessageInput, Storage } from '../../src/storage/index';
 export const initial: ChatInput = { responseMode: 'normal', enabled: false, createdAt: 0 };
 // @ts-expect-error — политика включения не имеет неявного default.
 export const missingEnabled: ChatInput = { responseMode: 'normal', createdAt: 0 };

@@ -1,4 +1,4 @@
-import type { LlmErrorCode, LlmFailure } from './types.js';
+import type { LlmErrorCode, LlmFailure } from './types';
 
 const messages: Readonly<Record<LlmErrorCode, string>> = Object.freeze({
   invalid_request: 'Некорректный запрос к модели.',

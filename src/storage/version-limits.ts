@@ -1,6 +1,6 @@
-import type { VersionLimits } from '../contracts/versioning.js';
-import { object, requireInput, string } from './validation.js';
-import { StorageError, safeError } from './errors.js';
+import type { VersionLimits } from '../contracts/versioning';
+import { object, requireInput, string } from './validation';
+import { StorageError, safeError } from './errors';
 export const defaultVersionLimits:VersionLimits=Object.freeze({textMaxLength:32000,maxPerEntity:100});
 export function versionLimits(input:VersionLimits=defaultVersionLimits):VersionLimits {
  try{object(input,['textMaxLength','maxPerEntity']);const result={...input};

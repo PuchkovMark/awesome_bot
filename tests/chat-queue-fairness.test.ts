@@ -1,8 +1,8 @@
 import { expect,test } from 'vitest';
-import { openStorage } from '../src/storage/index.js';
-import { createChatQueue } from '../src/core/index.js';
-import { scopeFor } from './helpers/connection-scope.js';
-import { queueMessage,flushQueue } from './helpers/chat-queue.js';
+import { openStorage } from '../src/storage/index';
+import { createChatQueue } from '../src/core/index';
+import { scopeFor } from './helpers/connection-scope';
+import { queueMessage,flushQueue } from './helpers/chat-queue';
 test('циклический выбор даёт тихому чату слот раньше нового задания горячего',async()=>{
  const storage=await openStorage(':memory:');const a=scopeFor(storage,'vk:a'),b=scopeFor(storage,'vk:b');
  const calls:string[]=[];const releases:(()=>void)[]=[];

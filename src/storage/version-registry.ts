@@ -1,5 +1,5 @@
-import type {VersionBackend} from './version-store.js';
-import {StorageError} from './errors.js';
+import type {VersionBackend} from './version-store';
+import {StorageError} from './errors';
 const backends=new WeakMap<object,VersionBackend>();
 export function registerVersions(storage:object,backend:VersionBackend):void {backends.set(storage,backend);}
 /** Внутренняя связь, не запросный API и не выдача административного объекта. */

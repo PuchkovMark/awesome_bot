@@ -1,9 +1,9 @@
 import {expect,test} from 'vitest';
 import Database from 'better-sqlite3';
-import {openStorage} from '../src/storage/index.js';
-import {scopeFor} from './helpers/connection-scope.js';
-import {storageFixture} from './helpers/storage-fixture.js';
-import {initialTrace,traceBackend} from '../src/storage/trace-store.js';
+import {openStorage} from '../src/storage/index';
+import {scopeFor} from './helpers/connection-scope';
+import {storageFixture} from './helpers/storage-fixture';
+import {initialTrace,traceBackend} from '../src/storage/trace-store';
 test('чтение scoped, заморожено и отфильтровано по сроку; удаление источника каскадное',async()=>{
  const f=storageFixture();const s=await openStorage(f.path);const db=new Database(f.path);try{
  const scope=scopeFor(s,'vk:a'),other=scopeFor(s,'vk:b');await s.messages.append(scope,{chatId:'vk:a',messageId:'m',userId:'vk:u',authorName:'',role:'user',text:'SECRET',timestamp:0});

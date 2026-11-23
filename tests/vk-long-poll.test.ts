@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createVkApi } from '../src/channels/vk/api.js';
-import type { VkApiCall } from '../src/channels/vk/api.js';
-import { createVkLongPoll } from '../src/channels/vk/long-poll.js';
-import type { VkPollGap } from '../src/channels/vk/long-poll.js';
-import type { VkIncoming } from '../src/channels/vk/normalize.js';
+import { createVkApi } from '../src/channels/vk/api';
+import type { VkApiCall } from '../src/channels/vk/api';
+import { createVkLongPoll } from '../src/channels/vk/long-poll';
+import type { VkPollGap } from '../src/channels/vk/long-poll';
+import type { VkIncoming } from '../src/channels/vk/normalize';
 
 const groupId = 314;
 const peerId = 2_000_000_004;

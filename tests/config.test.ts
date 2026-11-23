@@ -2,8 +2,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
-import { ConfigError, loadConfig } from '../src/config/index.js';
-import { createRedactor } from '../src/config/secrets.js';
+import { ConfigError, loadConfig } from '../src/config/index';
+import { createRedactor } from '../src/config/secrets';
 
 const valid = {
   BOT_OWNER_ID: 'vk:owner',

@@ -1,5 +1,5 @@
 import { expect,test } from 'vitest';
-import { loadApplicationConfig } from '../src/config/application.js';
+import { loadApplicationConfig } from '../src/config/application';
 
 const env={VK_TOKEN:'test-vk',VK_GROUP_ID:'314',BOT_OWNER_ID:'vk:73',DATABASE_PATH:'test.sqlite',
  OPENCODE_API_KEY:'test-go',LLM_MODEL:'test',LLM_SESSION_SECRET:'test-session',MODEL_CONTEXT_TOKENS:'16000',MESSAGE_RETENTION_DAYS:'30'};

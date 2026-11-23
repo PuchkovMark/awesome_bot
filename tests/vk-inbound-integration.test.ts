@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createVkInbound } from '../src/channels/index.js';
-import type { VkInboundApi } from '../src/channels/vk/api.js';
-import type { VkPollTransport } from '../src/channels/vk/long-poll.js';
-import { createChatQueue, createLifecycleService, createMessageRouter } from '../src/core/index.js';
-import type { ChatId, ConnectionScope, MembershipEvent } from '../src/contracts/index.js';
-import { openStorage } from '../src/storage/index.js';
-import type { Storage } from '../src/storage/index.js';
-import { flushQueue } from './helpers/chat-queue.js';
+import { createVkInbound } from '../src/channels/index';
+import type { VkInboundApi } from '../src/channels/vk/api';
+import type { VkPollTransport } from '../src/channels/vk/long-poll';
+import { createChatQueue, createLifecycleService, createMessageRouter } from '../src/core/index';
+import type { ChatId, ConnectionScope, MembershipEvent } from '../src/contracts/index';
+import { openStorage } from '../src/storage/index';
+import type { Storage } from '../src/storage/index';
+import { flushQueue } from './helpers/chat-queue';
 
 const groupId = 314;
 const firstPeer = 2_000_000_004;

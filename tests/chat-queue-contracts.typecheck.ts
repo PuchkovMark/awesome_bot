@@ -1,5 +1,5 @@
-import type { Storage } from '../src/storage/index.js';
-import type { ChatQueue, QueueDecision } from '../src/core/index.js';
+import type { Storage } from '../src/storage/index';
+import type { ChatQueue, QueueDecision } from '../src/core/index';
 export function queueContracts(storage: Storage, queue: ChatQueue) {
   // @ts-expect-error Голый chatId не является подлинной областью.
   void storage.messages.get('vk:a',1);

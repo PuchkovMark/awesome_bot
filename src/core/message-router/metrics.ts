@@ -1,5 +1,5 @@
-import type {SafeLogger} from '../../logger/types.js';
-import type {RoutingDecision} from './types.js';
+import type {SafeLogger} from '../../logger/types';
+import type {RoutingDecision} from './types';
 export function createRouterMetrics(logger?:SafeLogger){
  let unknown=0;
  const silence={reply_other:0,reply_unknown:0,mention_flood:0};

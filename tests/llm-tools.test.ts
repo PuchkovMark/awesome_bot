@@ -1,6 +1,6 @@
 import { expect, test, vi } from 'vitest';
-import { createLlmClient } from '../src/llm/index.js';
-import { completion, fakeClient, llmConfig, llmRequest, toolCall } from './helpers/llm-http.js';
+import { createLlmClient } from '../src/llm/index';
+import { completion, fakeClient, llmConfig, llmRequest, toolCall } from './helpers/llm-http';
 
 test('описания, вызов assistant и результат tool передаются без полномочий и исполнения', async () => {
   const execute = vi.fn();

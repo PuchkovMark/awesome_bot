@@ -1,1 +1,1 @@
-export { toolAuthorization } from './authorization.js';
+export { toolAuthorization } from './authorization';

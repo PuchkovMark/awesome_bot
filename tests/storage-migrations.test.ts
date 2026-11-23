@@ -1,9 +1,9 @@
 import Database from 'better-sqlite3';
 import { expect, test } from 'vitest';
-import { openConnection } from '../src/storage/connection.js';
-import { migrate } from '../src/storage/migrate.js';
-import { migrations } from '../src/storage/migrations/index.js';
-import { storageFixture } from './helpers/storage-fixture.js';
+import { openConnection } from '../src/storage/connection';
+import { migrate } from '../src/storage/migrate';
+import { migrations } from '../src/storage/migrations/index';
+import { storageFixture } from './helpers/storage-fixture';
 
 const insert = "INSERT INTO messages(chat_id,platform_message_id,user_id,author_name,role,text,timestamp) VALUES ('vk:1','1','vk:2','Имя','user','старый',0)";
 test('миграция 13 сохраняет поколения и связывает отметки с конкретным чатом и поколением', () => {

@@ -1,18 +1,18 @@
-import type { CapabilityState, ChannelAdapter, ChatId, ConnectionScope, PlatformMessageId, SendResult, UserId } from '../../contracts/index.js';
-import type { PublicationGuard, PublicationPort } from '../../core/index.js';
-import type { Storage } from '../../storage/index.js';
-import { createVkSdkApi } from './api.js';
-import type { VkApi } from './api.js';
-import { createVkInbound } from './inbound.js';
-import type { VkInboundOptions } from './inbound.js';
-import type { VkPollTransport } from './long-poll.js';
-import { isVkGroupChat, vkRecord } from './normalize.js';
-import { createVkOutbound, vkLocalId } from './outbound.js';
-import { createVkIntroduction } from './introduction.js';
-import { createVkAdministrationEvidence } from './administration-evidence.js';
-import { createVkAdministrationDelivery } from './administration-delivery.js';
-import { vkMessageLength } from './outbound-text.js';
-import type { waitForVkRetry } from './rate-limit.js';
+import type { CapabilityState, ChannelAdapter, ChatId, ConnectionScope, PlatformMessageId, SendResult, UserId } from '../../contracts/index';
+import type { PublicationGuard, PublicationPort } from '../../core/index';
+import type { Storage } from '../../storage/index';
+import { createVkSdkApi } from './api';
+import type { VkApi } from './api';
+import { createVkInbound } from './inbound';
+import type { VkInboundOptions } from './inbound';
+import type { VkPollTransport } from './long-poll';
+import { isVkGroupChat, vkRecord } from './normalize';
+import { createVkOutbound, vkLocalId } from './outbound';
+import { createVkIntroduction } from './introduction';
+import { createVkAdministrationEvidence } from './administration-evidence';
+import { createVkAdministrationDelivery } from './administration-delivery';
+import { vkMessageLength } from './outbound-text';
+import type { waitForVkRetry } from './rate-limit';
 
 export interface VkChannelOptions extends VkInboundOptions {
   readonly chats: Pick<Storage['chats'], 'get'>;

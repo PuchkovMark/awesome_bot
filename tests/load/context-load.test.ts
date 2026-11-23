@@ -1,13 +1,13 @@
 import {performance} from 'node:perf_hooks';
 import {expect,test} from 'vitest';
 import Database from 'better-sqlite3';
-import {openStorage} from '../../src/storage/index.js';
-import {scopeFor} from '../helpers/connection-scope.js';
-import {storageFixture} from '../helpers/storage-fixture.js';
-import {catalogAdministration} from '../../src/storage/catalog-admin.js';
-import {contextCapabilities} from '../helpers/context.js';
-import {createContextBuilder} from '../../src/core/context/index.js';
-import {recordQueueLoad} from '../helpers/queue-load-fixture.js';
+import {openStorage} from '../../src/storage/index';
+import {scopeFor} from '../helpers/connection-scope';
+import {storageFixture} from '../helpers/storage-fixture';
+import {catalogAdministration} from '../../src/storage/catalog-admin';
+import {contextCapabilities} from '../helpers/context';
+import {createContextBuilder} from '../../src/core/context/index';
+import {recordQueueLoad} from '../helpers/queue-load-fixture';
 test('50000 записей: индекс, ограниченные SQL-проекции и срок подготовки',async()=>{
  const f=storageFixture(),s=await openStorage(f.path),scope=scopeFor(s,'vk:loadctx'),db=new Database(f.path);
  try{

@@ -1,5 +1,5 @@
-import type { QueueConfig } from './types.js';
-import { QueueError } from './errors.js';
+import type { QueueConfig } from './types';
+import { QueueError } from './errors';
 export function queueConfig(input: Partial<QueueConfig> = {}): QueueConfig {
   try {
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw Error();

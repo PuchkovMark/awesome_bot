@@ -1,7 +1,7 @@
 import {expect,test} from 'vitest';
-import {contextConfig} from '../src/core/context/config.js';
-import {contextSeparator,estimateInput,staticMinimum} from '../src/core/context/budget.js';
-import {validateContextStartup} from '../src/core/context/startup.js';
+import {contextConfig} from '../src/core/context/config';
+import {contextSeparator,estimateInput,staticMinimum} from '../src/core/context/budget';
+import {validateContextStartup} from '../src/core/context/startup';
 const c=contextConfig({modelContextTokens:16000});
 test('конфигурация ограничивает общий ввод и резерв независимо от провайдера',()=>{
  expect(c.inputBudgetTokens).toBe(8000);expect(Object.isFrozen(c)).toBe(true);

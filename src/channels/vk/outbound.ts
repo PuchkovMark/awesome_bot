@@ -1,11 +1,11 @@
 import { randomInt } from 'node:crypto';
-import type { OutgoingMessage, PublishedPart } from '../../contracts/index.js';
-import { VkApiError, vkErrorCode, vkReadRetryable } from './api.js';
-import type { VkApi } from './api.js';
-import { vkCmid, vkId, vkRecord } from './normalize.js';
-import { splitVkText } from './outbound-text.js';
-import { VkRequestCancelled, waitForVkRetry } from './rate-limit.js';
-import type { VkRequestGuard } from './rate-limit.js';
+import type { OutgoingMessage, PublishedPart } from '../../contracts/index';
+import { VkApiError, vkErrorCode, vkReadRetryable } from './api';
+import type { VkApi } from './api';
+import { vkCmid, vkId, vkRecord } from './normalize';
+import { splitVkText } from './outbound-text';
+import { VkRequestCancelled, waitForVkRetry } from './rate-limit';
+import type { VkRequestGuard } from './rate-limit';
 
 const rejected = new Set([5, 6, 7, 15, 27, 100, 900, 901, 902, 910, 914, 917, 921, 925, 927, 932]);
 const issuedIdsLimit = 65_536;

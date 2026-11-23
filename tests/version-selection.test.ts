@@ -1,10 +1,10 @@
 import {expect,test} from 'vitest';
 import Database from 'better-sqlite3';
-import {openStorage} from '../src/storage/index.js';
-import {scopeFor} from './helpers/connection-scope.js';
-import {catalogAdministration} from '../src/storage/catalog-admin.js';
-import type {LocalContentKind,VersionRef} from '../src/contracts/versioning.js';
-import {storageFixture} from './helpers/storage-fixture.js';
+import {openStorage} from '../src/storage/index';
+import {scopeFor} from './helpers/connection-scope';
+import {catalogAdministration} from '../src/storage/catalog-admin';
+import type {LocalContentKind,VersionRef} from '../src/contracts/versioning';
+import {storageFixture} from './helpers/storage-fixture';
 test('выбор, откат, сброс, конфликт, отсутствующая версия и ошибка записи',async()=>{
  const f=storageFixture(),storage=await openStorage(f.path),db=new Database(f.path),scope=scopeFor(storage,'vk:a');
  try{

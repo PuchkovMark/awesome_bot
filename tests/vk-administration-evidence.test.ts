@@ -1,7 +1,7 @@
 import { expect, test, vi } from 'vitest';
-import { createVkAdministrationEvidence } from '../src/channels/vk/administration-evidence.js';
-import type { VkApiCall } from '../src/channels/vk/api.js';
-import type { ConnectionScope } from '../src/contracts/index.js';
+import { createVkAdministrationEvidence } from '../src/channels/vk/administration-evidence';
+import type { VkApiCall } from '../src/channels/vk/api';
+import type { ConnectionScope } from '../src/contracts/index';
 
 const peer=2000000001;
 const scope={chatId:`vk:${peer}`,generation:1} as unknown as ConnectionScope;

@@ -1,4 +1,4 @@
-import type { LlmErrorCode } from '../../llm/types.js';
+import type { LlmErrorCode } from '../../llm/types';
 
 export interface AgentLoopMessage { readonly role: 'user' | 'assistant'; readonly text: string }
 export interface AgentLoopInput {

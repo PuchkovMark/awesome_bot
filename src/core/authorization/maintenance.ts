@@ -1,4 +1,4 @@
-import type { AuthorizationStore } from '../../storage/index.js';
+import type { AuthorizationStore } from '../../storage/index';
 
 export interface AuthorizationScheduler {
   schedule(delayMs: number, callback: () => void): () => void;

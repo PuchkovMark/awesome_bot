@@ -1,5 +1,5 @@
-import type {LifecycleObservation} from '../../contracts/index.js';
-import {validId,platformOf} from '../authorization/validation.js';
+import type {LifecycleObservation} from '../../contracts/index';
+import {validId,platformOf} from '../authorization/validation';
 /** Структурная проверка не доказывает семантику confirmed: источник доверенный. */
 export function observationOf(value:unknown,platform:string):LifecycleObservation {
  const unavailable:LifecycleObservation={confidence:'unavailable',bot:'unknown'};
@@ -9,7 +9,7 @@ export function observationOf(value:unknown,platform:string):LifecycleObservatio
   if(
    Object.keys(row).some(k=>!['confidence','bot','creatorId','inviterId','creatorChanged','members','departedIds'].includes(k)))return unavailable;
   if(!['confirmed','uncertain','unavailable'].includes(row.confidence as string)||!['present','absent','unknown'].includes(row.bot as string))return unavailable;
-  const result: {confidence:LifecycleObservation['confidence'];bot:LifecycleObservation['bot'];creatorId?:Exclude<LifecycleObservation['creatorId'],undefined>;inviterId?:Exclude<LifecycleObservation['inviterId'],undefined>;creatorChanged?:boolean;departedIds?:readonly import('../../contracts/index.js').UserId[];members?:{complete:boolean;ids:NonNullable<LifecycleObservation['members']>['ids']}}={confidence:row.confidence as LifecycleObservation['confidence'],bot:row.bot as LifecycleObservation['bot']};
+  const result: {confidence:LifecycleObservation['confidence'];bot:LifecycleObservation['bot'];creatorId?:Exclude<LifecycleObservation['creatorId'],undefined>;inviterId?:Exclude<LifecycleObservation['inviterId'],undefined>;creatorChanged?:boolean;departedIds?:readonly import('../../contracts/index').UserId[];members?:{complete:boolean;ids:NonNullable<LifecycleObservation['members']>['ids']}}={confidence:row.confidence as LifecycleObservation['confidence'],bot:row.bot as LifecycleObservation['bot']};
   for(const key of ['creatorId','inviterId'] as const)if(Object.hasOwn(row,key)) {
    const id=row[key];if(id!==null&&(!validId(id)||platformOf(id)!==platform))return unavailable;
    result[key]=id as NonNullable<LifecycleObservation['creatorId']>|null;

@@ -1,9 +1,9 @@
 import { expect, test, vi } from 'vitest';
-import { createVkIntroduction } from '../src/channels/vk/introduction.js';
-import { createVkOutbound } from '../src/channels/vk/outbound.js';
-import { createVkApiCall, type VkApiCall } from '../src/channels/vk/api.js';
-import { createVkRateLimiter } from '../src/channels/vk/rate-limit.js';
-import type { ConnectionScope } from '../src/contracts/index.js';
+import { createVkIntroduction } from '../src/channels/vk/introduction';
+import { createVkOutbound } from '../src/channels/vk/outbound';
+import { createVkApiCall, type VkApiCall } from '../src/channels/vk/api';
+import { createVkRateLimiter } from '../src/channels/vk/rate-limit';
+import type { ConnectionScope } from '../src/contracts/index';
 
 test('служебная публикация повторяет сохранённый ключ, сверяет запись VK и ограничивает адресата', async () => {
   const chat = 'vk:2000000010';

@@ -1,8 +1,8 @@
-import type { IncomingMessage } from '../contracts/index.js';
-import type { GlobalVersionRef } from '../contracts/versioning.js';
-import type { PublicationRequest, QueueCompletion } from '../core/index.js';
-import type { LlmRequest } from '../llm/types.js';
-import type { MessageInput } from '../storage/index.js';
+import type { IncomingMessage } from '../contracts/index';
+import type { GlobalVersionRef } from '../contracts/versioning';
+import type { PublicationRequest, QueueCompletion } from '../core/index';
+import type { LlmRequest } from '../llm/types';
+import type { MessageInput } from '../storage/index';
 
 export interface Observation {
   readonly request: LlmRequest | null;

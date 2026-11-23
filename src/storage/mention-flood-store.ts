@@ -1,6 +1,6 @@
 import type { Database } from 'better-sqlite3';
-import type { ConnectionScope } from '../contracts/index.js';
-import type { ResponseRateConfig } from '../core/chat-limits/response-rate-config.js';
+import type { ConnectionScope } from '../contracts/index';
+import type { ResponseRateConfig } from '../core/chat-limits/response-rate-config';
 
 type ScopeKey = Pick<ConnectionScope, 'chatId' | 'generation'>;
 

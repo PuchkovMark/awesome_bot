@@ -1,8 +1,8 @@
-import { formatVkChecklist } from './checklist.js';
-import { writeLocalReport } from './report.js';
-import { runScenario } from './runner.js';
-import { scenarios } from './scenarios.js';
-import type { EvaluationResult } from './types.js';
+import { formatVkChecklist } from './checklist';
+import { writeLocalReport } from './report';
+import { runScenario } from './runner';
+import { scenarios } from './scenarios';
+import type { EvaluationResult } from './types';
 
 async function main(args: readonly string[]): Promise<number> {
   if (args.length === 1 && args[0] === '--checklist') {

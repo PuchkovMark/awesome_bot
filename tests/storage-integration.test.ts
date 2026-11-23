@@ -1,9 +1,9 @@
-import { openStorage, scopeFor } from './helpers/connection-scope.js';
+import { openStorage, scopeFor } from './helpers/connection-scope';
 import Database from 'better-sqlite3';
 import { expect, test, vi } from 'vitest';
-import * as api from '../src/storage/index.js';
+import * as api from '../src/storage/index';
 
-import { storageFixture } from './helpers/storage-fixture.js';
+import { storageFixture } from './helpers/storage-fixture';
 
 const message = { chatId: 'vk:1', userId: 'vk:2', messageId: 'one', authorName: 'Имя', role: 'user', text: 'SECRET-TEXT', timestamp: 0 } as const;
 test('публичный цикл сохраняет сообщения и настройки, затем распознаёт duplicate', async () => {

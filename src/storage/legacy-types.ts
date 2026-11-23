@@ -1,5 +1,5 @@
-import type { AuthorizationStore } from './legacy-authorization-types.js';
-import type { ChatId, UserId, PlatformMessageId, Timestamp } from '../contracts/index.js';
+import type { AuthorizationStore } from './legacy-authorization-types';
+import type { ChatId, UserId, PlatformMessageId, Timestamp } from '../contracts/index';
 
 export interface MessageInput {
   readonly chatId: ChatId;

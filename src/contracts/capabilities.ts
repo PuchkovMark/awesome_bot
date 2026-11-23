@@ -1,4 +1,4 @@
-import type { ChatId, Timestamp, UserId } from './identifiers.js';
+import type { ChatId, Timestamp, UserId } from './identifiers';
 
 export type CapabilityName = 'send' | 'typing' | 'reply' | 'getUserName'
   | 'adminInfo' | 'membershipEvents' | 'directMessage';

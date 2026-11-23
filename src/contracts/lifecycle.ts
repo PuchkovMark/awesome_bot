@@ -1,4 +1,4 @@
-import type { ChatId, UserId } from './identifiers.js';
+import type { ChatId, UserId } from './identifiers';
 declare const scopeBrand: unique symbol;
 /** Выдаётся доверенной границей; бренд не заменяет runtime-проверку. */
 export interface ConnectionScope {

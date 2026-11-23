@@ -1,5 +1,5 @@
-import type { ObjectParameterSchema, ToolContext, ToolDefinition } from '../../src/contracts/index.js';
-import { FakeAdapter } from '../helpers/fake-adapters.js';
+import type { ObjectParameterSchema, ToolContext, ToolDefinition } from '../../src/contracts/index';
+import { FakeAdapter } from '../helpers/fake-adapters';
 
 type Parameters = { readonly query: string };
 export const tool: ToolDefinition<Parameters, string> = {

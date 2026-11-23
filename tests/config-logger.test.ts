@@ -2,11 +2,11 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test, vi } from 'vitest';
-import { loadConfig } from '../src/config/index.js';
-import type { ConfigOptions } from '../src/config/index.js';
-import type { AppConfig } from '../src/config/types.js';
-import { createLogger, reportConfigError } from '../src/logger/index.js';
-import { captureLogs } from './helpers/log-output.js';
+import { loadConfig } from '../src/config/index';
+import type { ConfigOptions } from '../src/config/index';
+import type { AppConfig } from '../src/config/types';
+import { createLogger, reportConfigError } from '../src/logger/index';
+import { captureLogs } from './helpers/log-output';
 
 const valid = { BOT_OWNER_ID: 'vk:owner', VK_TOKEN: 'environment-vk-secret', OPENCODE_API_KEY: 'environment-opencode-secret', LLM_MODEL: 'deepseek-v4.1-flash', LOG_LEVEL: 'debug' };
 const absent = () => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); };

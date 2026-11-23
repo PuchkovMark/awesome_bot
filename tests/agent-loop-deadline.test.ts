@@ -1,7 +1,7 @@
 import { afterEach, expect, test, vi } from 'vitest';
-import { createAgentLoop } from '../src/core/index.js';
-import type { LlmRequest, LlmResult } from '../src/llm/types.js';
-import { agentInput, deferred, failure, response, sequence } from './helpers/agent-loop.js';
+import { createAgentLoop } from '../src/core/index';
+import type { LlmRequest, LlmResult } from '../src/llm/types';
+import { agentInput, deferred, failure, response, sequence } from './helpers/agent-loop';
 
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 const clock = () => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance', 'Date'] });

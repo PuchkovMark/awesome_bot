@@ -1,7 +1,7 @@
 import {expect,test} from 'vitest';
-import {openStorage} from '../src/storage/index.js';
-import {createLifecycleService} from '../src/core/index.js';
-import type {ConnectionScope,LifecycleObservation} from '../src/contracts/index.js';
+import {openStorage} from '../src/storage/index';
+import {createLifecycleService} from '../src/core/index';
+import type {ConnectionScope,LifecycleObservation} from '../src/contracts/index';
 test('область проверяется каждым чтением и записью, пауза сохраняет данные',async()=>{
  const storage=await openStorage(':memory:');let result:LifecycleObservation={confidence:'confirmed',bot:'present'};
  const life=createLifecycleService({storage,ownerId:'vk:owner',source:{async observe(){return result;}}});
@@ -18,7 +18,7 @@ test('область проверяется каждым чтением и за�
 });
 
 test('пауза отклоняет все запросные операции, old owner не переносится на новое поколение',async()=>{
- const {createAuthorizationService}=await import('../src/core/index.js');
+ const {createAuthorizationService}=await import('../src/core/index');
  const storage=await openStorage(':memory:');let result:LifecycleObservation={confidence:'confirmed',bot:'present'};
  const life=createLifecycleService({storage,ownerId:'vk:owner',source:{async observe(){return result;}}});
  const auth=await createAuthorizationService({config:{ownerId:'vk:owner',reasonMaxLength:500,reasonRetentionDays:90},store:storage.authorization,now:()=>100});

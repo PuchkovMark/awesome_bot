@@ -1,5 +1,5 @@
 import { createHmac } from 'node:crypto';
-import type { ConnectionScope } from '../contracts/lifecycle.js';
+import type { ConnectionScope } from '../contracts/lifecycle';
 
 /** Вычисление не подтверждает актуальность области и не хранит соответствия. */
 export function createLlmSessionId(secret: string): (scope: ConnectionScope) => string {

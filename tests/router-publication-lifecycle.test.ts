@@ -1,10 +1,10 @@
 import {expect,test,vi} from 'vitest';
-import {openStorage} from '../src/storage/index.js';
-import {createChatQueue} from '../src/core/chat-queue/service.js';
-import {scopeFor} from './helpers/connection-scope.js';
-import {flushQueue,queueMessage} from './helpers/chat-queue.js';
-import {lifecycleBackend} from '../src/storage/lifecycle-store.js';
-import {createPublicationService} from '../src/core/message-router/publication-service.js';
+import {openStorage} from '../src/storage/index';
+import {createChatQueue} from '../src/core/chat-queue/service';
+import {scopeFor} from './helpers/connection-scope';
+import {flushQueue,queueMessage} from './helpers/chat-queue';
+import {lifecycleBackend} from '../src/storage/lifecycle-store';
+import {createPublicationService} from '../src/core/message-router/publication-service';
 const route={kind:'name',mode:'normal',isGroupChat:true} as const;
 test('terminal зафиксирован до публикации; один чат не перекрывается, зависший порт ограничен и stop освобождает',async()=>{
  vi.useFakeTimers();const storage=await openStorage(':memory:'),scope=scopeFor(storage,'vk:a');await storage.chats.create(scope,{responseMode:'normal',enabled:true,createdAt:0});

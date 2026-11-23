@@ -1,6 +1,6 @@
-import type { CapabilityContext, CapabilitySnapshot } from './capabilities.js';
-import type { IncomingEvent, OutgoingMessage } from './events.js';
-import type { ChatId, PlatformId, PlatformMessageId, Timestamp, UserId } from './identifiers.js';
+import type { CapabilityContext, CapabilitySnapshot } from './capabilities';
+import type { IncomingEvent, OutgoingMessage } from './events';
+import type { ChatId, PlatformId, PlatformMessageId, Timestamp, UserId } from './identifiers';
 
 export type EventHandler = (event: IncomingEvent) => Promise<void>;
 /** Id отправленных частей в области чата. Ошибка отправки отклоняет Promise. */

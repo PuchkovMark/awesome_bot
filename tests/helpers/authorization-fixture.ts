@@ -1,7 +1,7 @@
-import { openStorage, createAuthorizationService, scopeFor, scopeForService } from './connection-scope.js';
+import { openStorage, createAuthorizationService, scopeFor, scopeForService } from './connection-scope';
 
 
-import type { AuthorizationOptions } from '../../src/core/index.js';
+import type { AuthorizationOptions } from '../../src/core/index';
 
 export const authConfig = { ownerId: 'vk:owner', reasonMaxLength: 500, reasonRetentionDays: 90 } as const;
 export async function authorizationFixture(options: Partial<AuthorizationOptions> = {}) {

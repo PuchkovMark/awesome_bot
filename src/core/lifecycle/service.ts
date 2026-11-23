@@ -1,9 +1,9 @@
-import { observationOf } from './source.js';
-import type { ChatId, ConnectionScope, KnownBoolean, UserId, LifecycleObservation, LifecycleSource } from '../../contracts/index.js';
-import type { Storage } from '../../storage/index.js';
-import { StorageError } from '../../storage/errors.js';
-import { lifecycleBackend, type AdministrationInvite } from '../../storage/lifecycle-store.js';
-import { validId } from '../authorization/validation.js';
+import { observationOf } from './source';
+import type { ChatId, ConnectionScope, KnownBoolean, UserId, LifecycleObservation, LifecycleSource } from '../../contracts/index';
+import type { Storage } from '../../storage/index';
+import { StorageError } from '../../storage/errors';
+import { lifecycleBackend, type AdministrationInvite } from '../../storage/lifecycle-store';
+import { validId } from '../authorization/validation';
 
 export function createLifecycleService(options:{readonly storage:Storage;readonly ownerId:UserId;readonly source:LifecycleSource}) {
   if(!validId(options.ownerId))throw new TypeError('Lifecycle: invalid_owner');

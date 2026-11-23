@@ -3,9 +3,9 @@ import { once } from 'node:events';
 import { writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { expect, test, vi } from 'vitest';
-import { initializePrompt, resolveApplicationChat } from '../src/app/setup.js';
-import { loadPromptConfig } from '../src/config/application.js';
-import { storageFixture } from './helpers/storage-fixture.js';
+import { initializePrompt, resolveApplicationChat } from '../src/app/setup';
+import { loadPromptConfig } from '../src/config/application';
+import { storageFixture } from './helpers/storage-fixture';
 
 function child(args: string[], env: NodeJS.ProcessEnv, cwd: string) {
   const processHandle = spawn(process.execPath, args, { env, cwd });

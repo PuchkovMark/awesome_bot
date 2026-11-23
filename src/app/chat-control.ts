@@ -1,13 +1,13 @@
-import type { createVkChannel } from '../channels/vk/channel.js';
-import { isVkGroupChat, type VkIncoming } from '../channels/vk/normalize.js';
-import type { AuthorizationContext, ChatId, IncomingMessage, UserId } from '../contracts/index.js';
-import { chatControlAction, parseChatControl } from '../core/chat-control/commands.js';
-import { formatChatControl } from '../core/chat-control/service.js';
-import type { createAuthorizationService } from '../core/authorization/service.js';
-import type { createLifecycleService } from '../core/lifecycle/service.js';
-import { createTraceDiagnostics } from '../core/response-tracing/diagnostics.js';
-import { chatControlStore } from '../storage/chat-control-store.js';
-import type { Storage } from '../storage/index.js';
+import type { createVkChannel } from '../channels/vk/channel';
+import { isVkGroupChat, type VkIncoming } from '../channels/vk/normalize';
+import type { AuthorizationContext, ChatId, IncomingMessage, UserId } from '../contracts/index';
+import { chatControlAction, parseChatControl } from '../core/chat-control/commands';
+import { formatChatControl } from '../core/chat-control/service';
+import type { createAuthorizationService } from '../core/authorization/service';
+import type { createLifecycleService } from '../core/lifecycle/service';
+import { createTraceDiagnostics } from '../core/response-tracing/diagnostics';
+import { chatControlStore } from '../storage/chat-control-store';
+import type { Storage } from '../storage/index';
 
 export function createChatControlHandlers(options: {
   readonly storage: Storage;

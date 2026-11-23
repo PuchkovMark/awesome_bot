@@ -1,8 +1,8 @@
 import Database from 'better-sqlite3';
 import { expect, test } from 'vitest';
-import { responseRateConfig } from '../src/core/chat-limits/response-rate-config.js';
-import { migrate } from '../src/storage/migrate.js';
-import { activeMentionFlood, admitMention, pruneMentionFlood } from '../src/storage/mention-flood-store.js';
+import { responseRateConfig } from '../src/core/chat-limits/response-rate-config';
+import { migrate } from '../src/storage/migrate';
+import { activeMentionFlood, admitMention, pruneMentionFlood } from '../src/storage/mention-flood-store';
 
 test('повтор, рестарт и смена настройки сохраняют границу и идентичность активного всплеска', () => {
   const db = new Database(':memory:');

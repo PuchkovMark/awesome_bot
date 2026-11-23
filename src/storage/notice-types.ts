@@ -1,5 +1,5 @@
-import type {ConnectionScope,UserId} from '../contracts/index.js';
-import type {RouteMetadata} from './queue-types.js';
+import type {ConnectionScope,UserId} from '../contracts/index';
+import type {RouteMetadata} from './queue-types';
 export const noticeText='Сейчас не получилось ответить. Попробуйте позже.';
 const templates = {
   generic: noticeText,

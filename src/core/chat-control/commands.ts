@@ -1,6 +1,6 @@
-import type { ChatId } from '../../contracts/index.js';
-import type { ResponseMode } from '../../storage/types.js';
-import type { ServiceCommand } from '../message-router/types.js';
+import type { ChatId } from '../../contracts/index';
+import type { ResponseMode } from '../../storage/types';
+import type { ServiceCommand } from '../message-router/types';
 
 export type ChatControlCommand =
   | {readonly kind:'settings'|'on'|'off'|'pause'|'disableAutonomous'}

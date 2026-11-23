@@ -1,6 +1,6 @@
 import {expect,test,vi} from 'vitest';
-import {contextFixture} from './helpers/context.js';
-import {createContextBuilder} from '../src/core/context/index.js';
+import {contextFixture} from './helpers/context';
+import {createContextBuilder} from '../src/core/context/index';
 test('повторные отмены и таймауты освобождают таймеры и не возвращают поздний ready',async()=>{
  vi.useFakeTimers();const f=await contextFixture();try{
  const a=await f.put('a','вопрос');const b=createContextBuilder({...f.options,capabilities:()=>new Promise(()=>{}),config:{modelContextTokens:16000,preparationTimeoutMs:10}});

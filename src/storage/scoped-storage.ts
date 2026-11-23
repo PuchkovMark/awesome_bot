@@ -1,15 +1,15 @@
-import { createContextStateReader } from './context-state-reader.js';
-import { createContextReader } from './context-reader.js';
-import type { ConnectionScope } from '../contracts/index.js';
-import type { QueueRecord } from './queue-types.js';
-import type { VersionBackend } from './version-store.js';
-import type { Connection } from './connection.js';
-import type { LifecycleBackend } from './lifecycle-store.js';
-import type { ScopedStorage } from './scoped-types.js';
-import { readMessage, createMessageStore } from './messages.js';
-import { createChatStore } from './chats.js';
-import { createAuthorizationStore } from './authorization-store.js';
-import { requireInput } from './validation.js';
+import { createContextStateReader } from './context-state-reader';
+import { createContextReader } from './context-reader';
+import type { ConnectionScope } from '../contracts/index';
+import type { QueueRecord } from './queue-types';
+import type { VersionBackend } from './version-store';
+import type { Connection } from './connection';
+import type { LifecycleBackend } from './lifecycle-store';
+import type { ScopedStorage } from './scoped-types';
+import { readMessage, createMessageStore } from './messages';
+import { createChatStore } from './chats';
+import { createAuthorizationStore } from './authorization-store';
+import { requireInput } from './validation';
 export function createScopedStorage(connection:Connection,backend:LifecycleBackend,versions:VersionBackend,queue:{get(scope:ConnectionScope,id:number):QueueRecord|null}):Omit<ScopedStorage,'traces'> {
   const messages=createMessageStore(connection),chats=createChatStore(connection),authorization=createAuthorizationStore(connection);
   return {

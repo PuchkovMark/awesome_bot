@@ -1,8 +1,8 @@
-import { historyBounds } from './history-retention-store.js';
-import type { SyncStore } from './legacy-types.js';
-import type { Connection } from './connection.js';
-import type { MessageInput, MessageStore, StoredMessage } from './legacy-types.js';
-import { compositeId, object, requireInput, string, timestamp } from './validation.js';
+import { historyBounds } from './history-retention-store';
+import type { SyncStore } from './legacy-types';
+import type { Connection } from './connection';
+import type { MessageInput, MessageStore, StoredMessage } from './legacy-types';
+import { compositeId, object, requireInput, string, timestamp } from './validation';
 
 const fields = ['chatId', 'messageId', 'userId', 'authorName', 'role', 'text', 'replyToMessageId', 'timestamp', 'attachmentCount'];
 export function validateMessage(message: MessageInput): void {

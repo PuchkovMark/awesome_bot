@@ -1,9 +1,9 @@
 import { expect, test, vi } from 'vitest';
-import { createChatOnboarding } from '../src/core/chat-onboarding/service.js';
-import type { IntroductionPort } from '../src/core/chat-onboarding/ports.js';
-import { createLifecycleService } from '../src/core/index.js';
-import { disclosureStore } from '../src/storage/chat-disclosure-store.js';
-import { openStorage } from '../src/storage/index.js';
+import { createChatOnboarding } from '../src/core/chat-onboarding/service';
+import type { IntroductionPort } from '../src/core/chat-onboarding/ports';
+import { createLifecycleService } from '../src/core/index';
+import { disclosureStore } from '../src/storage/chat-disclosure-store';
+import { openStorage } from '../src/storage/index';
 
 test('запрет отправки даёт одно предупреждение владельцу, а неизвестная доставка вступления сохраняет паузу', async () => {
   const storage=await openStorage(':memory:');

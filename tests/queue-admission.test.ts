@@ -1,10 +1,10 @@
 import { expect, test, vi } from 'vitest';
 import Database from 'better-sqlite3';
-import { openStorage } from '../src/storage/index.js';
-import { queueBackend } from '../src/storage/queue-registry.js';
-import { queueConfig } from '../src/core/chat-queue/validation.js';
-import { scopeFor } from './helpers/connection-scope.js';
-import { storageFixture } from './helpers/storage-fixture.js';
+import { openStorage } from '../src/storage/index';
+import { queueBackend } from '../src/storage/queue-registry';
+import { queueConfig } from '../src/core/chat-queue/validation';
+import { scopeFor } from './helpers/connection-scope';
+import { storageFixture } from './helpers/storage-fixture';
 const message = (id: string) => ({chatId:'vk:a' as const,userId:'vk:u' as const,messageId:id,authorName:'private',role:'user' as const,text:'кот',timestamp:0});
 test('атомарность, дубль после переполнения, независимый журнал, изоляция ссылки', async () => {
   const f=storageFixture(), storage=await openStorage(f.path), db=new Database(f.path);

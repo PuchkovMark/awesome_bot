@@ -1,6 +1,6 @@
 import type { Database } from 'better-sqlite3';
-import { safeError, StorageError } from './errors.js';
-import { databasePath } from './validation.js';
+import { safeError, StorageError } from './errors';
+import { databasePath } from './validation';
 
 /** Внутренний доступ; наружу через index.ts не экспортируется. */
 export interface Connection {

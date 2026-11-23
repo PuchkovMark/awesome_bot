@@ -1,6 +1,6 @@
-import { agentError, isAgentErrorCode } from './errors.js';
-import { usageCount } from './summary.js';
-import type { AgentLoopInput, AgentLoopMessage, AgentLoopOptions, AgentLoopOutcome } from './types.js';
+import { agentError, isAgentErrorCode } from './errors';
+import { usageCount } from './summary';
+import type { AgentLoopInput, AgentLoopMessage, AgentLoopOptions, AgentLoopOutcome } from './types';
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);

@@ -1,7 +1,7 @@
 import { afterEach, expect, test, vi } from 'vitest';
-import { createLlmClient } from '../src/llm/index.js';
-import type { LlmResult } from '../src/llm/index.js';
-import { completion, llmConfig, llmRequest } from './helpers/llm-http.js';
+import { createLlmClient } from '../src/llm/index';
+import type { LlmResult } from '../src/llm/index';
+import { completion, llmConfig, llmRequest } from './helpers/llm-http';
 
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 function deferred<T>() {

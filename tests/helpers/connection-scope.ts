@@ -1,9 +1,9 @@
-import { openStorage as openRealStorage } from '../../src/storage/index.js';
-import type { Storage } from '../../src/storage/index.js';
-import type { ChatId, ConnectionScope } from '../../src/contracts/index.js';
-import { lifecycleBackend } from '../../src/storage/lifecycle-store.js';
-import { createAuthorizationService as createRealAuthorizationService } from '../../src/core/index.js';
-import type { AuthorizationOptions } from '../../src/core/index.js';
+import { openStorage as openRealStorage } from '../../src/storage/index';
+import type { Storage } from '../../src/storage/index';
+import type { ChatId, ConnectionScope } from '../../src/contracts/index';
+import { lifecycleBackend } from '../../src/storage/lifecycle-store';
+import { createAuthorizationService as createRealAuthorizationService } from '../../src/core/index';
+import type { AuthorizationOptions } from '../../src/core/index';
 const stores=new WeakMap<object,Storage>(),services=new WeakMap<object,Storage>();
 /** Явный синтетический источник только fixtures. Не используется приложением. */
 export function scopeFor(storage:Storage,chatId:unknown):ConnectionScope {

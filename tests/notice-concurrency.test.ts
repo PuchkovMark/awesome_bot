@@ -1,10 +1,10 @@
 import {spawn} from 'node:child_process';
 import {resolve} from 'node:path';
 import {expect,test} from 'vitest';
-import {openStorage} from '../src/storage/index.js';
-import {scopeFor} from './helpers/connection-scope.js';
-import {storageFixture} from './helpers/storage-fixture.js';
-import {queueMessage} from './helpers/chat-queue.js';
+import {openStorage} from '../src/storage/index';
+import {scopeFor} from './helpers/connection-scope';
+import {storageFixture} from './helpers/storage-fixture';
+import {queueMessage} from './helpers/chat-queue';
 async function contender(path:string,id:number){
  const code=`const root=process.argv[2];const {openStorage}=await import(root+'/storage/index.js');const {lifecycleBackend}=await import(root+'/storage/lifecycle-store.js');const {noticeBackend}=await import(root+'/storage/notice-store.js');const s=await openStorage(process.argv[1]);const scope=lifecycleBackend(s).current('vk:a');process.stdout.write('ready\\n');process.stdin.once('data',async()=>{try{const p=noticeBackend(s).reserve(scope,Number(process.argv[3]),{kind:'name',mode:'normal',isGroupChat:true},100,0);process.stdout.write(p?'won\\n':'denied\\n');}finally{await s.close();}});`;
  const child=spawn(process.execPath,['--input-type=module','--eval',code,path,resolve('dist'),String(id)],{stdio:['pipe','pipe','pipe']});let output='',errors='';child.stderr.on('data',x=>{errors+=String(x);});

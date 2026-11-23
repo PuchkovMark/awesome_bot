@@ -1,7 +1,7 @@
-import type { ConnectionScope } from '../../contracts/index.js';
-import type { AuthorizationTransaction } from '../../storage/authorization-types.js';
-import type { ChatControlState } from '../../storage/chat-control-store.js';
-import type { ChatControlCommand } from './commands.js';
+import type { ConnectionScope } from '../../contracts/index';
+import type { AuthorizationTransaction } from '../../storage/authorization-types';
+import type { ChatControlState } from '../../storage/chat-control-store';
+import type { ChatControlCommand } from './commands';
 
 const pauseDuration=15*60_000;
 const modeLabel={silent:'молчаливый',normal:'нормальный',active:'активный'} as const;

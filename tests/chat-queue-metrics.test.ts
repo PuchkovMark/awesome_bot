@@ -1,9 +1,9 @@
 import { expect,test,vi } from 'vitest';
-import { openStorage } from '../src/storage/index.js';
-import { createChatQueue } from '../src/core/index.js';
-import { createLogger } from '../src/logger/index.js';
-import { scopeFor } from './helpers/connection-scope.js';
-import { queueMessage,flushQueue } from './helpers/chat-queue.js';
+import { openStorage } from '../src/storage/index';
+import { createChatQueue } from '../src/core/index';
+import { createLogger } from '../src/logger/index';
+import { scopeFor } from './helpers/connection-scope';
+import { queueMessage,flushQueue } from './helpers/chat-queue';
 test('логи содержат только счётчики, повтор перехода не удваивает interrupted',async()=>{
  vi.useFakeTimers();const storage=await openStorage(':memory:');const scope=scopeFor(storage,'vk:secret-chat');const lines:string[]=[];
  const logger=createLogger({destination:{write(line){lines.push(line);}}});

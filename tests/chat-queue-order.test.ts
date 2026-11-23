@@ -1,8 +1,8 @@
 import { expect, test } from 'vitest';
-import { openStorage } from '../src/storage/index.js';
-import { createChatQueue } from '../src/core/index.js';
-import { scopeFor } from './helpers/connection-scope.js';
-import type { ChatId } from '../src/contracts/index.js';
+import { openStorage } from '../src/storage/index';
+import { createChatQueue } from '../src/core/index';
+import { scopeFor } from './helpers/connection-scope';
+import type { ChatId } from '../src/contracts/index';
 const flush=async()=>{for(let i=0;i<20;i++)await Promise.resolve();};
 export const input=(chatId:ChatId,id:string)=>({chatId,messageId:id,userId:'vk:u' as const,authorName:'',text:id,role:'user' as const,timestamp:0});
 test('один чат FIFO, другие параллельны, ошибка не останавливает',async()=>{

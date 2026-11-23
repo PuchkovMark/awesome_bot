@@ -1,4 +1,4 @@
-import type { AgentLoopErrorCode, AgentLoopOutcome } from './types.js';
+import type { AgentLoopErrorCode, AgentLoopOutcome } from './types';
 
 const messages: Readonly<Record<AgentLoopErrorCode, string>> = Object.freeze({
   invalid_input: 'Некорректный ввод агентного цикла.',

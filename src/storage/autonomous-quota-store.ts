@@ -1,8 +1,8 @@
 import type { Database } from 'better-sqlite3';
-import type { ConnectionScope } from '../contracts/index.js';
-import { autonomousDayMs, autonomousHourMs, type ChatLimits } from '../core/chat-limits/config.js';
-import { allowsAutonomousReply, readChatControl } from './chat-control-store.js';
-import { requireInput, timestamp } from './validation.js';
+import type { ConnectionScope } from '../contracts/index';
+import { autonomousDayMs, autonomousHourMs, type ChatLimits } from '../core/chat-limits/config';
+import { allowsAutonomousReply, readChatControl } from './chat-control-store';
+import { requireInput, timestamp } from './validation';
 
 declare const reservationBrand: unique symbol;
 export type AutonomousReservation = { readonly [reservationBrand]: true };

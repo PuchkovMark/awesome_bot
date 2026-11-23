@@ -1,9 +1,9 @@
 import { expect,test,vi } from 'vitest';
-import { openStorage } from '../src/storage/index.js';
-import { createChatQueue } from '../src/core/index.js';
-import { lifecycleBackend } from '../src/storage/lifecycle-store.js';
-import { scopeFor } from './helpers/connection-scope.js';
-import { queueMessage,flushQueue } from './helpers/chat-queue.js';
+import { openStorage } from '../src/storage/index';
+import { createChatQueue } from '../src/core/index';
+import { lifecycleBackend } from '../src/storage/lifecycle-store';
+import { scopeFor } from './helpers/connection-scope';
+import { queueMessage,flushQueue } from './helpers/chat-queue';
 test('uncertain отменяет текущий результат, queued продолжает только после решения владельца',async()=>{
  vi.useFakeTimers();const storage=await openStorage(':memory:');const life=lifecycleBackend(storage),scope=scopeFor(storage,'vk:a');
  const signals:AbortSignal[]=[];const release:(()=>void)[]=[];
@@ -33,7 +33,7 @@ test('удаление текущего поколения отменяет ло
 
 test('просроченный маркер не блокирует очистку без нового запуска очереди',async()=>{
  vi.useFakeTimers();vi.setSystemTime(1000);const storage=await openStorage(':memory:'),scope=scopeFor(storage,'vk:a');
- const {queueBackend}=await import('../src/storage/queue-registry.js');
+ const {queueBackend}=await import('../src/storage/queue-registry');
  try{
  await storage.messages.append(scope,queueMessage('vk:a','1'));queueBackend(storage).acquire('crashed',100,10);vi.setSystemTime(1100);
  const life=lifecycleBackend(storage);expect(life.apply(life.begin('vk:a'),{confidence:'confirmed',bot:'absent'})).toMatchObject({status:'applied'});

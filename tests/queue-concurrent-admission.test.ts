@@ -1,10 +1,10 @@
 import { spawn } from 'node:child_process';
 import { resolve } from 'node:path';
 import { expect,test } from 'vitest';
-import { openStorage } from '../src/storage/index.js';
-import { queueBackend } from '../src/storage/queue-registry.js';
-import { scopeFor } from './helpers/connection-scope.js';
-import { storageFixture } from './helpers/storage-fixture.js';
+import { openStorage } from '../src/storage/index';
+import { queueBackend } from '../src/storage/queue-registry';
+import { scopeFor } from './helpers/connection-scope';
+import { storageFixture } from './helpers/storage-fixture';
 async function contender(path:string,id:string) {
  const code=`
   const root=process.argv[2];const {openStorage}=await import(root+'/storage/index.js');

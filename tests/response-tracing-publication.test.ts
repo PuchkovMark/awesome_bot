@@ -1,11 +1,11 @@
 import {expect,test} from 'vitest';
 import Database from 'better-sqlite3';
-import {openStorage} from '../src/storage/index.js';
-import {storageFixture} from './helpers/storage-fixture.js';
-import {scopeFor} from './helpers/connection-scope.js';
-import {flushQueue,queueMessage} from './helpers/chat-queue.js';
-import {createAgentLoopQueue} from '../src/core/chat-queue/agent-loop-adapter.js';
-import {createPublicationService} from '../src/core/message-router/publication-service.js';
+import {openStorage} from '../src/storage/index';
+import {storageFixture} from './helpers/storage-fixture';
+import {scopeFor} from './helpers/connection-scope';
+import {flushQueue,queueMessage} from './helpers/chat-queue';
+import {createAgentLoopQueue} from '../src/core/chat-queue/agent-loop-adapter';
+import {createPublicationService} from '../src/core/message-router/publication-service';
 for(const mode of ['normal','active'] as const)for(const failure of ['none','full','both','receipt'] as const)test(`публикация ${mode}/${failure}: запись до порта, без повторов модели`,async()=>{
  const f=storageFixture(),s=await openStorage(f.path),db=new Database(f.path),scope=scopeFor(s,'vk:a');let calls=0;const sent:{kind:string;text:string}[]=[];
  await s.chats.create(scope,{enabled:true,responseMode:mode,createdAt:0});
@@ -23,4 +23,4 @@ for(const mode of ['normal','active'] as const)for(const failure of ['none','ful
  }finally{await q.stop();db.close();await s.close();f.cleanup();}
 });
 
-test('разные строки таблицы имеют разные устойчивые идентификаторы',async()=>{const {publicationRow}=await import('../src/core/message-router/publication.js');const route={kind:'name',mode:'normal',isGroupChat:true} as const;expect(publicationRow(route,{kind:'empty'})).toBe('unusable_response');expect(publicationRow(route,{kind:'rate_limit'})).toBe('unsuccessful');});
+test('разные строки таблицы имеют разные устойчивые идентификаторы',async()=>{const {publicationRow}=await import('../src/core/message-router/publication');const route={kind:'name',mode:'normal',isGroupChat:true} as const;expect(publicationRow(route,{kind:'empty'})).toBe('unusable_response');expect(publicationRow(route,{kind:'rate_limit'})).toBe('unsuccessful');});

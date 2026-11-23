@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import type { IncomingEvent, IncomingMessage, MembershipChange } from '../src/contracts/index.js';
+import type { IncomingEvent, IncomingMessage, MembershipChange } from '../src/contracts/index';
 
 function describeEvent(event: IncomingEvent): string {
   switch (event.kind) {

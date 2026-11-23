@@ -1,11 +1,11 @@
 import {expect,test,vi} from 'vitest';
 import Database from 'better-sqlite3';
-import {openStorage} from '../src/storage/index.js';
-import {scopeFor} from './helpers/connection-scope.js';
-import {storageFixture} from './helpers/storage-fixture.js';
-import {queueBackend} from '../src/storage/queue-registry.js';
-import {queueConfig} from '../src/core/chat-queue/validation.js';
-import {queueMessage} from './helpers/chat-queue.js';
+import {openStorage} from '../src/storage/index';
+import {scopeFor} from './helpers/connection-scope';
+import {storageFixture} from './helpers/storage-fixture';
+import {queueBackend} from '../src/storage/queue-registry';
+import {queueConfig} from '../src/core/chat-queue/validation';
+import {queueMessage} from './helpers/chat-queue';
 const config=queueConfig();
 test('старт/закрытие/повтор и восстановление: одна трассировка на задание',async()=>{
  const f=storageFixture();let s=await openStorage(f.path);const scope=scopeFor(s,'vk:a');const q=queueBackend(s);q.acquire('one',10000,100);
@@ -26,12 +26,12 @@ test('двойной отказ не фиксирует противоречащ
  }finally{db.close();await s.close();f.cleanup();}
 });
 test('после удаления поколения поздний результат не воссоздаёт запись',async()=>{
- const s=await openStorage(':memory:');try{const scope=scopeFor(s,'vk:a'),q=queueBackend(s);q.acquire('a',10000,100);q.admit('a',scope,queueMessage('vk:a','m'),()=>true,config);const work=q.take('a')!;q.finish('a',work,'completed');q.release('a');const {lifecycleBackend}=await import('../src/storage/lifecycle-store.js');const l=lifecycleBackend(s);l.ownerDecision(l.begin('vk:a'),'new');q.acquire('b',10000,100);expect(q.finish('b',work,'completed')).toBeNull();expect(await s.traces.last(scopeFor(s,'vk:a'))).toBeNull();q.release('b');}finally{await s.close();vi.useRealTimers();}
+ const s=await openStorage(':memory:');try{const scope=scopeFor(s,'vk:a'),q=queueBackend(s);q.acquire('a',10000,100);q.admit('a',scope,queueMessage('vk:a','m'),()=>true,config);const work=q.take('a')!;q.finish('a',work,'completed');q.release('a');const {lifecycleBackend}=await import('../src/storage/lifecycle-store');const l=lifecycleBackend(s);l.ownerDecision(l.begin('vk:a'),'new');q.acquire('b',10000,100);expect(q.finish('b',work,'completed')).toBeNull();expect(await s.traces.last(scopeFor(s,'vk:a'))).toBeNull();q.release('b');}finally{await s.close();vi.useRealTimers();}
 });
 
 test('второй экземпляр не меняет конфигурацию действующего владельца',async()=>{
- const s=await openStorage(':memory:');try{const q=queueBackend(s);const {traceBackend}=await import('../src/storage/trace-store.js');q.acquire('a',10000,100,{maxRecordBytes:16384,retentionDays:1,messageRetentionDays:30});expect(()=>q.acquire('b',10000,100,{maxRecordBytes:65536,retentionDays:7,messageRetentionDays:30})).toThrow('queue_owned');expect(traceBackend(s).config().maxRecordBytes).toBe(16384);q.release('a');}finally{await s.close();}
+ const s=await openStorage(':memory:');try{const q=queueBackend(s);const {traceBackend}=await import('../src/storage/trace-store');q.acquire('a',10000,100,{maxRecordBytes:16384,retentionDays:1,messageRetentionDays:30});expect(()=>q.acquire('b',10000,100,{maxRecordBytes:65536,retentionDays:7,messageRetentionDays:30})).toThrow('queue_owned');expect(traceBackend(s).config().maxRecordBytes).toBe(16384);q.release('a');}finally{await s.close();}
 });
 test('превышение размера сохраняет отдельную причину минимальной формы',async()=>{
- const s=await openStorage(':memory:');try{const scope=scopeFor(s,'vk:a'),q=queueBackend(s);q.acquire('a',10000,100,{maxRecordBytes:16384,retentionDays:7,messageRetentionDays:30});q.admit('a',scope,queueMessage('vk:a','m'),()=>true,config);const w=q.take('a')!;const {initialTrace}=await import('../src/storage/trace-store.js');const p={...initialTrace(),tools:Array.from({length:500},()=>({name:'tool',outcome:'success' as const,bytes:1,durationMs:1}))};q.finish('a',w,'completed',p);const row=await s.traces.get(scope,w.id);expect(row?.payload.degradation).toBe('size_exceeded');expect(row?.payload.tools).toEqual([]);q.release('a');}finally{await s.close();}
+ const s=await openStorage(':memory:');try{const scope=scopeFor(s,'vk:a'),q=queueBackend(s);q.acquire('a',10000,100,{maxRecordBytes:16384,retentionDays:7,messageRetentionDays:30});q.admit('a',scope,queueMessage('vk:a','m'),()=>true,config);const w=q.take('a')!;const {initialTrace}=await import('../src/storage/trace-store');const p={...initialTrace(),tools:Array.from({length:500},()=>({name:'tool',outcome:'success' as const,bytes:1,durationMs:1}))};q.finish('a',w,'completed',p);const row=await s.traces.get(scope,w.id);expect(row?.payload.degradation).toBe('size_exceeded');expect(row?.payload.tools).toEqual([]);q.release('a');}finally{await s.close();}
 });

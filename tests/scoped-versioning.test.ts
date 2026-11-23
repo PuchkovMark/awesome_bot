@@ -1,10 +1,10 @@
 import {expect,test} from 'vitest';
-import {openStorage} from '../src/storage/index.js';
-import {scopeFor} from './helpers/connection-scope.js';
-import {catalogAdministration} from '../src/storage/catalog-admin.js';
-import {createLifecycleService} from '../src/core/index.js';
-import type {LocalContentKind,VersionInput} from '../src/contracts/versioning.js';
-import {storageFixture} from './helpers/storage-fixture.js';
+import {openStorage} from '../src/storage/index';
+import {scopeFor} from './helpers/connection-scope';
+import {catalogAdministration} from '../src/storage/catalog-admin';
+import {createLifecycleService} from '../src/core/index';
+import type {LocalContentKind,VersionInput} from '../src/contracts/versioning';
+import {storageFixture} from './helpers/storage-fixture';
 test('локальные версии изолированы, системный промпт только общий, все операции требуют scope',async()=>{
  const storage=await openStorage(':memory:',{versioning:{textMaxLength:2,maxPerEntity:2}}),a=scopeFor(storage,'vk:a'),b=scopeFor(storage,'vk:b');
  try{

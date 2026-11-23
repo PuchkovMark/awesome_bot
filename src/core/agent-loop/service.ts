@@ -1,13 +1,13 @@
-import type { LlmClient, LlmRequest } from '../../llm/types.js';
-import { agentError } from './errors.js';
-import { createAttemptSummary } from './summary.js';
-import { loopOptions, parseAttempt, prepareLoopInput } from './validation.js';
-import type { ParsedAttempt } from './validation.js';
-import type { AgentLoop, AgentLoopInput, AgentLoopOptions, AgentLoopOutcome, AgentLoopResult, AttemptAdmission } from './types.js';
+import type { LlmClient, LlmRequest } from '../../llm/types';
+import { agentError } from './errors';
+import { createAttemptSummary } from './summary';
+import { loopOptions, parseAttempt, prepareLoopInput } from './validation';
+import type { ParsedAttempt } from './validation';
+import type { AgentLoop, AgentLoopInput, AgentLoopOptions, AgentLoopOutcome, AgentLoopResult, AttemptAdmission } from './types';
 
 type Stop = { readonly kind: 'cancelled' | 'deadline_exceeded' };
 /** Только внедрённый клиент. Фабрика не создаёт инфраструктурные ресурсы. */
-export function createAgentLoop(client: LlmClient, options: AgentLoopOptions = {},onAttempt?:(summary:import('./types.js').AgentLoopSummary)=>void, allowAttempt?:()=>AttemptAdmission): AgentLoop {
+export function createAgentLoop(client: LlmClient, options: AgentLoopOptions = {},onAttempt?:(summary:import('./types').AgentLoopSummary)=>void, allowAttempt?:()=>AttemptAdmission): AgentLoop {
   const config = loopOptions(options);
   let invoke: LlmClient['complete'];
   try {

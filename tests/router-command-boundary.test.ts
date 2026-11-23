@@ -1,7 +1,7 @@
 import {expect,test,vi} from 'vitest';
-import {authorizationFixture} from './helpers/authorization-fixture.js';
-import {createChatQueue,createMessageRouter} from '../src/core/index.js';
-import type {IncomingMessage} from '../src/contracts/index.js';
+import {authorizationFixture} from './helpers/authorization-fixture';
+import {createChatQueue,createMessageRouter} from '../src/core/index';
+import type {IncomingMessage} from '../src/contracts/index';
 const input:IncomingMessage={kind:'message',chatId:'vk:one',userId:'vk:owner',authorName:'',isGroupChat:true,isAdmin:false,isBot:false,text:'служебная команда',messageId:'owner',isMentioned:false,isReplyToBot:false,timestamp:0,attachments:[]};
 test('выключенный служебный путь только владельцу, без журнала; silent администратору с настоящей ролью',async()=>{
  const f=await authorizationFixture(),scope=f.owner.scope,handler=vi.fn(async()=> 'completed' as const);const q=createChatQueue({tracing:{messageRetentionDays:30},storage:f.storage,handler});await q.start();

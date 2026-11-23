@@ -1,5 +1,5 @@
-import type { JsonValue } from '../contracts/json.js';
-import type { LlmRequest, LlmToolCall } from './types.js';
+import type { JsonValue } from '../contracts/json';
+import type { LlmRequest, LlmToolCall } from './types';
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);

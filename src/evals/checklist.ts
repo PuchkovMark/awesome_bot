@@ -1,4 +1,4 @@
-import type { Scenario } from './types.js';
+import type { Scenario } from './types';
 
 export function formatVkChecklist(scenarios: readonly Scenario[]): string {
   const lines = [

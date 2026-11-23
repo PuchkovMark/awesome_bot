@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import type { ChannelAdapter, IncomingEvent, OutgoingMessage } from '../src/contracts/index.js';
-import { FakeAdapter } from './helpers/fake-adapters.js';
+import type { ChannelAdapter, IncomingEvent, OutgoingMessage } from '../src/contracts/index';
+import { FakeAdapter } from './helpers/fake-adapters';
 
 describe.each(['test-a', 'test-b'] as const)('адаптер %s', (platform) => {
   test('передаёт оба вида событий и ожидает обработчик', async () => {

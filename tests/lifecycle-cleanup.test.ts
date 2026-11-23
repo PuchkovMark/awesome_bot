@@ -1,10 +1,10 @@
 import {expect,test} from 'vitest';
-import {openStorage} from '../src/storage/index.js';
-import {openConnection} from '../src/storage/connection.js';
-import {createLifecycleService} from '../src/core/index.js';
-import type {LifecycleObservation} from '../src/contracts/index.js';
-import {storageFixture} from './helpers/storage-fixture.js';
-import {participantFixture} from './helpers/participant-fixture.js';
+import {openStorage} from '../src/storage/index';
+import {openConnection} from '../src/storage/connection';
+import {createLifecycleService} from '../src/core/index';
+import type {LifecycleObservation} from '../src/contracts/index';
+import {storageFixture} from './helpers/storage-fixture';
+import {participantFixture} from './helpers/participant-fixture';
 
 const chatTables=['messages','chats','chat_participants','participant_profiles','profile_facts','bot_admin_grants','bot_admin_revocations','bot_admin_revocation_audit','bot_admin_controls','chat_connections'] as const;
 test('удаление всех сущностей и FTS, SQL-откат, изоляция и старое поколение после перезапуска',async()=>{

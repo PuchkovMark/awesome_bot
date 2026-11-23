@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { expect, test } from 'vitest';
-import { scenarios } from '../src/evals/scenarios.js';
+import { scenarios } from '../src/evals/scenarios';
 
 function cli(directory: string, args: string[], before = '') {
   const importHook = `data:text/javascript,${encodeURIComponent(before)}`;

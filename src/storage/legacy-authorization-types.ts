@@ -1,6 +1,6 @@
-import type { ChatId, Timestamp } from '../contracts/index.js';
-import type { AuthorizationTransaction } from './authorization-types.js';
-export type { AuthorizationTransaction, AdminGrant, RevocationAudit } from './authorization-types.js';
+import type { ChatId, Timestamp } from '../contracts/index';
+import type { AuthorizationTransaction } from './authorization-types';
+export type { AuthorizationTransaction, AdminGrant, RevocationAudit } from './authorization-types';
 
 export interface AuthorizationStore {
   /** Promise из callback запрещён; исключение откатывает всю транзакцию. */

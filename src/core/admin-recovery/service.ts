@@ -1,9 +1,9 @@
-import type { ChatId, ConnectionScope, UserId } from '../../contracts/index.js';
-import { adminRecoveryStore, type RecoveryOperation } from '../../storage/admin-recovery-store.js';
-import type { Storage } from '../../storage/index.js';
-import type { createAuthorizationService } from '../authorization/service.js';
-import type { createLifecycleService } from '../lifecycle/service.js';
-import type { AdminRecoveryCommand } from './commands.js';
+import type { ChatId, ConnectionScope, UserId } from '../../contracts/index';
+import { adminRecoveryStore, type RecoveryOperation } from '../../storage/admin-recovery-store';
+import type { Storage } from '../../storage/index';
+import type { createAuthorizationService } from '../authorization/service';
+import type { createLifecycleService } from '../lifecycle/service';
+import type { AdminRecoveryCommand } from './commands';
 
 type OperationGuard = {readonly signal:AbortSignal;readonly isCurrent:()=>boolean};
 interface OwnerDelivery {

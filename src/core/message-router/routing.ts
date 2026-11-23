@@ -1,6 +1,6 @@
-import type {RoutingInput,RoutingDecision} from './types.js';
-import {directlyAddressesName} from './name-address.js';
-import {validIncoming} from './validation.js';
+import type {RoutingInput,RoutingDecision} from './types';
+import {directlyAddressesName} from './name-address';
+import {validIncoming} from './validation';
 export function routeMessage(input:RoutingInput):RoutingDecision {
  if(!input||typeof input!=='object')return {kind:'silence',reason:'invalid_input'};
  const {message,settings,service}=input;

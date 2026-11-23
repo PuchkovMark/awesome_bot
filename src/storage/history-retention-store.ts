@@ -1,9 +1,9 @@
 import { randomBytes } from 'node:crypto';
 import type { Database } from 'better-sqlite3';
-import type { ChatId, ConnectionScope, UserId } from '../contracts/index.js';
-import type { Connection } from './connection.js';
-import type { LifecycleBackend } from './lifecycle-store.js';
-import type { MessageInput } from './types.js';
+import type { ChatId, ConnectionScope, UserId } from '../contracts/index';
+import type { Connection } from './connection';
+import type { LifecycleBackend } from './lifecycle-store';
+import type { MessageInput } from './types';
 
 export const HISTORY_CONFIRMATION_MS = 5 * 60_000;
 const BATCH_SIZE = 100;

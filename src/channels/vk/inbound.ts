@@ -1,12 +1,12 @@
-import type { ChatId, ConnectionScope, EventHandler, IncomingMessage, MembershipEvent, UserId } from '../../contracts/index.js';
-import type { createLifecycleService, createMessageRouter } from '../../core/index.js';
-import type { RoutedAdmissionGuard } from '../../storage/queue-types.js';
-import { StorageError } from '../../storage/errors.js';
-import { createVkSdkApi } from './api.js';
-import type { VkInboundApi } from './api.js';
-import { createVkLongPoll } from './long-poll.js';
-import type { VkPollGap, VkPollTransport } from './long-poll.js';
-import { isVkGroupChat, normalizeVkIncoming, parseVkIncoming, vkChatId, type VkIncoming } from './normalize.js';
+import type { ChatId, ConnectionScope, EventHandler, IncomingMessage, MembershipEvent, UserId } from '../../contracts/index';
+import type { createLifecycleService, createMessageRouter } from '../../core/index';
+import type { RoutedAdmissionGuard } from '../../storage/queue-types';
+import { StorageError } from '../../storage/errors';
+import { createVkSdkApi } from './api';
+import type { VkInboundApi } from './api';
+import { createVkLongPoll } from './long-poll';
+import type { VkPollGap, VkPollTransport } from './long-poll';
+import { isVkGroupChat, normalizeVkIncoming, parseVkIncoming, vkChatId, type VkIncoming } from './normalize';
 
 type Lifecycle = Pick<ReturnType<typeof createLifecycleService>,
   'current' | 'admissionScope' | 'isAdmissionCurrent' | 'activeChatIds' | 'verify' | 'recordConnectionSignal'>;

@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { withParticipantDatabase } from './helpers/participant-fixture.js';
+import { withParticipantDatabase } from './helpers/participant-fixture';
 
 test('независимость профилей бесед и платформ, сосуществование фактов', async () => {
   await withParticipantDatabase((db, f) => {

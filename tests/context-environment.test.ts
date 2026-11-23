@@ -1,6 +1,6 @@
 import {expect,test} from 'vitest';
-import {contextFixture,contextCapabilities} from './helpers/context.js';
-import {formatEnvironment} from '../src/core/context/environment.js';
+import {contextFixture,contextCapabilities} from './helpers/context';
+import {formatEnvironment} from '../src/core/context/environment';
 for(const platform of ['test-a','test-b'] as const)test(`реальный сборщик получает текущую платформу ${platform}, а unknown не становится правом`,async()=>{
  const f=await contextFixture(`${platform}:ctx`);try{
  const a=await f.put('a','вопрос');const r=await f.builder.prepare(f.work(a.id));if(r.kind!=='ready')throw Error(r.kind);

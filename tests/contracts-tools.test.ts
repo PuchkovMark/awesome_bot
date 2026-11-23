@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import type { PlatformAvailability, ToolContext, ToolDefinition, UserId } from '../src/contracts/index.js';
-import { FakeAdapter } from './helpers/fake-adapters.js';
+import type { PlatformAvailability, ToolContext, ToolDefinition, UserId } from '../src/contracts/index';
+import { FakeAdapter } from './helpers/fake-adapters';
 
 // Демонстрационный инструмент: продуктовые инструменты и реестр здесь не создаются.
 const lookupName: ToolDefinition<{ userId: UserId }, string | null> = {

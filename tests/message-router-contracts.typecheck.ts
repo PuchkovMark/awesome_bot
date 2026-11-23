@@ -1,6 +1,6 @@
-import type {IncomingMessage,ConnectionScope} from '../src/contracts/index.js';
-import type {ContextMessageReader} from '../src/storage/context-types.js';
-import type {QueueHandler} from '../src/core/chat-queue/types.js';
+import type {IncomingMessage,ConnectionScope} from '../src/contracts/index';
+import type {ContextMessageReader} from '../src/storage/context-types';
+import type {QueueHandler} from '../src/core/chat-queue/types';
 export function contracts(message:IncomingMessage,reader:ContextMessageReader,scope:ConnectionScope){
  const {isBot,...missing}=message;void isBot;
  // @ts-expect-error isBot обязателен, неизвестность задаётся явно.

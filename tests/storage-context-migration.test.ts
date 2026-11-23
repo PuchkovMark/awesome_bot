@@ -1,10 +1,10 @@
 import {expect,test} from 'vitest';
 import Database from 'better-sqlite3';
-import {migrate} from '../src/storage/migrate.js';
-import {migrations} from '../src/storage/migrations/index.js';
-import {openStorage} from '../src/storage/index.js';
-import {scopeFor} from './helpers/connection-scope.js';
-import {storageFixture} from './helpers/storage-fixture.js';
+import {migrate} from '../src/storage/migrate';
+import {migrations} from '../src/storage/migrations/index';
+import {openStorage} from '../src/storage/index';
+import {scopeFor} from './helpers/connection-scope';
+import {storageFixture} from './helpers/storage-fixture';
 test('upgrade 8 сохраняет контрольные суммы, тексты и FTS; старый признак неизвестен',()=>{
  const db=new Database(':memory:');try{
  migrate(db,migrations.slice(0,8));const before=db.prepare('SELECT * FROM schema_migrations').all();

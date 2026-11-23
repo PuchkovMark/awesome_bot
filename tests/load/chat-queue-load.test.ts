@@ -1,12 +1,12 @@
-import { recordQueueLoad } from '../helpers/queue-load-fixture.js';
+import { recordQueueLoad } from '../helpers/queue-load-fixture';
 import { expect,test,vi } from 'vitest';
-import { openStorage } from '../../src/storage/index.js';
-import { createChatQueue } from '../../src/core/index.js';
-import { queueConfig } from '../../src/core/chat-queue/validation.js';
-import { queueBackend } from '../../src/storage/queue-registry.js';
-import { scopeFor } from '../helpers/connection-scope.js';
-import { queueMessage,flushQueue } from '../helpers/chat-queue.js';
-import { storageFixture } from '../helpers/storage-fixture.js';
+import { openStorage } from '../../src/storage/index';
+import { createChatQueue } from '../../src/core/index';
+import { queueConfig } from '../../src/core/chat-queue/validation';
+import { queueBackend } from '../../src/storage/queue-registry';
+import { scopeFor } from '../helpers/connection-scope';
+import { queueMessage,flushQueue } from '../helpers/chat-queue';
+import { storageFixture } from '../helpers/storage-fixture';
 test('расчётная модель: 4 слота, 130 секунд, 8 ожидающих, тихий чат при полном допуске',async()=>{
  vi.useFakeTimers();vi.setSystemTime(10000);const storage=await openStorage(':memory:');let calls=0,completed=0;
  const scopes=['vk:a','vk:b','vk:c','vk:d'].map(id=>scopeFor(storage,id));const backend=queueBackend(storage);backend.acquire('seed',30000,10000);

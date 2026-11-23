@@ -1,11 +1,11 @@
 import Database from 'better-sqlite3';
 import { expect, test } from 'vitest';
-import { chatControlStore } from '../src/storage/chat-control-store.js';
-import { openStorage } from '../src/storage/index.js';
-import { lifecycleBackend } from '../src/storage/lifecycle-store.js';
-import { migrate } from '../src/storage/migrate.js';
-import { migrations } from '../src/storage/migrations/index.js';
-import { storageFixture } from './helpers/storage-fixture.js';
+import { chatControlStore } from '../src/storage/chat-control-store';
+import { openStorage } from '../src/storage/index';
+import { lifecycleBackend } from '../src/storage/lifecycle-store';
+import { migrate } from '../src/storage/migrate';
+import { migrations } from '../src/storage/migrations/index';
+import { storageFixture } from './helpers/storage-fixture';
 
 test('версия 17 сохраняет настройки, очередь, историю и период уведомлений без старых начислений', async () => {
   const files = storageFixture();

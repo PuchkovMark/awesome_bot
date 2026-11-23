@@ -1,9 +1,9 @@
-import type { AuthorizationContext } from './authorization.js';
-import type { ChannelAdapter } from './adapter.js';
-import type { CapabilityName } from './capabilities.js';
-import type { KnownBoolean } from './events.js';
-import type { ChatId, PlatformId, UserId } from './identifiers.js';
-import type { ObjectParameterSchema } from './json.js';
+import type { AuthorizationContext } from './authorization';
+import type { ChannelAdapter } from './adapter';
+import type { CapabilityName } from './capabilities';
+import type { KnownBoolean } from './events';
+import type { ChatId, PlatformId, UserId } from './identifiers';
+import type { ObjectParameterSchema } from './json';
 
 /** Факты текущего запроса от харнеса, отдельно от параметров модели. */
 export interface ToolContext {

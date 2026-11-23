@@ -1,15 +1,15 @@
 import { writeSync } from 'node:fs';
 import type { Writable } from 'node:stream';
-import { loadApplicationConfig, loadPromptConfig, loadResolutionConfig } from '../config/application.js';
-import { ConfigError } from '../config/index.js';
-import type { ConfigOptions } from '../config/index.js';
-import { createLogger, reportConfigError } from '../logger/index.js';
-import type { ApplicationFailure } from '../logger/types.js';
-import { runApplication } from './service.js';
+import { loadApplicationConfig, loadPromptConfig, loadResolutionConfig } from '../config/application';
+import { ConfigError } from '../config/index';
+import type { ConfigOptions } from '../config/index';
+import { createLogger, reportConfigError } from '../logger/index';
+import type { ApplicationFailure } from '../logger/types';
+import { runApplication } from './service';
 import {
   applicationChatId, applicationGroupId, configureDisclosure, confirmApplicationDisclosure, deleteApplicationChatData,
   initializePrompt, readAdminRecovery, readOnboarding, requestDisclosureUpdate, resolveApplicationChat,
-} from './setup.js';
+} from './setup';
 
 interface CliOptions {
   readonly config?: ConfigOptions;

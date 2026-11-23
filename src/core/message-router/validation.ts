@@ -1,4 +1,4 @@
-import type {IncomingMessage} from '../../contracts/index.js';
+import type {IncomingMessage} from '../../contracts/index';
 export function validIncoming(message:IncomingMessage):boolean {
  return !!message && message.kind==='message' && ['isGroupChat','isMentioned','isReplyToBot'].every(k=>typeof Object.getOwnPropertyDescriptor(message,k)?.value==='boolean')
   && (message.replyAddress===undefined || ['bot','other','unknown'].includes(message.replyAddress))

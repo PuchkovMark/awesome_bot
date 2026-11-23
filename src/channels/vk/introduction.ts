@@ -1,10 +1,10 @@
-import type { ChatId, ConnectionScope, UserId } from '../../contracts/index.js';
-import type { IntroductionGuard, IntroductionPort, ServiceDelivery, WritePermission } from '../../core/chat-onboarding/ports.js';
-import type { VkApi } from './api.js';
-import { VkApiError } from './api.js';
-import { isVkGroupChat, vkRecord } from './normalize.js';
-import type { createVkOutbound } from './outbound.js';
-import { vkLocalId } from './outbound.js';
+import type { ChatId, ConnectionScope, UserId } from '../../contracts/index';
+import type { IntroductionGuard, IntroductionPort, ServiceDelivery, WritePermission } from '../../core/chat-onboarding/ports';
+import type { VkApi } from './api';
+import { VkApiError } from './api';
+import { isVkGroupChat, vkRecord } from './normalize';
+import type { createVkOutbound } from './outbound';
+import { vkLocalId } from './outbound';
 
 // Повтор в Test Bot через 15,6 секунды вернул ту же запись. В рабочем окне оставляем запас.
 export const vkIntroductionReplayWindowMs = 14_000;

@@ -1,8 +1,8 @@
 import type {
   CapabilitySnapshot, CapabilityState, ChannelAdapter, EventHandler,
   MessageLengthLimit, SendResult,
-} from '../../src/contracts/index.js';
-import { FakeAdapter } from '../helpers/fake-adapters.js';
+} from '../../src/contracts/index';
+import { FakeAdapter } from '../helpers/fake-adapters';
 
 export const adapter: ChannelAdapter = new FakeAdapter('test-a');
 export const result: SendResult = ['one', 'two'];

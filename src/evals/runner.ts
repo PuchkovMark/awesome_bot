@@ -1,11 +1,11 @@
-import { createAgentLoopQueue, createContextPreparation, createLifecycleService, createMessageRouter, createPublicationService } from '../core/index.js';
-import type { PublicationRequest, QueueCompletion } from '../core/index.js';
-import type { CapabilitySnapshot } from '../contracts/index.js';
-import type { LlmClient, LlmRequest } from '../llm/types.js';
-import { catalogAdministration } from '../storage/catalog-admin.js';
-import { openStorage } from '../storage/index.js';
-import type { TraceRecord } from '../storage/trace-types.js';
-import type { EvaluationResult, Observation, Scenario } from './types.js';
+import { createAgentLoopQueue, createContextPreparation, createLifecycleService, createMessageRouter, createPublicationService } from '../core/index';
+import type { PublicationRequest, QueueCompletion } from '../core/index';
+import type { CapabilitySnapshot } from '../contracts/index';
+import type { LlmClient, LlmRequest } from '../llm/types';
+import { catalogAdministration } from '../storage/catalog-admin';
+import { openStorage } from '../storage/index';
+import type { TraceRecord } from '../storage/trace-types';
+import type { EvaluationResult, Observation, Scenario } from './types';
 
 const model = 'synthetic-local';
 const loopTimeoutMs = 1_000;

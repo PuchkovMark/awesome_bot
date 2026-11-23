@@ -1,7 +1,7 @@
 import { expect, test, vi } from 'vitest';
-import { createLlmClient } from '../src/llm/index.js';
-import type { LlmRequest } from '../src/llm/index.js';
-import { completion, fakeClient, llmConfig, llmRequest } from './helpers/llm-http.js';
+import { createLlmClient } from '../src/llm/index';
+import type { LlmRequest } from '../src/llm/index';
+import { completion, fakeClient, llmConfig, llmRequest } from './helpers/llm-http';
 
 test('точный Go endpoint, модель, авторизация и буквальные сообщения', async () => {
   const fetch = vi.fn(async (_url: string, _init: RequestInit) => { void _url; void _init; return Response.json(completion()); });

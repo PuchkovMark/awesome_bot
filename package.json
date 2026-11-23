@@ -22,7 +22,7 @@
     "format:files": "prettier --no-editorconfig --ignore-path .gitignore \"{src,tests,scripts}/**/*.{js,cjs,mjs,ts,cts,mts}\" \"!src/storage/migrations/[0-9]*.ts\" eslint.config.mjs vitest.config.ts vitest.queue-load.config.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "build": "npm run lint && npm run check:catalog && npm run check:context && npm run check:traces && npm run typecheck && tsc -p tsconfig.build.json",
+    "build": "npm run lint && npm run check:catalog && npm run check:context && npm run check:traces && npm run typecheck && node scripts/build-esm.mjs",
     "test": "vitest run",
     "check:traces": "node scripts/check-trace-boundary.mjs",
     "check:catalog": "node scripts/check-catalog-boundary.mjs",

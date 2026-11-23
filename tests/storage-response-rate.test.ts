@@ -1,9 +1,9 @@
 import Database from 'better-sqlite3';
 import { expect, test } from 'vitest';
-import { migrate } from '../src/storage/migrate.js';
+import { migrate } from '../src/storage/migrate';
 import {
   finishResponse, pruneResponseRate, recoverResponseRate, responseAlreadyStarted, responseSlotAvailable, startResponse,
-} from '../src/storage/response-rate-store.js';
+} from '../src/storage/response-rate-store';
 
 test('незавершённая публикация удерживает место за границей окна, неизвестная учитывается с первой попытки', () => {
   const db = new Database(':memory:');

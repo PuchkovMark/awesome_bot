@@ -1,4 +1,4 @@
-import type { ChatId, UserId, Timestamp, PlatformMessageId } from '../contracts/index.js';
+import type { ChatId, UserId, Timestamp, PlatformMessageId } from '../contracts/index';
 
 /** Сохранённые платформенные сведения, не роль и не разрешение харнеса. */
 export type ParticipantRole = 'member' | 'admin' | 'unknown';

@@ -1,11 +1,11 @@
 import Database from 'better-sqlite3';
 import {expect,test} from 'vitest';
-import {openStorage} from '../src/storage/index.js';
-import {catalogAdministration} from '../src/storage/catalog-admin.js';
-import {scopeFor} from './helpers/connection-scope.js';
-import {storageFixture} from './helpers/storage-fixture.js';
-import {createLifecycleService} from '../src/core/index.js';
-import type {GlobalVersionRef,LifecycleObservation,VersionRef} from '../src/contracts/index.js';
+import {openStorage} from '../src/storage/index';
+import {catalogAdministration} from '../src/storage/catalog-admin';
+import {scopeFor} from './helpers/connection-scope';
+import {storageFixture} from './helpers/storage-fixture';
+import {createLifecycleService} from '../src/core/index';
+import type {GlobalVersionRef,LifecycleObservation,VersionRef} from '../src/contracts/index';
 test('история и выбор переживают перезапуск, очистка полная и откатывается, общий каталог сохраняется',async()=>{
  const f=storageFixture();let storage=await openStorage(f.path);const db=new Database(f.path);let observation:LifecycleObservation={confidence:'confirmed',bot:'present'};
  try{

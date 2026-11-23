@@ -1,4 +1,4 @@
-import type { AgentLoopInput, AgentLoopResult } from '../src/core/index.js';
+import type { AgentLoopInput, AgentLoopResult } from '../src/core/index';
 const input: AgentLoopInput = { system: '', messages: [{ role: 'user', text: 'Привет' }], sessionId: 'opaque', maxOutputTokens: 1 };
 // @ts-expect-error инструментального режима в первой версии нет
 const tools: AgentLoopInput = { ...input, tools: [] };

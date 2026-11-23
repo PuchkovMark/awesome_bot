@@ -1,15 +1,15 @@
 import {expect,test,vi} from 'vitest';
 import Database from 'better-sqlite3';
-import {storageFixture} from './helpers/storage-fixture.js';
-import {legacyChatPromptFixture,legacyPrompt,sharedPrompt} from './helpers/legacy-chat-prompt-fixture.js';
-import {openStorage} from '../src/storage/index.js';
-import {scopeFor} from './helpers/connection-scope.js';
-import {createContextPreparation} from '../src/core/prepare-context.js';
-import {createAgentLoopQueue} from '../src/core/chat-queue/agent-loop-adapter.js';
-import {contextCapabilities} from './helpers/context.js';
-import {flushQueue} from './helpers/chat-queue.js';
-import {lifecycleBackend} from '../src/storage/lifecycle-store.js';
-import type {LlmRequest} from '../src/llm/types.js';
+import {storageFixture} from './helpers/storage-fixture';
+import {legacyChatPromptFixture,legacyPrompt,sharedPrompt} from './helpers/legacy-chat-prompt-fixture';
+import {openStorage} from '../src/storage/index';
+import {scopeFor} from './helpers/connection-scope';
+import {createContextPreparation} from '../src/core/prepare-context';
+import {createAgentLoopQueue} from '../src/core/chat-queue/agent-loop-adapter';
+import {contextCapabilities} from './helpers/context';
+import {flushQueue} from './helpers/chat-queue';
+import {lifecycleBackend} from '../src/storage/lifecycle-store';
+import type {LlmRequest} from '../src/llm/types';
 for(const selected of [true,false])test(`восстановленное задание после upgrade: общий выбор ${selected}`,async()=>{
  vi.useFakeTimers();const f=storageFixture();let s:Awaited<ReturnType<typeof openStorage>>|undefined;
  let q:ReturnType<typeof createAgentLoopQueue>|undefined;

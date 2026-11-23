@@ -1,9 +1,9 @@
 import { API, APIRequest } from 'vk-io';
-import type { KnownBoolean } from '../../contracts/index.js';
-import { isVkGroupChat, vkId, vkRecord } from './normalize.js';
-import type { VkEnrichment, VkIncoming } from './normalize.js';
-import { createVkRateLimiter, VkRequestCancelled, waitForVkRetry } from './rate-limit.js';
-import type { VkRequestGuard } from './rate-limit.js';
+import type { KnownBoolean } from '../../contracts/index';
+import { isVkGroupChat, vkId, vkRecord } from './normalize';
+import type { VkEnrichment, VkIncoming } from './normalize';
+import { createVkRateLimiter, VkRequestCancelled, waitForVkRetry } from './rate-limit';
+import type { VkRequestGuard } from './rate-limit';
 
 type ApiMethod = 'groups.getLongPollServer' | 'users.get'
   | 'messages.getConversationMembers' | 'messages.getByConversationMessageId' | 'messages.getConversationsById'

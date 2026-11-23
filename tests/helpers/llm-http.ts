@@ -1,6 +1,6 @@
 import { vi } from 'vitest';
-import type { LlmClientOptions, LlmRequest } from '../../src/llm/index.js';
-import { createLlmClient } from '../../src/llm/index.js';
+import type { LlmClientOptions, LlmRequest } from '../../src/llm/index';
+import { createLlmClient } from '../../src/llm/index';
 export const llmConfig = { provider: 'opencode', apiKey: 'synthetic-key', model: 'deepseek-v4.1-flash' } as const;
 export function llmRequest(overrides: Partial<LlmRequest> = {}): LlmRequest {
   return { system: 'Инструкции', messages: [{ role: 'user', text: ' Привет\n' }], maxOutputTokens: 128, sessionId: 'synthetic-session', ...overrides };

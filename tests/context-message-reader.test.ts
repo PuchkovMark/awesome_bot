@@ -1,8 +1,8 @@
 import {expect,test} from 'vitest';
 import Database from 'better-sqlite3';
-import {openStorage} from '../src/storage/index.js';
-import {scopeFor} from './helpers/connection-scope.js';
-import {storageFixture} from './helpers/storage-fixture.js';
+import {openStorage} from '../src/storage/index';
+import {scopeFor} from './helpers/connection-scope';
+import {storageFixture} from './helpers/storage-fixture';
 test('полный журнал сохраняет notice, контекст фильтрует до limit и get/reply; FTS rebuild безопасен',async()=>{
  const f=storageFixture(),s=await openStorage(f.path),scope=scopeFor(s,'vk:a'),db=new Database(f.path);
  try{

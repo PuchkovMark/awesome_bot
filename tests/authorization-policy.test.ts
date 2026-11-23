@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest';
-import { botRole, evaluatePolicy } from '../src/core/index.js';
-import type { AuthorizationAction, AuthorizationContext, GrantBasis } from '../src/contracts/index.js';
-import type { PolicyInput } from '../src/core/index.js';
+import { botRole, evaluatePolicy } from '../src/core/index';
+import type { AuthorizationAction, AuthorizationContext, GrantBasis } from '../src/contracts/index';
+import type { PolicyInput } from '../src/core/index';
 const context = { chatId: 'vk:chat', userId: 'vk:user', platform: 'vk', kind: 'chat' } as unknown as AuthorizationContext;
 const base: PolicyInput = { context, ownerId: 'vk:owner', bases: [], revoked: false, enabled: true, action: 'chat.configure' };
 const adminActions: AuthorizationAction[] = ['chat.configure', 'chat.history.clear', 'chat.passport.edit', 'chat.persona.select', 'chat.onboarding.configure', 'chat.pause.extend', 'admin.grant', 'admin.remove', 'diagnostics.read', 'profile.admin.add'];

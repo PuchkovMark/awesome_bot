@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
-import { llmFailure } from '../src/llm/errors.js';
-import type { LlmResult } from '../src/llm/index.js';
+import { llmFailure } from '../src/llm/errors';
+import type { LlmResult } from '../src/llm/index';
 
 test('ошибка содержит только фиксированные безопасные поля', () => {
   expect(llmFailure('network')).toEqual({ kind: 'error', code: 'network', message: 'Ошибка соединения с провайдером.' });

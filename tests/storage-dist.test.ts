@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { expect, test } from 'vitest';
 import Database from 'better-sqlite3';
-import { storageFixture } from './helpers/storage-fixture.js';
+import { storageFixture } from './helpers/storage-fixture';
 
 test('ESM-выпуск открывает БД вне проекта без исходников', () => {
   const fixture = storageFixture();

@@ -1,4 +1,4 @@
-import type { Redact } from './types.js';
+import type { Redact } from './types';
 
 // Объединение интервалов закрывает в том числе пересекающиеся секреты.
 export function createRedactor(values: readonly string[]): Redact {

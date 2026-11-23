@@ -1,7 +1,7 @@
-import { ConfigError, configErrorCodes } from '../config/errors.js';
-import { configParameters } from '../config/types.js';
-import { applicationFailures } from './types.js';
-import type { ErrorCategory, LogEvent } from './types.js';
+import { ConfigError, configErrorCodes } from '../config/errors';
+import { configParameters } from '../config/types';
+import { applicationFailures } from './types';
+import type { ErrorCategory, LogEvent } from './types';
 
 // Не читать геттеры, не вызывать toJSON и не передавать исходный объект сериализатору.
 export function ownData(object: unknown, key: string): unknown {

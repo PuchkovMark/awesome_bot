@@ -1,9 +1,9 @@
 import {expect,test,vi} from 'vitest';
-import {contextFixture} from './helpers/context.js';
-import {createAgentLoopQueue} from '../src/core/chat-queue/agent-loop-adapter.js';
-import {createPublicationService} from '../src/core/message-router/publication-service.js';
-import {flushQueue,queueMessage} from './helpers/chat-queue.js';
-import type {PreparationFailure} from '../src/core/context/types.js';
+import {contextFixture} from './helpers/context';
+import {createAgentLoopQueue} from '../src/core/chat-queue/agent-loop-adapter';
+import {createPublicationService} from '../src/core/message-router/publication-service';
+import {flushQueue,queueMessage} from './helpers/chat-queue';
+import type {PreparationFailure} from '../src/core/context/types';
 for(const mode of ['normal','active'] as const)for(const reason of ['current_message_too_large','static_budget_too_small','missing_system_prompt'] as const)test(`уведомление ${mode}/${reason} с точным журналированием и общим периодом`,async()=>{
  const f=await contextFixture();await f.storage.chats.update(f.scope,{responseMode:mode});const complete=vi.fn();
  let failure:PreparationFailure=reason;const publish=vi.fn(async()=>({kind:'delivered' as const,receipt:{messageId:'notice',userId:'vk:bot' as const,authorName:'',timestamp:200}}));

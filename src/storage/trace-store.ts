@@ -1,14 +1,14 @@
-import { historyBounds } from './history-retention-store.js';
-import type {TraceEvent} from '../core/response-tracing/metrics.js';
+import { historyBounds } from './history-retention-store';
+import type {TraceEvent} from '../core/response-tracing/metrics';
 import type {Database} from 'better-sqlite3';
-import type {ConnectionScope} from '../contracts/index.js';
-import type {Connection} from './connection.js';
-import type {LifecycleBackend} from './lifecycle-store.js';
-import type {TraceConfig} from '../core/response-tracing/config.js';
-import type {TracePayload,TraceRecord,TracePublication} from './trace-types.js';
-import type {QueueWork} from './queue-types.js';
-import {encodeTrace} from './trace-validation.js';
-import {requireInput,timestamp} from './validation.js';
+import type {ConnectionScope} from '../contracts/index';
+import type {Connection} from './connection';
+import type {LifecycleBackend} from './lifecycle-store';
+import type {TraceConfig} from '../core/response-tracing/config';
+import type {TracePayload,TraceRecord,TracePublication} from './trace-types';
+import type {QueueWork} from './queue-types';
+import {encodeTrace} from './trace-validation';
+import {requireInput,timestamp} from './validation';
 export function initialTrace(route:TracePayload['route']=null):TracePayload {return {model:{name:null,invoked:'no'},prompt:null,context:null,summary:{steps:0,attempts:0,attemptsPerStep:[],durationMs:0,usage:{input:{knownTokens:0,unknownAttempts:0,overflowed:false},output:{knownTokens:0,unknownAttempts:0,overflowed:false}}},route,resultKind:null,preparationFailure:null,publication:{rowId:'silent_outcome',tableVersion:1,reaction:'silence',status:'pending_checks',reason:'none'},degraded:false,degradation:'none',tools:[]};}
 export function minimalTrace(p:TracePayload,reason:'write_failed'|'size_exceeded'):TracePayload {
  return {...p,context:null,tools:[],degraded:true,degradation:reason};

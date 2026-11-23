@@ -1,14 +1,14 @@
 import {setImmediate as yieldImmediate} from 'node:timers/promises';
-import type {ConnectionScope} from '../../contracts/lifecycle.js';
-import type {CapabilitySnapshot} from '../../contracts/capabilities.js';
-import type {ContextMessageReader,ContextStateReader} from '../../storage/context-types.js';
-import {contextConfig,type ContextConfig} from './config.js';
-import {contextSeparator,estimateInput} from './budget.js';
-import {validateContextStartup} from './startup.js';
-import {formatEnvironment,type ContextRoute} from './environment.js';
-import {formatMessages,type ContextEntry} from './format.js';
-import type {PreparationResult} from './types.js';
-import {createContextMetrics} from './metrics.js';
+import type {ConnectionScope} from '../../contracts/lifecycle';
+import type {CapabilitySnapshot} from '../../contracts/capabilities';
+import type {ContextMessageReader,ContextStateReader} from '../../storage/context-types';
+import {contextConfig,type ContextConfig} from './config';
+import {contextSeparator,estimateInput} from './budget';
+import {validateContextStartup} from './startup';
+import {formatEnvironment,type ContextRoute} from './environment';
+import {formatMessages,type ContextEntry} from './format';
+import type {PreparationResult} from './types';
+import {createContextMetrics} from './metrics';
 export interface ContextWork {readonly scope:ConnectionScope;readonly messageId:number;readonly route:ContextRoute|null;readonly signal:AbortSignal;readonly isCurrent:()=>boolean}
 export interface ContextBuilderOptions {
  readonly messages:ContextMessageReader;readonly state:ContextStateReader;

@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { expect, test } from 'vitest';
-import { migrate } from '../src/storage/migrate.js';
-import { migrations } from '../src/storage/migrations/index.js';
+import { migrate } from '../src/storage/migrate';
+import { migrations } from '../src/storage/migrations/index';
 
 test('миграция с версии 17 сохраняет журнал, индекс поиска, настройки, очередь и начисления', () => {
   const db = new Database(':memory:');

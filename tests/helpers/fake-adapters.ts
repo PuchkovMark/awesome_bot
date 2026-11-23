@@ -1,7 +1,7 @@
 import type {
   CapabilityContext, CapabilitySnapshot, ChannelAdapter, ChatId, EventHandler,
   IncomingEvent, OutgoingMessage, SendResult, UserId,
-} from '../../src/contracts/index.js';
+} from '../../src/contracts/index';
 
 /** Подмена только для демонстрации контракта; не эмулирует права или сеть. */
 export class FakeAdapter implements ChannelAdapter {

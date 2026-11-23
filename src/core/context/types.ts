@@ -1,5 +1,5 @@
-import type {GlobalVersionRef} from '../../contracts/versioning.js';
-import type {AgentLoopInput} from '../agent-loop/types.js';
+import type {GlobalVersionRef} from '../../contracts/versioning';
+import type {AgentLoopInput} from '../agent-loop/types';
 export type PreparationFailure='missing_system_prompt'|'static_budget_too_small'|'current_message_too_large'|'internal_error';
 export interface ContextMetadata {
  readonly version:GlobalVersionRef;readonly cutoffId:number;readonly messageIds:readonly number[];

@@ -1,6 +1,6 @@
-import type {ContentVersion} from '../contracts/versioning.js';
-import type {ConnectionScope} from '../contracts/lifecycle.js';
-import type {StoredMessage,HistoryQuery} from './types.js';
+import type {ContentVersion} from '../contracts/versioning';
+import type {ConnectionScope} from '../contracts/lifecycle';
+import type {StoredMessage,HistoryQuery} from './types';
 /** Единственный reader, выдаваемый сборщику контекста и контекстному поиску. */
 export interface ContextMessageReader {
  get(scope:ConnectionScope,id:number):Promise<StoredMessage|null>;
@@ -14,4 +14,4 @@ export interface ContextStateReader {
  settings(scope:ConnectionScope):Promise<{readonly enabled:boolean;readonly responseMode:'silent'|'normal'|'active';readonly timezone:string}|null>;
  systemPrompt(scope:ConnectionScope):Promise<ContentVersion|null>;
 }
-export type {StoredMessage} from './types.js';
+export type {StoredMessage} from './types';

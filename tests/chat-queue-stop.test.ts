@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-import { openStorage } from '../src/storage/index.js';
-import { createChatQueue } from '../src/core/index.js';
-import { scopeFor } from './helpers/connection-scope.js';
-import { queueMessage,flushQueue } from './helpers/chat-queue.js';
-import { queueBackend } from '../src/storage/queue-registry.js';
+import { openStorage } from '../src/storage/index';
+import { createChatQueue } from '../src/core/index';
+import { scopeFor } from './helpers/connection-scope';
+import { queueMessage,flushQueue } from './helpers/chat-queue';
+import { queueBackend } from '../src/storage/queue-registry';
 beforeEach(()=>{vi.useFakeTimers();vi.setSystemTime(10000);});afterEach(()=>vi.useRealTimers());
 test('ограниченная остановка игнорирующего сигнал обработчика, queued сохранено, поздний отказ наблюдается',async()=>{
  const storage=await openStorage(':memory:'), scope=scopeFor(storage,'vk:a');let reject!:(error:unknown)=>void;let signal!:AbortSignal;

@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from 'vitest';
-import { agentInput, failure, response, sequence } from './helpers/agent-loop.js';
+import { agentInput, failure, response, sequence } from './helpers/agent-loop';
 
 afterEach(() => { vi.useRealTimers(); });
 function clock() { vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] }); }

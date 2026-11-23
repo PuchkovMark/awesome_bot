@@ -1,5 +1,5 @@
-import type { AuthorizationAction, AuthorizationContext, AuthorizationDecision, BotRole, GrantBasis, UserId } from '../../contracts/index.js';
-import { platformOf, validId } from './validation.js';
+import type { AuthorizationAction, AuthorizationContext, AuthorizationDecision, BotRole, GrantBasis, UserId } from '../../contracts/index';
+import { platformOf, validId } from './validation';
 
 const minimum: Record<AuthorizationAction, BotRole> = {
   'chat.configure': 'admin', 'chat.history.clear': 'admin', 'chat.passport.edit': 'admin',
