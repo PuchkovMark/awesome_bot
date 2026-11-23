@@ -1,3 +1,4 @@
+import { passportSections } from '../contracts/chat-passport';
 import { requireInput } from './validation';
 import { StorageError } from './errors';
 import type { TracePayload } from './trace-types';
@@ -170,17 +171,31 @@ export function validateTrace(value: unknown): asserts value is TracePayload {
     num(v.version);
   }
   if (p.context !== null) {
-    const c = plain(p.context, [
-      'version',
-      'cutoffId',
-      'messageIds',
-      'layerBytes',
-      'estimatedTokens',
-      'scanned',
-      'historyTruncated',
-      'reply',
-      'absentLayers',
-    ]);
+    const c = plain(
+      p.context,
+      [
+        'version',
+        'cutoffId',
+        'messageIds',
+        'layerBytes',
+        'estimatedTokens',
+        'scanned',
+        'historyTruncated',
+        'reply',
+        'absentLayers',
+      ],
+      ['passport'],
+    );
+    if (Object.hasOwn(c, 'passport')) {
+      const passport = plain(c.passport, ['sections', 'estimatedTokens']);
+      list(passport.sections, passportSections.length, (section) => one(section, passportSections));
+      requireInput(
+        typeof passport.estimatedTokens === 'number' &&
+          Number.isInteger(passport.estimatedTokens) &&
+          passport.estimatedTokens > 0 &&
+          passport.estimatedTokens <= 1024,
+      );
+    }
     const v = plain(c.version, ['area', 'kind', 'key', 'version']);
     one(v.area, ['global']);
     one(v.kind, ['system_prompt']);

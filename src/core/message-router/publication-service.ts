@@ -107,6 +107,7 @@ export function createPublicationService(options: {
       readonly authorLabels?: readonly string[];
       readonly addressPreference?: AddressPreferenceReference;
       readonly participantCards?: QueueCompletion['participantCards'];
+      readonly passportCurrent?: QueueCompletion['passportCurrent'];
       readonly toolSourceIds?: readonly number[];
       readonly toolResultsCurrent?: QueueCompletion['toolResultsCurrent'];
     } = {},
@@ -117,6 +118,7 @@ export function createPublicationService(options: {
       authorLabels = [],
       addressPreference,
       participantCards,
+      passportCurrent,
       toolResultsCurrent,
     } = details;
     const jobId = work.jobId;
@@ -130,7 +132,7 @@ export function createPublicationService(options: {
       meter: ResponsePublication | undefined,
       started = false;
     let preferenceDenied = false;
-    let cardsDenied = false;
+    let contextDenied = false;
     let meteredOutcome: import('../../storage/response-rate-store').ResponseRateOutcome = 'unknown';
     const denial: { reason?: Extract<ResponsePublicationAdmission, { allowed: false }>['reason'] } =
       {};
@@ -196,9 +198,13 @@ export function createPublicationService(options: {
           return false;
         }
       };
-      const profileContextCurrent = () => {
+      const contextCurrent = () => {
         try {
-          return (participantCards?.current() ?? true) && (toolResultsCurrent?.() ?? true);
+          return (
+            (participantCards?.current() ?? true) &&
+            (toolResultsCurrent?.() ?? true) &&
+            (passportCurrent?.() ?? true)
+          );
         } catch {
           return false;
         }
@@ -217,7 +223,7 @@ export function createPublicationService(options: {
           return false;
         }
       }
-      const readyToSend = () => isCurrent() && addressCurrent() && profileContextCurrent();
+      const readyToSend = () => isCurrent() && addressCurrent() && contextCurrent();
       const settings = await options.storage.chats.get(scope);
       if (!settings || !readyToSend()) return suppressed(guardReason());
       let decision = publicationDecision(route, settings, outcome);
@@ -226,12 +232,12 @@ export function createPublicationService(options: {
         signal: work.signal,
         isCurrent,
         async allow() {
-          if (!isCurrent() || !profileContextCurrent()) return false;
+          if (!isCurrent() || !contextCurrent()) return false;
           const latest = await options.storage.chats.get(scope);
           return (
             !!latest &&
             isCurrent() &&
-            profileContextCurrent() &&
+            contextCurrent() &&
             publicationDecision(
               route,
               latest,
@@ -311,8 +317,8 @@ export function createPublicationService(options: {
       }
       const beforeSend = () => {
         if (!isCurrent()) return false;
-        if (!profileContextCurrent()) {
-          cardsDenied = true;
+        if (!contextCurrent()) {
+          contextDenied = true;
           return false;
         }
         if (!addressCurrent()) {
@@ -413,7 +419,11 @@ export function createPublicationService(options: {
             text,
             ...replyFields,
             ...guard,
-            ...(meter || addressPreference || participantCards || toolResultsCurrent
+            ...(meter ||
+            addressPreference ||
+            participantCards ||
+            toolResultsCurrent ||
+            passportCurrent
               ? { beforeSend }
               : {}),
             confirmPart,
@@ -435,7 +445,7 @@ export function createPublicationService(options: {
       if (parts.size > 0) meteredOutcome = 'delivered';
       else if (!journalFailed && result?.kind === 'failed') meteredOutcome = 'failed';
       if (denial.reason && !started) return suppressed(denial.reason);
-      if (parts.size === 0 && (cardsDenied || !profileContextCurrent())) return suppressed('guard');
+      if (parts.size === 0 && (contextDenied || !contextCurrent())) return suppressed('guard');
       if (
         parts.size === 0 &&
         (preferenceDenied || (result?.kind === 'failed' && !addressCurrent()))
@@ -507,6 +517,7 @@ export function createPublicationService(options: {
           toolSourceIds: completion.toolSourceIds ?? [],
           subjectIds: completion.subjectIds ?? [],
           ...(completion.participantCards ? { participantCards: completion.participantCards } : {}),
+          ...(completion.passportCurrent ? { passportCurrent: completion.passportCurrent } : {}),
           ...(completion.toolResultsCurrent
             ? { toolResultsCurrent: completion.toolResultsCurrent }
             : {}),

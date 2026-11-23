@@ -41,6 +41,7 @@ export async function fixture(
     limit?: number;
     profileNotice?: string;
     retentionDays?: number;
+    modelContextTokens?: number;
     upload?: (peer: number, data: Buffer) => Promise<string>;
     threshold?: number;
     window?: number;
@@ -79,7 +80,7 @@ export async function fixture(
       DATABASE_PATH: files.path,
       OPENCODE_API_KEY: 'synthetic-go',
       LLM_MODEL: 'synthetic-model',
-      MODEL_CONTEXT_TOKENS: '16000',
+      MODEL_CONTEXT_TOKENS: String(options.modelContextTokens ?? 16000),
       MESSAGE_RETENTION_DAYS: String(options.retentionDays ?? 30),
       LLM_SESSION_SECRET: 'synthetic-session',
       CHAT_RESPONSES_PER_MINUTE: String(options.limit ?? 6),

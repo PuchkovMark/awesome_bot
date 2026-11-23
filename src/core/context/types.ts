@@ -1,3 +1,4 @@
+import type { PassportSection } from '../../contracts/chat-passport';
 import type { PreparedPassport } from './passport';
 import type { PreparedCards } from './participant-cards';
 import type { AddressPreferenceReference } from '../../contracts/index';
@@ -14,6 +15,10 @@ export interface ContextMetadata {
   readonly messageIds: readonly number[];
   readonly layerBytes: Readonly<{ system: number; environment: number; messages: number }>;
   readonly estimatedTokens: number;
+  readonly passport?: {
+    readonly sections: readonly PassportSection[];
+    readonly estimatedTokens: number;
+  };
   readonly scanned: number;
   readonly historyTruncated: boolean;
   readonly reply: 'none' | 'included' | 'truncated' | 'unavailable';

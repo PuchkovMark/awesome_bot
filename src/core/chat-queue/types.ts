@@ -60,6 +60,7 @@ export interface QueueCompletion {
   readonly subjectIds?: readonly import('../../contracts/index').UserId[];
   readonly toolSourceIds?: readonly number[];
   readonly toolResultsCurrent?: () => boolean;
+  readonly passportCurrent?: () => boolean;
   readonly participantCards?: {
     readonly current: () => boolean;
     readonly sourceIds: readonly number[];

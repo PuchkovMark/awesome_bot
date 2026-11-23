@@ -1,3 +1,4 @@
+import type { PassportRevision, PassportSection } from '../../contracts/chat-passport';
 import { composePassport, type PreparedPassport } from '../context/passport';
 import {
   createParticipantCardComposer,
@@ -8,7 +9,7 @@ import {
 import { estimateRequestInput } from '../context/budget';
 import type { AddressPreferenceReference, ConnectionScope, UserId } from '../../contracts/index';
 import { createJobModelAttempts } from './delegated-attempts';
-import type { LlmClient } from '../../llm/types';
+import type { LlmClient, LlmMessage } from '../../llm/types';
 import type { AgentLoopInput, AgentLoopOptions, LoopTools } from '../agent-loop/types';
 import { createAttemptSummary } from '../agent-loop/summary';
 import { createAgentLoop } from '../agent-loop/service';
@@ -164,14 +165,29 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
         const cardSubjects = new Set<UserId>();
         const cardSources = new Set<number>();
         let candidateCards: readonly UsedCard[] = [];
-        let cardBytes = 0;
+        const usedPassport = new Map<PassportSection, PassportRevision>();
+        let candidatePassport: ReturnType<typeof composePassport> | undefined;
+        let passportBase: LlmMessage | undefined;
+        let passportTokens = 0;
+        let addedBytes = 0;
         let context = prepared.metadata;
         let staleContext = false;
         const cardsCurrent = () => cards?.current([...usedRefs.values()]) ?? true;
+        const passportCurrent = (extra: readonly PassportRevision[] = []) => {
+          try {
+            return passport?.current([...usedPassport.values(), ...extra]) ?? true;
+          } catch {
+            return false;
+          }
+        };
         const allowed = () => {
           if (
-            cards &&
-            !cards.current([...usedRefs.values(), ...candidateCards.flatMap(({ refs }) => refs)])
+            (cards &&
+              !cards.current([
+                ...usedRefs.values(),
+                ...candidateCards.flatMap(({ refs }) => refs),
+              ])) ||
+            !passportCurrent(candidatePassport?.used)
           ) {
             staleContext = true;
             return false;
@@ -196,6 +212,23 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
           attempts: jobAttempts,
           settings,
         });
+        const guardedSession: LoopTools | undefined =
+          session && (cards || passport)
+            ? {
+                ...session,
+                current: () => session.current() && cardsCurrent() && passportCurrent(),
+                ...(passport
+                  ? {
+                      beginBatch(request, remaining, steps) {
+                        // Результат инструмента использует место до добавления необязательных разделов.
+                        const messages = request.messages.slice();
+                        if (passportBase) messages[passport.messageIndex] = passportBase;
+                        session.beginBatch({ ...request, messages }, remaining, steps);
+                      },
+                    }
+                  : {}),
+              }
+            : session;
         const loop = createAgentLoop(
           client,
           settings,
@@ -231,42 +264,63 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
                 for (const id of card.sourceIds) cardSources.add(id);
                 for (const ref of card.refs) usedRefs.set(ref.value, ref);
               }
-              if (cards && context && prepared.metadata && candidateCards.length) {
-                const index = cards.messageIndex;
-                const bytes =
+              for (const revision of candidatePassport?.used ?? [])
+                usedPassport.set(revision.section, revision);
+              if (
+                context &&
+                prepared.metadata &&
+                (candidateCards.length || candidatePassport?.used.length)
+              ) {
+                const index = cards?.messageIndex ?? passport!.messageIndex;
+                const original = prepared.metadata;
+                addedBytes = Math.max(
+                  addedBytes,
                   Buffer.byteLength(request.messages[index]?.text ?? '') -
-                  Buffer.byteLength(prepared.input.messages[index]?.text ?? '');
-                if (bytes > cardBytes) {
-                  cardBytes = bytes;
-                  context = {
-                    ...prepared.metadata,
-                    layerBytes: {
-                      ...prepared.metadata.layerBytes,
-                      messages: prepared.metadata.layerBytes.messages + bytes,
-                    },
-                    estimatedTokens: prepared.metadata.estimatedTokens + bytes,
-                    absentLayers: prepared.metadata.absentLayers.filter(
-                      (layer) => layer !== 'profiles',
-                    ),
-                  };
-                  work.recordTrace({ context: { ...context, messageIds: ids } });
-                }
+                    Buffer.byteLength(prepared.input.messages[index]?.text ?? ''),
+                );
+                passportTokens = Math.max(passportTokens, candidatePassport?.estimatedTokens ?? 0);
+                context = {
+                  ...original,
+                  layerBytes: {
+                    ...original.layerBytes,
+                    messages: original.layerBytes.messages + addedBytes,
+                  },
+                  estimatedTokens: original.estimatedTokens + addedBytes,
+                  absentLayers: original.absentLayers.filter(
+                    (layer) =>
+                      !(layer === 'profiles' && cardSubjects.size) &&
+                      !(layer === 'passport' && usedPassport.size),
+                  ),
+                  ...(usedPassport.size
+                    ? {
+                        passport: {
+                          sections: [...usedPassport.keys()],
+                          estimatedTokens: passportTokens,
+                        },
+                      }
+                    : {}),
+                };
+                work.recordTrace({ context: { ...context, messageIds: ids } });
               }
+              candidatePassport = undefined;
               candidateCards = [];
             }
             return admission;
           },
-          session && cards
-            ? { ...session, current: () => session.current() && cardsCurrent() }
-            : session,
+          guardedSession,
           compose || passport
             ? (request) => {
                 const result = compose?.(request);
                 candidateCards = result?.used ?? [];
                 const withCards = result?.request ?? request;
-                return passport
-                  ? composePassport(passport, withCards, options.modelInputLimit).request
-                  : withCards;
+                candidatePassport = passport
+                  ? composePassport(passport, withCards, options.modelInputLimit)
+                  : undefined;
+                passportBase =
+                  passport && candidatePassport?.used.length
+                    ? withCards.messages[passport.messageIndex]
+                    : undefined;
+                return candidatePassport?.request ?? withCards;
               }
             : undefined,
         );
@@ -298,6 +352,7 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
           ...(session
             ? { toolResultsCurrent: session.current, toolSourceIds: session.sourceIds() }
             : {}),
+          ...(usedPassport.size ? { passportCurrent: () => passportCurrent() } : {}),
           ...(cardSubjects.size
             ? { participantCards: { current: cardsCurrent, sourceIds: [...cardSources] } }
             : {}),
