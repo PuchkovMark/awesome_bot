@@ -12,6 +12,7 @@ import type { ChatId, ConnectionScope } from '../src/contracts/index';
 import { createLifecycleService } from '../src/core/index';
 import type { LlmResult } from '../src/llm/types';
 import type { SafeLogger } from '../src/logger/index';
+import { disclosureStore } from '../src/storage/chat-disclosure-store';
 import { openConnection } from '../src/storage/connection';
 import { openStorage } from '../src/storage/index';
 import { storageFixture } from './helpers/storage-fixture';
@@ -162,6 +163,7 @@ async function fixture() {
   }
 
   return {
+    path: files.path,
     storage,
     connection,
     life,
@@ -331,6 +333,220 @@ test('ранний личный путь принимает целую кома�
       text: expect.stringContaining(`Беседа ${ownerId}`),
     });
     expect(() => f.life.current(ownerId)).toThrow('uncertain_connection');
+  } finally {
+    await f.close();
+  }
+});
+
+test('десять строк обзора приводят к независимым решениям, повтор сброса сохраняет новое поколение', async () => {
+  const f = await fixture();
+  try {
+    await f.start(5);
+    const peers = Array.from({ length: 10 }, (_, index) => firstPeer + index);
+    const firstScope = f.open(peers[0]!);
+    const lastScope = f.open(peers.at(-1)!);
+    await f.storage.chats.create(firstScope, {
+      createdAt: Date.now(),
+      responseMode: 'active',
+      enabled: false,
+    });
+    await f.storage.chats.create(lastScope, {
+      createdAt: Date.now(),
+      responseMode: 'silent',
+      enabled: true,
+    });
+    await f.record(firstScope, '1');
+    await f.record(lastScope, '2');
+    for (const peer of peers.slice(1, -1)) {
+      const scope = f.open(peer);
+      await f.record(scope, '3');
+    }
+    f.update(
+      f.event('', peers[1], member, {
+        action: { type: 'chat_invite_user', member_id: -community },
+      }),
+    );
+    await f.life.verify(chat(peers[2]!));
+    await f.gap();
+    f.connection.run((db) =>
+      db
+        .prepare('UPDATE chat_connections SET pause_reason=NULL WHERE chat_id=?')
+        .run(chat(peers[3]!)),
+    );
+
+    const activePeer = firstPeer + peers.length;
+    const activeScope = f.open(activePeer);
+    const disclosure = disclosureStore(f.storage);
+    const disclosed = disclosure.register(
+      {
+        provider: 'OpenCode Go',
+        dataPolicy: 'Синтетические данные',
+        storagePolicy: 'Тестовое хранение',
+        detailsText: 'Тестовое раскрытие',
+        detailsUrl: 'https://example.test/details',
+        ownerContact: 'Тестовый контакт',
+        change: 'material',
+      },
+      Date.now(),
+    );
+    await vi.waitFor(() => expect(disclosure.gate(activeScope).version).toBe(disclosed));
+
+    const pauseSnapshot = f.paused();
+    const parts = () => f.sends.filter(({ text }) => text.startsWith(`${overview} VK`));
+    f.update(f.event(overview));
+    await vi.waitFor(() =>
+      expect(parts().flatMap(({ text }) => text.split('\n\n').slice(1))).toHaveLength(10),
+    );
+    expect(parts().length).toBeGreaterThan(1);
+    const blocks = parts().flatMap(({ peer, text }) => {
+      expect(peer).toBe(owner);
+      expect(Buffer.byteLength(text)).toBeLessThanOrEqual(vkMessageLength.value);
+      expect(text).not.toContain('Прежняя синтетическая переписка');
+      return text
+        .split('\n\n')
+        .slice(1)
+        .map((block) => block.split('\n'));
+    });
+    expect(pauseSnapshot.map(({ chatId }) => chatId)).toEqual(peers.map(chat));
+    expect(blocks[1]![0]).toContain('VK сообщил');
+    expect(blocks[2]![0]).toContain('Сверка не подтвердила');
+    expect(blocks[3]![0]).toContain('Причина прежней паузы не сохранена');
+    expect(blocks[0]![0]).toContain('Прервалось наблюдение за событиями VK');
+    for (const [index, lines] of blocks.entries()) {
+      const { chatId, generation, revision } = pauseSnapshot[index]!;
+      expect(lines).toEqual([
+        expect.stringContaining(`Беседа ${chatId}.`),
+        `Продолжить ${chatId} ${generation}/${revision}`,
+        expect.stringContaining('Сохраняет текущую историю'),
+        `Начать заново ${chatId} ${generation}/${revision}`,
+        expect.stringContaining('Удаляет данные прежнего подключения'),
+      ]);
+    }
+    const before = f.connection.run((db) =>
+      db
+        .prepare(
+          'SELECT chat_id,platform_message_id AS message_id FROM messages WHERE chat_id<>? ORDER BY id',
+        )
+        .all(activeScope.chatId),
+    );
+    f.update(...peers.map((peer) => f.event('[club314|Бот] Вопрос на паузе', peer, member)));
+    f.update(f.event('[club314|Бот] Вопрос в действующей беседе', activePeer, member));
+    await vi.waitFor(async () =>
+      expect((await f.storage.traces.last(activeScope))?.payload.publication.status).toBe(
+        'delivered',
+      ),
+    );
+    expect(f.model).toHaveBeenCalledOnce();
+    expect(
+      f.connection.run((db) =>
+        db
+          .prepare(
+            'SELECT chat_id,platform_message_id AS message_id FROM messages WHERE chat_id<>? ORDER BY id',
+          )
+          .all(activeScope.chatId),
+      ),
+    ).toEqual(before);
+
+    const continueCommand = blocks[0]![1]!;
+    const resetCommand = blocks.at(-1)![3]!;
+    f.update(f.event(continueCommand));
+    await vi.waitFor(() =>
+      expect(f.sends).toContainEqual({
+        peer: owner,
+        text: expect.stringContaining(`Беседа ${firstScope.chatId} продолжена`),
+      }),
+    );
+    const continued = f.life.current(firstScope.chatId);
+    expect(continued.generation).toBe(firstScope.generation);
+    expect(await f.storage.messages.list(continued, { limit: 10 })).toMatchObject([
+      { messageId: '1' },
+    ]);
+    expect(await f.storage.chats.get(continued)).toMatchObject({
+      enabled: false,
+      responseMode: 'active',
+    });
+
+    f.failSend((text) => text.startsWith(`Для беседы ${lastScope.chatId} начато`));
+    const resetEvent = f.event(resetCommand);
+    f.update(resetEvent);
+    await vi.waitFor(() => expect(f.failed).toHaveLength(1));
+    expect(f.failed[0]).toMatchObject({ peer: owner });
+    const reset = f.life.current(lastScope.chatId);
+    expect(reset.generation).not.toBe(lastScope.generation);
+    expect(await f.storage.messages.list(reset, { limit: 10 })).toEqual([]);
+    await vi.waitFor(async () =>
+      expect(await f.storage.chats.get(reset)).toMatchObject({
+        enabled: true,
+        responseMode: 'normal',
+      }),
+    );
+    await f.record(reset, '4');
+    f.update(resetEvent);
+    const stale = (chatId: ChatId) =>
+      f.sends.filter(
+        ({ peer, text }) =>
+          peer === owner && text.startsWith(`Состояние беседы ${chatId} изменилось.`),
+      );
+    await vi.waitFor(() => expect(stale(reset.chatId)).toHaveLength(1));
+    expect(f.failed).toHaveLength(1);
+    expect(f.life.current(reset.chatId).generation).toBe(reset.generation);
+    expect(await f.storage.messages.list(reset, { limit: 10 })).toMatchObject([{ messageId: '4' }]);
+    expect(f.paused()).toEqual(pauseSnapshot.slice(1, -1));
+    expect(f.life.current(activeScope.chatId).generation).toBe(activeScope.generation);
+
+    const initialPartCount = parts().length;
+    f.update(f.event(overview));
+    await vi.waitFor(() =>
+      expect(
+        parts()
+          .slice(initialPartCount)
+          .flatMap(({ text }) => text.split('\n\n').slice(1)),
+      ).toHaveLength(8),
+    );
+    expect(f.paused()).toEqual(pauseSnapshot.slice(1, -1));
+
+    await f.stop();
+    const reopened = await openStorage(f.path);
+    try {
+      const life = createLifecycleService({
+        storage: reopened,
+        ownerId,
+        source: unconfirmedLifecycleSource,
+      });
+      expect(life.pausedConnections('vk', ownerId)).toEqual(pauseSnapshot.slice(1, -1));
+      expect(await reopened.messages.list(life.current(reset.chatId), { limit: 10 })).toMatchObject(
+        [{ messageId: '4' }],
+      );
+    } finally {
+      await reopened.close();
+    }
+    await f.start();
+    const restarted = f.paused();
+    expect(restarted).toHaveLength(11);
+    expect(restarted.find(({ chatId }) => chatId === continued.chatId)).toMatchObject({
+      generation: continued.generation,
+      revision: pauseSnapshot[0]!.revision + 2,
+      reason: 'startup',
+    });
+    expect(restarted.find(({ chatId }) => chatId === reset.chatId)).toMatchObject({
+      generation: reset.generation,
+      reason: 'startup',
+    });
+    expect(restarted.filter(({ reason }) => reason === 'startup')).toHaveLength(3);
+    f.update(f.event(continueCommand), f.event(resetCommand));
+    await vi.waitFor(() => {
+      expect(stale(continued.chatId)).toHaveLength(1);
+      expect(stale(reset.chatId)).toHaveLength(2);
+    });
+    expect(f.paused()).toEqual(restarted);
+    expect(
+      f.connection.run((db) =>
+        db
+          .prepare('SELECT platform_message_id AS message_id FROM messages WHERE chat_id=?')
+          .all(reset.chatId),
+      ),
+    ).toEqual([{ message_id: '4' }]);
+    expect(f.model).toHaveBeenCalledOnce();
   } finally {
     await f.close();
   }
