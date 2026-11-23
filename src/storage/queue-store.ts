@@ -1,4 +1,5 @@
 import { acceptQuestionnaireInput } from './questionnaire-input';
+import { rememberProfileUpdate } from './profile-update-store';
 import { noteParticipantMessage } from './participant-registry';
 import {
   acceptsHistoryInput,
@@ -306,6 +307,8 @@ export function createQueueBackend(
                   "UPDATE messages SET purpose='service_notice' WHERE chat_id=? AND id=?",
                 ).run(scope.chatId, snapshot.message.id);
               }
+              if (routed.profileUpdate)
+                rememberProfileUpdate(db, scope, snapshot.message.id, snapshot.receivedAt);
               const result: import('./queue-types').RoutedQueueDecision =
                 gate?.ordinary === false && routed.route
                   ? { route: null, reason: 'silent' }

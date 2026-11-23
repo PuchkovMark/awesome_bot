@@ -2,6 +2,8 @@ import Database from 'better-sqlite3';
 import { expect, test } from 'vitest';
 import { migrate } from '../src/storage/migrate';
 const tables = [
+  'profile_update_waiting',
+  'profile_update_runs',
   'participant_departures',
   'departed_profile_answers',
   'questionnaire_progress',
@@ -85,6 +87,7 @@ const tables = [
   'sqlite_sequence',
 ];
 const others = [
+  'profile_update_queue_order',
   'participant_departures_due',
   'departed_profile_answers_message',
   'personal_answer_sources_answer',

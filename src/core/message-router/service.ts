@@ -146,6 +146,13 @@ export function createMessageRouter(options: RouterOptions) {
           });
           return {
             reason: decision.reason,
+            ...(!command &&
+            message.isBot === false &&
+            !message.hasForwarded &&
+            !message.text.trimStart().startsWith('/') &&
+            (message.isGroupChat || message.chatId === message.userId)
+              ? { profileUpdate: true as const }
+              : {}),
             ...(answerForm ? {} : { skipQuestionnaire: true as const }),
             ...(decision.kind === 'service' &&
             command &&

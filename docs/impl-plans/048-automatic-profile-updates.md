@@ -2,7 +2,7 @@
 
 - Номер: 048
 - Название: Автообновление профилей из переписки
-- Статус: черновик
+- Статус: в работе
 - Дата: 2026-11-23
 - Дата завершения: —
 - Связанные документы: [задача](../tasks/048-automatic-profile-updates.md), [утверждённый план фичи](../plans/048-automatic-profile-updates.md), [профили](../specs/profiles.md), [личные команды 046](../impl-plans/completed/046-participant-profile-commands.md).

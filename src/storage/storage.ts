@@ -6,6 +6,7 @@ import { createChatPassportStore, registerChatPassport } from './chat-passport-s
 import { createProfileCommandStore, registerProfileCommands } from './profile-command-store';
 import { createGreetingStore, registerGreetings } from './greeting-store';
 import { createProfileFactStore, registerProfileInference } from './profile-fact-store';
+import { createProfileUpdateStore, registerProfileUpdates } from './profile-update-store';
 import {
   createAddressPreferenceStore,
   registerAddressPreferences,
@@ -97,6 +98,7 @@ export async function openStorage(
     const privacy = createPersonalDataStore(connection, backend);
     registerPersonalData(storage, privacy);
     registerProfileInference(storage, profileFacts);
+    registerProfileUpdates(storage, createProfileUpdateStore(connection, backend));
     registerProfileCommands(storage, profileCommands);
     registerChatPassport(storage, passport);
     registerQuestionnaires(storage, questionnaires);
