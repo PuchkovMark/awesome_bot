@@ -64,6 +64,11 @@ export function startParticipantDeparture(
     .run(args);
   if (!changed.changes) return;
   hideDepartedAnswers(db, scope, user);
+  pauseDepartedActivity(db, scope, user);
+}
+
+export function pauseDepartedActivity(db: Database, scope: ChatGeneration, user: UserId) {
+  const args = { ...scope, user };
   db.prepare(`DELETE FROM profile_command_lists WHERE ${subject}`).run(args);
   db.prepare(
     `DELETE FROM questionnaire_inputs WHERE chat_id=@chatId AND generation=@generation

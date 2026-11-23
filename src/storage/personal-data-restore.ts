@@ -5,7 +5,8 @@ import {
   purgePersonalMessages,
   invalidateDependentData,
 } from './personal-deletion';
-import { requireInput } from './validation';
+import { reconcileStagedDepartures } from './participant-departure-restore';
+import { requireInput, timestamp } from './validation';
 
 /** Вход для будущего восстановления F9.3. Файл ещё изолирован от приложения. */
 export function reconcileStagedPersonalData(staged: Database, newer: Database, now: number) {
@@ -15,6 +16,11 @@ export function reconcileStagedPersonalData(staged: Database, newer: Database, n
       !staged.inTransaction &&
       staged.pragma('foreign_keys', { simple: true }) === 1,
   );
+  timestamp(now);
+  newer.transaction(() => reconcileSnapshot(staged, newer, now)).deferred();
+}
+
+function reconcileSnapshot(staged: Database, newer: Database, now: number) {
   const currentScope = newer.prepare(
     'SELECT 1 FROM chat_connections WHERE chat_id=? AND generation=?',
   );
@@ -151,6 +157,7 @@ export function reconcileStagedPersonalData(staged: Database, newer: Database, n
       while (purgePersonalMessages(staged, now) > 0) {
         /* Проверяем следующую порцию внутри той же изолированной операции. */
       }
+      reconcileStagedDepartures(staged, newer, now);
       for (const operation of deletions) {
         requireInput(
           !staged
