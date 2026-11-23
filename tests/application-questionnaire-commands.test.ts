@@ -4,6 +4,7 @@ import { privateQuestionnaire } from '../src/core/questionnaires/private-templat
 import { vkMessageLength } from '../src/channels/vk/outbound-text';
 import { chat, fixture, peer, until } from './helpers/application-response-fixture';
 import { seedBeforeQuestionnaires } from './helpers/questionnaire-upgrade';
+import { participantRegistryStore } from '../src/storage/participant-registry';
 
 type App = Awaited<ReturnType<typeof fixture>>;
 const profileNotice = 'Тестовое уведомление об анкете и личном профиле.';
@@ -250,6 +251,40 @@ test('после достоверного отказа списка повтор
       expect(attempt(app)).toMatchObject({ state: 'active', shownAt: app.start + 2000 }),
     );
     expect(app.sends.map(({ text }) => text)).toEqual([expect.stringContaining(groupHint), list]);
+  } finally {
+    await app.close();
+  }
+});
+
+test('после смены состава подтверждённый отказ допускает повтор показа в том же поколении', async () => {
+  const app = await fixture({ profileNotice, hold: true });
+  try {
+    app.at(1000);
+    app.submit('/анкета');
+    await until(() => expect(app.holds).toHaveLength(1));
+    const reserved = attempt(app)!;
+    app.at(2000);
+    app.membership('chat_invite_user_by_link', 42);
+    await until(() =>
+      expect(participantRegistryStore(app.storage).read(app.scope).participants).toContainEqual(
+        expect.objectContaining({ userId: 'vk:42', status: 'present' }),
+      ),
+    );
+    app.holds[0]!.release();
+    await until(() =>
+      expect(attempt(app)).toMatchObject({
+        state: 'showing',
+        attempt: reserved.attempt,
+        presentation: reserved.presentation,
+        shownAt: null,
+      }),
+    );
+    expect(app.sends).toEqual([]);
+    app.submit('/анкета');
+    await until(() => expect(app.holds).toHaveLength(2));
+    app.holds[1]!.release();
+    await until(() => expect(attempt(app)?.state).toBe('active'));
+    expect(app.sends.filter(({ text }) => text.startsWith(groupHint))).toHaveLength(1);
   } finally {
     await app.close();
   }

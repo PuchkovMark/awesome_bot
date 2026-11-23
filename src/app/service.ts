@@ -529,6 +529,7 @@ export async function runApplication(
       const questionnaires = createQuestionnaireCommands({
         storage,
         authorization,
+        lifecycle,
         channel,
         signal,
         progress: questionnaireProgress,

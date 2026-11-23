@@ -169,10 +169,13 @@ test('тёзки заполняют свои анкеты, а команды и 
       expect(app.sends.some(({ text }) => text === 'Ответ обрабатывается.')).toBe(true),
     );
     expect(app.complete).toHaveBeenCalledTimes(1);
+    app.at(4000);
+    const second = app.submit('[club314|Пенёк] ' + body.replace('Аня', 'Саша'), 42);
+    await until(() => expect(attempt(app, peer, 42)?.state).toBe('processing'));
+    expect(app.complete).toHaveBeenCalledTimes(1);
     model.resolve();
     await app.published(first);
-    app.at(4000);
-    await app.published(app.submit('[club314|Пенёк] ' + body.replace('Аня', 'Саша'), 42));
+    await app.published(second);
     expect(attempt(app)).toMatchObject({ state: 'completed', answers: '{"2":"Аня","9":"походы"}' });
     expect(attempt(app, peer, 42)).toMatchObject({
       state: 'completed',

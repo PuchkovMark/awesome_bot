@@ -2,6 +2,7 @@ import type { createVkChannel } from '../channels/vk/channel';
 import { vkMessageLength } from '../channels/vk/outbound-text';
 import type { AuthorizationContext, IncomingMessage } from '../contracts/index';
 import type { createAuthorizationService } from '../core/authorization/service';
+import type { createLifecycleService } from '../core/lifecycle/service';
 import type { createQuestionnaireProgress } from '../core/questionnaire/progress';
 import { chatControlStore } from '../storage/chat-control-store';
 import type { QuestionnaireCommand } from '../storage/questionnaire-progress-store';
@@ -52,13 +53,14 @@ export function createQuestionnaireCommands(options: {
   readonly storage: Storage;
   readonly progress: ReturnType<typeof createQuestionnaireProgress>;
   readonly authorization: Awaited<ReturnType<typeof createAuthorizationService>>;
+  readonly lifecycle: Pick<ReturnType<typeof createLifecycleService>, 'current'>;
   readonly channel: Pick<
     ReturnType<typeof createVkChannel>,
     'deliverQuestionnairePart' | 'replyGroupControl' | 'replyPrivateControl'
   >;
   readonly signal: AbortSignal;
 }) {
-  const { channel, progress, authorization, signal } = options;
+  const { channel, progress, authorization, lifecycle, signal } = options;
   const controls = chatControlStore(options.storage);
   function commandOf(message: IncomingMessage) {
     return message.isBot === false && (message.isGroupChat || message.chatId === message.userId)
@@ -128,7 +130,12 @@ export function createQuestionnaireCommands(options: {
         const sent = await channel.deliverQuestionnairePart(scope, text, deliveryGuard);
         if (sent.kind === 'delivered')
           return actor.confirmPresentation(presentation, stage, sent.receipt, Date.now(), current);
-        if (sent.kind === 'failed') actor.deliveryFailed(presentation);
+        if (sent.kind === 'failed') {
+          // Возврат в показ проверяет поколение и идентификатор показа после смены ревизии.
+          const attemptScope = lifecycle.current(scope.chatId);
+          if (attemptScope.generation === scope.generation)
+            progress.participant(attemptScope, message.userId).deliveryFailed(presentation);
+        }
         return false;
       }
       if (separate && !work.warningDelivered) {
