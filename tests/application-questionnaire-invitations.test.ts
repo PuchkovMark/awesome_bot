@@ -1,11 +1,13 @@
-import { createQuestionnaireProgress } from '../src/core/questionnaire/progress';
+import { legacyQuestionnaire } from '../src/core/questionnaires/legacy-template';
+import { privateQuestionnaire } from '../src/core/questionnaires/private-template';
 import { expect, test } from 'vitest';
-import { fixture, peer, until } from './helpers/application-response-fixture';
+import { chat, fixture, peer, until } from './helpers/application-response-fixture';
 import { chatControlStore } from '../src/storage/chat-control-store';
 import { participantRegistryStore } from '../src/storage/participant-registry';
 import { personalDataStore } from '../src/storage/personal-data-store';
 import type { UserId } from '../src/contracts/index';
 import type { QuestionnaireInvitationSource } from '../src/core/greetings/invitation';
+import { seedBeforeQuestionnaires } from './helpers/questionnaire-upgrade';
 
 type App = Awaited<ReturnType<typeof fixture>>;
 const hello = 'Рады видеть в лесу! [id999|чужой]';
@@ -181,7 +183,7 @@ test('приглашение ждёт квитанции и пересчитыв
 });
 
 test.each([
-  'без движка',
+  'без допуска профиля',
   'отказ приветствия',
   'неизвестное приветствие',
   'выключение приветствия',
@@ -193,7 +195,10 @@ test.each([
   const app = await fixture({
     hold: stopBeforeInvite,
     limit: reason === 'лимит' ? 1 : 6,
-    greetings: { members: [73], ...(reason === 'без движка' ? {} : { questionnaire: source }) },
+    greetings: {
+      members: [73],
+      ...(reason === 'без допуска профиля' ? {} : { questionnaire: source }),
+    },
   });
   try {
     await configure(app, true, true);
@@ -354,56 +359,166 @@ test('выключение бота убирает ожидающее пригл
   }
 });
 
-test('завершение движком 052 исключает участника из следующего приглашения 050', async () => {
-  const { source } = engine();
+test.each([false, true])(
+  'штатное приглашение ведёт к прохождению и учитывает завершение, приветствие %s',
+  async (greet) => {
+    const app = await fixture({
+      profileNotice: 'Обработка анкеты и профиля.',
+      greetings: { members: [73, 102] },
+    });
+    try {
+      await configure(app, greet, true);
+      app.name(101, 'Саша', 'Иванов');
+      app.name(102, 'Саша', 'Иванов');
+      enter(app, 101, [73, 101, 102]);
+      await open(app);
+      const confirmation = greet ? app.holdReceipt((text) => text === hello) : undefined;
+      app.at(31_000);
+      if (confirmation) {
+        await confirmation.entered;
+        expect(welcomes(app).map(({ text }) => text)).toEqual([hello]);
+        confirmation.release();
+      }
+      await until(() => expect(invitations(app)).toHaveLength(1));
+      const invite = invitations(app)[0]!;
+      expect(invite.text).toContain('[id101|Саша Иванов]');
+      expect(invite.text).not.toContain('[id102|');
+      expect(invite.disableMentions).toBe(0);
+      expect(welcomes(app).map(({ text }) => text)).toEqual(
+        greet ? [hello, invite.text] : [invite.text],
+      );
+      const progress = () =>
+        app.db
+          .prepare('SELECT state,answers FROM questionnaire_progress WHERE chat_id=? AND user_id=?')
+          .get(app.scope.chatId, 'vk:101');
+      expect(progress()).toBeUndefined();
+      app.at(32_000);
+      const command = invite.text.split(' ').at(-1)!;
+      expect(command).toBe(action);
+      app.submit(command, 101);
+      await until(() => expect(progress()).toMatchObject({ state: 'active' }));
+      const list = legacyQuestionnaire.questions.map(({ text }) => text).join('\n');
+      const shown = app.sends.find(({ text }) => text.startsWith('Ваш ответ увидят участники'));
+      expect(shown?.text.endsWith(list)).toBe(true);
+      app.complete.mockResolvedValueOnce({
+        kind: 'complete',
+        text: JSON.stringify(
+          Object.fromEntries(
+            legacyQuestionnaire.questions.map((q) => [q.position, q.position === 2 ? 'Аня' : null]),
+          ),
+        ),
+        usage: { input: 20, output: 10 },
+      });
+      app.at(33_000);
+      app.submit('Пенёк, я Аня. Остальное пропущу.', 101);
+      await until(() =>
+        expect(app.sends.some((s) => s.text === 'Спасибо! Анкета заполнена.')).toBe(true),
+      );
+      expect(progress()).toEqual({ state: 'completed', answers: '{"2":"Аня"}' });
+      if (!greet) await app.restart(true);
+      app.at(34_000);
+      app.setMembers([73, 102]);
+      app.membership('chat_kick_user', 101, 101);
+      await until(() =>
+        expect(
+          participantRegistryStore(app.storage)
+            .read(app.scope)
+            .participants.find((p) => p.userId === 'vk:101')?.status,
+        ).not.toBe('present'),
+      );
+      enter(app, 101, [73, 101, 102], 35_000);
+      await open(app, 2);
+      app.at(65_000);
+      await until(() => expect(states(app)[1]).toMatchObject({ invitation: 'skipped' }));
+      expect(invitations(app)).toHaveLength(1);
+      expect(app.complete).toHaveBeenCalledTimes(1);
+    } finally {
+      await app.close();
+    }
+  },
+);
+
+test('завершение только в личке оставляет штатное приглашение беседы доступным', async () => {
   const app = await fixture({
     profileNotice: 'Обработка анкеты и профиля.',
-    greetings: { members: [73], questionnaire: source },
+    greetings: { members: [73] },
   });
   try {
     await configure(app, false, true);
-    enter(app);
-    await open(app);
-    app.at(31_000);
-    await until(() => expect(invitations(app)).toHaveLength(1));
-    const participant = createQuestionnaireProgress(app.storage).participant(app.scope, 'vk:101');
-    const opened = participant.open(Date.now())!;
-    expect(opened.template.questions).toHaveLength(16);
-    const presentation = participant.takePresentation(Date.now())!;
-    expect(presentation.text.split('\n')).toHaveLength(16);
-    participant.shown(presentation.presentation, Date.now());
-    app.complete.mockResolvedValueOnce({
-      kind: 'complete',
-      text: JSON.stringify(
-        Object.fromEntries(
-          opened.template.questions.map((q) => [q.position, q.position === 2 ? 'Аня' : null]),
-        ),
-      ),
-      usage: { input: 20, output: 10 },
-    });
-    app.at(32_000);
-    app.submit('[club314|Пенёк], я Аня. Остальное пропущу.', 101);
-    await until(() =>
-      expect(app.sends.some((s) => s.text === 'Спасибо! Анкета заполнена.')).toBe(true),
-    );
-    expect(participant.current(Date.now())?.state).toBe('completed');
-    app.at(33_000);
-    app.setMembers([73]);
-    app.membership('chat_kick_user', 101, 101);
+    app.at(1000);
+    app.submit(action, 101, undefined, 101);
     await until(() =>
       expect(
-        participantRegistryStore(app.storage)
-          .read(app.scope)
-          .participants.find((p) => p.userId === 'vk:101')?.status,
-      ).not.toBe('present'),
+        app.sends.some(
+          ({ peer_id, text }) => peer_id === 101 && text.includes('повторите /анкета.'),
+        ),
+      ).toBe(true),
     );
-    enter(app, 101, [73, 101], 34_000);
-    await open(app, 2);
-    app.at(64_000);
-    await until(() => expect(states(app)[1]).toMatchObject({ invitation: 'skipped' }));
-    expect(invitations(app)).toHaveLength(1);
-    expect(app.complete).toHaveBeenCalledTimes(1);
+    app.at(2000);
+    app.submit(action, 101, undefined, 101);
+    const completion = (chatId: string) =>
+      app.db
+        .prepare("SELECT state FROM questionnaire_progress WHERE chat_id=? AND user_id='vk:101'")
+        .pluck()
+        .get(chatId);
+    await until(() => expect(completion('vk:101')).toBe('active'));
+    app.complete.mockResolvedValueOnce({
+      kind: 'complete',
+      usage: { input: 20, output: 10 },
+      text: JSON.stringify(
+        Object.fromEntries(
+          privateQuestionnaire.questions.map(({ position }) => [
+            position,
+            position === 1 ? 'Аня' : null,
+          ]),
+        ),
+      ),
+    });
+    app.at(3000);
+    app.submit('Я Аня. Остальное пропущу.', 101, undefined, 101);
+    await until(() =>
+      expect(
+        app.sends.some(
+          ({ peer_id, text }) => peer_id === 101 && text === 'Спасибо! Анкета заполнена.',
+        ),
+      ).toBe(true),
+    );
+    expect(completion('vk:101')).toBe('completed');
+    enter(app, 101, [73, 101], 4000);
+    await open(app);
+    app.at(34_000);
+    await until(() => expect(invitations(app)).toHaveLength(1));
+    expect(invitations(app)[0]).toMatchObject({
+      peer_id: peer,
+      text: expect.stringContaining('[id101|'),
+    });
+    expect(completion(app.scope.chatId)).toBeUndefined();
   } finally {
     await app.close();
   }
 });
+
+test.each(['нет редакции', 'участник отказался от профилирования'] as const)(
+  'штатное приглашение учитывает доступность — %s',
+  async (reason) => {
+    const app = await fixture({
+      profileNotice: 'Обработка анкеты и профиля.',
+      greetings: { members: [73] },
+      ...(reason === 'нет редакции'
+        ? { existingChat: (path: string) => seedBeforeQuestionnaires(path, [chat]) }
+        : {}),
+    });
+    try {
+      await configure(app, false, true);
+      if (reason === 'участник отказался от профилирования')
+        personalDataStore(app.storage).disable(app.scope, 'vk:101', Date.now());
+      enter(app);
+      await open(app);
+      app.at(31_000);
+      await until(() => expect(states(app)).toEqual([{ state: 'skipped', invitation: 'skipped' }]));
+      expect(invitations(app)).toEqual([]);
+    } finally {
+      await app.close();
+    }
+  },
+);

@@ -1,7 +1,12 @@
 import { createQuestionnaireProgress } from '../core/questionnaire/progress';
-import { createQuestionnaireCommands, parseQuestionnaireCommand } from './questionnaire-commands';
+import {
+  createQuestionnaireCommands,
+  openQuestionnaire,
+  parseQuestionnaireCommand,
+} from './questionnaire-commands';
 import { questionnaireAnswerHandler } from '../core/questionnaire/answer';
 import { questionnaireProgressStore } from '../storage/questionnaire-progress-store';
+import { questionnaireStore } from '../storage/questionnaire-store';
 import { createProfileCommands } from './profile-commands';
 import { applicationTools } from './model-tools';
 import { contextParticipantCards } from './context-participant-cards';
@@ -136,6 +141,8 @@ export async function runApplication(
         },
       });
       const privacy = personalDataStore(storage);
+      const questionnaireProgress = createQuestionnaireProgress(storage);
+      const questionnaireTemplates = questionnaireStore(storage);
       const registry = participantRegistryStore(storage);
       privacy.purgeExpired(Date.now());
       privacy.cleanup(Date.now());
@@ -332,8 +339,18 @@ export async function runApplication(
         signal,
         limit: config.responseRate.responsesPerMinute,
         ...(dependencies.greetingRules ? { rules: dependencies.greetingRules } : {}),
-        questionnaire: createQuestionnaireProgress(storage).invitations(
-          dependencies.questionnaireInvitations,
+        questionnaire: questionnaireProgress.invitations(
+          dependencies.questionnaireInvitations ?? {
+            action: (scope) => (questionnaireTemplates.current(scope) ? openQuestionnaire : null),
+            state(scope, user) {
+              const state = controls.read(scope);
+              return state.enabled &&
+                state.mode !== 'silent' &&
+                privacy.profileAllowed(scope, user, Date.now())
+                ? 'available'
+                : 'unavailable';
+            },
+          },
         ),
         port: {
           writing: (scope, guard) => channel.introduction!.writing(scope, 'chat', guard),
@@ -514,7 +531,7 @@ export async function runApplication(
         authorization,
         channel,
         signal,
-        progress: createQuestionnaireProgress(storage),
+        progress: questionnaireProgress,
       });
       const address = createAddressPreferenceHandlers({ storage, channel, signal });
       const pausedChats = createPausedChatCommands({ channel, lifecycle, ownerId, signal });
