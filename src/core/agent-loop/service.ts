@@ -100,28 +100,38 @@ export function createAgentLoop(
             return finish({ kind: 'cancelled' });
           }
           const reservation = admission === true ? undefined : admission;
-          let invoked = false;
-          let pending: Promise<ParsedAttempt>;
+          let counted = false;
+          let pending: Promise<ParsedAttempt> | undefined;
           try {
-            const afterAdmission = checkStopped();
-            if (afterAdmission) return finish(afterAdmission);
-            summary.beginAttempt();
-            attempts++;
-            onAttempt?.(summary.snapshot(Math.max(0, performance.now() - started)));
-            const beforeSend = checkStopped();
-            if (beforeSend) return finish(beforeSend);
-            invoked = true;
-            try {
-              pending = Promise.resolve(invoke(request)).then(parseAttempt, () =>
-                parseAttempt(undefined),
-              );
-            } catch {
-              pending = Promise.resolve(parseAttempt(undefined));
+            if (!checkStopped()) {
+              summary.beginAttempt();
+              counted = true;
+              onAttempt?.(summary.snapshot(Math.max(0, performance.now() - started)));
+              if (!checkStopped()) {
+                attempts++;
+                try {
+                  pending = Promise.resolve(invoke(request)).then(parseAttempt, () =>
+                    parseAttempt(undefined),
+                  );
+                } catch {
+                  pending = Promise.resolve(parseAttempt(undefined));
+                }
+              }
             }
           } finally {
-            if (!invoked) reservation?.cancelBeforeSend();
+            if (!pending) {
+              if (counted) summary.cancelAttempt();
+              reservation?.cancelBeforeSend();
+            }
           }
-          const result = await Promise.race([pending, halted]);
+          if (!pending) return finish(checkStopped() ?? agentError('client_failure'));
+          const reconciled = pending.then((result) => {
+            if (result.usage.input !== null || result.usage.output !== null) {
+              reservation?.recordUsage(result.usage);
+            }
+            return result;
+          });
+          const result = await Promise.race([reconciled, halted]);
           const after = checkStopped();
           if (after) return finish(after);
           summary.recordUsage(result.usage);

@@ -1,4 +1,4 @@
-import type { LlmErrorCode } from '../../llm/types';
+import type { LlmErrorCode, LlmUsage } from '../../llm/types';
 
 export interface AgentLoopMessage {
   readonly role: 'user' | 'assistant';
@@ -35,6 +35,7 @@ export type AgentLoopErrorCode =
   Exclude<LlmErrorCode, 'rate_limit' | 'cancelled'> | 'invalid_input' | 'client_failure';
 export interface AttemptReservation {
   readonly cancelBeforeSend: () => void;
+  readonly recordUsage: (usage: LlmUsage) => void;
 }
 export type AttemptAdmission =
   | boolean

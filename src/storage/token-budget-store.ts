@@ -143,6 +143,25 @@ export function insertTokenReservation(
   );
 }
 
+export function reconcileTokenReservation(
+  db: Database,
+  scope: ConnectionScope,
+  key: string,
+  usage: LlmUsage,
+) {
+  if (usage.input !== null) timestamp(usage.input);
+  if (usage.output !== null) timestamp(usage.output);
+  return (
+    db
+      .prepare(
+        `UPDATE token_budget_attempts
+       SET input_tokens=coalesce(input_tokens,?),output_tokens=coalesce(output_tokens,?)
+       WHERE chat_id=? AND generation=? AND attempt_key=?`,
+      )
+      .run(usage.input, usage.output, scope.chatId, scope.generation, key).changes === 1
+  );
+}
+
 export function deleteUnsentTokenReservation(db: Database, scope: ConnectionScope, key: string) {
   return (
     db
@@ -221,19 +240,7 @@ export function createTokenBudgetStore(lifecycle: LifecycleBackend) {
       });
     },
     reconcile(scope: ConnectionScope, key: string, usage: LlmUsage) {
-      if (usage.input !== null) timestamp(usage.input);
-      if (usage.output !== null) timestamp(usage.output);
-      return lifecycle.transaction(
-        scope,
-        (db) =>
-          db
-            .prepare(
-              `UPDATE token_budget_attempts
-           SET input_tokens=coalesce(input_tokens,?),output_tokens=coalesce(output_tokens,?)
-           WHERE chat_id=? AND generation=? AND attempt_key=?`,
-            )
-            .run(usage.input, usage.output, scope.chatId, scope.generation, key).changes === 1,
-      );
+      return lifecycle.transaction(scope, (db) => reconcileTokenReservation(db, scope, key, usage));
     },
   };
 }

@@ -1,4 +1,5 @@
 import { expect, test, vi } from 'vitest';
+import { tokenBudgetStore, tokenBudgetWindowMs } from '../src/storage/token-budget-store';
 import { openStorage } from '../src/storage/index';
 import { createChatQueue } from '../src/core/index';
 import { queueConfig } from '../src/core/chat-queue/validation';
@@ -68,5 +69,70 @@ test('граница срока ожидания не вызывает обра�
     await q?.stop();
     await storage.close();
     vi.useRealTimers();
+  }
+});
+
+test('резерв возможной отправки переживает перезапуск и поздний usage не сдвигает окно', async () => {
+  const fixture = storageFixture();
+  let storage = await openStorage(fixture.path);
+  const at = Date.parse('2026-11-23T12:00:00Z');
+  try {
+    const scope = scopeFor(storage, 'vk:budget');
+    await storage.chats.create(scope, { enabled: true, responseMode: 'normal', createdAt: 0 });
+    const backend = queueBackend(storage);
+    backend.acquire('first', 30000, 10000);
+    backend.admitRouted(
+      'first',
+      scope,
+      queueMessage(scope.chatId, 'one'),
+      () => ({
+        reason: 'mention',
+        route: { kind: 'mention', mode: 'normal', isGroupChat: true },
+      }),
+      queueConfig(),
+    );
+    const work = backend.take('first')!;
+    const reservation = { key: 'job:1:1', purpose: 'direct', input: 400, output: 600 } as const;
+    expect(
+      backend.admitModelAttempt(
+        'first',
+        work,
+        undefined,
+        () => true,
+        () => at,
+        [],
+        undefined,
+        reservation,
+      ),
+    ).toMatchObject({ recordUsage: expect.any(Function) });
+    backend.release('first');
+    await storage.close();
+    storage = await openStorage(fixture.path);
+    const current = scopeFor(storage, scope.chatId);
+    const reopened = queueBackend(storage);
+    reopened.acquire('next', 30000, 10000);
+    expect(reopened.take('next')).toBeNull();
+    const store = tokenBudgetStore(storage);
+    expect(store.read(current, true, at + 180000).total).toMatchObject({
+      confirmed: 0n,
+      reserved: 1000n,
+      incompleteAttempts: 1,
+    });
+    store.reconcile(current, reservation.key, { input: null, output: 0 });
+    expect(store.read(current, true, at + 180000).total).toMatchObject({
+      confirmed: 0n,
+      reserved: 400n,
+    });
+    store.reconcile(current, reservation.key, { input: 1200, output: 9 });
+    expect(store.read(current, true, at + tokenBudgetWindowMs - 1).total).toMatchObject({
+      confirmed: 1200n,
+      reserved: 0n,
+      incompleteAttempts: 0,
+    });
+    expect(store.read(current, true, at + tokenBudgetWindowMs).total.confirmed).toBe(0n);
+    reopened.release('next');
+  } finally {
+    await storage.close();
+    fixture.cleanup();
   }
 });

@@ -172,3 +172,42 @@ test('отказ токен-бюджета и отказ F4.3 не расход�
     await storage.close();
   }
 });
+
+test('поздний usage после тайм-аута сохраняется без повторного вызова', async () => {
+  vi.useFakeTimers();
+  const storage = await openStorage(':memory:');
+  const scope = scopeFor(storage, 'vk:chat');
+  const budget = tokenBudgetStore(storage);
+  const delayed = Promise.withResolvers<LlmResult>();
+  const complete = vi.fn(() => delayed.promise);
+  const queue = createAgentLoopQueue({
+    storage,
+    tokenBudget: true,
+    tracing: { messageRetentionDays: 30 },
+    modelName: 'synthetic',
+    client: { complete },
+    prepare: async () => ready,
+    loopOptions: { timeoutMs: 100 },
+  });
+  try {
+    await storage.chats.create(scope, { enabled: true, responseMode: 'normal', createdAt: 0 });
+    await queue.start();
+    await queue.admitRouted(scope, queueMessage(scope.chatId, '1'), route);
+    await flushQueue();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(await storage.queue.get(scope, 1)).toMatchObject({ outcome: 'deadline_exceeded' });
+    expect(budget.read(scope, true, Date.now()).total.incompleteAttempts).toBe(1);
+    delayed.resolve({ ...response, usage: { input: 600, output: 0 } });
+    await flushQueue();
+    expect(budget.read(scope, true, Date.now()).total).toMatchObject({
+      confirmed: 600n,
+      reserved: 0n,
+      incompleteAttempts: 0,
+    });
+    expect(complete).toHaveBeenCalledOnce();
+  } finally {
+    await queue.stop();
+    await storage.close();
+    vi.useRealTimers();
+  }
+});

@@ -138,3 +138,22 @@ test('каждый повтор запрашивает допуск перед �
   expect(admission.mock.calls.map(([, ordinal]) => ordinal)).toEqual([1, 2]);
   expect(admission.mock.calls[0]?.[0].maxOutputTokens).toBe(agentInput().maxOutputTokens);
 });
+
+test('доказанная отмена между резервом и вызовом снимает резерв, вызов не учитывается', async () => {
+  const controller = new AbortController();
+  const complete = vi.fn();
+  const reservation = { cancelBeforeSend: vi.fn(), recordUsage: vi.fn() };
+  const loop = createAgentLoop(
+    { complete },
+    {},
+    () => controller.abort(),
+    () => reservation,
+  );
+  expect(await loop.run({ ...agentInput(), signal: controller.signal })).toMatchObject({
+    kind: 'cancelled',
+    summary: { attempts: 0, usage: { input: { unknownAttempts: 0 } } },
+  });
+  expect(reservation.cancelBeforeSend).toHaveBeenCalledOnce();
+  expect(reservation.recordUsage).not.toHaveBeenCalled();
+  expect(complete).not.toHaveBeenCalled();
+});

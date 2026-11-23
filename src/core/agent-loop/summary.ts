@@ -11,6 +11,9 @@ function counter() {
     begin() {
       unknownAttempts++;
     },
+    cancel() {
+      unknownAttempts--;
+    },
     record(value: unknown) {
       const count = usageCount(value);
       if (count === null) return;
@@ -37,6 +40,11 @@ export function createAttemptSummary() {
       attempts++;
       input.begin();
       output.begin();
+    },
+    cancelAttempt() {
+      attempts--;
+      input.cancel();
+      output.cancel();
     },
     recordUsage(usage: { readonly input: unknown; readonly output: unknown }) {
       input.record(usage.input);

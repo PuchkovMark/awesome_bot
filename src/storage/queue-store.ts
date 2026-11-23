@@ -12,6 +12,7 @@ import { createChatStore } from './chats';
 import type { RoutedQueueCallback, RoutedAdmission, RouteMetadata } from './queue-types';
 import { createMessageStore, readMessage, validateMessage } from './messages';
 import type { MessageInput } from './types';
+import type { LlmUsage } from '../llm/types';
 import type { QueueConfig, QueueDecision, QueueAdmission } from './queue-types';
 import type { Database } from 'better-sqlite3';
 import type { ConnectionScope } from '../contracts/index';
@@ -27,6 +28,7 @@ import {
   deleteUnsentTokenReservation,
   insertTokenReservation,
   pruneTokenBudget,
+  reconcileTokenReservation,
   type TokenReservation,
 } from './token-budget-store';
 import {
@@ -574,6 +576,12 @@ export function createQueueBackend(
         if (!reservation) return true;
         const { key } = reservation;
         return {
+          recordUsage(usage: LlmUsage) {
+            // Результат уже допущенной попытки может прийти после остановки задания.
+            connection.run((database) =>
+              reconcileTokenReservation(database, work.scope, key, usage),
+            );
+          },
           cancelBeforeSend() {
             connection.run((database) =>
               database
