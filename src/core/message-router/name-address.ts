@@ -14,6 +14,12 @@ export function ownNameText(text: string) {
   return normalized.replace(/«[^»]*»|“[^”]*”|"[^"\n]*"|\x60[^\x60]*\x60/gu, ' ');
 }
 
+export function addressesQuestionnaireByName(text: string): boolean {
+  const normalized = text.normalize('NFC');
+  const address = /^\s*пен[её]к\s*,\s*/iu.exec(normalized);
+  return !!address && /[\p{L}\p{N}]/u.test(ownNameText(normalized.slice(address[0].length)));
+}
+
 export function directlyAddressesName(text: string): boolean {
   const visible = ownNameText(text);
   const words: string[] = visible.match(/[\p{L}\p{N}_]+/gu) ?? [];

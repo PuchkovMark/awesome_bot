@@ -405,9 +405,10 @@ export async function runApplication(
             : (checkDisclosure(work)?.allowed ?? true),
       });
       const modelClient = dependencies.client ?? createLlmClient(config.llm);
+      const questionnaireAttempts = questionnaireProgressStore(storage);
       queue = createAgentLoopQueue({
         questionnaireAnswer: questionnaireAnswerHandler({
-          store: questionnaireProgressStore(storage),
+          store: questionnaireAttempts,
           client: modelClient,
           sessionId: createLlmSessionId(config.sessionSecret),
           maxOutputTokens: preparation.config.maxOutputTokens,
@@ -522,6 +523,7 @@ export async function runApplication(
         queue,
         logger,
         authorization,
+        canAnswerQuestionnaire: questionnaireAttempts.canAnswer,
         onQueueFull: publication.queueFull,
         onFlood(scope, candidate, isCurrent) {
           const operation = publication

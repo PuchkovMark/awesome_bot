@@ -65,7 +65,7 @@ export function routeMessage(input: RoutingInput): RoutingDecision {
       ? 'mention'
       : message.isReplyToBot
         ? 'reply'
-        : directlyAddressesName(message.text)
+        : input.questionnaireName || directlyAddressesName(message.text)
           ? 'name'
           : null;
   if (!kind) {

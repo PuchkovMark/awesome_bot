@@ -1,10 +1,16 @@
 import { createRouterMetrics } from './metrics';
 import type { SafeLogger } from '../../logger/types';
-import type { ConnectionScope, IncomingMessage, AuthorizationContext } from '../../contracts/index';
+import type {
+  ConnectionScope,
+  IncomingMessage,
+  AuthorizationContext,
+  UserId,
+} from '../../contracts/index';
 import type { Storage } from '../../storage/index';
 import type { ChatQueue } from '../chat-queue/types';
 import type { RoutingDecision, ServiceCommand } from './types';
 import { routeMessage } from './routing';
+import { addressesQuestionnaireByName } from './name-address';
 import { validIncoming } from './validation';
 import { commandAccess, type RouterAuthorization } from './command-boundary';
 import type {
@@ -27,6 +33,12 @@ export interface RouterOptions {
   readonly storage: Storage;
   readonly queue: ChatQueue;
   readonly authorization?: RouterAuthorization;
+  readonly canAnswerQuestionnaire?: (
+    scope: ConnectionScope,
+    user: UserId,
+    messageId: number,
+    receivedAt: number,
+  ) => boolean;
   readonly recognizeCommand?: (
     message: IncomingMessage,
     replyToOther: boolean | undefined,
@@ -110,14 +122,31 @@ export function createMessageRouter(options: RouterOptions) {
         scope,
         record,
         (snapshot) => {
+          const answerForm =
+            message.isBot === false &&
+            !message.hasForwarded &&
+            message.replyAddress !== 'unknown' &&
+            (message.isGroupChat || message.chatId === message.userId);
           const decision = routeMessage({
             message,
             settings: snapshot.settings,
             considerInitiative: options.queue.autonomousReplies === true,
+            questionnaireName:
+              !service &&
+              answerForm &&
+              message.isGroupChat &&
+              addressesQuestionnaireByName(message.text) &&
+              options.canAnswerQuestionnaire?.(
+                scope,
+                message.userId,
+                snapshot.message.id,
+                snapshot.receivedAt,
+              ) === true,
             ...(service ? { service } : {}),
           });
           return {
             reason: decision.reason,
+            ...(answerForm ? {} : { skipQuestionnaire: true as const }),
             ...(decision.kind === 'service' &&
             command &&
             ['reminder.manage', 'profile.self.address'].includes(command.action)

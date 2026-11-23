@@ -7,6 +7,7 @@ import { lifecycleBackend } from './lifecycle-store';
 import {
   questionnaireSource,
   acceptQuestionnaireInput,
+  answerableAttempt,
   questionnaireHour,
 } from './questionnaire-input';
 import { profileAdmitted } from './personal-data-store';
@@ -311,6 +312,12 @@ export function questionnaireProgressStore(storage: Storage) {
   return {
     participant,
     completionRevision,
+    canAnswer(scope: ConnectionScope, user: UserId, messageId: number, receivedAt: number) {
+      return lifecycle.transaction(
+        scope,
+        (db) => answerableAttempt(db, scope, user, messageId, receivedAt) !== null,
+      );
+    },
     participating(scope: ConnectionScope, user: UserId) {
       return lifecycle.transaction(scope, (db) =>
         participantProfileAvailable(readDeparture(db, scope, user)),

@@ -12,6 +12,7 @@ export interface RoutingInput {
   readonly message: IncomingMessage;
   readonly settings: Pick<ChatSettings, 'enabled' | 'responseMode'>;
   readonly considerInitiative?: boolean;
+  readonly questionnaireName?: boolean;
   readonly service?: {
     readonly command: ServiceCommand;
     readonly role: BotRole;

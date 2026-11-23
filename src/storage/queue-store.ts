@@ -339,6 +339,7 @@ export function createQueueBackend(
               chosen = Object.freeze({
                 reason: result.reason,
                 route: route === null ? null : Object.freeze({ ...route }),
+                ...(result.skipQuestionnaire ? { skipQuestionnaire: true as const } : {}),
                 ...(gate?.ordinary !== false && result.initiative
                   ? { initiative: result.initiative }
                   : {}),
@@ -366,7 +367,8 @@ export function createQueueBackend(
           const routed = chosen as import('./queue-types').RoutedQueueDecision | null;
           const route = routed?.route;
           if (admission.status === 'queued' && route) {
-            acceptQuestionnaireInput(db, scope, message.userId, admission.messageId, receivedAt);
+            if (!routed?.skipQuestionnaire)
+              acceptQuestionnaireInput(db, scope, message.userId, admission.messageId, receivedAt);
             const revision = readChatControl(db, scope.chatId).responseRevision;
             db.prepare(
               'UPDATE queue_jobs SET route_kind=?,route_mode=?,route_group=?,disclosure_version=?,control_revision=? WHERE id=?',

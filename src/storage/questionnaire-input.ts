@@ -22,14 +22,12 @@ export function questionnaireSource(
   return message && profileAdmitted(db, scope, user, message.timestamp, 'write') ? message : null;
 }
 
-/** В одной транзакции с допуском задания. Повтор, переполнение или чужое сообщение не занимают попытку. */
-export function acceptQuestionnaireInput(
+export function answerableAttempt(
   db: Database,
   scope: ConnectionScope,
   user: UserId,
   messageId: number,
   receivedAt: number,
-  expectedAttempt?: string,
 ) {
   timestamp(receivedAt);
   const key = [scope.chatId, scope.generation, user] as const;
@@ -41,9 +39,9 @@ export function acceptQuestionnaireInput(
     )
     .get(...key, receivedAt, receivedAt - questionnaireHour) as
     { attempt: string; shownMessageId: number | null } | undefined;
-  if (!row || (expectedAttempt !== undefined && expectedAttempt !== row.attempt)) return false;
+  if (!row) return null;
   const source = questionnaireSource(db, scope, user, messageId, receivedAt);
-  if (!source) return false;
+  if (!source) return null;
   const sequence = Number(source.platformMessageId);
   if (
     row.shownMessageId !== null &&
@@ -51,15 +49,29 @@ export function acceptQuestionnaireInput(
       String(sequence) !== source.platformMessageId ||
       sequence <= row.shownMessageId)
   )
-    return false;
+    return null;
+  return row.attempt;
+}
+
+/** В одной транзакции с допуском задания. Повтор, переполнение или чужое сообщение не занимают попытку. */
+export function acceptQuestionnaireInput(
+  db: Database,
+  scope: ConnectionScope,
+  user: UserId,
+  messageId: number,
+  receivedAt: number,
+  expectedAttempt?: string,
+) {
+  const attempt = answerableAttempt(db, scope, user, messageId, receivedAt);
+  if (!attempt || (expectedAttempt !== undefined && expectedAttempt !== attempt)) return false;
   if (
     !db
       .prepare('INSERT OR IGNORE INTO questionnaire_inputs VALUES(?,?,?,?)')
-      .run(messageId, scope.chatId, scope.generation, row.attempt).changes
+      .run(messageId, scope.chatId, scope.generation, attempt).changes
   )
     return false;
   db.prepare(
     "UPDATE questionnaire_progress SET state='processing',source_id=? WHERE " + subject,
-  ).run(messageId, ...key);
+  ).run(messageId, scope.chatId, scope.generation, user);
   return true;
 }
