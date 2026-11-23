@@ -18,6 +18,11 @@ export function safeEvent(input: unknown): LogEvent | undefined {
    const fields=Object.fromEntries(keys.map(key=>[key,ownData(input,key)]));
    if(keys.every(key=>Number.isSafeInteger(fields[key])&&(fields[key] as number)>=0))return {event,window:'run',...fields} as LogEvent;
   }
+  if(event==='router_silence'){
+    const reason=ownData(input,'reason'),count=ownData(input,'count');
+    if((reason==='reply_other'||reason==='reply_unknown'||reason==='mention_flood')&&
+      typeof count==='number'&&Number.isSafeInteger(count)&&count>=0)return {event,reason,count};
+  }
   if(event==='router_stats'&&ownData(input,'window')==='run'){const n=ownData(input,'senderUnknown');if(Number.isSafeInteger(n)&&(n as number)>=0)return {event,window:'run',senderUnknown:n as number};}
   if (event === 'queue_stats' && ownData(input, 'window') === 'run') {
     const keys = ['depthQueued', 'depthRunning', 'waitCount', 'waitTotalMs', 'waitMaxMs', 'rejected', 'expired', 'interrupted'] as const;

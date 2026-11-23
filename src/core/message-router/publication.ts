@@ -10,6 +10,7 @@ export function publicationDecision(route:RouteMetadata|null,current:{readonly e
   const text=Object.getOwnPropertyDescriptor(outcome,'text')?.value as unknown;
   return typeof text==='string'&&text.trim()?{kind:'answer',text}:silence;
  }
+ if(kind==='mention_flood')return {kind:'notice',template:'mention_flood'};
  if(kind==='quota_exhausted')return {kind:'notice',template:'quota_exhausted'};
  if(route.mode==='active'||(route.isGroupChat&&current.responseMode==='active'))return silence;
  if(kind==='current_message_too_large')return {kind:'notice',template:'current_message_too_large'};

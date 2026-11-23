@@ -4,6 +4,7 @@ export const noticeText='Сейчас не получилось ответить
 const templates = {
   generic: noticeText,
   current_message_too_large: 'Сообщение слишком большое для ответа. Попробуйте сократить его.',
+  mention_flood: 'Слишком много обращений подряд. Попробуйте чуть позже.',
   quota_exhausted: 'Сейчас слишком много запросов. Попробуй чуть позже.',
 };
 export type NoticeKind = keyof typeof templates;

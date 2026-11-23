@@ -2,7 +2,7 @@ import { API, APIRequest } from 'vk-io';
 import type { KnownBoolean } from '../../contracts/index.js';
 import { isVkGroupChat, vkId, vkRecord } from './normalize.js';
 import type { VkEnrichment, VkIncoming } from './normalize.js';
-import { createVkRateLimiter, waitForVkRetry } from './rate-limit.js';
+import { createVkRateLimiter, VkRequestCancelled, waitForVkRetry } from './rate-limit.js';
 import type { VkRequestGuard } from './rate-limit.js';
 
 type ApiMethod = 'groups.getLongPollServer' | 'users.get'
@@ -33,20 +33,27 @@ export function vkErrorCode(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }
 
+const limitedCalls = new WeakSet<VkApiCall>();
+
 export function createVkApiCall(attempt: VkApiAttempt, limit = createVkRateLimiter()): VkApiCall {
-  return (method, parameters, guard) => limit(async () => {
-    let body: Record<string, unknown> | undefined;
-    try {
-      body = vkRecord(await attempt(method, parameters));
-    } catch {
-      throw new VkApiError(undefined);
-    }
-    if (body && Object.hasOwn(body, 'response')) {
-      if (body.error !== undefined || body.response === undefined) throw new VkApiError(undefined);
-      return body.response;
-    }
-    throw new VkApiError(vkErrorCode(vkRecord(body?.error)?.error_code));
-  }, guard);
+  const call: VkApiCall = (method, parameters, guard) => {
+    const { beforeSend, ...checks } = guard ?? {};
+    return limit(async () => {
+      let body: Record<string, unknown> | undefined;
+      try {
+        body = vkRecord(await attempt(method, parameters));
+      } catch {
+        throw new VkApiError(undefined);
+      }
+      if (body && Object.hasOwn(body, 'response')) {
+        if (body.error !== undefined || body.response === undefined) throw new VkApiError(undefined);
+        return body.response;
+      }
+      throw new VkApiError(vkErrorCode(vkRecord(body?.error)?.error_code));
+    }, method === 'messages.send' && beforeSend ? { ...checks, beforeSend } : checks);
+  };
+  limitedCalls.add(call);
+  return call;
 }
 
 export function vkReadRetryable(error: unknown): boolean {
@@ -158,7 +165,7 @@ async function verifyReply(call: VkApiCall, message: VkIncoming): Promise<VkEnri
     const parent = local.find(row => row?.conversation_message_id === reply.cmid);
     const embedded = vkRecord(current?.reply_message);
     const authorId = vkId(parent?.from_id);
-    if (current?.from_id !== message.authorId || current.date !== message.timestamp / 1000
+    if (authorId === undefined || current?.from_id !== message.authorId || current.date !== message.timestamp / 1000
       || embedded?.conversation_message_id !== reply.cmid || typeof parent?.date !== 'number'
       || !Number.isSafeInteger(parent.date) || parent.date < 0 || parent.date > current.date
       || embedded.date !== parent.date || (embedded.peer_id != null && embedded.peer_id !== message.peerId)
@@ -182,7 +189,14 @@ export function createVkApi(
   };
   const nameFor = personalProfiles(read);
   return Object.freeze({
-    request: call,
+    request: (async (method,parameters,guard) => {
+      if(method==='messages.send'&&guard?.beforeSend&&!limitedCalls.has(call)){
+        if((guard.allow&&!await guard.allow())||guard.signal?.aborted||guard.isCurrent?.()===false||!guard.beforeSend()){
+          throw new VkRequestCancelled();
+        }
+      }
+      return call(method,parameters,guard);
+    }) satisfies VkApiCall,
     async getUserName(id: number): Promise<string | null> {
       return (await nameFor(id)) ?? null;
     },

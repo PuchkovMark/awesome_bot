@@ -54,6 +54,7 @@ export async function runApplication(config: ApplicationConfig, logger: SafeLogg
   let readyTimer: ReturnType<typeof setTimeout> | undefined;
   let stopTimer: ReturnType<typeof setTimeout> | undefined;
   const typing = new Set<Promise<void>>();
+  const floodPublications = new Set<Promise<void>>();
 
   function stop(failure: ApplicationFailure | null) {
     if (signal.aborted) return;
@@ -139,12 +140,13 @@ export async function runApplication(config: ApplicationConfig, logger: SafeLogg
       if (signal.aborted) return;
 
       startupFailure = 'queue_failed';
-      const publication = createPublicationService({ storage, port: channel.publicationPort,
+      const publication = createPublicationService({ storage, port: channel.publicationPort, responseBudget:()=>queue?.responseBudget,
         disclosureCurrent:work => work.jobId === undefined && group(work.scope.chatId)
           ? onboarding.gate(work.scope).version !== null : checkDisclosure(work)?.allowed ?? true });
       queue = createAgentLoopQueue({
         storage, logger, modelName: config.llm.model, tracing: config.tracing,
         limits: dependencies.chatLimits ?? {},
+        responseRate: config.responseRate,
         client: dependencies.client ?? createLlmClient(config.llm),
         disclosure:checkDisclosure,
         platform: channel.platform, signal,
@@ -172,6 +174,10 @@ export async function runApplication(config: ApplicationConfig, logger: SafeLogg
       const history=createHistoryHandlers({storage,authorization,lifecycle,channel,ownerId,group,signal,
         isRunning:queue.isRunning,wakeMaintenance:queue.wakeHistoryMaintenance??(()=>{})});
       const router = createMessageRouter({ storage, queue, logger, authorization, onQueueFull: publication.queueFull,
+        onFlood(scope,candidate,isCurrent) {
+          const operation=publication.flood(scope,candidate,{signal,isCurrent}).finally(()=>floodPublications.delete(operation));
+          floodPublications.add(operation);
+        },
         recognizeCommand:(message,replyToOther) => history.recognize(message) ?? chatControl.recognize(message,replyToOther) ??
           (message.isGroupChat&&message.isBot===false&&parseTimezoneCommand(message.text)!==null
             ? {action:'chat.configure',minimumRole:'admin'} : null),
@@ -206,7 +212,7 @@ export async function runApplication(config: ApplicationConfig, logger: SafeLogg
   const cleanup = (async () => {
     await stopping.promise;
     await startup;
-    const results = await Promise.allSettled([queue?.stop(), poll,introductionWork,administrationWork, ...typing]);
+    const results = await Promise.allSettled([queue?.stop(), poll,introductionWork,administrationWork, ...typing, ...floodPublications]);
     authorization?.dispose();
     try { await storage?.close(); }
     catch { return reason ?? 'stop_failed'; }

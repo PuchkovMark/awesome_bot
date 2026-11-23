@@ -6,6 +6,8 @@ import {createTraceMetrics} from '../response-tracing/metrics.js';
 import { StorageError } from '../../storage/errors.js';
 import { randomUUID } from 'node:crypto';
 import { queueBackend } from '../../storage/queue-registry.js';
+import { noticeBackend } from '../../storage/notice-store.js';
+import type { ResponsePublicationBudget } from '../../storage/queue-types.js';
 import type { QueueWork } from '../../storage/queue-types.js';
 import { QueueError } from './errors.js';
 import { queueConfig } from './validation.js';
@@ -31,6 +33,8 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
   if (!options || typeof options.handler !== 'function') throw new QueueError('invalid_input');
   const config = queueConfig(options.config);
   const limits = options.limits === undefined ? undefined : chatLimits(options.limits);
+  const responseRate=options.responseRate;
+  const notices=responseRate?noticeBackend(options.storage):undefined;
   const platform = options.platform;
   if (platform !== undefined && (typeof platform !== 'string' || !/^[a-z][a-z0-9_-]*$/u.test(platform))) throw new QueueError('invalid_input');
   if(traceConfig(options.tracing).retentionDays*86400000<=config.handlerTimeoutMs)throw new QueueError('invalid_input');
@@ -119,8 +123,8 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
       if(!backend.valid(token,work)){finish(task,'interrupted');return;}
       if(work.route){const settings=await options.storage.chats.get(work.scope);if(task.done)return;if(!settings?.enabled||settings.responseMode==='silent'||!backend.valid(token,work)){finish(task,'interrupted');return;}}
       const outcome:unknown=await handler(Object.freeze({jobId:work.id,recordTrace:(update:Partial<TracePayload>)=>{if(task.done||!backend.valid(token,work))return;const next={...task.trace,...update};if(backend.progress(token,work,next))task.trace=next;},scope:work.scope,messageId:work.messageId,signal:controller.signal,route:work.route,...disclosureVersion(work),isCurrent,
-        ...(limits && work.route || backend.historyConfigured ? {admitModelAttempt:(allow:()=>boolean,contextIds?:readonly number[])=>
-          backend.admitModelAttempt(token,work,limits,()=>running()&&allow()&&running(),Date.now,contextIds)} : {}),
+        ...(limits && work.route || responseRate || backend.historyConfigured ? {admitModelAttempt:(allow:()=>boolean,contextIds?:readonly number[])=>
+          backend.admitModelAttempt(token,work,limits,()=>running()&&allow()&&running(),Date.now,contextIds,responseRate)} : {}),
       }));
       const completion:QueueCompletion=typeof outcome==='object'&&outcome!==null&&outcomes.has((outcome as QueueCompletion).outcome)?outcome as QueueCompletion:{outcome:outcomes.has(outcome)?outcome as QueueOutcome:'failed'};
       finish(task,completion.outcome,completion);
@@ -133,6 +137,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
       if(performance.now()>=renewAt){
         backend.renew(token,config.leaseMs);
         if(limits)backend.pruneQuotas(token,limits,platform);
+        if(responseRate)backend.pruneResponseRate(token,responseRate);
         renewAt=performance.now()+config.renewIntervalMs;
       }
       for(const task of [...tasks.values()])if(!(task.publishing?backend.publicationValid(token,task.work):backend.valid(token,task.work)))finish(task,'interrupted');
@@ -167,7 +172,28 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
     tick=setTimeout(()=>{tick=undefined;pump();armTick();},Math.max(1,Math.min(1000,config.renewIntervalMs)));
     tick.unref();
   }
+  const responseBudget:ResponsePublicationBudget|undefined=responseRate&&notices?{
+    currentFlood(input){
+      if(phase!=='running')return false;
+      try{return backend.currentPublicationFlood(token,input);}
+      catch{return false;}
+    },
+    start(input,isCurrent){
+      if(phase!=='running'||(platform!==undefined&&!input.scope.chatId.startsWith(platform+':')))return {allowed:false,reason:'guard'};
+      try{return backend.startPublication(token,input,responseRate,notices,isCurrent);}
+      catch(error){
+        try{backend.check(token);}catch(fatal){fault(fatal);}
+        throw safeFailure(error);
+      }
+    },
+    finish(input,outcome){
+      if(phase!=='running'&&phase!=='stopping')return;
+      try{backend.finishPublication(token,input,outcome);}
+      catch(error){try{backend.check(token);}catch(fatal){fault(fatal);}throw safeFailure(error);}
+    },
+  }:undefined;
   const service: ChatQueue = {
+    ...(responseBudget?{responseBudget:Object.freeze(responseBudget)}:{}),
     signal:lifetime.signal,
     wakeHistoryMaintenance(){historyCheckAt=0;schedule();},
     isRunning(){if(phase!=='running')return false;try{backend.check(token);return true;}catch{return false;}},
@@ -183,7 +209,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
       if(phase!=='running')return {admission:{status:'stopped'},decision:null};
       if(platform!==undefined&&!scope.chatId.startsWith(platform+':'))throw new QueueError('invalid_input');
       try{
-       const result=backend.admitRouted(token,scope,message,decision,config,guard);
+       const result=backend.admitRouted(token,scope,message,decision,config,guard,responseRate);
        if(result.admission.status==='queue_full')counters.rejected=add(counters.rejected,1);
        emit();schedule();return result;
       }catch(error){try{backend.check(token);}catch(fatal){fault(fatal);}throw safeFailure(error);}

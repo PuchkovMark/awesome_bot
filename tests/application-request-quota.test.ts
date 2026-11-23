@@ -25,7 +25,7 @@ test('активная беседа получает один reply при се�
   const files = storageFixture();
   const { config } = loadApplicationConfig({ env: { VK_TOKEN: 'test-vk', VK_GROUP_ID: String(group), BOT_OWNER_ID: ownerId,
     DATABASE_PATH: files.path, OPENCODE_API_KEY: 'test-go', LLM_MODEL: 'test-model', MODEL_CONTEXT_TOKENS: '16000',
-    MESSAGE_RETENTION_DAYS: '30', LLM_SESSION_SECRET: 'test-session' }, readFile: () => '' });
+    CHAT_MENTION_FLOOD_THRESHOLD: '100', MESSAGE_RETENTION_DAYS: '30', LLM_SESSION_SECRET: 'test-session' }, readFile: () => '' });
   const prompt = join(files.directory, 'prompt.txt');
   await writeFile(prompt, 'Синтетическая инструкция.');
   expect(await initializePrompt(config, prompt)).toBeNull();

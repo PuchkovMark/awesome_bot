@@ -118,3 +118,13 @@ describe('служебные действия участия VK', () => {
       .toEqual({ kind: 'invalid' });
   });
 });
+
+it('считает повторные метки сообщества одним адресатом и не берёт адресатов из цитаты', () => {
+  const parent={conversation_message_id:7,from_id:88,text:'[id99|Другой]'};
+  const one=parse({text:'[club314|Бот] [public314|Бот] Вопрос',reply_message:parent});
+  expect(normalizeVkIncoming(one,groupId,{verifiedReply:{cmid:7,authorId:88}}))
+    .toMatchObject({isMentioned:true,soleBotMention:true,replyAddress:'other',replyToMessageId:'7'});
+  const two=parse({text:'[club314|Бот] [id99|Другой] Вопрос',reply_message:parent});
+  expect(two).toMatchObject({isMentioned:true,soleBotMention:false});
+  expect(normalizeVkIncoming(parse({reply_message:{id:77}}),groupId)).toMatchObject({replyAddress:'unknown'});
+});

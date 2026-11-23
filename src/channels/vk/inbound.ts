@@ -187,7 +187,7 @@ export function createVkInbound(options: VkInboundOptions, dependencies: VkInbou
           }
           counters.dispatched++;
           const normalized=normalizeVkIncoming(message, groupId, enrichment);
-          await dispatch(normalized,scope,isCurrent,disclosure,message.reply!==undefined&&!normalized.isReplyToBot);
+          await dispatch(normalized,scope,isCurrent,disclosure,normalized.replyAddress==='other'||normalized.replyAddress==='unknown');
         }).catch(() => { counters.failed++; }).finally(() => {
           pending.delete(task);
           if (tails.get(chatId) === task) tails.delete(chatId);

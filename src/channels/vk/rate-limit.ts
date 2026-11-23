@@ -6,6 +6,7 @@ export interface VkRequestGuard {
   readonly signal?: AbortSignal;
   readonly isCurrent?: () => boolean;
   readonly allow?: () => boolean | Promise<boolean>;
+  readonly beforeSend?: () => boolean;
 }
 
 export class VkRequestCancelled extends Error {
@@ -26,7 +27,7 @@ export function createVkRateLimiter(options: {
   let nextAt = Number.NEGATIVE_INFINITY;
   let tail = Promise.resolve();
 
-  return function run<T>(call: () => Promise<T>, { signal, isCurrent, allow }: VkRequestGuard = {}): Promise<T> {
+  return function run<T>(call: () => Promise<T>, { signal, isCurrent, allow, beforeSend }: VkRequestGuard = {}): Promise<T> {
     if (signal?.aborted) return Promise.reject(new VkRequestCancelled());
     const result = Promise.withResolvers<T>();
     const abort = () => result.reject(new VkRequestCancelled());
@@ -41,7 +42,7 @@ export function createVkRateLimiter(options: {
           remaining = nextAt - now();
         }
         if ((allow && !await Promise.race([allow(), result.promise.then(() => false, () => false)]))
-          || signal?.aborted || (isCurrent && !isCurrent())) throw new VkRequestCancelled();
+          || signal?.aborted || (isCurrent && !isCurrent()) || (beforeSend && !beforeSend())) throw new VkRequestCancelled();
       } catch {
         result.reject(new VkRequestCancelled());
         return;

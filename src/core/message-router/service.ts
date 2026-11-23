@@ -7,7 +7,7 @@ import type {RoutingDecision,ServiceCommand} from './types.js';
 import {routeMessage} from './routing.js';
 import {validIncoming} from './validation.js';
 import {commandAccess,type RouterAuthorization} from './command-boundary.js';
-import type {RoutedQueueDecision,RouteMetadata,RoutedAdmissionGuard} from '../../storage/queue-types.js';
+import type {FloodNotice,RoutedQueueDecision,RouteMetadata,RoutedAdmissionGuard} from '../../storage/queue-types.js';
 function fromDecision(value:RoutedQueueDecision):RoutingDecision {
  if(value.route)return {kind:'ordinary',reason:value.route.kind,route:value.route};
  if(value.reason==='service')return {kind:'service',reason:'service'};
@@ -19,6 +19,7 @@ export interface RouterOptions {
  readonly identity?:(scope:ConnectionScope,message:IncomingMessage)=>AuthorizationContext|undefined;
  readonly executeCommand?:(context:AuthorizationContext,message:IncomingMessage,isCurrent:()=>boolean,replayOnly?:boolean)=>Promise<void>;
  readonly onDecision?:(decision:RoutingDecision)=>void;
+ readonly onFlood?:(scope:ConnectionScope,candidate:FloodNotice,isCurrent:()=>boolean)=>void;
  readonly onQueueFull?:(scope:ConnectionScope,messageId:number,route:RouteMetadata,guard:{readonly signal:AbortSignal;readonly isCurrent:()=>boolean})=>Promise<void>;
 }
 export function createMessageRouter(options:RouterOptions){
@@ -44,6 +45,14 @@ export function createMessageRouter(options:RouterOptions){
   },disclosure);
   const decision=result.decision?fromDecision(result.decision):null;
   if(decision){metrics?.record(decision);try{options.onDecision?.(decision);}catch{/* Диагностика не меняет решение. */}}
+  if(result.floodNotice){
+   const candidate=result.floodNotice;
+   options.onFlood?.(scope,candidate,()=>{
+    if(!options.queue.isRunning()||(isCurrent&&!isCurrent()))return false;
+    const gate=disclosure?.();
+    return !gate||(gate.respond&&gate.ordinary!==false&&gate.version===candidate.disclosureVersion);
+   });
+  }
   if(result.admission.status==='queue_full'&&decision?.kind==='ordinary')await options.onQueueFull?.(scope,result.admission.messageId,decision.route,{
    signal:options.queue.signal,isCurrent:()=>{
     if(!options.queue.isRunning()||(isCurrent&&!isCurrent()))return false;

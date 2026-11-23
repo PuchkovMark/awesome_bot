@@ -22,3 +22,14 @@ for(const kind of ['incomplete','refused','empty','rate_limit','tools_not_suppor
  expect(publicationDecision({...route,mode:'active'},{enabled:true,responseMode:'active'},{kind})).toEqual({kind:'silence'});
 });
 for(const kind of ['cancelled','expired','interrupted','message_missing','UNKNOWN'])test('молчание '+kind,()=>expect(publicationDecision({kind:'name',mode:'normal',isGroupChat:true},{enabled:true,responseMode:'normal'},{kind})).toEqual({kind:'silence'}));
+
+test.each([
+ ['other',false,false,'reply_other'],
+ ['other',true,false,'reply_other'],
+ ['other',true,true,'mention'],
+ ['unknown',true,true,'reply_unknown'],
+ ['bot',false,false,'reply'],
+] as const)('адресация reply %s с упоминанием %s и единственностью %s', (replyAddress,isMentioned,soleBotMention,reason)=>{
+ const message={...incoming,replyAddress,isMentioned,soleBotMention,isReplyToBot:replyAddress==='bot'};
+ expect(routeMessage({message,settings:{enabled:true,responseMode:'normal'}}).reason).toBe(reason);
+});

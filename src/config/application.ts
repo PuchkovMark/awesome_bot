@@ -1,5 +1,6 @@
 import { resolve } from 'node:path';
 import { contextConfig } from '../core/context/config.js';
+import { responseRateConfig } from '../core/chat-limits/response-rate-config.js';
 import { traceConfig } from '../core/response-tracing/config.js';
 import {
   baseConfig, ConfigError, ownerParameter, positiveParameter, readConfigParameters, requiredParameter, versionParameters,
@@ -39,12 +40,22 @@ export function loadApplicationConfig(options?: ConfigOptions) {
   let tracing;
   try { tracing = traceConfig({ messageRetentionDays }); }
   catch { throw new ConfigError('invalid', ['MESSAGE_RETENTION_DAYS']); }
+  const defaults = responseRateConfig();
+  const floodWindowMs = positiveParameter(values, 'CHAT_MENTION_FLOOD_WINDOW_MS', defaults.floodWindowMs);
+  if (floodWindowMs > 8_640_000_000_000_000 - Date.now()) {
+    throw new ConfigError('invalid', ['CHAT_MENTION_FLOOD_WINDOW_MS']);
+  }
+  const responseRate = responseRateConfig({
+    responsesPerMinute: positiveParameter(values, 'CHAT_RESPONSES_PER_MINUTE', defaults.responsesPerMinute),
+    floodThreshold: positiveParameter(values, 'CHAT_MENTION_FLOOD_THRESHOLD', defaults.floodThreshold),
+    floodWindowMs,
+  });
   return Object.freeze({
     config: Object.freeze({
       ...base,
       authorization: Object.freeze({ ...base.authorization, ownerId }),
       vk: Object.freeze({ ...base.vk, groupId: positiveParameter(values, 'VK_GROUP_ID') }),
-      databasePath: databasePath(cwd, values), context: modelContext(values), sessionSecret, tracing,
+      databasePath: databasePath(cwd, values), context: modelContext(values), sessionSecret, tracing, responseRate,
     }),
     redact,
   });

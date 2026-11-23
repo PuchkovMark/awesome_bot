@@ -21,6 +21,8 @@ export interface IncomingMessage {
   readonly messageId: PlatformMessageId;
   readonly replyToMessageId?: PlatformMessageId;
   readonly isReplyToBot: boolean;
+  readonly replyAddress?: 'bot' | 'other' | 'unknown';
+  readonly soleBotMention?: boolean;
   readonly isMentioned: boolean;
   readonly timestamp: Timestamp;
   readonly attachments: readonly Attachment[];

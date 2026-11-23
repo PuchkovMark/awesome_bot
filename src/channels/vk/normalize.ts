@@ -22,6 +22,8 @@ export interface VkIncoming {
   readonly timestamp: number;
   readonly text: string;
   readonly isMentioned: boolean;
+  readonly soleBotMention?: boolean;
+  readonly hasReply?: boolean;
   readonly attachments: readonly Attachment[];
   readonly reply: VkReply | undefined;
 }
@@ -152,12 +154,18 @@ export function parseVkIncoming(update: unknown, groupId: number): ParseResult {
   if (!peerId || !authorId || !cmid || timestamp === undefined || typeof row.text !== 'string'
     || (row.out !== undefined && row.out !== 0 && row.out !== false)) return { kind: 'invalid' };
 
-  const mention = new RegExp(`\\[(?:club|public)${groupId}\\|[^\\[\\]\\r\\n]+\\]`, 'gu');
-  const withoutMention = row.text.replace(mention, '');
-  const isMentioned = withoutMention !== row.text;
+  const recipients = new Set<number>();
+  const withoutMention = row.text.replace(/\[(id|club|public)([0-9]+)\|[^[\]\r\n]+\]/gu, (match: string, type: string, id: string) => {
+    const recipient = vkId(Number(id) * (type === 'id' ? 1 : -1));
+    if (recipient === undefined) return match;
+    recipients.add(recipient);
+    return recipient === -groupId ? '' : match;
+  });
+  const isMentioned = recipients.has(-groupId);
   const reply = parseReply(row.reply_message);
   return { kind: 'message', message: {
-    peerId, authorId, cmid, timestamp, isMentioned,
+    peerId, authorId, cmid, timestamp, isMentioned, soleBotMention: isMentioned && recipients.size===1,
+    ...(row.reply_message!==undefined?{hasReply:true}:{}),
     text: isMentioned ? withoutMention.trim() : row.text,
     attachments: parseAttachments(row.attachments),
     reply: reply && reply.cmid < cmid ? reply : undefined,
@@ -178,7 +186,11 @@ export function normalizeVkIncoming(message: VkIncoming, groupId: number, enrich
     messageId: String(message.cmid),
     ...(reply ? { replyToMessageId: String(reply.cmid) } : {}),
     isReplyToBot: reply?.authorId === -groupId,
+    ...(message.hasReply || message.reply ? {
+      replyAddress: reply?.authorId === undefined ? 'unknown' : reply.authorId === -groupId ? 'bot' : 'other',
+    } : {}),
     isMentioned: message.isMentioned,
+    ...(message.soleBotMention === undefined ? {} : {soleBotMention:message.soleBotMention}),
     timestamp: message.timestamp,
     attachments: message.attachments,
   };

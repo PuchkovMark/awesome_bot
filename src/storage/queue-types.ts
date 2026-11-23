@@ -37,7 +37,34 @@ export type QueueMessage = MessageInput;
 
 export interface RouteMetadata { readonly kind:'direct_message'|'mention'|'reply'|'name'; readonly mode:'normal'|'active'; readonly isGroupChat:boolean }
 
-export interface RoutedQueueDecision { readonly route:RouteMetadata|null; readonly reason:'direct_message'|'mention'|'reply'|'name'|'service'|'disabled'|'silent'|'sender_bot'|'sender_unknown'|'invalid_input'|'not_addressed'|'forbidden' }
+export interface RoutedQueueDecision { readonly route:RouteMetadata|null; readonly reason:'direct_message'|'mention'|'reply'|'name'|'service'|'disabled'|'silent'|'sender_bot'|'sender_unknown'|'invalid_input'|'not_addressed'|'forbidden'|'reply_unknown'|'reply_other'|'mention_flood' }
 export type RoutedQueueCallback=(input:QueueRoutingSnapshot & {readonly settings:import('./types.js').ChatSettings})=>RoutedQueueDecision;
-export interface RoutedAdmission {readonly admission:QueueAdmission|{readonly status:'paused'};readonly decision:RoutedQueueDecision|null}
+export interface FloodNotice {
+ readonly messageId:number;
+ readonly receivedAt:number;
+ readonly controlRevision:number;
+ readonly disclosureVersion:number|null;
+ readonly route:RouteMetadata;
+}
+export interface RoutedAdmission {
+ readonly admission:QueueAdmission|{readonly status:'paused'};
+ readonly decision:RoutedQueueDecision|null;
+ readonly floodNotice?:FloodNotice;
+}
+export interface ResponsePublication {
+ readonly scope:ConnectionScope;
+ readonly key:string;
+ readonly messageId:number;
+ readonly route:RouteMetadata;
+ readonly notice?: {readonly kind:'quota_exhausted'|'mention_flood';readonly interval:number};
+ readonly flood?:FloodNotice;
+}
+export type ResponsePublicationAdmission =
+ | {readonly allowed:true;readonly permit?:import('./notice-types.js').NoticePermit}
+ | {readonly allowed:false;readonly reason:'guard'|'response_rate'|'notice_period'};
+export interface ResponsePublicationBudget {
+ currentFlood(input:ResponsePublication):boolean;
+ start(input:ResponsePublication,isCurrent:()=>boolean):ResponsePublicationAdmission;
+ finish(input:ResponsePublication,outcome:import('./response-rate-store.js').ResponseRateOutcome):void;
+}
 export type RoutedAdmissionGuard = () => { readonly journal: boolean; readonly respond: boolean; readonly version: number | null; readonly ordinary?:boolean };

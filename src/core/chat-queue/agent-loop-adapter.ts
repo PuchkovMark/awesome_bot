@@ -26,6 +26,7 @@ export function createAgentLoopQueue(options:AgentLoopQueueOptions){
  if(!Number.isSafeInteger(prep)||prep<=0||prep>2147483647||!Number.isSafeInteger(margin)||margin<=0||config.handlerTimeoutMs<settings.timeoutMs+prep+margin)throw new QueueError('invalid_input');
  return createChatQueue({tracing:options.tracing,storage:options.storage,...(options.logger?{logger:options.logger}:{}),...(options.onSettled?{onSettled:options.onSettled}:{}),...(options.platform!==undefined?{platform:options.platform}:{}),config,
  ...(options.limits===undefined?{}:{limits:options.limits}),
+ ...(options.responseRate===undefined?{}:{responseRate:options.responseRate}),
  handler:async work=>{
   const zero=createAttemptSummary().snapshot(0);work.recordTrace({summary:zero});
   const initialDisclosure=options.disclosure?.(work);

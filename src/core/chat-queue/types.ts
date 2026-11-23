@@ -16,12 +16,14 @@ export interface ChatQueueOptions {
   readonly storage: Storage; readonly handler: QueueHandler;
   readonly config?: Partial<QueueConfig>; readonly logger?: SafeLogger;
   readonly limits?: Partial<ChatLimits>;
+  readonly responseRate?: import('../chat-limits/response-rate-config.js').ResponseRateConfig;
   /** У привязанного к платформе воркера проверка непрерывности предшествует выдаче работы. */
   readonly platform?: string;
 }
 export interface ChatQueue {
   readonly signal:AbortSignal;
   isRunning():boolean;
+  readonly responseBudget?:import('../../storage/queue-types.js').ResponsePublicationBudget;
   wakeHistoryMaintenance?():void;
   start(): Promise<void>;
   admit(scope: ConnectionScope, message: MessageInput, decision: QueueDecision): Promise<QueueAdmission>;

@@ -18,6 +18,12 @@ import { requireInput, timestamp } from './validation.js';
 import { readChatControl } from './chat-control-store.js';
 import { admitRequestQuota, pruneRequestQuota } from './request-quota-store.js';
 import { createAutonomousQuotaStore, pruneAutonomousQuota, restoreAutonomousQuota } from './autonomous-quota-store.js';
+import { activeMentionFlood, admitMention, pruneMentionFlood } from './mention-flood-store.js';
+import { finishResponse, noticePeriodAvailable, pruneResponseRate, recoverResponseRate, responseAlreadyStarted, responseSlotAvailable, startResponse } from './response-rate-store.js';
+import type { ResponseRateOutcome } from './response-rate-store.js';
+import type { NoticeBackend } from './notice-types.js';
+import type { FloodNotice, ResponsePublication, ResponsePublicationAdmission } from './queue-types.js';
+import type { ResponseRateConfig } from '../core/chat-limits/response-rate-config.js';
 import type { ChatLimits } from '../core/chat-limits/config.js';
 export function createQueueBackend(connection: Connection, lifecycle: LifecycleBackend,traces:TraceBackend,messageRetentionDays?:number) {
   const retentionMs=messageRetentionDays===undefined?undefined:messageRetentionDays*86_400_000;
@@ -60,22 +66,37 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
     transaction,
     historyConfigured:retentionMs!==undefined,
     admitRouted(token:string,scope:ConnectionScope,message:MessageInput,decision:RoutedQueueCallback,config:QueueConfig,
-      guard?: import('./queue-types.js').RoutedAdmissionGuard):RoutedAdmission {
+      guard?: import('./queue-types.js').RoutedAdmissionGuard,responseRate?:ResponseRateConfig):RoutedAdmission {
      return transaction(token,()=>lifecycle.transaction(scope,db=>{
       const gate = guard?.();
       if (gate && !gate.journal) return {admission:{status:'paused'},decision:null};
       let chosen:import('./queue-types.js').RoutedQueueDecision|null=null;
+      let floodNotice:FloodNotice|undefined;
       const admission=this.admit(token,scope,message,snapshot=>{
        const settings=createChatStore(connection).get(scope.chatId);requireInput(settings);
        const value:unknown=gate && !gate.respond ? {route:null,reason:'forbidden'} : decision(Object.freeze({...snapshot,settings:Object.freeze(settings)}));
        if(value instanceof Promise){void value.catch(()=>{});throw new StorageError('invalid_input');}
        requireInput(value!==null&&typeof value==='object');
        const routed=value as import('./queue-types.js').RoutedQueueDecision;
-       requireInput(['direct_message','mention','reply','name','service','disabled','silent','sender_bot','sender_unknown','invalid_input','not_addressed','forbidden'].includes(routed.reason));
+       requireInput(['direct_message','mention','reply','name','service','disabled','silent','sender_bot','sender_unknown','invalid_input','not_addressed','forbidden','reply_unknown','reply_other','mention_flood'].includes(routed.reason));
        if(routed.route!==null){requireInput(['direct_message','mention','reply','name'].includes(routed.route.kind)&&['normal','active'].includes(routed.route.mode)&&typeof routed.route.isGroupChat==='boolean'&&routed.reason===routed.route.kind);}
        const result:import('./queue-types.js').RoutedQueueDecision=gate?.ordinary===false&&routed.route
          ? {route:null,reason:'silent'} : routed;
-       chosen=Object.freeze({reason:result.reason,route:result.route===null?null:Object.freeze({...result.route})});return chosen.route!==null;
+       const route=result.route;
+       if(responseRate&&route?.isGroupChat){
+        const now=snapshot.receivedAt;
+        const messageId=snapshot.message.id;
+        const mention=route.kind==='mention'?admitMention(db,scope,messageId,responseRate,now):null;
+        if(mention?.active||(!mention&&activeMentionFlood(db,scope,now)!==null)){
+         if(mention?.opened&&responseSlotAvailable(db,scope,responseRate.responsesPerMinute,now)&&noticePeriodAvailable(db,scope,now)){
+          floodNotice={messageId,receivedAt:now,route,controlRevision:readChatControl(db,scope.chatId).responseRevision,
+           disclosureVersion:gate?.version??null};
+         }
+         chosen={reason:'mention_flood',route:null};
+         return false;
+        }
+       }
+       chosen=Object.freeze({reason:result.reason,route:route===null?null:Object.freeze({...route})});return chosen.route!==null;
       },config);
       const route=(chosen as import('./queue-types.js').RoutedQueueDecision|null)?.route;
       if(admission.status==='queued'&&route) {
@@ -83,7 +104,7 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
         db.prepare('UPDATE queue_jobs SET route_kind=?,route_mode=?,route_group=?,disclosure_version=?,control_revision=? WHERE id=?')
           .run(route.kind,route.mode,route.isGroupChat?1:0,gate?.version??null,revision,admission.jobId);
       }
-      return Object.freeze({admission,decision:chosen});
+      return Object.freeze({admission,decision:chosen,...(floodNotice?{floodNotice:Object.freeze(floodNotice)}:{})});
      }));
     },
     admit(token: string, scope: ConnectionScope, message: MessageInput, decision: QueueDecision, config: QueueConfig): QueueAdmission {
@@ -120,7 +141,9 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
         if(config)traces.configure(config);if(report)traces.observe(report);
         db.prepare('UPDATE queue_lease SET token=?,expires_at=?,safety_ms=? WHERE singleton=1').run(token, now + leaseMs, safetyMs);
         if (retentionMs!==undefined) applyHistoryRetention(db,retentionMs,now);
-        restoreAutonomousQuota(db, pausePlatform === undefined ? null : `${pausePlatform}:`);
+        const prefix=pausePlatform===undefined?null:`${pausePlatform}:`;
+        restoreAutonomousQuota(db,prefix);
+        recoverResponseRate(db,prefix);
         if (pausePlatform !== undefined) lifecycle.pauseActivePlatform(db, pausePlatform);
         const running=db.prepare("SELECT j.id,j.chat_id AS chatId,j.generation,j.message_id AS messageId,j.received_at AS receivedAt FROM queue_jobs j WHERE j.state='running'").all() as {id:number;chatId:ConnectionScope['chatId'];generation:number;messageId:number;receivedAt:number}[];
         for(const row of running){
@@ -182,14 +205,44 @@ export function createQueueBackend(connection: Connection, lifecycle: LifecycleB
     valid(token: string, work: QueueWork): boolean {
       return transaction(token, db => running(db, token, work));
     },
-    admitModelAttempt(token: string, work: QueueWork, limits: ChatLimits|undefined, allow: () => boolean, now = Date.now, contextIds:readonly number[] = []) {
+    admitModelAttempt(token: string, work: QueueWork, limits: ChatLimits|undefined, allow: () => boolean, now = Date.now, contextIds:readonly number[] = [],responseRate?:ResponseRateConfig) {
       return transaction(token, db => {
         if (!running(db, token, work) || !allow()) return false;
+        if(responseRate&&work.route?.isGroupChat&&!sources.has(work)&&activeMentionFlood(db,work.scope,now())!==null)return false;
         const ids=sources.get(work)??[...new Set([work.messageId,...contextIds])];
         if (!historySourcesVisible(db,work.scope.chatId,ids)) return 'context_stale' as const;
         const result=limits&&work.route?admitRequestQuota(db,work,limits,now()):true;
         if (result===true) sources.set(work,ids);
         return result;
+      });
+    },
+    currentPublicationFlood(token:string,input:ResponsePublication,now=Date.now()):boolean {
+      return transaction(token,()=>lifecycle.transaction(input.scope,db=>!!input.flood&&
+        activeMentionFlood(db,input.scope,now)===input.flood.messageId&&
+        readChatControl(db,input.scope.chatId).responseRevision===input.flood.controlRevision));
+    },
+    startPublication(token:string,input:ResponsePublication,config:ResponseRateConfig,notices:NoticeBackend,
+      isCurrent:()=>boolean,now=Date.now()):ResponsePublicationAdmission {
+      const {scope, key, messageId,route,notice,flood}=input;
+      return transaction(token,()=>lifecycle.transaction(scope,db=>{
+        if(!isCurrent()||!route.isGroupChat||!historySourcesVisible(db,scope.chatId,[messageId])||
+          responseAlreadyStarted(db,scope,key))return {allowed:false,reason:'guard'};
+        if(flood&&(activeMentionFlood(db,scope,now)!==flood.messageId||
+          readChatControl(db,scope.chatId).responseRevision!==flood.controlRevision))return {allowed:false,reason:'guard'};
+        if(!responseSlotAvailable(db,scope,config.responsesPerMinute,now))return {allowed:false,reason:'response_rate'};
+        const permit=notice?notices.reserve(scope,messageId,route,notice.interval,now,notice.kind):null;
+        if(notice&&!permit)return {allowed:false,reason:'notice_period'};
+        startResponse(db,scope,key,now);
+        return permit?{allowed:true,permit}:{allowed:true};
+      }));
+    },
+    finishPublication(token:string,input:ResponsePublication,outcome:ResponseRateOutcome) {
+      transaction(token,db=>finishResponse(db,input.scope,input.key,outcome));
+    },
+    pruneResponseRate(token:string,config:ResponseRateConfig,now=Date.now()) {
+      transaction(token,db=>{
+        pruneResponseRate(db,now);
+        pruneMentionFlood(db,now,config.floodWindowMs);
       });
     },
     autonomousQuota(token: string, limits: ChatLimits, platform?: string) {
