@@ -574,6 +574,8 @@ npm run --silent eval:local -- --checklist
 
 Для автообновления профилей команда `npm run eval:local -- --profile-model --out /tmp/awesome-profile-model.json` отправляет только синтетические сценарии настроенной модели. Режим читает `LLM_MODEL` и `OPENCODE_API_KEY` из окружения. Перед запуском согласуйте число вызовов и резерв. [Оценка F5.7](docs/specs/evals.md#автообновление-профилей-f57)
 
+Для оценки ответов на три исхода поиска запустите `npm run eval:local -- --history-model --out /tmp/awesome-history-model.json`. Режим использует те же настройки Go из окружения, синтетические журналы и подмену доставки VK. [Оценка F6.6](docs/specs/evals.md#честность-о-неполноте-f66)
+
 ## Ручная проверка в VK F3.5
 
 Для прогона используйте OpenCode Go с `LLM_MODEL=deepseek-v4.1-flash` и задайте ключ подписки локально через `OPENCODE_API_KEY`. Проверьте доступность модели в аккаунте Go. Предел расходов сверх подписки составляет $0. Перед запуском проверьте, что Extra Usage выключен. [Решение по модели](docs/decisions.md#модель-и-подписка-для-ручной-проверки-vk) · [Extra Usage](https://opencode.ai/docs/console/go/#usage-beyond-limits)
