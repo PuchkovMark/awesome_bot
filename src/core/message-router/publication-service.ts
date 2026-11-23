@@ -118,6 +118,7 @@ export function createPublicationService(options: {
     let budget: ResponsePublicationBudget | undefined,
       meter: ResponsePublication | undefined,
       started = false;
+    let preferenceDenied = false;
     let meteredOutcome: import('../../storage/response-rate-store').ResponseRateOutcome = 'unknown';
     const denial: { reason?: Extract<ResponsePublicationAdmission, { allowed: false }>['reason'] } =
       {};
@@ -173,15 +174,15 @@ export function createPublicationService(options: {
           lifecycle.revision(scope);
           return (
             (!withoutJob || notices.sourceVisible(scope, work.messageId)) &&
-            (options.disclosureCurrent?.(work) ?? true) &&
-            addressCurrent()
+            (options.disclosureCurrent?.(work) ?? true)
           );
         } catch {
           return false;
         }
       }
+      const readyToSend = () => isCurrent() && addressCurrent();
       const settings = await options.storage.chats.get(scope);
-      if (!settings || !isCurrent()) return suppressed(guardReason());
+      if (!settings || !readyToSend()) return suppressed(guardReason());
       let decision = publicationDecision(route, settings, outcome);
       if (decision.kind === 'silence') return suppressed('none');
       const guard: PublicationGuard = {
@@ -202,7 +203,7 @@ export function createPublicationService(options: {
         },
       };
       const source = await options.storage.messages.get(scope, work.messageId);
-      if (!source || !isCurrent()) return suppressed(guardReason());
+      if (!source || !readyToSend()) return suppressed(guardReason());
       if (
         decision.kind === 'answer' &&
         route.isGroupChat &&
@@ -213,12 +214,12 @@ export function createPublicationService(options: {
         work.signal,
         options.port.canReply(scope, work.signal, source.messageId, guard),
       );
-      if (!isCurrent()) return suppressed(guardReason());
+      if (!readyToSend()) return suppressed(guardReason());
       const current = await options.storage.chats.get(scope);
       if (
         !current ||
         publicationDecision(route, current, outcome).kind !== decision.kind ||
-        !isCurrent()
+        !readyToSend()
       )
         return suppressed(guardReason());
       // Проверка после await защищает и от второго экземпляра сервиса в одном процессе.
@@ -255,7 +256,7 @@ export function createPublicationService(options: {
             undefined;
         if (!permit) return 'silence';
       }
-      if (!(await guard.allow())) return suppressed(guardReason());
+      if (!(await guard.allow()) || !readyToSend()) return suppressed(guardReason());
       const notice =
         decision.kind === 'notice' && isRateLimitedNotice(decision.template)
           ? { kind: decision.template, interval }
@@ -271,7 +272,12 @@ export function createPublicationService(options: {
         };
       }
       const beforeSend = () => {
-        if (!budget || !meter || !isCurrent()) return false;
+        if (!isCurrent()) return false;
+        if (!addressCurrent()) {
+          preferenceDenied = true;
+          return false;
+        }
+        if (!budget || !meter) return true;
         if (started) {
           if (route.kind === 'initiative') budget.repeatInitiative?.(meter);
           return !flood || budget.currentFlood(meter);
@@ -348,7 +354,7 @@ export function createPublicationService(options: {
             text,
             ...replyFields,
             ...guard,
-            ...(meter ? { beforeSend } : {}),
+            ...(meter || addressPreference ? { beforeSend } : {}),
             confirmPart,
           }),
         );
@@ -368,6 +374,8 @@ export function createPublicationService(options: {
       if (parts.size > 0) meteredOutcome = 'delivered';
       else if (!journalFailed && result?.kind === 'failed') meteredOutcome = 'failed';
       if (denial.reason && !started) return suppressed(denial.reason);
+      if (preferenceDenied && parts.size === 0 && result?.kind === 'failed')
+        return suppressed('address_preference_changed');
       if (journalFailed) {
         report('journal_failed');
         if (parts.size > 0) report('partial_delivery');

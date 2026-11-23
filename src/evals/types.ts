@@ -1,4 +1,4 @@
-import type { IncomingMessage } from '../contracts/index';
+import type { IncomingMessage, UserId } from '../contracts/index';
 import type { GlobalVersionRef } from '../contracts/versioning';
 import type { PublicationRequest, QueueCompletion } from '../core/index';
 import type { LlmRequest } from '../llm/types';
@@ -29,6 +29,13 @@ export interface Scenario {
   readonly initiative?: {
     readonly mode: 'active' | 'normal' | 'silent';
     readonly due?: boolean;
+  };
+  readonly address?: {
+    readonly preference?: {
+      readonly owner: UserId;
+      readonly form: string;
+      readonly state?: 'hidden' | 'reset' | 'neighbor';
+    };
   };
   readonly history: readonly MessageInput[];
   readonly historyLimit?: number;

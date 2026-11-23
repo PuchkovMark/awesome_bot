@@ -219,3 +219,52 @@ test.each(['скрытие', 'сброс', 'отключение'] as const)(
     }
   },
 );
+
+test.each(['до', 'после'] as const)(
+  'отключение профиля %s отправки учитывает фактическую доставку',
+  async (when) => {
+    const f = await fixture({ profileNotice, active: true, hold: when === 'до' });
+    try {
+      f.at(1000);
+      f.submit('Пенёк, называй меня Рысь');
+      await until(() =>
+        expect(
+          addressPreferenceStore(f.storage).resolve(f.scope, user, f.start + 1000, true)?.text,
+        ).toBe('Рысь'),
+      );
+      const text = 'Рысь, обычный ответ.';
+      const disable = () => personalDataStore(f.storage).disable(f.scope, user, f.start + 1000);
+      if (when === 'после')
+        f.failSend((outgoing) => {
+          if (outgoing === text) disable();
+          return undefined;
+        });
+      f.complete.mockResolvedValueOnce({ kind: 'complete', text, usage: { input: 1, output: 1 } });
+      const question = f.submit('[club314|Пенёк] Вопрос', 41);
+      if (when === 'до') {
+        await until(() => expect(f.holds).toHaveLength(1));
+        disable();
+        f.holds[0]!.release();
+      }
+      expect((await f.trace(question)).payload.publication).toMatchObject(
+        when === 'до'
+          ? { status: 'suppressed', reason: 'address_preference_changed' }
+          : { status: 'delivered', reason: 'none' },
+      );
+      const sent = f.sends.find((row) => row.text === text);
+      if (when === 'до') expect(sent).toBeUndefined();
+      else {
+        expect(sent?.reply_message?.conversation_message_id).toBe(question);
+        const recorded = f.db
+          .prepare('SELECT id FROM messages WHERE chat_id=? AND platform_message_id=?')
+          .get(f.scope.chatId, String(sent!.conversation_message_id)) as { id: number };
+        expect(await f.storage.messages.get(f.scope, recorded.id)).toMatchObject({
+          text,
+          role: 'assistant',
+        });
+      }
+    } finally {
+      await f.close();
+    }
+  },
+);

@@ -8,6 +8,8 @@ import {
 import type { ChatQueue, PublicationRequest, QueueCompletion } from '../core/index';
 import type { CapabilitySnapshot } from '../contracts/index';
 import type { LlmClient, LlmRequest } from '../llm/types';
+import { addressPreferenceStore } from '../storage/address-preference-store';
+import { disclosureStore } from '../storage/chat-disclosure-store';
 import { catalogAdministration } from '../storage/catalog-admin';
 import { openStorage } from '../storage/index';
 import type { TraceRecord } from '../storage/trace-types';
@@ -148,6 +150,47 @@ export async function runScenario(
             : message,
         );
       }
+      const addressPreferences = scenario.address && addressPreferenceStore(storage);
+      const preference = scenario.address?.preference;
+      if (addressPreferences && preference) {
+        const target =
+          preference.state === 'neighbor' ? await startChat('synthetic:address-neighbor') : scope;
+        const disclosure = disclosureStore(storage);
+        const notice = 'Обращение можно выбрать и скрыть.';
+        const version = disclosure.register(
+          {
+            profileNotice: notice,
+            provider: 'Оценочный стенд',
+            dataPolicy: 'Синтетическая переписка',
+            storagePolicy: 'Только временная база',
+            detailsText: 'Сведения для синтетического сценария.',
+            detailsUrl: 'https://example.test/privacy',
+            ownerContact: 'Синтетический владелец',
+            change: 'material',
+          },
+          1,
+        );
+        const publication = disclosure.ensure(target, 'introduction', version);
+        const claim = disclosure.claim(target, publication.id, notice, 10);
+        if (!claim || !disclosure.finish(target, claim, 'delivered', 11, null, 'intro'))
+          return evaluate('setup_failed');
+        const update = (
+          sequence: number,
+          change: Parameters<typeof addressPreferences.change>[3],
+        ) =>
+          addressPreferences.change(
+            target,
+            preference.owner,
+            { sequence, at: 20 + sequence, isGroupChat: scenario.input.isGroupChat },
+            change,
+            () => true,
+          ) === 'changed';
+        if (!update(1, { kind: 'set', form: preference.form })) return evaluate('setup_failed');
+        if (preference.state === 'reset' && !update(2, { kind: 'reset' }))
+          return evaluate('setup_failed');
+        if (preference.state === 'hidden' && !update(2, { kind: 'visibility', value: 'bot' }))
+          return evaluate('setup_failed');
+      }
       const catalog = catalogAdministration(storage);
       const created = await catalog.append({
         key: scenario.promptKey ?? 'eval',
@@ -163,6 +206,7 @@ export async function runScenario(
 
       const preparation = createContextPreparation({
         storage,
+        ...(addressPreferences ? { addressForm: addressPreferences.resolve } : {}),
         config: {
           modelContextTokens: 16_000,
           ...(scenario.historyLimit ? { maxHistoryMessages: scenario.historyLimit } : {}),
@@ -189,6 +233,7 @@ export async function runScenario(
       });
       const publication = createPublicationService({
         storage,
+        ...(addressPreferences ? { addressCurrent: addressPreferences.current } : {}),
         ...(scenario.initiative ? { responseBudget: () => queue.responseBudget } : {}),
         port: {
           async canReply() {
@@ -213,6 +258,7 @@ export async function runScenario(
       let settledJobId: number | undefined;
       const queue: ChatQueue = createAgentLoopQueue({
         storage,
+        ...(addressPreferences ? { addressCurrent: addressPreferences.current } : {}),
         tracing: { messageRetentionDays: 30 },
         modelName: settings.modelName ?? model,
         loopOptions: { timeoutMs, maxAttemptsPerStep: 1 },

@@ -1,7 +1,13 @@
 import type { IncomingMessage } from '../contracts/index';
 import type { MessageInput } from '../storage/index';
 import type { Observation, Scenario } from './types';
-import { authorLabelPrompt, authorLabelPromptKey } from './author-label-prompt';
+import { addressPromptVersion } from '../core/context/address-prompt';
+import {
+  addressPreferencePrompt,
+  addressPreferencePromptKey,
+  authorLabelPrompt,
+  authorLabelPromptKey,
+} from './author-label-prompt';
 
 const chatId = 'synthetic:main';
 const userId = 'synthetic:member';
@@ -19,6 +25,7 @@ const formatPrompt = [
 interface ContextRecord {
   readonly text?: string;
   readonly author?: string;
+  readonly addressForm?: string;
   readonly bot?: boolean;
   readonly authorLabel?: string;
   readonly unavailable?: boolean;
@@ -359,6 +366,165 @@ const twinScenarios: readonly Scenario[] = [
   },
 ];
 
+const chosenForm = 'Рысь';
+const hiddenForm = 'ЗакрытыйМаркерF52';
+const literalForm = 'Рысь «Север»';
+const configured = { owner: firstTwin, form: chosenForm } as const;
+const noGenderQuestion = 'Напомни мой вариант места встречи.';
+const addressCases: readonly {
+  readonly id: string;
+  readonly title: string;
+  readonly expected: string;
+  readonly display?: string;
+  readonly text?: string;
+  readonly sender?: IncomingMessage['userId'];
+  readonly preference?: NonNullable<Scenario['address']>['preference'];
+  readonly setup: string;
+}[] = [
+  {
+    id: 'address-chosen',
+    title: 'Первый тёзка с явным обращением',
+    expected: chosenForm,
+    preference: configured,
+    setup: 'Первый участник просит «называй меня Рысь».',
+  },
+  {
+    id: 'address-namesake',
+    title: 'Второй тёзка сохраняет обычное имя',
+    expected: sameName,
+    sender: secondTwin,
+    preference: configured,
+    setup: 'Первый участник просит «называй меня Рысь», второй сохраняет своё имя.',
+  },
+  {
+    id: 'address-reset',
+    title: 'После сброса используется свежее имя VK',
+    expected: 'Александр Иванов',
+    display: 'Александр Иванов',
+    preference: { ...configured, state: 'reset' },
+    setup:
+      'Первый участник выбирает «Рысь», сбрасывает форму командой «обращайся ко мне как в VK» и меняет отображаемое имя.',
+  },
+  {
+    id: 'address-neighbor',
+    title: 'В соседней беседе обращение не переносится',
+    expected: sameName,
+    preference: { ...configured, state: 'neighbor' },
+    setup: 'Первый участник выбирает «Рысь» только в другой беседе.',
+  },
+  {
+    id: 'address-given-name',
+    title: 'Доступно только имя',
+    expected: 'Саша',
+    display: 'Саша',
+    setup: 'В источнике текущей реплики первого участника доступно только имя «Саша».',
+  },
+  {
+    id: 'address-empty',
+    title: 'Для пустого имени используется нейтральное обращение',
+    expected: '',
+    display: '',
+    setup: 'В источнике текущей реплики первого участника имя отсутствует.',
+  },
+  {
+    id: 'address-neutral',
+    title: 'Обращение без предположения о поле',
+    expected: chosenForm,
+    text: noGenderQuestion,
+    preference: configured,
+    setup: 'Первый участник выбирает «Рысь». Сведения о поле отсутствуют.',
+  },
+  {
+    id: 'address-hidden',
+    title: 'Закрытое обращение отсутствует в запросе и ответе',
+    expected: sameName,
+    preference: { owner: firstTwin, form: hiddenForm, state: 'hidden' },
+    setup: 'В тестовом профиле сохранено закрытое контрольное слово, которого нет в истории.',
+  },
+  {
+    id: 'address-literal',
+    title: 'Форма с кавычками сохраняется буквально',
+    expected: literalForm,
+    preference: { ...configured, form: literalForm },
+    setup: 'Первый участник выбирает форму Рысь «Север».',
+  },
+];
+
+const addressScenarios: Scenario[] = addressCases.map((item) => {
+  const author = item.display ?? sameName;
+  const sender = item.sender ?? firstTwin;
+  const second = sender === secondTwin;
+  const fact = second ? 'маяк' : 'фонтан';
+  const wrong = second ? 'фонтан' : 'маяк';
+  const label = second ? 'u2' : 'u1';
+  const text = item.text ?? ownQuestion;
+  return {
+    id: item.id,
+    revision: 1,
+    title: item.title,
+    prompt: addressPreferencePrompt,
+    promptKey: addressPreferencePromptKey,
+    address: item.preference ? { preference: item.preference } : {},
+    history: twins,
+    input: twinInput(text, { userId: sender, authorName: author }),
+    answer: item.expected ? `${item.expected}, вы предложили ${fact}.` : `Вы предложили ${fact}.`,
+    criteria: [
+      {
+        id: 'scoped-address',
+        description: 'Разрешённая форма передана отдельно только для текущего автора.',
+        check: (observation) => {
+          const { current, history, reply } = markedUserBlocks(observation)[0] ?? {};
+          return (
+            observation.request?.system.includes(addressPromptVersion) === true &&
+            current?.author === author &&
+            current.addressForm === item.expected &&
+            current.authorLabel === label &&
+            Array.isArray(history) &&
+            history.every((entry: ContextRecord) => entry.addressForm === undefined) &&
+            reply?.addressForm === undefined
+          );
+        },
+        vk: 'В синтетическом запросе есть разрешённая форма текущего автора и его собственная метка.',
+      },
+      {
+        id: 'correct-recipient-and-address',
+        description: 'Получатель и факт совпадают с источником, форма воспроизведена буквально.',
+        check: ({ answer }) =>
+          answer?.scope.chatId === chatId &&
+          answer.replyToMessageId === 'current' &&
+          (item.expected
+            ? answer.text.startsWith(item.expected + ',') ||
+              answer.text.startsWith(item.expected + '!')
+            : !/Саша|Иванов|Рысь/iu.test(answer.text)) &&
+          (item.display !== 'Саша' || !/Иванов/iu.test(answer.text)) &&
+          answer.text.toLowerCase().includes(fact) &&
+          !answer.text.toLowerCase().includes(wrong) &&
+          !/(?<![\p{L}])(?:ты|вы) (?:предложил[а]?|выбрал[а]?)(?![\p{L}])/iu.test(answer.text),
+        vk: 'Ответ пришёл на реплику нужного автора, правильно назвал место и использовал допустимое обращение.',
+      },
+      {
+        id: 'private-form-absent',
+        description: 'Закрытое значение и пояснения о нём отсутствуют.',
+        check: ({ request, answer }) =>
+          request !== null &&
+          answer !== null &&
+          !JSON.stringify(request).includes(hiddenForm) &&
+          !new RegExp(
+            `${hiddenForm}|скрыт.{0,12}(обращен|ник)|закрыт.{0,12}(обращен|ник)`,
+            'iu',
+          ).test(answer.text),
+        vk: 'В запросе и ответе нет контрольного слова, а в ответе нет ссылки на скрытую настройку.',
+      },
+      authorLabelsAbsent,
+    ],
+    vkSteps: [
+      ...seedTwins,
+      item.setup,
+      `Текущий участник спрашивает «${text}» с обращением к боту.`,
+    ],
+  };
+});
+
 const helpText = 'Кто-нибудь, помогите разобраться с расписанием';
 const mentionText = 'Обсуждали, как работает Пенёк';
 const meetingText = 'Во сколько встречаемся у фонтана?';
@@ -659,5 +825,6 @@ export const scenarios: readonly Scenario[] = [
     ],
   },
   ...twinScenarios,
+  ...addressScenarios,
   ...initiativeScenarios,
 ];

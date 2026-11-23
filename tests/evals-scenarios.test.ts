@@ -18,6 +18,15 @@ test('сценарии имеют уникальные ключи сравнен
     'authors-given-name',
     'authors-empty-name',
     'authors-technical-reference',
+    'address-chosen',
+    'address-namesake',
+    'address-reset',
+    'address-neighbor',
+    'address-given-name',
+    'address-empty',
+    'address-neutral',
+    'address-hidden',
+    'address-literal',
     'initiative-help',
     'initiative-mention',
     'initiative-question',
@@ -82,4 +91,21 @@ test('сценарии тёзок используют одну версию и�
     new Set(authors.map(({ prompt, promptKey }) => JSON.stringify([prompt, promptKey]))).size,
   ).toBe(1);
   expect(first.prompt).toContain('authorLabel');
+});
+
+test('оценки обращений передают выбор только его владельцу и проверяют ответ на его реплику', () => {
+  const own = scenarios.find(({ id }) => id === 'address-chosen')!;
+  const other = scenarios.find(({ id }) => id === 'address-namesake')!;
+  const hidden = scenarios.find(({ id }) => id === 'address-hidden')!;
+  expect(own.input.userId).toBe(own.address?.preference?.owner);
+  expect(other.address?.preference).toEqual(own.address?.preference);
+  expect(other.input.userId).not.toBe(own.input.userId);
+  expect(other.input.authorName).toBe(own.input.authorName);
+  expect(own.answer).toBe('Рысь, вы предложили фонтан.');
+  expect(other.answer).toBe('Саша Иванов, вы предложили маяк.');
+  expect(hidden.address?.preference).toMatchObject({ state: 'hidden' });
+  expect(hidden.answer).not.toContain(hidden.address?.preference?.form);
+  expect(
+    new Set(scenarios.filter(({ address }) => address).map(({ promptKey }) => promptKey)),
+  ).toEqual(new Set(['f52-address-preferences']));
 });
