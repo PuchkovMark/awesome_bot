@@ -80,18 +80,15 @@ test('собранная команда запускает набор, а чек
 test('отдельная оценка фиксирует качество модели и токены в пределах семи попыток', () => {
   const directory = mkdtempSync(join(tmpdir(), 'awesome-evals-profile-model-'));
   try {
-    const out = cli(
-      directory,
-      ['--profile-model', '--out', 'model.json'],
-      `
+    const transport = `
       process.env.LLM_MODEL = 'synthetic-model';
       process.env.OPENCODE_API_KEY = 'synthetic-secret';
       globalThis.fetch = async () => Response.json({
         choices: [{ message: { role: 'assistant', content: '[]' }, finish_reason: 'stop' }],
         usage: { prompt_tokens: 9, completion_tokens: 2 },
       });
-    `,
-    );
+    `;
+    const out = cli(directory, ['--profile-model', '--out', 'model.json'], transport);
     expect(out.status, out.stderr).toBe(1);
     expect(out.stdout).toContain('Пройдено 4, нарушений 3, технических сбоев 0');
     const contents = readFileSync(join(directory, 'model.json'), 'utf8');
