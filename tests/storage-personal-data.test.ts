@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { chatSummaryStore } from '../src/storage/chat-summary-store';
 import { reconcileStagedPersonalData } from '../src/storage/personal-data-restore';
 import { expect, test, vi } from 'vitest';
 import { greetingStore } from '../src/storage/greeting-store';
@@ -103,6 +104,12 @@ test('удаление скрывает источники сразу, сохр�
     );
     const privacy = personalDataStore(storage);
     expect(privacy.export(scope, user, at).messages).toHaveLength(1);
+    const summaries = chatSummaryStore(storage);
+    const period = { from: at, to: at + 1, timezone: 'UTC' };
+    const ids = summaries.ids(scope, period, saved.id);
+    const claim = summaries.claim(scope, period, 'day', ids, [], at);
+    if (claim?.kind !== 'owned') throw Error('Не получен диапазон');
+    summaries.finish(scope, claim.id, claim.token, 'Закрытый факт');
     const backup = new Database(f.path);
     try {
       await backup.backup(f.path + '.staged');
@@ -116,6 +123,7 @@ test('удаление скрывает источники сразу, сохр�
     expect(privacy.confirmDeletion(scope, 'vk:11', request.code, at)).toBe(false);
     expect(privacy.confirmDeletion(scope, user, request.code, at + 899999)).toBe(true);
     expect(privacy.confirmDeletion(scope, user, request.code, at + 899999)).toBe(false);
+    expect(summaries.current(scope, [claim.id])).toBe(false);
     expect(await storage.contextMessages.search(scope, 'закрытый', 5, 128)).toEqual([]);
     expect(await storage.messages.get(scope, saved.id)).not.toHaveProperty('replyToMessageId');
     expect(() => privacy.export(scope, user, at + 900000)).toThrow();
@@ -137,7 +145,9 @@ test('удаление скрывает источники сразу, сохр�
           )
           .get(chat, user),
       ).toEqual({ n: 1 });
+      expect(staged.prepare('SELECT count(*) FROM chat_summaries').pluck().get()).toBe(1);
       reconcileStagedPersonalData(staged, newer, at + 900000);
+      expect(staged.prepare('SELECT count(*) FROM chat_summaries').pluck().get()).toBe(0);
       expect(
         staged
           .prepare(
@@ -227,7 +237,7 @@ test('перечень источников F5.8 охватывает табли
       personal:
         'chat_participants participant_profiles profile_facts chat_author_labels messages request_quota_admissions chat_control_commands history_clear_requests personal_profile_choices personal_exports address_preferences greeting_candidates greeting_members profile_command_lists profile_command_positions profile_command_parts chat_passport_prompts questionnaire_editor_prompts questionnaire_progress',
       dependent:
-        'messages_fts messages_fts_config messages_fts_data messages_fts_docsize messages_fts_idx personal_answer_sources tool_answer_subjects departed_profile_answers greeting_windows queue_jobs response_traces mention_flood_inputs autonomous_questions autonomous_reply_parts questionnaire_inputs profile_update_waiting',
+        'messages_fts messages_fts_config messages_fts_data messages_fts_docsize messages_fts_idx personal_answer_sources tool_answer_subjects departed_profile_answers greeting_windows queue_jobs response_traces mention_flood_inputs autonomous_questions autonomous_reply_parts questionnaire_inputs profile_update_waiting chat_summaries chat_summary_sources chat_summary_parts chat_summary_notices',
       authority:
         'admin_presence admin_observations admin_recovery_operations bot_admin_grants bot_admin_revocations bot_admin_revocation_audit personal_retained_denials',
       privateReminders:

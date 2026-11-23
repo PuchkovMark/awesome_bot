@@ -1,3 +1,4 @@
+import { chatSummaries } from './042-chat-summaries';
 import { questionnaireProgress } from './036-questionnaire-progress';
 import { participantDepartures } from './037-participant-departures';
 import { questionnaireDelivery } from './038-questionnaire-delivery';
@@ -86,4 +87,5 @@ export const migrations: readonly Migration[] = [
   profileUpdateQueue,
   profileUpdateBudget,
   profileInferenceRejections,
+  chatSummaries,
 ];

@@ -2,6 +2,10 @@ import Database from 'better-sqlite3';
 import { expect, test } from 'vitest';
 import { migrate } from '../src/storage/migrate';
 const tables = [
+  'chat_summaries',
+  'chat_summary_sources',
+  'chat_summary_parts',
+  'chat_summary_notices',
   'profile_inference_rejections',
   'profile_update_waiting',
   'profile_update_runs',
@@ -88,6 +92,9 @@ const tables = [
   'sqlite_sequence',
 ];
 const others = [
+  'chat_summary_by_summary',
+  'chat_summary_delete_source',
+  'chat_summary_hide_source',
   'profile_update_queue_order',
   'participant_departures_due',
   'departed_profile_answers_message',

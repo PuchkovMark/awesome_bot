@@ -109,6 +109,7 @@ test('F1.4 → версия 3 сохраняет историю, настрой�
             { version: 39 },
             { version: 40 },
             { version: 41 },
+            { version: 42 },
           ]);
           expect(db.prepare('SELECT * FROM chat_participants').all()).toEqual([]);
           expect(db.prepare('SELECT * FROM participant_profiles').all()).toEqual([]);
