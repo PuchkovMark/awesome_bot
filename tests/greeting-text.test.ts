@@ -6,16 +6,14 @@ test('согласованные формулировки и отсутстви�
     'Привет, Саша! Добро пожаловать в беседу!',
   );
   expect(formatGreeting({ count: 1, returning: false })).toBe('Привет! Добро пожаловать в беседу!');
-  expect(formatGreeting({ count: 1, returning: true, name: 'Саша', questionnaire: true })).toBe(
-    'С возвращением, Саша!',
-  );
+  expect(formatGreeting({ count: 1, returning: true, name: 'Саша' })).toBe('С возвращением, Саша!');
   expect(formatGreeting({ count: 1, returning: true })).toBe('С возвращением!');
-  expect(formatGreeting({ count: 2, returning: true, name: 'Саша', questionnaire: true })).toBe(
+  expect(formatGreeting({ count: 2, returning: true, name: 'Саша' })).toBe(
     'Всем привет! Добро пожаловать в беседу!',
   );
 });
 
-test('шаблон подставляет только доступные материалы и добавляет ровно одну строку анкеты', () => {
+test('шаблон подставляет только доступные материалы и убирает прежнюю подстановку анкеты', () => {
   const options = {
     count: 1,
     returning: false,
@@ -28,9 +26,6 @@ test('шаблон подставляет только доступные мат
   const text =
     'Привет, {персонаж}! Добро пожаловать в беседу!\nЛесной сторож. Берегите лес.\ninterest: шахматы';
   expect(formatGreeting(options)).toBe(text);
-  expect(formatGreeting({ ...options, questionnaire: true })).toBe(
-    text + '\nЕсли хочешь, заполни анкету знакомства.',
-  );
   expect(formatGreeting({ ...options, template: 'x'.repeat(4000) })).toBe(
     'Привет, {персонаж}! Добро пожаловать в беседу!',
   );

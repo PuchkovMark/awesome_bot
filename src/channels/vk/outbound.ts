@@ -1,11 +1,13 @@
 import { randomInt } from 'node:crypto';
+import type { QuestionnaireInvitationDispatch } from '../../core/greetings/invitation';
 import type { OutgoingMessage, PublishedPart } from '../../contracts/index';
 import { VkApiError, vkErrorCode, vkReadRetryable } from './api';
 import type { VkApi } from './api';
-import { vkCmid, vkId, vkRecord } from './normalize';
+import { isVkGroupChat, vkCmid, vkId, vkRecord } from './normalize';
 import { splitVkText } from './outbound-text';
 import { VkRequestCancelled, waitForVkRetry } from './rate-limit';
 import type { VkRequestGuard } from './rate-limit';
+import { formatQuestionnaireInvitation } from './questionnaire-invitation';
 
 const rejected = new Set([5, 6, 7, 15, 27, 100, 900, 901, 902, 910, 914, 917, 921, 925, 927, 932]);
 const issuedIdsLimit = 65_536;
@@ -20,6 +22,14 @@ export interface VkSendRequest extends OutgoingMessage, VkRequestGuard {
   readonly replayUntil?: number;
   readonly receivedId?: (messageId: string) => void;
   readonly confirmPart: (part: PublishedPart) => void | Promise<void>;
+}
+
+interface VkInvitationRequest extends VkRequestGuard {
+  readonly chatId: OutgoingMessage['chatId'];
+  readonly sendId: number;
+  readonly prepare: () => QuestionnaireInvitationDispatch | null;
+  readonly onOmitted: (count: number) => void;
+  readonly confirmPart: VkSendRequest['confirmPart'];
 }
 
 interface VkMessage {
@@ -123,10 +133,11 @@ export function createVkOutbound(options: {
     text: string,
     parent: VkMessage | undefined,
     input: VkSendRequest,
+    invitation?: VkInvitationRequest,
   ) {
     const sendId = input.kind === 'service' ? input.sendId : undefined;
     const replayUntil = input.replayUntil;
-    const guard =
+    const readGuard =
       replayUntil === undefined
         ? input
         : {
@@ -149,6 +160,21 @@ export function createVkOutbound(options: {
           }
         : {}),
     };
+    const guard = invitation
+      ? {
+          ...readGuard,
+          beforeSend() {
+            const prepared = invitation.prepare();
+            if (!prepared) return false;
+            const content = formatQuestionnaireInvitation(prepared);
+            if (!content || !prepared.reserve()) return false;
+            params.message = content.text;
+            params.disable_mentions = 0;
+            invitation.onOmitted(content.omitted);
+            return true;
+          },
+        }
+      : readGuard;
     for (let retry = 0; ; retry++) {
       try {
         if (guard.signal?.aborted || (guard.isCurrent && !guard.isCurrent()))
@@ -165,9 +191,10 @@ export function createVkOutbound(options: {
           );
         }
         if (!cmid) throw new VkApiError(undefined);
-        return cmid;
+        return { cmid, text: params.message };
       } catch (error) {
         if (
+          invitation ||
           replayUntil !== undefined ||
           !(error instanceof VkApiError) ||
           error.code !== 6 ||
@@ -177,6 +204,80 @@ export function createVkOutbound(options: {
         await wait(retry, guard.signal);
       }
     }
+  }
+
+  async function send(
+    input: VkSendRequest,
+    invitation?: VkInvitationRequest,
+  ): Promise<SendOutcome> {
+    const peer = vkLocalId(input.chatId);
+    if (peer === undefined || (invitation && !isVkGroupChat(peer)))
+      return { kind: 'failed', confirmedParts: 0 };
+    const chunks = invitation ? [''] : splitVkText(input.text);
+    const replyId = localMessageId(input.replyToMessageId);
+    if (
+      chunks.length === 0 ||
+      (input.replyToMessageId !== undefined && replyId === undefined) ||
+      (input.kind === 'notice' && (chunks.length !== 1 || replyId === undefined)) ||
+      (input.kind === 'service' &&
+        (chunks.length !== 1 ||
+          replyId !== undefined ||
+          input.sendId === undefined ||
+          !Number.isInteger(input.sendId) ||
+          input.sendId <= 0 ||
+          input.sendId > 0x7fffffff))
+    ) {
+      return { kind: 'failed', confirmedParts: 0 };
+    }
+    let parent: VkMessage | undefined;
+    if (replyId !== undefined) {
+      try {
+        parent = await lookup(peer, replyId, input);
+      } catch {
+        /* Перед отправкой проверяется область источника. */
+      }
+      if (!parent) return { kind: 'failed', confirmedParts: 0 };
+    }
+    const confirmedIds = new Set<number>();
+    for (const chunk of chunks) {
+      const confirmedParts = confirmedIds.size;
+      const expectedParent = confirmedParts === 0 ? parent : undefined;
+      let sent: Awaited<ReturnType<typeof sendPart>>;
+      try {
+        sent = await sendPart(peer, chunk, expectedParent, input, invitation);
+      } catch (error) {
+        const denied =
+          error instanceof VkRequestCancelled ||
+          (error instanceof VkApiError && error.code !== undefined && rejected.has(error.code));
+        return { kind: denied ? 'failed' : 'unknown', confirmedParts };
+      }
+      const { cmid, text } = sent;
+      if (confirmedIds.has(cmid)) return { kind: 'unknown', confirmedParts };
+      input.receivedId?.(String(cmid));
+      const observed = await lookupConfirmed(peer, cmid, input);
+      if (!observed || observed.author !== -groupId) return { kind: 'unknown', confirmedParts };
+      const linked =
+        expectedParent !== undefined &&
+        observed.reply?.conversation_message_id === expectedParent.cmid &&
+        observed.reply.from_id === expectedParent.author &&
+        observed.reply.date === expectedParent.date;
+      const expectedLink = expectedParent === undefined ? observed.reply === undefined : linked;
+      if (invitation && (!text || observed.text !== text || !expectedLink))
+        return { kind: 'unknown', confirmedParts };
+      if (input.kind === 'notice' && !linked) return { kind: 'unknown', confirmedParts };
+      await input.confirmPart({
+        messageId: String(cmid),
+        userId: `vk:${observed.author}`,
+        authorName: '',
+        text: observed.text,
+        timestamp: observed.date * 1000,
+        ...(linked ? { replyToMessageId: String(expectedParent.cmid) } : {}),
+      });
+      confirmedIds.add(cmid);
+      if (observed.text !== text || !expectedLink)
+        return { kind: 'unknown', confirmedParts: confirmedIds.size };
+    }
+    return { kind: 'delivered', confirmedParts: confirmedIds.size };
   }
 
   return Object.freeze({
@@ -212,71 +313,11 @@ export function createVkOutbound(options: {
         return false;
       }
     },
-    async send(input: VkSendRequest): Promise<SendOutcome> {
-      const peer = vkLocalId(input.chatId);
-      if (peer === undefined) return { kind: 'failed', confirmedParts: 0 };
-      const chunks = splitVkText(input.text);
-      const replyId = localMessageId(input.replyToMessageId);
-      if (
-        chunks.length === 0 ||
-        (input.replyToMessageId !== undefined && replyId === undefined) ||
-        (input.kind === 'notice' && (chunks.length !== 1 || replyId === undefined)) ||
-        (input.kind === 'service' &&
-          (chunks.length !== 1 ||
-            replyId !== undefined ||
-            input.sendId === undefined ||
-            !Number.isInteger(input.sendId) ||
-            input.sendId <= 0 ||
-            input.sendId > 0x7fffffff))
-      ) {
-        return { kind: 'failed', confirmedParts: 0 };
-      }
-      let parent: VkMessage | undefined;
-      if (replyId !== undefined) {
-        try {
-          parent = await lookup(peer, replyId, input);
-        } catch {
-          /* Перед отправкой проверяется область источника. */
-        }
-        if (!parent) return { kind: 'failed', confirmedParts: 0 };
-      }
-      const confirmedIds = new Set<number>();
-      for (const text of chunks) {
-        const confirmedParts = confirmedIds.size;
-        const expectedParent = confirmedParts === 0 ? parent : undefined;
-        let cmid: number;
-        try {
-          cmid = await sendPart(peer, text, expectedParent, input);
-        } catch (error) {
-          const denied =
-            error instanceof VkRequestCancelled ||
-            (error instanceof VkApiError && error.code !== undefined && rejected.has(error.code));
-          return { kind: denied ? 'failed' : 'unknown', confirmedParts };
-        }
-        if (confirmedIds.has(cmid)) return { kind: 'unknown', confirmedParts };
-        input.receivedId?.(String(cmid));
-        const observed = await lookupConfirmed(peer, cmid, input);
-        if (!observed || observed.author !== -groupId) return { kind: 'unknown', confirmedParts };
-        const linked =
-          expectedParent !== undefined &&
-          observed.reply?.conversation_message_id === expectedParent.cmid &&
-          observed.reply.from_id === expectedParent.author &&
-          observed.reply.date === expectedParent.date;
-        const expectedLink = expectedParent === undefined ? observed.reply === undefined : linked;
-        if (input.kind === 'notice' && !linked) return { kind: 'unknown', confirmedParts };
-        await input.confirmPart({
-          messageId: String(cmid),
-          userId: `vk:${observed.author}`,
-          authorName: '',
-          text: observed.text,
-          timestamp: observed.date * 1000,
-          ...(linked ? { replyToMessageId: String(expectedParent.cmid) } : {}),
-        });
-        confirmedIds.add(cmid);
-        if (observed.text !== text || !expectedLink)
-          return { kind: 'unknown', confirmedParts: confirmedIds.size };
-      }
-      return { kind: 'delivered', confirmedParts: confirmedIds.size };
+    send(input: VkSendRequest) {
+      return send(input);
+    },
+    sendInvitation(input: VkInvitationRequest) {
+      return send({ ...input, kind: 'service', text: '' }, input);
     },
     async sendTyping(chatId: VkSendRequest['chatId'], guard: VkRequestGuard): Promise<void> {
       const peer = vkLocalId(chatId);

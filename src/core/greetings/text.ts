@@ -6,7 +6,6 @@ export interface GreetingTextInput {
   readonly persona?: string;
   readonly rules?: string;
   readonly facts?: readonly { readonly fieldKey: string; readonly value: string }[];
-  readonly questionnaire?: boolean;
 }
 
 export function formatGreeting(input: GreetingTextInput): string {
@@ -22,8 +21,6 @@ export function formatGreeting(input: GreetingTextInput): string {
     : input.returning
       ? `С возвращением${address}!`
       : `Привет${address}! Добро пожаловать в беседу!`;
-  const invitation =
-    input.questionnaire && !input.returning ? 'Если хочешь, заполни анкету знакомства.' : '';
   const substitutions = {
     приветствие: base,
     имя: single ? name : '',
@@ -40,6 +37,5 @@ export function formatGreeting(input: GreetingTextInput): string {
       (_, key: keyof typeof substitutions) => substitutions[key],
     )
     .trim();
-  const text = render && render.length <= 3500 ? render : base;
-  return invitation ? text + '\n' + invitation : text;
+  return render && render.length <= 3500 ? render : base;
 }

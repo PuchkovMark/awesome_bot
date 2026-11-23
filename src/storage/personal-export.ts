@@ -89,6 +89,14 @@ export function readPersonalExport(
         WHERE w.chat_id=? AND w.generation=? AND g.user_id=? ORDER BY g.confirmed_at,w.id`,
         )
         .all(chat, generation, user),
+      invitationEntries: db
+        .prepare(
+          `SELECT g.confirmed_at,w.due_at,w.invitation_state AS state
+        FROM greeting_members g JOIN greeting_windows w ON w.id=g.window_id
+        WHERE w.chat_id=? AND w.generation=? AND g.user_id=? AND (g.invitation<>0 OR g.invited=1)
+        ORDER BY g.confirmed_at,w.id`,
+        )
+        .all(chat, generation, user),
       greetingCandidate:
         db
           .prepare(

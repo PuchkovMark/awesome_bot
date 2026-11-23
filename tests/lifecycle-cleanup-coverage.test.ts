@@ -81,6 +81,7 @@ const others = [
   'greeting_due',
   'questionnaire_invitation_send',
   'questionnaire_invitation_due',
+  'greeting_open_window',
   'greeting_scope',
   'greeting_member',
   'greeting_disabled_chat',

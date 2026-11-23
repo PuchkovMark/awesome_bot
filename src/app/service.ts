@@ -1,6 +1,7 @@
 import { createProfileCommands } from './profile-commands';
 import { applicationTools } from './model-tools';
 import { createGreetingService } from '../core/greetings/service';
+import type { QuestionnaireInvitationSource } from '../core/greetings/invitation';
 import { greetingStore } from '../storage/greeting-store';
 import { addressPreferenceStore } from '../storage/address-preference-store';
 import type { AddressPreferenceReference } from '../contracts/index';
@@ -58,6 +59,7 @@ interface ApplicationDependencies {
   readonly administrationIntervalMs?: number;
   readonly reminderIntervalMs?: number;
   readonly greetingIntervalMs?: number;
+  readonly questionnaireInvitations?: QuestionnaireInvitationSource;
   readonly greetingRules?: (scope: ConnectionScope) => string | undefined;
   readonly membershipScanMs?: number;
   readonly membershipStaggerMs?: number;
@@ -303,10 +305,14 @@ export async function runApplication(
         signal,
         limit: config.responseRate.responsesPerMinute,
         ...(dependencies.greetingRules ? { rules: dependencies.greetingRules } : {}),
+        ...(dependencies.questionnaireInvitations
+          ? { questionnaire: dependencies.questionnaireInvitations }
+          : {}),
         port: {
           writing: (scope, guard) => channel.introduction!.writing(scope, 'chat', guard),
           name: channel.getUserName,
           send: channel.sendGreeting,
+          sendInvitation: channel.sendQuestionnaireInvitation,
         },
       });
       let greetingWait: AbortController | undefined;

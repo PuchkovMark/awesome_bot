@@ -2,6 +2,10 @@ import { expect, test, vi } from 'vitest';
 import { personalDataStore } from '../src/storage/personal-data-store';
 import { participantRegistryStore } from '../src/storage/participant-registry';
 import { tokenBudgetStore } from '../src/storage/token-budget-store';
+import { greetingStore } from '../src/storage/greeting-store';
+import { migrate } from '../src/storage/migrate';
+import { migrations } from '../src/storage/migrations/index';
+import { profileFixture } from './helpers/profile-fact-fixture';
 import { openConnection } from '../src/storage/connection';
 import { lifecycleBackend } from '../src/storage/lifecycle-store';
 import { scopeFor, openStorage } from './helpers/connection-scope';
@@ -159,5 +163,139 @@ test('в одной секунде поздний старый сигнал не
   } finally {
     clock.mockRestore();
     await storage.close();
+  }
+});
+
+test('новые настройки действуют на последующие входы, с одним окном для двух публикаций', async () => {
+  const f = await profileFixture();
+  const start = Date.UTC(2026, 10, 23, 12);
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(start);
+  try {
+    const target = await f.chat(chats[0], []);
+    f.deliver(target);
+    const registry = participantRegistryStore(f.storage);
+    const joins = (user: `vk:${number}`, number: number, offset: number) => {
+      clock.mockReturnValue(start + offset);
+      expect(
+        registry.observe(
+          target,
+          {
+            kind: 'membership',
+            chatId: target.chatId,
+            actorId: user,
+            subjectId: user,
+            timestamp: start + offset,
+            change: 'joined',
+          },
+          String(number),
+          true,
+        ),
+      ).toBe(true);
+    };
+    const controls = (change: Parameters<typeof f.storage.authorization.transaction>[1]) =>
+      f.storage.authorization.transaction(target, change);
+    joins('vk:10', 10, 0);
+    await controls((tx) => tx.writeInvitation(true, start, 20));
+    joins('vk:11', 19, 0);
+    joins('vk:12', 21, 0);
+    await controls((tx) => tx.writeGreeting(true, start + 2_000, 22));
+    joins('vk:13', 23, 29_000);
+    joins('vk:14', 24, 30_000);
+
+    const service = greetingStore(f.storage);
+    const window = service.due(start + 30_000)!;
+    expect(window.publication).toBe('greeting');
+    expect(
+      service.prepare(target, window.id, start + 30_000)?.members.map(({ user }) => user),
+    ).toEqual(['vk:13']);
+    expect(service.prepareInvitation(target, window.id, start + 30_000)).toBeNull();
+    const sendId = service.allocate();
+    expect(service.start(target, window.id, sendId, start + 30_000, 6, () => true)).toBe(true);
+    expect(service.due(start + 30_000)).toBeNull();
+    service.confirm(
+      target,
+      window.id,
+      sendId,
+      {
+        messageId: '100',
+        userId: 'vk:-314',
+        authorName: 'Пенёк',
+        timestamp: start + 30_000,
+        text: 'Привет!',
+      },
+      ['vk:13'],
+    );
+    await f.reopen();
+    const restored = scopeFor(f.storage, chats[0]);
+    const reopened = greetingStore(f.storage);
+    reopened.recover();
+    expect(reopened.due(start + 30_000)?.publication).toBe('invitation');
+    expect(
+      reopened
+        .prepareInvitation(restored, window.id, start + 30_000)
+        ?.recipients.map(({ user }) => user),
+    ).toEqual(['vk:12', 'vk:13']);
+
+    await f.storage.authorization.transaction(restored, (tx) => {
+      tx.writeGreeting(false, start + 30_000, 50);
+      tx.writeGreeting(true, start + 30_000, 51);
+    });
+    expect(
+      reopened
+        .prepareInvitation(restored, window.id, start + 30_000)
+        ?.recipients.map(({ user }) => user),
+    ).toEqual(['vk:12']);
+    const inviteId = reopened.allocate();
+    expect(
+      reopened.start(restored, window.id, inviteId, start + 30_000, 6, () => true, ['vk:12']),
+    ).toBe(true);
+    reopened.recover();
+    expect(reopened.due(start + 30_000)).toBeNull();
+    const next = reopened.due(start + 60_000)!;
+    expect(next.id).not.toBe(window.id);
+    expect(next.publication).toBe('invitation');
+    expect(
+      reopened
+        .prepareInvitation(restored, next.id, start + 60_000)
+        ?.recipients.map(({ user }) => user),
+    ).toEqual([]);
+  } finally {
+    clock.mockRestore();
+    await f.close();
+  }
+});
+
+test('миграция 33 оставляет ожидающее приветствие и не добавляет приглашение задним числом', async () => {
+  const files = storageFixture();
+  try {
+    const old = await openConnection(files.path, (db) => migrate(db, migrations.slice(0, 32)));
+    try {
+      old.run((db) => {
+        db.exec(`INSERT INTO chat_connections(chat_id,generation,revision,state)
+          VALUES ('vk:2000000045',1,0,'active');
+          INSERT INTO greeting_windows(chat_id,generation,opened_at,due_at,state)
+          VALUES ('vk:2000000045',1,100,30100,'waiting');
+          INSERT INTO greeting_members VALUES(1,'vk:41',100,0);`);
+      });
+    } finally {
+      old.close();
+    }
+    const migrated = await openConnection(files.path, migrate);
+    try {
+      migrated.run((db) => {
+        expect(db.prepare('SELECT state,invitation_state FROM greeting_windows').get()).toEqual({
+          state: 'waiting',
+          invitation_state: 'skipped',
+        });
+        expect(
+          db.prepare('SELECT user_id,greet,invitation,invited FROM greeting_members').get(),
+        ).toEqual({ user_id: 'vk:41', greet: 1, invitation: 0, invited: 0 });
+        expect(db.pragma('foreign_key_check')).toEqual([]);
+      });
+    } finally {
+      migrated.close();
+    }
+  } finally {
+    files.cleanup();
   }
 });

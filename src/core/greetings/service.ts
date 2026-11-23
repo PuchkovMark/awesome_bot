@@ -1,14 +1,17 @@
-import type { ConnectionScope, PublishedPart, UserId } from '../../contracts/index';
-import type { IntroductionGuard, WritePermission } from '../chat-onboarding/ports';
+import type { ConnectionScope, PublishedPart } from '../../contracts/index';
+import type { IntroductionGuard } from '../chat-onboarding/ports';
 import type { ResponseRateOutcome } from '../../storage/response-rate-store';
 import type { greetingStore } from '../../storage/greeting-store';
 import type { ScopedStorage } from '../../storage/scoped-types';
 import type { addressPreferenceStore } from '../../storage/address-preference-store';
 import { formatGreeting } from './text';
+import {
+  createQuestionnaireInvitation,
+  type QuestionnaireInvitationPort,
+  type QuestionnaireInvitationSource,
+} from './invitation';
 
-interface GreetingPort {
-  writing(scope: ConnectionScope, guard: IntroductionGuard): Promise<WritePermission>;
-  name(user: UserId): Promise<string | null>;
+interface GreetingPort extends QuestionnaireInvitationPort {
   send(
     scope: ConnectionScope,
     text: string,
@@ -26,11 +29,12 @@ export function createGreetingService(options: {
   readonly scopeCurrent: (scope: ConnectionScope) => boolean;
   readonly signal: AbortSignal;
   readonly limit: number;
-  readonly questionnaire?: (scope: ConnectionScope) => boolean;
+  readonly questionnaire?: QuestionnaireInvitationSource;
   readonly rules?: (scope: ConnectionScope) => string | undefined;
   readonly port: GreetingPort;
 }) {
   const { store, profiles, address, signal, port } = options;
+  const invite = createQuestionnaireInvitation(options);
   return {
     recover: store.recover,
     async due(): Promise<boolean> {
@@ -41,10 +45,15 @@ export function createGreetingService(options: {
       try {
         scope = options.scope(work);
       } catch {
-        return true;
+        return false;
       }
       const id = work.id;
       const active = () => !signal.aborted && options.scopeCurrent(scope);
+      if (!active()) return false;
+      if (work.publication === 'invitation') {
+        await invite(scope, id, active);
+        return true;
+      }
       const first = store.prepare(scope, id, Date.now());
       if (!first || !active()) {
         if (active()) store.skip(scope, id);
@@ -55,7 +64,6 @@ export function createGreetingService(options: {
       const profile = single && first.template ? profiles.read(scope, single.user) : undefined;
       const selected = single ? address.resolve(scope, single.user, Date.now(), true) : undefined;
       const rules = first.template ? options.rules?.(scope) : undefined;
-      const questionnaire = options.questionnaire?.(scope) === true;
       const current = () =>
         active() &&
         JSON.stringify(store.prepare(scope, id, Date.now())) === data &&
@@ -64,8 +72,7 @@ export function createGreetingService(options: {
           (selected
             ? address.current(scope, selected.reference)
             : address.resolve(scope, single.user, Date.now(), true) === undefined)) &&
-        (!first.template || options.rules?.(scope) === rules) &&
-        (options.questionnaire?.(scope) === true) === questionnaire;
+        (!first.template || options.rules?.(scope) === rules);
       const permission = await port.writing(scope, { signal, isCurrent: current });
       if (permission !== 'allowed' || !current()) {
         if (active()) store.skip(scope, id);
@@ -74,7 +81,6 @@ export function createGreetingService(options: {
       const name = selected?.text ?? (single ? await port.name(single.user) : null);
       const text = formatGreeting({
         count: first.members.length,
-        questionnaire,
         returning: first.members.some((member) => member.returning),
         ...(name ? { name } : {}),
         ...(rules ? { rules } : {}),

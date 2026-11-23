@@ -17,6 +17,7 @@ import { lifecycleBackend } from '../../src/storage/lifecycle-store';
 import { noticeTemplate } from '../../src/storage/notice-types';
 import { storageFixture } from './storage-fixture';
 import type { ChatLimits } from '../../src/core/chat-limits/config';
+import type { QuestionnaireInvitationSource } from '../../src/core/greetings/invitation';
 
 export const group = 314;
 export const peer = 2_000_000_041;
@@ -45,7 +46,11 @@ export async function fixture(
     hold?: boolean;
     userRequests?: number;
     active?: boolean;
-    greetings?: { readonly members?: readonly number[]; readonly rules?: string };
+    greetings?: {
+      readonly members?: readonly number[];
+      readonly rules?: string;
+      readonly questionnaire?: QuestionnaireInvitationSource;
+    };
     quotas?: Partial<ChatLimits>;
   } = {},
 ) {
@@ -130,6 +135,14 @@ export async function fixture(
   let tick = 0;
   let sendFault:
     ((text: string) => number | 'unknown' | 'unknownAfterDelivery' | undefined) | undefined;
+  let receiptHold:
+    | {
+        readonly match: (text: string) => boolean;
+        readonly enter: () => void;
+        readonly wait: Promise<void>;
+        readonly release: () => void;
+      }
+    | undefined;
   const holds: { release: () => void; finished: Promise<void> }[] = [];
   const limit = createVkRateLimiter({
     now: () => tick,
@@ -166,15 +179,18 @@ export async function fixture(
           ];
           return { response: { items, ...(members === null ? {} : { count: items.length }) } };
         }
-        if (method === 'messages.getByConversationMessageId')
-          return {
-            response: {
-              items: String(args.conversation_message_ids)
-                .split(',')
-                .map((id) => messages.get(Number(id)))
-                .filter(Boolean),
-            },
-          };
+        if (method === 'messages.getByConversationMessageId') {
+          const items = String(args.conversation_message_ids)
+            .split(',')
+            .map((id) => messages.get(Number(id)))
+            .filter((item) => item !== undefined);
+          const hold = receiptHold;
+          if (hold && items.some((item) => item.from_id === -group && hold.match(item.text))) {
+            hold.enter();
+            await hold.wait;
+          }
+          return { response: { items } };
+        }
         if (method === 'messages.isMessagesFromGroupAllowed')
           return { response: { is_allowed: Number(privateAllowed) } };
         if (method === 'messages.send' && args.attachment) {
@@ -239,6 +255,9 @@ export async function fixture(
             membershipScanMs: 10,
             membershipStaggerMs: 0,
             ...(options.greetings.rules ? { greetingRules: () => options.greetings!.rules } : {}),
+            ...(options.greetings.questionnaire
+              ? { questionnaireInvitations: options.greetings.questionnaire }
+              : {}),
           }
         : {}),
       chatLimits: {
@@ -250,6 +269,7 @@ export async function fixture(
   let running = launch();
   async function close() {
     stop.abort();
+    receiptHold?.release();
     for (const hold of holds) hold.release();
     try {
       expect(await running).toBeNull();
@@ -301,6 +321,7 @@ export async function fixture(
       },
       async restart(resume = false) {
         stop.abort();
+        receiptHold?.release();
         for (const hold of holds) hold.release();
         expect(await running).toBeNull();
         ready = Promise.withResolvers<void>();
@@ -324,6 +345,16 @@ export async function fixture(
       storage,
       scope,
       start,
+      holdReceipt(match: (text: string) => boolean) {
+        const entered = Promise.withResolvers<void>();
+        const gate = Promise.withResolvers<void>();
+        const release = () => {
+          receiptHold = undefined;
+          gate.resolve();
+        };
+        receiptHold = { match, enter: entered.resolve, wait: gate.promise, release };
+        return { entered: entered.promise, release };
+      },
       failSend(fault: typeof sendFault) {
         sendFault = fault;
       },

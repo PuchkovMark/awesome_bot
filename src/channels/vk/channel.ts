@@ -1,3 +1,4 @@
+import type { QuestionnaireInvitationPort } from '../../core/greetings/invitation';
 import type { VkIncoming } from './normalize';
 import type { PublishedPart } from '../../contracts/index';
 import { randomInt } from 'node:crypto';
@@ -52,6 +53,7 @@ export function createVkChannel(
     ...(dependencies.wait ? { wait: dependencies.wait } : {}),
   });
   let typingFailed = 0;
+  let invitationMentionsOmitted = 0;
 
   function guardFor(chatId: ChatId): PublicationGuard {
     const scope = options.lifecycle.admissionScope(chatId);
@@ -285,6 +287,22 @@ export function createVkChannel(
       });
       return result.kind;
     },
+    async sendQuestionnaireInvitation(
+      ...args: Parameters<QuestionnaireInvitationPort['sendInvitation']>
+    ) {
+      const [scope, sendId, guard, prepare, confirmPart] = args;
+      const result = await outbound.sendInvitation({
+        ...guard,
+        chatId: scope.chatId,
+        sendId,
+        prepare,
+        confirmPart,
+        onOmitted(count) {
+          invitationMentionsOmitted += count;
+        },
+      });
+      return result.kind;
+    },
     introduction: options.owner
       ? createVkIntroduction({ owner: options.owner, groupId: options.groupId, api, outbound })
       : undefined,
@@ -306,6 +324,6 @@ export function createVkChannel(
       }
     },
     publicationPort,
-    stats: () => Object.freeze({ ...inbound.stats(), typingFailed }),
+    stats: () => Object.freeze({ ...inbound.stats(), typingFailed, invitationMentionsOmitted }),
   });
 }
