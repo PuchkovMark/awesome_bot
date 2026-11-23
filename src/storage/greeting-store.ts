@@ -101,7 +101,7 @@ export function createGreetingStore(
         disclosure: disclosure.version,
         revision: lifecycle.assertScope(db, scope).revision,
         template: versions.selected(scope, 'greeting_template'),
-        persona: versions.selected(scope, 'persona'),
+        persona: versions.persona(db, scope),
       };
     });
   }

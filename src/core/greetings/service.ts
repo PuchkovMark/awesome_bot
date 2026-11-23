@@ -4,6 +4,7 @@ import type { ResponseRateOutcome } from '../../storage/response-rate-store';
 import type { greetingStore } from '../../storage/greeting-store';
 import type { ScopedStorage } from '../../storage/scoped-types';
 import type { addressPreferenceStore } from '../../storage/address-preference-store';
+import { starterPersonaCard } from '../personas/card';
 import { formatGreeting } from './text';
 import {
   createQuestionnaireInvitation,
@@ -85,7 +86,9 @@ export function createGreetingService(options: {
         ...(name ? { name } : {}),
         ...(rules ? { rules } : {}),
         ...(first.template ? { template: first.template.text } : {}),
-        ...(first.persona ? { persona: first.persona.text } : {}),
+        ...(first.persona
+          ? { persona: starterPersonaCard(first.persona)?.name ?? first.persona.text }
+          : {}),
         ...(profile ? { facts: profile.facts } : {}),
       });
       const sendId = store.allocate();

@@ -191,6 +191,41 @@ test('приглашение ждёт полного состава, затем 
   }
 });
 
+test.each(['Макс', 'Виктор'])('шаблон приветствия подставляет имя «%s»', async (name) => {
+  const f = await fixture({ greetings: { members: [73] } });
+  try {
+    await enable(f);
+    if (name === 'Виктор') {
+      f.submit('/персонаж Виктор', 73);
+      await until(() =>
+        expect(f.sends.some(({ text }) => text.includes('теперь отвечает Виктор.'))).toBe(true),
+      );
+    }
+    const template = await f.storage.versions.append(f.scope, {
+      kind: 'greeting_template',
+      key: 'welcome',
+      text: '{приветствие} Вам отвечает {персонаж}.',
+      createdAt: f.start,
+      expectedHead: null,
+    });
+    if (template.status !== 'created') throw Error('Нет версии шаблона приветствия.');
+    await f.storage.versions.select(f.scope, 'greeting_template', template.value.ref, null);
+    f.name(101, 'Анна');
+    f.at(1_000);
+    f.setMembers([73, 101]);
+    join(f, 101);
+    await waitWindows(f, 1);
+    f.at(31_000);
+    await until(() => expect(windows(f)[0]?.state).toBe('delivered'));
+    expect(greetings(f).map(({ text }) => text)).toEqual([
+      `Привет, Анна! Добро пожаловать в беседу! Вам отвечает ${name}.`,
+    ]);
+    expect(f.complete).not.toHaveBeenCalled();
+  } finally {
+    await f.close();
+  }
+});
+
 test.each([
   'настройка',
   'пауза',
