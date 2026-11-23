@@ -120,7 +120,7 @@ export async function fixture(
   };
   const messages = new Map<number, Message>();
   const names = new Map<number, { first_name: string; last_name: string }>();
-  const sends: Message[] = [];
+  const sends: (Message & { readonly disableMentions: number })[] = [];
   const filesSent: { peer: number; attachment: string }[] = [];
   let serial = 0;
   let tick = 0;
@@ -190,7 +190,7 @@ export async function fixture(
           ...(parent ? { reply_message: parent } : {}),
         };
         messages.set(row.conversation_message_id, row);
-        sends.push(row);
+        sends.push({ ...row, disableMentions: Number(args.disable_mentions) });
         return { response: [row] };
       },
       async (call, guard) => {

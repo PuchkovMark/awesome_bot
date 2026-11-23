@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { fixture, peer, until } from './helpers/application-response-fixture';
+import { answer, fixture, peer, until } from './helpers/application-response-fixture';
 import { addressPreferenceStore } from '../src/storage/address-preference-store';
 import { personalDataStore } from '../src/storage/personal-data-store';
 
@@ -121,10 +121,17 @@ test('два полных тёзки получают свои формы, по�
         addressPreferenceStore(f.storage).resolve(f.scope, user, f.start + 1000, true)?.text,
       ).toBe('Рысь «тест» [id29|ник]'),
     );
+    const literalReply = 'Рысь «тест» [id29|ник], вы предложили фонтан.';
+    f.complete.mockResolvedValueOnce({ ...answer, text: literalReply });
     const first = f.submit('[club314|Пенёк] Что я предложил?', 41);
     const second = f.submit('[club314|Пенёк] Что я предложил?', 42);
     await f.published(first);
     await f.published(second);
+    expect(f.sends.find(({ text }) => text === literalReply)).toMatchObject({
+      peer_id: peer,
+      reply_message: { conversation_message_id: first, from_id: 41 },
+      disableMentions: 1,
+    });
     const blocks = f.complete.mock.calls.map(([input]) => JSON.parse(input.messages.at(-1)!.text!));
     expect(blocks[0].current).toMatchObject({
       author: 'Саша Иванов',
