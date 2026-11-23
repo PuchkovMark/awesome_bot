@@ -1,7 +1,11 @@
 import { setImmediate as yieldImmediate } from 'node:timers/promises';
 import type { ConnectionScope } from '../../contracts/lifecycle';
 import type { CapabilitySnapshot } from '../../contracts/capabilities';
-import type { ContextMessageReader, ContextStateReader } from '../../storage/context-types';
+import type {
+  ContextMessage,
+  ContextMessageReader,
+  ContextStateReader,
+} from '../../storage/context-types';
 import { contextConfig, type ContextConfig } from './config';
 import {
   contextSeparator,
@@ -105,6 +109,12 @@ export function createContextBuilder(options: ContextBuilderOptions) {
       route.isGroupChat,
       settings.timezone,
     );
+    const authorLabels = new Set<string>();
+    function includeAuthor(message: ContextMessage) {
+      const label = formatter.authorLabel(message);
+      if (label) authorLabels.add(label);
+    }
+    includeAuthor(currentMessage);
     // Неиспользованный резерв окружения не увеличивает окно истории.
     const fixedInputCost =
       systemInputCost(system) +
@@ -166,6 +176,7 @@ export function createContextBuilder(options: ContextBuilderOptions) {
           replyJson = fittingReply ?? unavailableReplyJson;
           replyState = fittingReply === undefined ? 'unavailable' : 'truncated';
         }
+        if (replyState !== 'unavailable') includeAuthor(quotedMessage);
       }
     }
 
@@ -219,6 +230,7 @@ export function createContextBuilder(options: ContextBuilderOptions) {
           break;
         }
         history.push({ journalId: message.id, serialized });
+        includeAuthor(message);
         inputCost = candidateCost;
         if (message.truncated) historyTruncated = true;
         if (history.length + replyCount >= config.maxHistoryMessages) {
@@ -281,6 +293,7 @@ export function createContextBuilder(options: ContextBuilderOptions) {
         sessionId: options.sessionId(scope),
       }),
       metadata,
+      ...(authorLabels.size ? { authorLabels: Object.freeze([...authorLabels]) } : {}),
     };
   }
 

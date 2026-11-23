@@ -21,6 +21,7 @@ export type PreparationResult =
       readonly kind: 'ready';
       readonly input: Omit<AgentLoopInput, 'signal'>;
       readonly metadata: ContextMetadata;
+      readonly authorLabels?: readonly string[];
     }
   | { readonly kind: 'failed'; readonly reason: PreparationFailure }
   | { readonly kind: 'cancelled' | 'unavailable' | 'deadline_exceeded' };

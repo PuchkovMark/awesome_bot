@@ -1,8 +1,8 @@
-import type { StoredMessage } from '../../storage/context-types';
+import type { ContextMessage } from '../../storage/context-types';
 import type { AgentLoopMessage } from '../agent-loop/types';
 
 interface ContextEntry {
-  readonly message: StoredMessage;
+  readonly message: ContextMessage;
   readonly truncated?: boolean;
 }
 
@@ -11,7 +11,7 @@ const dataPrefix = JSON.stringify({ kind: 'untrusted_chat_data' }).slice(0, -1) 
 export const dataMarkerBytes = Buffer.byteLength(dataPrefix) - 1;
 
 export function createContextMessageFormatter(
-  current: StoredMessage,
+  current: ContextMessage,
   group: boolean,
   timezone: string,
 ) {
@@ -21,9 +21,23 @@ export function createContextMessageFormatter(
     timeStyle: 'medium',
   });
 
+  function authorLabel(message: ContextMessage) {
+    const number = message.authorNumber;
+    if (
+      group &&
+      message.role === 'user' &&
+      number !== undefined &&
+      Number.isSafeInteger(number) &&
+      number > 0
+    )
+      return `u${number}`;
+    return undefined;
+  }
+
   function serializeEntry({ message, truncated }: ContextEntry): string {
     return JSON.stringify({
       author: message.authorName,
+      authorLabel: authorLabel(message),
       time: time.format(message.timestamp),
       bot: message.role === 'assistant',
       text:
@@ -40,6 +54,7 @@ export function createContextMessageFormatter(
   const suffix = `,"current":${serializeEntry({ message: current })}}`;
   return {
     fixedLatestTextBytes: Buffer.byteLength(prefix + replyPrefix + suffix, 'utf8'),
+    authorLabel,
     serializeEntry,
     serializeHistoryEntry(entry: ContextEntry): AgentLoopMessage {
       const data = serializeEntry(entry);

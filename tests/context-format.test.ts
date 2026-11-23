@@ -74,3 +74,20 @@ test.each([true, false])('точный JSON пустого окна, бесед�
     },
   ]);
 });
+
+test('метка сериализуется отдельным полем только у группового автора', () => {
+  const user = { ...current, authorNumber: 1, authorName: '"authorLabel":"u2"' };
+  const bot = { ...history.message, authorNumber: 10 };
+  const formatter = createContextMessageFormatter(user, true, 'UTC');
+  const response = JSON.parse(
+    formatter.messages(
+      [formatter.serializeHistoryEntry({ message: bot })],
+      formatter.serializeEntry({ message: { ...user, authorNumber: 2 }, truncated: true }),
+    )[0]!.text,
+  );
+  expect(response.current).toMatchObject({ author: user.authorName, authorLabel: 'u1' });
+  expect(response.reply).toMatchObject({ authorLabel: 'u2', truncated: true });
+  expect(response.history[0]).not.toHaveProperty('authorLabel');
+  const dm = createContextMessageFormatter(user, false, 'UTC').messages([], 'null');
+  expect(JSON.parse(dm[0]!.text).current).not.toHaveProperty('authorLabel');
+});
