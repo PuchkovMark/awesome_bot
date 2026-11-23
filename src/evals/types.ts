@@ -1,6 +1,6 @@
 import type { PassportSection } from '../contracts/chat-passport';
 import type { IncomingMessage, UserId } from '../contracts/index';
-import type { GlobalVersionRef } from '../contracts/versioning';
+import type { GlobalVersionRef, VersionRef } from '../contracts/versioning';
 import type { PublicationRequest, QueueCompletion } from '../core/index';
 import type { LlmRequest } from '../llm/types';
 import type { MessageInput } from '../storage/index';
@@ -15,7 +15,8 @@ export interface Observation {
   readonly publicationReason?: import('../storage/trace-types').TracePublication['reason'];
   readonly route?: import('../storage/queue-types').RouteMetadata | null;
   readonly initiativeCandidate?: boolean;
-  readonly passportGrantUnchanged?: boolean;
+  readonly grantsUnchanged?: boolean;
+  readonly personaVersion?: VersionRef;
   readonly modelAttempts?: number;
 }
 
@@ -48,6 +49,16 @@ export interface Scenario {
     readonly neighbor?: Partial<Record<PassportSection, string>>;
     readonly tryGrant?: true;
   };
+  readonly persona?: {
+    readonly id: string;
+    readonly useDefault?: true;
+    readonly profile?: {
+      readonly userId: UserId;
+      readonly name: string;
+      readonly visible: string;
+      readonly hidden: string;
+    };
+  };
   readonly history: readonly MessageInput[];
   readonly historyLimit?: number;
   readonly historyTimezone?: string;
@@ -78,6 +89,7 @@ export interface EvaluationResult {
   readonly scenarioRevision: number;
   readonly model: string | null;
   readonly prompt: GlobalVersionRef | null;
+  readonly persona?: VersionRef | null;
   readonly extraction?: {
     readonly requestRevision: number;
     readonly inputEstimate: number;

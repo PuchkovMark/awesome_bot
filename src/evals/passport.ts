@@ -39,7 +39,7 @@ export function seedPassport(
   return true;
 }
 
-export function passportGrantClient(answer: string): LlmClient {
+export function deniedGrantClient(answer: string): LlmClient {
   return {
     async complete(request) {
       const usage = { input: null, output: null };

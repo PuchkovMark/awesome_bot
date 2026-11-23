@@ -10,7 +10,17 @@ export async function writeLocalReport(
 ): Promise<void> {
   const attempts = new Map<string, number>();
   const runs = results.map(
-    ({ scenarioId, scenarioRevision, model, prompt, outcome, reason, criteria, extraction }) => {
+    ({
+      scenarioId,
+      scenarioRevision,
+      model,
+      prompt,
+      persona,
+      outcome,
+      reason,
+      criteria,
+      extraction,
+    }) => {
       const key = `${scenarioId}:${scenarioRevision}`;
       const attempt = (attempts.get(key) ?? 0) + 1;
       attempts.set(key, attempt);
@@ -25,6 +35,16 @@ export async function writeLocalReport(
           key: prompt.key,
           version: prompt.version,
         },
+        ...(persona === undefined
+          ? {}
+          : {
+              persona: persona && {
+                area: persona.area,
+                kind: persona.kind,
+                key: persona.key,
+                version: persona.version,
+              },
+            }),
         ...(extraction
           ? {
               extraction: {

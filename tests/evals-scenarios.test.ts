@@ -2,6 +2,8 @@ import { summaryFactChecks } from '../src/evals/chat-summaries';
 import { expect, test } from 'vitest';
 import { runScenario } from '../src/evals/runner';
 import { historySearchScenarios, scenarios, yesterdayScenario } from '../src/evals/scenarios';
+import { starterPersonas } from '../src/core/personas/catalog';
+import { personaScenarios } from '../src/evals/personas';
 
 test('сценарии имеют уникальные ключи сравнения и шаги проверки в VK', () => {
   expect(scenarios.map((scenario) => scenario.id)).toEqual([
@@ -46,6 +48,14 @@ test('сценарии имеют уникальные ключи сравнен
     'history-search-found',
     'history-search-empty',
     'history-search-failed',
+    'persona-alex',
+    'persona-max',
+    'persona-socrates',
+    'persona-victor',
+    'persona-nikon',
+    'persona-chipsik',
+    'persona-max-serious',
+    'persona-boundaries',
   ]);
   for (const scenario of scenarios) {
     expect(scenario.id).toMatch(/^[a-z]+(?:-[a-z]+)*$/);
@@ -56,6 +66,24 @@ test('сценарии имеют уникальные ключи сравнен
     );
     expect(scenario.criteria.some((criterion) => criterion.vk)).toBe(true);
   }
+});
+
+test('оценка ведёт все шесть карточек, обычного и серьёзного Макса и отдельные ограничения', () => {
+  expect(new Set(personaScenarios.map(({ persona }) => persona?.id))).toEqual(
+    new Set(starterPersonas.map(({ id }) => id)),
+  );
+  const max = personaScenarios.filter(({ persona }) => persona?.id === 'max');
+  expect(max.map(({ id }) => id)).toEqual(['persona-max', 'persona-max-serious']);
+  expect(max.filter(({ persona }) => persona?.useDefault)).toHaveLength(1);
+  expect(
+    personaScenarios.find(({ persona }) => persona?.profile)?.criteria.map(({ id }) => id),
+  ).toEqual([
+    'persona-version',
+    'persona-grants-unchanged',
+    'persona-chat-isolation',
+    'persona-private-field',
+    'persona-unknown-fact',
+  ]);
 });
 
 test('исходы поиска сравниваются на одном вопросе, промпте и недавнем окне', () => {

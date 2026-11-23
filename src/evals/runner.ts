@@ -1,9 +1,12 @@
 import { evaluateChatSummary, summaryFactChecks } from './chat-summaries';
 import { chatSummaryCase } from './scenarios';
-import { passportGrantClient, seedPassport } from './passport';
+import { deniedGrantClient, seedPassport } from './passport';
+import { seedPersonaProfile } from './personas';
 import { chatPassportStore } from '../storage/chat-passport-store';
 import { applicationTools } from '../app/model-tools';
+import { contextParticipantCards } from '../app/context-participant-cards';
 import { createContextAuthority } from '../core/authorization/context';
+import type { ConnectionScope } from '../contracts/index';
 import { historyEvaluationAdapter, historySearchClient, yesterdayClient } from './history';
 import {
   createAgentLoopQueue,
@@ -16,8 +19,8 @@ import type { ChatQueue, PublicationRequest, QueueCompletion } from '../core/ind
 import type { LlmClient, LlmRequest } from '../llm/types';
 import { addressPreferenceStore } from '../storage/address-preference-store';
 import { disclosureStore } from '../storage/chat-disclosure-store';
-import { catalogAdministration } from '../storage/catalog-admin';
-import { openStorage } from '../storage/index';
+import { catalogAdministration, installStarterPersonas } from '../storage/catalog-admin';
+import { openStorage, type Storage } from '../storage/index';
 import type { TraceRecord } from '../storage/trace-types';
 import type { EvaluationResult, Observation, Scenario } from './types';
 
@@ -63,6 +66,7 @@ function classify(
     scenarioRevision: scenario.revision,
     model: trace?.payload.model.name ?? null,
     prompt: trace?.payload.prompt ?? null,
+    ...(scenario.persona ? { persona: observation.personaVersion ?? null } : {}),
     outcome: reason
       ? 'technical_error'
       : criteria.every((criterion) => criterion.outcome === 'passed')
@@ -88,6 +92,27 @@ async function waitForSettlement(
   }
 }
 
+function enableSyntheticProfiles(storage: Storage, scope: ConnectionScope): boolean {
+  const disclosure = disclosureStore(storage);
+  const notice = 'Обращение можно выбрать и скрыть.';
+  const version = disclosure.register(
+    {
+      profileNotice: notice,
+      provider: 'Оценочный стенд',
+      dataPolicy: 'Синтетическая переписка',
+      storagePolicy: 'Только временная база',
+      detailsText: 'Сведения для синтетического сценария.',
+      detailsUrl: 'https://example.test/privacy',
+      ownerContact: 'Синтетический владелец',
+      change: 'material',
+    },
+    1,
+  );
+  const publication = disclosure.ensure(scope, 'introduction', version);
+  const claim = disclosure.claim(scope, publication.id, notice, 10);
+  return !!claim && disclosure.finish(scope, claim, 'delivered', 11, null, 'intro');
+}
+
 export async function runScenario(
   scenario: Scenario,
   client: LlmClient = defaultClient(scenario),
@@ -99,10 +124,11 @@ export async function runScenario(
   let answer: PublicationRequest | null = null;
   let trace: TraceRecord | null = null;
   let initiativeCandidate = false;
-  let passportGrantUnchanged: boolean | undefined;
+  let grantsUnchanged: boolean | undefined;
   let stage: EvaluationResult['reason'] = 'setup_failed';
-  const evaluate = (reason: EvaluationResult['reason']) =>
-    classify(scenario, trace, reason, {
+  const evaluate = (reason: EvaluationResult['reason']) => {
+    const personaVersion = trace?.payload.context?.persona?.version;
+    return classify(scenario, trace, reason, {
       ...(firstRequest ? { firstRequest } : {}),
       request,
       answer: trace?.payload.publication.status === 'delivered' ? answer : null,
@@ -110,9 +136,11 @@ export async function runScenario(
       publicationReason: trace?.payload.publication.reason ?? 'none',
       route: trace?.payload.route ?? null,
       initiativeCandidate,
-      ...(passportGrantUnchanged === undefined ? {} : { passportGrantUnchanged }),
+      ...(grantsUnchanged === undefined ? {} : { grantsUnchanged }),
+      ...(personaVersion ? { personaVersion } : {}),
       ...(trace?.payload.summary ? { modelAttempts: trace.payload.summary.attempts } : {}),
     });
+  };
 
   try {
     const storage = await openStorage(':memory:');
@@ -169,6 +197,22 @@ export async function runScenario(
             : message,
         );
       }
+      const persona = scenario.persona;
+      if (persona) {
+        installStarterPersonas(storage, 0);
+        if (!persona.useDefault) {
+          const selected = await storage.authorization.transaction(scope, (tx) =>
+            tx.selectStarterPersona(stimulus.userId, persona.id, 90),
+          );
+          if (selected.status !== 'selected') return evaluate('setup_failed');
+        }
+        if (
+          persona.profile &&
+          (!enableSyntheticProfiles(storage, scope) ||
+            !(await seedPersonaProfile(storage, scope, persona.profile)))
+        )
+          return evaluate('setup_failed');
+      }
       const passport = scenario.passport && chatPassportStore(storage);
       if (passport && scenario.passport) {
         if (!seedPassport(passport, scope, scenario.passport.local))
@@ -183,33 +227,16 @@ export async function runScenario(
         )
           return evaluate('setup_failed');
       }
-      const beforeGrant = scenario.passport?.tryGrant
-        ? await storage.authorization.transaction(scope, (tx) => tx.bases(stimulus.userId))
-        : undefined;
+      const beforeGrant =
+        scenario.passport?.tryGrant || persona?.profile
+          ? await storage.authorization.transaction(scope, (tx) => tx.bases(stimulus.userId))
+          : undefined;
       const addressPreferences = scenario.address && addressPreferenceStore(storage);
       const preference = scenario.address?.preference;
       if (addressPreferences && preference) {
         const target =
           preference.state === 'neighbor' ? await startChat('synthetic:address-neighbor') : scope;
-        const disclosure = disclosureStore(storage);
-        const notice = 'Обращение можно выбрать и скрыть.';
-        const version = disclosure.register(
-          {
-            profileNotice: notice,
-            provider: 'Оценочный стенд',
-            dataPolicy: 'Синтетическая переписка',
-            storagePolicy: 'Только временная база',
-            detailsText: 'Сведения для синтетического сценария.',
-            detailsUrl: 'https://example.test/privacy',
-            ownerContact: 'Синтетический владелец',
-            change: 'material',
-          },
-          1,
-        );
-        const publication = disclosure.ensure(target, 'introduction', version);
-        const claim = disclosure.claim(target, publication.id, notice, 10);
-        if (!claim || !disclosure.finish(target, claim, 'delivered', 11, null, 'intro'))
-          return evaluate('setup_failed');
+        if (!enableSyntheticProfiles(storage, target)) return evaluate('setup_failed');
         const update = (
           sequence: number,
           change: Parameters<typeof addressPreferences.change>[3],
@@ -244,6 +271,7 @@ export async function runScenario(
         storage,
         ...(addressPreferences ? { addressForm: addressPreferences.resolve } : {}),
         ...(passport ? { passport: { read: passport.read, current: passport.current } } : {}),
+        ...(persona?.profile ? { participantCards: contextParticipantCards(storage) } : {}),
         config: {
           modelContextTokens: 16_000,
           ...(scenario.historyLimit ? { maxHistoryMessages: scenario.historyLimit } : {}),
@@ -285,7 +313,7 @@ export async function runScenario(
         loopOptions: { timeoutMs, maxAttemptsPerStep: 1 },
         config: { handlerMarginMs, stopTimeoutMs: 1_000 },
         prepare: preparation.prepare,
-        ...(scenario.historyTimezone || scenario.passport?.tryGrant
+        ...(scenario.historyTimezone || scenario.passport?.tryGrant || persona
           ? {
               tools: applicationTools(
                 storage,
@@ -337,7 +365,7 @@ export async function runScenario(
           const after = await storage.authorization.transaction(scope, (tx) =>
             tx.bases(stimulus.userId),
           );
-          passportGrantUnchanged =
+          grantsUnchanged =
             beforeGrant.length === after.length &&
             beforeGrant.every((basis) => after.includes(basis));
         }
@@ -356,7 +384,8 @@ export async function runScenario(
 function defaultClient(scenario: Scenario): LlmClient {
   if (scenario.historySearch) return historySearchClient;
   if (scenario.historyTimezone) return yesterdayClient;
-  if (scenario.passport?.tryGrant) return passportGrantClient(scenario.answer);
+  if (scenario.passport?.tryGrant || scenario.persona?.profile)
+    return deniedGrantClient(scenario.answer);
   return {
     async complete() {
       return {

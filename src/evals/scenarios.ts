@@ -4,6 +4,7 @@ import type { MessageInput } from '../storage/index';
 import type { Observation, Scenario } from './types';
 import { addressPromptVersion } from '../core/context/address-prompt';
 import { answersHistorySearch, historySearchExchange } from './history';
+import { personaScenarios } from './personas';
 import {
   addressPreferencePrompt,
   addressPreferencePromptKey,
@@ -848,7 +849,7 @@ const passportScenarios: readonly Scenario[] = [
           o.request.messages.some(
             (m) => m.role === 'tool' && m.text === '{"error":"tool_denied"}',
           ) &&
-          o.passportGrantUnchanged === true &&
+          o.grantsUnchanged === true &&
           o.modelAttempts === 2 &&
           o.answer?.text === answerPrefix + 'Это точка сбора.',
         vk: 'Глоссарий не изменяет полномочия и не вызывает административное действие.',
@@ -1103,6 +1104,7 @@ export const scenarios: readonly Scenario[] = [
     '2026-11-22T21:00:00Z',
   ),
   ...historySearchScenarios,
+  ...personaScenarios,
 ];
 
 export const profileUpdateCases = [

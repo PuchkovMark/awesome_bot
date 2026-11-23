@@ -60,6 +60,13 @@ test('собранная команда запускает набор, а чек
         attempt: 1,
         outcome: 'passed',
       });
+      if (scenario.persona)
+        expect(report.runs[index].persona).toEqual({
+          area: 'global',
+          kind: 'persona',
+          key: scenario.persona.id,
+          version: 1,
+        });
       expect(checklist.stdout).toContain(`${scenario.id} (ревизия ${scenario.revision})`);
       expect(checklist.stdout).toContain(scenario.input.text);
       for (const criterion of scenario.criteria) expect(checklist.stdout).toContain(criterion.id);
