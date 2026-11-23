@@ -37,6 +37,7 @@ export function reconcileStagedPersonalData(staged: Database, newer: Database, n
   })[];
   staged
     .transaction(() => {
+      staged.prepare('DELETE FROM profile_command_lists').run();
       for (const operation of deletions) {
         const existing = staged
           .prepare('SELECT generation FROM chat_connections WHERE chat_id=?')

@@ -69,6 +69,14 @@ export interface PublicProfileFact {
   readonly reliability: FactReliability;
 }
 
+/** Только для личной выдачи. Внутренние ключи служат для проверки актуальности. */
+export interface OwnProfileFact extends PublicProfileFact {
+  readonly interest: string;
+  readonly factId: number;
+  readonly restrictionId: number | null;
+  readonly visibility: FactVisibility;
+}
+
 declare const profileReadReference: unique symbol;
 export type ProfileReadReference = { readonly [profileReadReference]: true };
 

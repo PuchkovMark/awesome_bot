@@ -3,12 +3,19 @@ import type { Database } from 'better-sqlite3';
 import type { LifecycleBackend } from './lifecycle-store';
 import type {
   FactSourceKind,
+  FactVisibility,
+  OwnProfileFact,
   ProfileFactChange,
   ProfileFactInput,
   ProfileFactWriteResult,
 } from './participant-types';
 import { historyBounds } from './history-retention-store';
-import { interestKey } from './profile-fact-selection';
+import { interestKey, ownInterestRestriction, selectOwnProfile } from './profile-fact-selection';
+import type {
+  ProfileCommandChange,
+  ProfileCommandEvent,
+  ProfileCommandEditResult,
+} from './profile-command-types';
 import { profileAdmitted } from './personal-data-store';
 import { compositeId, object, requireInput } from './validation';
 import type { Storage } from './types';
@@ -74,6 +81,99 @@ function origin(
       bounds.expiredThrough,
       Number(inferred),
     ) as Origin | undefined;
+}
+
+function writePrivateFact(
+  db: Database,
+  scope: ConnectionScope,
+  actor: UserId,
+  fact: OwnProfileFact,
+  change: ProfileCommandChange,
+  event: ProfileCommandEvent,
+  now: number,
+): ProfileCommandEditResult {
+  requireInput(event.scope.chatId === actor && db.inTransaction);
+  if (change.kind === 'reject') {
+    if (fact.sourceKind !== 'inferred') return 'not_inferred';
+    db.prepare('INSERT INTO profile_fact_rejections(fact_id,rejected_at) VALUES(?,?)').run(
+      fact.factId,
+      now,
+    );
+    return 'applied';
+  }
+
+  const nextInterest =
+    change.kind === 'correct' && fact.fieldKey === 'interest'
+      ? interestKey(change.value)
+      : fact.interest;
+  const moves = nextInterest !== fact.interest;
+  if (
+    moves &&
+    selectOwnProfile(db, scope, actor, now).some(
+      (row) => row.fieldKey === 'interest' && row.interest === nextInterest,
+    )
+  )
+    return 'conflict';
+  const insert = db.prepare(`INSERT INTO profile_facts(
+    chat_id,user_id,field_key,value,source_kind,source_user_id,source_message_id,source_note,
+    reliability,visibility,created_at,updated_at,generation,source_at,event_key,interest_key,change_kind
+  ) VALUES (?,?,?,?,'self',?,NULL,NULL,?,?,?,?,?,?,?,?,?)`);
+  const eventKey =
+    '2:profile:' +
+    String(event.scope.generation).padStart(16, '0') +
+    ':' +
+    event.messageId.padStart(16, '0');
+  const newest = db
+    .prepare(
+      `SELECT max(source_at) FROM profile_facts
+    WHERE chat_id=? AND generation=? AND user_id=? AND field_key=? AND interest_key IN (?,?)`,
+    )
+    .pluck()
+    .get(scope.chatId, scope.generation, actor, fact.fieldKey, fact.interest, nextInterest) as
+    number | null;
+  // Даже при одинаковой отметке UTC действие должно идти после показанного состояния.
+  const sourceAt = newest === null ? now : Math.max(now, newest + 1);
+  const write = (
+    kind: 'set' | 'visibility' | 'withdraw',
+    interest: string,
+    value: string,
+    visibility: FactVisibility,
+  ) =>
+    insert.run(
+      scope.chatId,
+      actor,
+      fact.fieldKey,
+      value,
+      actor,
+      kind === 'set' ? 'confirmed' : 'unknown',
+      visibility,
+      now,
+      now,
+      scope.generation,
+      sourceAt,
+      eventKey,
+      interest,
+      kind,
+    );
+  if (change.kind === 'hide') write('visibility', fact.interest, '', 'bot');
+  else {
+    if (moves) {
+      const destination = ownInterestRestriction(db, scope, actor, nextInterest, now);
+      const visibility =
+        fact.visibility === 'unknown' || destination === 'unknown'
+          ? 'unknown'
+          : fact.visibility === 'bot' || destination === 'bot'
+            ? 'bot'
+            : 'chat';
+      write('withdraw', fact.interest, '', fact.visibility);
+      write('visibility', nextInterest, '', visibility);
+    }
+    write('set', nextInterest, change.value, fact.visibility);
+  }
+  db.prepare(
+    'UPDATE participant_profiles SET updated_at=max(updated_at,?) WHERE chat_id=? AND user_id=?',
+  ).run(now, scope.chatId, actor);
+  return 'applied';
 }
 
 export function createProfileFactStore(lifecycle: LifecycleBackend) {
@@ -157,7 +257,7 @@ export function createProfileFactStore(lifecycle: LifecycleBackend) {
       return 'recorded';
     });
   }
-  return { record };
+  return { record, writePrivateFact };
 }
 
 /** Доверенный вход будущего извлечения F5.7 с проверкой исходной реплики в SQLite. */

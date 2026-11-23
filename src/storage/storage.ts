@@ -1,3 +1,4 @@
+import { createProfileCommandStore, registerProfileCommands } from './profile-command-store';
 import { createGreetingStore, registerGreetings } from './greeting-store';
 import { createProfileFactStore, registerProfileInference } from './profile-fact-store';
 import {
@@ -54,8 +55,20 @@ export async function openStorage(
     const traces = createTraceBackend(connection, backend);
     const queue = createQueueBackend(connection, backend, traces, options.messageRetentionDays);
     const profileFacts = createProfileFactStore(backend);
+    const profileCommands = createProfileCommandStore(
+      connection,
+      backend,
+      profileFacts.writePrivateFact,
+    );
     const storage: Storage = {
-      ...createScopedStorage(connection, backend, versions, queue, profileFacts),
+      ...createScopedStorage(
+        connection,
+        backend,
+        versions,
+        queue,
+        profileFacts,
+        profileCommands.edit,
+      ),
       traces: {
         async get(scope, id) {
           return traces.get(scope, id);
@@ -71,6 +84,7 @@ export async function openStorage(
     const privacy = createPersonalDataStore(connection, backend);
     registerPersonalData(storage, privacy);
     registerProfileInference(storage, profileFacts);
+    registerProfileCommands(storage, profileCommands);
     registerAddressPreferences(storage, createAddressPreferenceStore(privacy));
     registerParticipantRegistry(storage, createParticipantRegistry(connection, backend));
     registerReminders(storage, createReminderStore(connection, backend));

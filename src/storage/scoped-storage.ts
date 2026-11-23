@@ -1,7 +1,9 @@
+import type { ProfileCommandEdit, ProfileCommandEditResult } from './profile-command-types';
+import { selectOwnProfile } from './profile-fact-selection';
 import { createProfileFactReader } from './profile-fact-reader';
 import { createContextStateReader } from './context-state-reader';
 import { createContextReader } from './context-reader';
-import type { ConnectionScope } from '../contracts/index';
+import type { ConnectionScope, UserId } from '../contracts/index';
 import type { QueueRecord } from './queue-types';
 import type { VersionBackend } from './version-store';
 import type { Connection } from './connection';
@@ -21,6 +23,12 @@ export function createScopedStorage(
   versions: VersionBackend,
   queue: { get(scope: ConnectionScope, id: number): QueueRecord | null },
   facts: ProfileFactWriter,
+  editProfile: (
+    scope: ConnectionScope,
+    actor: UserId,
+    input: ProfileCommandEdit,
+    now: number,
+  ) => ProfileCommandEditResult,
 ): Omit<ScopedStorage, 'traces'> {
   const messages = createMessageStore(connection),
     chats = createChatStore(connection),
@@ -82,11 +90,19 @@ export function createScopedStorage(
     },
     authorization: {
       async transaction(scope, callback) {
-        return backend.transaction(scope, () =>
+        return backend.transaction(scope, (db) =>
           authorization.transaction(scope.chatId, (tx) =>
             callback(
               Object.freeze<ScopedAuthorizationTransaction>({
                 ...tx,
+                editOwnProfile(actorId, input, now) {
+                  tx.revision();
+                  return editProfile(scope, actorId, input, now);
+                },
+                readOwnProfile(actorId, now) {
+                  tx.revision();
+                  return selectOwnProfile(db, scope, actorId, now);
+                },
                 changeProfileFact(actorId, input) {
                   tx.revision();
                   return facts.record(

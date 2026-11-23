@@ -164,6 +164,7 @@ test.each([
   'address-preference-store.ts',
   'profile-fact-store.ts',
   'greeting-store.ts',
+  'profile-command-store.ts',
 ])('инфраструктура %s недоступна через транзитивный импорт', (module) => {
   const f = fixture();
   try {

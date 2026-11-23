@@ -1,6 +1,11 @@
 import type { Database } from 'better-sqlite3';
 import type { ConnectionScope, UserId } from '../contracts/index';
-import type { FactReliability, FactSourceKind, FactVisibility } from './participant-types';
+import type {
+  FactReliability,
+  FactSourceKind,
+  FactVisibility,
+  OwnProfileFact,
+} from './participant-types';
 import { historyBounds } from './history-retention-store';
 import { profileAdmitted } from './personal-data-store';
 import { requireInput } from './validation';
@@ -32,6 +37,7 @@ interface FactRow {
   readonly visibility: FactVisibility;
   readonly reliability: FactReliability;
   readonly legacy: number;
+  readonly rejected: number;
 }
 const sourcePriority = { self: 3, admin: 2, inferred: 1 } as const;
 
@@ -41,13 +47,9 @@ interface Slot {
   legacyRestriction?: FactVisibility;
 }
 
-export function selectPublicFacts(
-  db: Database,
-  scope: ConnectionScope,
-  query: ProfileQuery,
-  now: number,
-) {
-  if (!db.prepare('SELECT 1 FROM chats WHERE chat_id=? AND enabled=1').get(scope.chatId)) return [];
+function selectSlots(db: Database, scope: ConnectionScope, query: ProfileQuery, now: number) {
+  if (!db.prepare('SELECT 1 FROM chats WHERE chat_id=? AND enabled=1').get(scope.chatId))
+    return new Map<UserId, Map<string, Slot>>();
 
   const bounds = historyBounds(db, scope.chatId, now);
   const profile = query.kind === 'profile';
@@ -58,10 +60,11 @@ export function selectPublicFacts(
     .prepare(
       `SELECT f.id, f.user_id AS userId, f.field_key AS fieldKey, f.interest_key AS interest,
       f.change_kind AS kind, f.source_kind AS sourceKind, f.value, f.visibility, f.reliability,
-      f.generation IS NULL AS legacy,
+      f.generation IS NULL AS legacy, r.fact_id IS NOT NULL AS rejected,
       CASE WHEN f.source_kind <> 'self' THEN (SELECT m.id FROM messages m
         WHERE m.chat_id=f.chat_id AND m.platform_message_id=f.source_message_id) END AS messageRowId
     FROM profile_facts f JOIN chat_participants p USING(chat_id,user_id)
+    LEFT JOIN profile_fact_rejections r ON r.fact_id=f.id
     WHERE f.chat_id=? AND (f.generation=? OR (f.generation IS NULL AND f.visibility<>'chat'))
       AND ${profile ? "p.status IN ('present','unknown')" : "p.status='present'"} AND ${condition}
       AND (f.source_kind='self' OR f.generation IS NULL OR EXISTS (
@@ -109,18 +112,82 @@ export function selectPublicFacts(
     }
   }
 
-  const visible: { row: FactRow; restrictionId: number | null }[] = [];
+  return byUser;
+}
+
+function slotVisibility(slot: Slot): FactVisibility {
+  return slot.restriction?.visibility ?? slot.legacyRestriction ?? slot.fact?.visibility ?? 'chat';
+}
+
+export function selectCurrentFacts(
+  db: Database,
+  scope: ConnectionScope,
+  query: ProfileQuery,
+  now: number,
+) {
+  const byUser = selectSlots(db, scope, query, now);
+  const selected: { row: FactRow; restrictionId: number | null; visibility: FactVisibility }[] = [];
   for (const [user, slots] of byUser) {
     if (!profileAdmitted(db, scope, user, now)) continue;
-    for (const { fact, restriction, legacyRestriction } of slots.values()) {
-      if (
-        fact?.kind === 'set' &&
-        (restriction?.visibility ?? legacyRestriction ?? fact.visibility) === 'chat' &&
-        (profile || fact.sourceKind === 'self')
-      )
-        visible.push({ row: fact, restrictionId: restriction?.id ?? null });
+    for (const slot of slots.values()) {
+      const { fact, restriction } = slot;
+      if (fact?.kind === 'set' && !fact.rejected)
+        selected.push({
+          row: fact,
+          restrictionId: restriction?.id ?? null,
+          visibility: slotVisibility(slot),
+        });
     }
   }
-  // Порядок зависит только от опубликованного набора, включая ноль совпадений.
-  return visible.sort((left, right) => left.row.id - right.row.id);
+  // Сортировка по строкам фактов сохраняет порядок не изменившихся позиций.
+  return selected.sort((left, right) => left.row.id - right.row.id);
+}
+
+export function selectPublicFacts(
+  db: Database,
+  scope: ConnectionScope,
+  query: ProfileQuery,
+  now: number,
+) {
+  return selectCurrentFacts(db, scope, query, now).filter(
+    ({ row, visibility }) =>
+      visibility === 'chat' && (query.kind === 'profile' || row.sourceKind === 'self'),
+  );
+}
+
+export function selectOwnProfile(
+  db: Database,
+  scope: ConnectionScope,
+  actor: UserId,
+  now: number,
+): readonly OwnProfileFact[] {
+  return selectCurrentFacts(db, scope, { kind: 'profile', subjectId: actor }, now).map(
+    ({
+      row: { id, fieldKey, value, sourceKind, reliability, interest },
+      restrictionId,
+      visibility,
+    }) => ({
+      fieldKey,
+      value,
+      sourceKind,
+      reliability,
+      interest,
+      factId: id,
+      restrictionId,
+      visibility,
+    }),
+  );
+}
+
+export function ownInterestRestriction(
+  db: Database,
+  scope: ConnectionScope,
+  actor: UserId,
+  interest: string,
+  now: number,
+): FactVisibility {
+  const slot = selectSlots(db, scope, { kind: 'profile', subjectId: actor }, now)
+    .get(actor)
+    ?.get('interest' + '\0' + interest);
+  return slot ? slotVisibility(slot) : 'chat';
 }

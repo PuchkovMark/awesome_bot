@@ -1,3 +1,7 @@
+import type {
+  ProfileCommandEdit,
+  ProfileCommandEditResult,
+} from '../../storage/profile-command-types';
 import type { ScopedAuthorizationTransaction, ScopedStorage } from '../../storage/scoped-types';
 import { createReasonMaintenance } from './maintenance';
 import type { AuthorizationScheduler } from './maintenance';
@@ -120,6 +124,30 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
       return guarded(context, action, subjectId, () => ({ allowed: true, value: undefined }), {
         allowInitialOwnerSettings: action === 'usage.read' || action === 'usage.configure',
       });
+    },
+    async readOwnProfile(context: AuthorizationContext, subjectId: UserId) {
+      return guarded(context, 'profile.self.manage', subjectId, (tx) => ({
+        allowed: true,
+        value: tx.readOwnProfile(context.userId, now()),
+      }));
+    },
+    async editOwnProfile(
+      context: AuthorizationContext,
+      input: ProfileCommandEdit,
+      current: () => boolean,
+    ) {
+      if (disposed || !authority.contains(context)) return deny('invalid_context');
+      if (context.kind !== 'chat' || context.scope.chatId !== context.userId)
+        return deny('wrong_scope');
+      return guarded<ProfileCommandEditResult>(
+        context,
+        'profile.self.manage',
+        context.userId,
+        (tx) => {
+          if (!current()) return deny('conflict');
+          return { allowed: true, value: tx.editOwnProfile(context.userId, input, now()) };
+        },
+      );
     },
     async changeProfileFact(
       context: AuthorizationContext,

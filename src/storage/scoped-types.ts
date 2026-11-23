@@ -1,3 +1,4 @@
+import type { ProfileCommandEdit, ProfileCommandEditResult } from './profile-command-types';
 import type { VersionStore } from './version-types';
 import type { ConnectionScope, UserId } from '../contracts/index';
 import type {
@@ -12,6 +13,7 @@ import type {
 } from './types';
 import type { AuthorizationTransaction } from './authorization-types';
 import type {
+  OwnProfileFact,
   ProfileFactInput,
   ProfileFactWriteResult,
   ProfileReadReference,
@@ -20,6 +22,8 @@ import type {
 } from './participant-types';
 
 export interface ScopedAuthorizationTransaction extends AuthorizationTransaction {
+  editOwnProfile(actorId: UserId, input: ProfileCommandEdit, now: number): ProfileCommandEditResult;
+  readOwnProfile(actorId: UserId, now: number): readonly OwnProfileFact[];
   changeProfileFact(actorId: UserId, input: ProfileFactInput): ProfileFactWriteResult;
 }
 

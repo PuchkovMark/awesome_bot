@@ -180,3 +180,74 @@ test('недоступный источник не выдаёт ссылку, у
     await f.close();
   }
 });
+
+test('только автор читает действующие интересы и скрытые поля выбранной беседы', async () => {
+  const f = await profileFixture();
+  try {
+    const first = await f.chat();
+    const second = await f.chat(neighbor);
+    f.deliver(first);
+    f.deliver(second);
+    await f.auth.applyTrustedInitialAuthorities(first, { creatorId: admin });
+    await f.change(
+      first,
+      alice,
+      alice,
+      await f.message(first, alice, '50', 50),
+      set('interest', 'Шахматы'),
+    );
+    await f.change(
+      first,
+      alice,
+      alice,
+      await f.message(first, alice, '51', 51),
+      set('interest', 'Бег'),
+    );
+    const hidden = await f.message(first, alice, '52', 52);
+    await f.change(first, alice, alice, hidden, {
+      kind: 'visibility',
+      fieldKey: 'interest',
+      interest: 'Шахматы',
+      visibility: 'bot',
+    });
+    await f.change(first, twin, twin, await f.message(first, twin, '53', 53), set('city', 'Омск'));
+    await f.change(
+      second,
+      alice,
+      alice,
+      await f.message(second, alice, '50', 50),
+      set('city', 'Пермь'),
+    );
+    const privateRead = (
+      scope: typeof first,
+      actor: typeof alice | typeof twin | typeof admin,
+      subject = actor,
+    ) => f.auth.readOwnProfile(f.auth.context({ scope, userId: actor }), subject);
+    const facts = await privateRead(first, alice);
+    expect(facts).toMatchObject({
+      allowed: true,
+      value: [
+        {
+          value: 'Шахматы',
+          visibility: 'bot',
+          sourceKind: 'self',
+          restrictionId: expect.any(Number),
+        },
+        { value: 'Бег', visibility: 'chat', sourceKind: 'self', restrictionId: null },
+      ],
+    });
+    expect(await privateRead(first, twin)).toMatchObject({
+      allowed: true,
+      value: [{ value: 'Омск' }],
+    });
+    expect(await privateRead(first, admin, alice)).toMatchObject({ allowed: false });
+    expect(await privateRead(second, alice)).toMatchObject({
+      allowed: true,
+      value: [{ value: 'Пермь' }],
+    });
+    expect(f.storage.profileFacts.read(first, alice).facts).toMatchObject([{ value: 'Бег' }]);
+    expect(f.storage.profileFacts.searchInterests(first, 'Шахматы').matches).toEqual([]);
+  } finally {
+    await f.close();
+  }
+});

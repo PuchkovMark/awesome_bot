@@ -110,6 +110,13 @@ export function confirmDeletion(
     `UPDATE greeting_windows SET state='skipped' WHERE chat_id=? AND generation=?
     AND state='waiting' AND NOT EXISTS(SELECT 1 FROM greeting_members WHERE window_id=greeting_windows.id)`,
   ).run(chat, scope.generation);
+  db.prepare(
+    `DELETE FROM profile_command_lists WHERE user_id=?
+    AND (chat_id=? AND generation=? OR user_id=? AND private_generation=?)`,
+  ).run(user, chat, scope.generation, chat, scope.generation);
+  db.prepare(
+    'DELETE FROM profile_command_events WHERE chat_id=? AND generation=? AND user_id=?',
+  ).run(chat, scope.generation, user);
   invalidateDependentData(db, chat, code);
   db.prepare(
     `DELETE FROM profile_facts WHERE chat_id=? AND (user_id=? OR source_user_id=? OR source_message_id IN (${inputs}))`,
@@ -193,6 +200,8 @@ export function confirmDeletion(
     .prepare(
       `SELECT 1 FROM chat_participants WHERE chat_id=@chat AND user_id=@user
     UNION ALL SELECT 1 FROM address_preferences WHERE chat_id=@chat AND user_id=@user
+    UNION ALL SELECT 1 FROM profile_command_lists WHERE user_id=@user AND (chat_id=@chat OR user_id=@chat)
+    UNION ALL SELECT 1 FROM profile_command_events WHERE chat_id=@chat AND user_id=@user
     UNION ALL SELECT 1 FROM greeting_candidates WHERE chat_id=@chat AND user_id=@user
     UNION ALL SELECT 1 FROM greeting_members g JOIN greeting_windows w ON w.id=g.window_id
       WHERE w.chat_id=@chat AND g.user_id=@user
