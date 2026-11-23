@@ -1,13 +1,18 @@
+import Database from 'better-sqlite3';
 import { expect, test } from 'vitest';
 import type { ConnectionScope, UserId } from '../src/contracts/index';
 import { lifecycleBackend } from '../src/storage/lifecycle-store';
 import { personalDataStore } from '../src/storage/personal-data-store';
+import { reconcileStagedPersonalData } from '../src/storage/personal-data-restore';
+import { departureGraceMs } from '../src/storage/participant-departures';
+import { participantRegistryStore } from '../src/storage/participant-registry';
+import { profileCommandStore } from '../src/storage/profile-command-store';
 import { selectOwnProfile } from '../src/storage/profile-fact-selection';
 import { questionnaireProgressStore } from '../src/storage/questionnaire-progress-store';
 import { questionnaireStore } from '../src/storage/questionnaire-store';
 import { questionnaireQuestions } from '../src/core/questionnaires/legacy-template';
-import { scopeFor } from './helpers/connection-scope';
-import { alice, group, profileFixture, twin } from './helpers/profile-fact-fixture';
+import { openStorage, scopeFor } from './helpers/connection-scope';
+import { alice, group, neighbor, profileFixture, twin } from './helpers/profile-fact-fixture';
 
 type Fixture = Awaited<ReturnType<typeof profileFixture>>;
 const question = 'Чем увлекаетесь?';
@@ -162,6 +167,130 @@ test('обновление переносит только проверяемы�
       { prompt_delivered_at: null, decision: null },
       { prompt_delivered_at: null, decision: null },
     ]);
+  } finally {
+    await f.close();
+  }
+});
+
+test('личные правки анкеты и подтверждённое удаление сохраняются при восстановлении копии', async () => {
+  const f = await profileFixture();
+  const backup = f.path + '.backup';
+  try {
+    const target = await f.chat();
+    const direct = await f.chat(alice, [alice]);
+    const other = await f.chat(neighbor);
+    for (const scope of [target, direct, other]) {
+      f.deliver(scope);
+      const { store, id } = await pending(f, scope, alice, '200');
+      expect(store.finish(scope, id, 130, answers, () => true)).toBe(true);
+    }
+    const db = new Database(f.path, { readonly: true });
+    try {
+      await db.backup(backup);
+      const lists = profileCommandStore(f.storage);
+      const list = lists.open(
+        alice,
+        direct,
+        target,
+        { scope: direct, messageId: '300', at: 140 },
+        140,
+      )!;
+      const [part] = lists.parts(list, [{ first: 1, last: 2 }], 140)!;
+      expect(lists.confirm(list, 1, part!.sendId, '301', 140)).toBe(true);
+      const edit = (
+        messageId: string,
+        position: number,
+        change: { kind: 'hide' } | { kind: 'correct'; value: string },
+      ) => lists.edit(direct, alice, { messageId, position, change, at: 150, replyId: '301' }, 150);
+      expect(edit('302', 2, { kind: 'hide' })).toBe('applied');
+      expect(edit('303', 1, { kind: 'correct', value: 'Шашки' })).toBe('applied');
+      const privacy = personalDataStore(f.storage);
+      const current = privacy.export(target, alice, 151);
+      expect(current.questionnaire?.questions.map(({ answer }) => answer)).toEqual([
+        'Шашки',
+        null,
+        'Го',
+      ]);
+      expect(current.facts).toMatchObject([
+        { value: 'Го', visibility: 'bot' },
+        { value: 'Шашки', visibility: 'chat' },
+      ]);
+      expect(current.facts).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ value: 'Шахматы' })]),
+      );
+      const stage = new Database(backup);
+      stage.pragma('foreign_keys=ON');
+      try {
+        reconcileStagedPersonalData(stage, db, 151);
+        const copy = await openStorage(backup);
+        try {
+          const restored = personalDataStore(copy).export(scopeFor(copy, group), alice, 151);
+          expect(restored.questionnaire).toEqual(current.questionnaire);
+          expect(restored.facts).toEqual(current.facts);
+        } finally {
+          await copy.close();
+        }
+        const operation = privacy.requestDeletion(target, alice, 'delete-067', 152);
+        expect(privacy.confirmDeletion(target, alice, operation.code, 153)).toBe(true);
+        reconcileStagedPersonalData(stage, db, 154);
+        expect(
+          stage.prepare('SELECT * FROM questionnaire_answer_facts WHERE chat_id=?').all(group),
+        ).toEqual([]);
+        expect(
+          stage.prepare('SELECT * FROM questionnaire_access WHERE chat_id=?').all(group),
+        ).toEqual([]);
+        expect(stage.prepare('SELECT * FROM profile_facts WHERE chat_id=?').all(group)).toEqual([]);
+        expect(stage.pragma('foreign_key_check')).toEqual([]);
+      } finally {
+        stage.close();
+      }
+      for (const scope of [direct, other])
+        expect(
+          privacy.export(scope, alice, 154).questionnaire?.questions.map(({ answer }) => answer),
+        ).toEqual(['Шахматы', null, 'Го']);
+    } finally {
+      db.close();
+    }
+  } finally {
+    await f.close();
+  }
+});
+
+test('уход закрывает анкету, ранний возврат сохраняет ответы, очистка по сроку удаляет их', async () => {
+  const f = await profileFixture();
+  try {
+    const scope = await f.chat();
+    f.deliver(scope);
+    const { store, id } = await pending(f, scope, alice, '200');
+    expect(store.finish(scope, id, 130, answers, () => true)).toBe(true);
+    const registry = participantRegistryStore(f.storage);
+    const privacy = personalDataStore(f.storage);
+    const event = (change: 'left' | 'joined', timestamp: number) =>
+      registry.observe(scope, {
+        kind: 'membership',
+        chatId: scope.chatId,
+        change,
+        timestamp,
+        eventId: String(timestamp),
+        subjectId: alice,
+        actorId: alice,
+      });
+    const leftAt = Date.now() - 1000;
+    expect(event('left', leftAt)).toBe(true);
+    expect(own(f, scope)).toEqual([]);
+    expect(privacy.export(scope, alice, leftAt + 1).questionnaire?.questions[0]?.answer).toBe(
+      'Шахматы',
+    );
+    expect(event('joined', leftAt + 2)).toBe(true);
+    expect(own(f, scope)).toHaveLength(2);
+    expect(event('left', leftAt + 3)).toBe(true);
+    expect(registry.purgeDeparted(leftAt + 3 + departureGraceMs)).toBe(1);
+    expect(privacy.export(scope, alice, leftAt + 3 + departureGraceMs).questionnaire).toBeNull();
+    expect(
+      lifecycleBackend(f.storage).transaction(scope, (db) =>
+        db.prepare('SELECT * FROM questionnaire_access').all(),
+      ),
+    ).toEqual([]);
   } finally {
     await f.close();
   }

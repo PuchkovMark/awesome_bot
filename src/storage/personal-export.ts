@@ -2,6 +2,7 @@ import type { Database } from 'better-sqlite3';
 import type { ConnectionScope, UserId } from '../contracts/index';
 import { historyBounds } from './history-retention-store';
 import { departureGraceMs, readDeparture } from './participant-departures';
+import { questionnaireFieldPrefix } from './questionnaire-types';
 import { requireInput } from './validation';
 
 export function readPersonalExport(
@@ -67,20 +68,32 @@ export function readPersonalExport(
     facts: visible
       ? db
           .prepare(
-            `SELECT field_key,value,source_kind,reliability,visibility,created_at,updated_at,source_at,r.rejected_at,
+            `SELECT coalesce(q.question,f.field_key) AS field_key,value,source_kind,reliability,
+      coalesce((SELECT v.visibility FROM profile_facts v
+        WHERE (v.chat_id,v.generation,v.user_id,v.field_key)=(q.chat_id,q.generation,q.user_id,q.field_key)
+          AND v.change_kind='visibility'
+        ORDER BY v.source_at DESC,v.event_key DESC,v.id LIMIT 1),f.visibility) AS visibility,
+      created_at,updated_at,source_at,r.rejected_at,
       change_kind,CASE WHEN change_kind<>'set' AND interest_key<>'' THEN interest_key END AS interest,
-      CASE WHEN source_user_id=user_id AND EXISTS(
+      CASE WHEN f.source_user_id=f.user_id AND EXISTS(
         SELECT 1 FROM personal_visible_messages m
         WHERE m.chat_id=f.chat_id AND m.user_id=f.user_id AND m.platform_message_id=f.source_message_id
           AND m.id>? AND m.timestamp>?
       ) THEN source_message_id END AS own_source_message
       FROM profile_facts f LEFT JOIN profile_fact_rejections r ON r.fact_id=f.id
-      WHERE chat_id=? AND user_id=? AND (generation=? OR generation IS NULL)
-       AND (source_kind<>'inferred' OR generation IS NULL OR EXISTS(
+      LEFT JOIN questionnaire_answer_facts q
+        ON (q.chat_id,q.generation,q.user_id,q.field_key)=(f.chat_id,f.generation,f.user_id,f.field_key)
+      WHERE f.chat_id=? AND f.user_id=? AND (f.generation=? OR f.generation IS NULL)
+       AND (source_kind<>'inferred' OR f.generation IS NULL OR EXISTS(
         SELECT 1 FROM personal_visible_messages m WHERE m.chat_id=f.chat_id
         AND m.platform_message_id=f.source_message_id AND m.id>? AND m.timestamp>?
        ))
-      ORDER BY id`,
+       AND (f.field_key NOT GLOB '${questionnaireFieldPrefix}*' OR f.id=(
+        SELECT s.id FROM profile_facts s
+        WHERE (s.chat_id,s.generation,s.user_id,s.field_key)=(q.chat_id,q.generation,q.user_id,q.field_key)
+          AND s.source_kind='self' AND s.change_kind='set'
+        ORDER BY s.source_at DESC,s.event_key DESC,s.id LIMIT 1))
+      ORDER BY f.id`,
           )
           .all(
             bounds.clearedThrough,
@@ -211,6 +224,14 @@ function questionnaireExport(db: Database, scope: ConnectionScope, user: UserId,
     )
     .all(scope.chatId, scope.generation, user) as { position: number; value: string }[];
   for (const { position, value } of linked) answers[position] = value;
+  const access = db
+    .prepare(
+      `SELECT a.prompt_delivered_at AS deliveredAt,a.decision
+      FROM questionnaire_access a JOIN questionnaire_progress q USING(chat_id,generation,user_id,attempt)
+      WHERE a.chat_id=? AND a.generation=? AND a.user_id=?`,
+    )
+    .get(scope.chatId, scope.generation, user) as
+    { deliveredAt: number | null; decision: string | null } | undefined;
   return {
     state:
       row.state === 'active' && row.shown_at !== null && now - row.shown_at >= 3_600_000
@@ -218,6 +239,7 @@ function questionnaireExport(db: Database, scope: ConnectionScope, user: UserId,
         : row.state,
     revision: template.ref.revision,
     shownAt: row.shown_at,
+    ...(access ? { access } : {}),
     questions: template.questions.map((q) => ({
       question: q.text,
       answer: answers[q.position] ?? null,

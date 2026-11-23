@@ -7,6 +7,8 @@ import {
 } from './personal-deletion';
 import { reconcileStagedProfileUpdates } from './profile-update-restore';
 import { reconcileStagedDepartures } from './participant-departure-restore';
+import { reconcileStagedQuestionnaires } from './questionnaire-profile-restore';
+import { migrate } from './migrate';
 import { requireInput, timestamp } from './validation';
 
 /** Вход для будущего восстановления F9.3. Файл ещё изолирован от приложения. */
@@ -44,6 +46,7 @@ function reconcileSnapshot(staged: Database, newer: Database, now: number) {
   })[];
   staged
     .transaction(() => {
+      migrate(staged);
       // Кеш пересобирается из журнала после сверки видимости и границ хранения.
       staged.prepare('DELETE FROM chat_summaries').run();
       staged.prepare('DELETE FROM profile_command_lists').run();
@@ -161,6 +164,7 @@ function reconcileSnapshot(staged: Database, newer: Database, now: number) {
         /* Проверяем следующую порцию внутри той же изолированной операции. */
       }
       reconcileStagedDepartures(staged, newer, now);
+      reconcileStagedQuestionnaires(staged, newer);
       reconcileStagedProfileUpdates(staged, newer, now);
       for (const operation of deletions) {
         requireInput(

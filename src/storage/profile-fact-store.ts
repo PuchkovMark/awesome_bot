@@ -11,12 +11,8 @@ import type {
   ProfileFactWriteResult,
 } from './participant-types';
 import { historyBounds } from './history-retention-store';
-import {
-  interestKey,
-  ownInterestRestriction,
-  questionnaireFieldPrefix,
-  selectOwnProfile,
-} from './profile-fact-selection';
+import { interestKey, ownInterestRestriction, selectOwnProfile } from './profile-fact-selection';
+import { questionnaireFieldPrefix } from './questionnaire-types';
 import type {
   ProfileCommandChange,
   ProfileCommandEvent,

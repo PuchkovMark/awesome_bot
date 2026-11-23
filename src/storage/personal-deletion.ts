@@ -43,6 +43,20 @@ export function invalidateDependentData(db: Database, chat: string, code: string
     SELECT message_id FROM personal_hidden_messages WHERE code=?)`,
   ).run(chat, code);
   db.prepare(
+    `UPDATE questionnaire_progress SET answers=NULL WHERE chat_id=? AND source_id IN (
+      SELECT message_id FROM personal_hidden_messages WHERE code=?
+    )`,
+  ).run(chat, code);
+  db.prepare(
+    `WITH affected AS MATERIALIZED (
+      SELECT q.chat_id,q.generation,q.user_id,q.field_key
+      FROM questionnaire_answer_facts q JOIN questionnaire_progress p USING(chat_id,generation,user_id,attempt)
+      WHERE q.chat_id=? AND p.source_id IN (SELECT message_id FROM personal_hidden_messages WHERE code=?)
+    ) DELETE FROM profile_facts AS f WHERE (f.chat_id,f.generation,f.user_id,f.field_key) IN (
+      SELECT chat_id,generation,user_id,field_key FROM affected
+    )`,
+  ).run(chat, code);
+  db.prepare(
     `DELETE FROM profile_facts WHERE chat_id=? AND source_message_id IN (
   SELECT m.platform_message_id FROM personal_hidden_messages h JOIN messages m ON m.id=h.message_id WHERE h.code=?
   )`,

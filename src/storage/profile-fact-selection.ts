@@ -8,6 +8,7 @@ import type {
 } from './participant-types';
 import { historyBounds } from './history-retention-store';
 import { profileAdmitted } from './personal-data-store';
+import { questionnaireFieldPrefix, questionnaireReviewDelayMs } from './questionnaire-types';
 import { requireInput } from './validation';
 
 function normalizedInterest(value: string): string {
@@ -24,9 +25,6 @@ export function interestKey(interest: string): string {
 export type ProfileQuery =
   | { readonly kind: 'profile'; readonly subjectId: UserId }
   | { readonly kind: 'interest'; readonly interest: string };
-
-export const questionnaireFieldPrefix = 'questionnaire:';
-export const questionnaireReviewDelayMs = 15 * 60_000;
 
 interface FactRow {
   readonly id: number;
