@@ -1,7 +1,8 @@
+import type { Database } from 'better-sqlite3';
 import { historyBounds } from './history-retention-store';
 import type { SyncStore } from './legacy-types';
 import type { Connection } from './connection';
-import type { MessageInput, MessageStore, StoredMessage } from './legacy-types';
+import type { AppendResult, MessageInput, MessageStore, StoredMessage } from './legacy-types';
 import { compositeId, object, requireInput, string, timestamp } from './validation';
 
 const fields = [
@@ -46,7 +47,7 @@ function fromRow(row: MessageRow): StoredMessage {
   return replyToMessageId === null ? message : { ...message, replyToMessageId };
 }
 
-function assignAuthorNumber(db: import('better-sqlite3').Database, message: MessageInput) {
+function assignAuthorNumber(db: Database, message: MessageInput) {
   db.prepare(
     `INSERT INTO chat_author_labels(chat_id,generation,user_id,author_number)
     SELECT c.chat_id,c.generation,@userId,(
@@ -60,45 +61,47 @@ function assignAuthorNumber(db: import('better-sqlite3').Database, message: Mess
   ).run({ chatId: message.chatId, userId: message.userId });
 }
 
+export function appendMessage(db: Database, message: MessageInput): AppendResult {
+  validateMessage(message);
+  const inserted = db
+    .prepare(
+      `INSERT INTO messages
+    (chat_id, platform_message_id, user_id, author_name, role, text, reply_to_message_id, timestamp, attachment_count, sender_bot)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(chat_id, platform_message_id) DO NOTHING RETURNING id`,
+    )
+    .get(
+      message.chatId,
+      message.messageId,
+      message.userId,
+      message.authorName,
+      message.role,
+      message.text,
+      message.replyToMessageId ?? null,
+      message.timestamp,
+      message.attachmentCount ?? null,
+      typeof message.senderBot === 'boolean' ? Number(message.senderBot) : null,
+    ) as { id: number } | undefined;
+  if (inserted) {
+    if (message.isGroupChat && message.role === 'user') {
+      requireInput(db.inTransaction);
+      assignAuthorNumber(db, message);
+    }
+    return { status: 'inserted', id: inserted.id };
+  }
+  const existing = db
+    .prepare('SELECT id FROM messages WHERE chat_id = ? AND platform_message_id = ?')
+    .get(message.chatId, message.messageId) as { id: number };
+  return { status: 'duplicate', id: existing.id };
+}
+
 export function createMessageStore(
   connection: Connection,
   contextOnly = false,
 ): SyncStore<MessageStore> {
   return {
     append(message) {
-      return connection.run((db) => {
-        validateMessage(message);
-        const inserted = db
-          .prepare(
-            `INSERT INTO messages
-          (chat_id, platform_message_id, user_id, author_name, role, text, reply_to_message_id, timestamp, attachment_count, sender_bot)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(chat_id, platform_message_id) DO NOTHING RETURNING id`,
-          )
-          .get(
-            message.chatId,
-            message.messageId,
-            message.userId,
-            message.authorName,
-            message.role,
-            message.text,
-            message.replyToMessageId ?? null,
-            message.timestamp,
-            message.attachmentCount ?? null,
-            typeof message.senderBot === 'boolean' ? Number(message.senderBot) : null,
-          ) as { id: number } | undefined;
-        if (inserted) {
-          if (message.isGroupChat && message.role === 'user') {
-            requireInput(db.inTransaction);
-            assignAuthorNumber(db, message);
-          }
-          return { status: 'inserted', id: inserted.id };
-        }
-        const existing = db
-          .prepare('SELECT id FROM messages WHERE chat_id = ? AND platform_message_id = ?')
-          .get(message.chatId, message.messageId) as { id: number };
-        return { status: 'duplicate', id: existing.id };
-      });
+      return connection.run((db) => appendMessage(db, message));
     },
     list(chatId, query) {
       return connection.run((db) => {

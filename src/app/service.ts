@@ -1,4 +1,5 @@
 import { createQuestionnaireProgress } from '../core/questionnaire/progress';
+import { createQuestionnaireCommands, parseQuestionnaireCommand } from './questionnaire-commands';
 import { questionnaireAnswerHandler } from '../core/questionnaire/answer';
 import { questionnaireProgressStore } from '../storage/questionnaire-progress-store';
 import { createProfileCommands } from './profile-commands';
@@ -37,7 +38,7 @@ import { createChatOnboarding } from '../core/chat-onboarding/service';
 import { canonicalTimezone, parseTimezoneCommand } from '../core/chat-onboarding/timezone';
 import { vkLocalId } from '../channels/vk/outbound';
 import { describeVkRights, vkIntroductionReplayWindowMs } from '../channels/vk/introduction';
-import { isVkGroupChat } from '../channels/vk/normalize';
+import { isVkGroupChat, vkChatId } from '../channels/vk/normalize';
 import type { ChatId, ConnectionScope } from '../contracts/index';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createAdminRecoveryService } from '../core/admin-recovery/service';
@@ -142,7 +143,7 @@ export async function runApplication(
       const controls = chatControlStore(storage);
       let ready = false;
       const adminStore = adminRecoveryStore(storage);
-      const channel = createVkChannel(
+      const channel: ReturnType<typeof createVkChannel> = createVkChannel(
         {
           ...config.vk,
           lifecycle,
@@ -168,9 +169,26 @@ export async function runApplication(
           },
           capturePrivateDisclosure: (scope) =>
             onboarding.configuredForProfiles() ? onboarding.capture(scope) : undefined,
-          notifyPrivate: async (scope, current) => {
+          notifyPrivate: async (scope, current, message) => {
             if (!onboarding.configuredForProfiles()) return true;
-            if (onboarding.privatePending(scope)) await onboarding.notifyPrivate(scope, current);
+            if (onboarding.privatePending(scope)) {
+              const command = (message.literalText ?? message.text).trim();
+              const questionnaire =
+                !message.hasForwarded &&
+                !message.attachments.length &&
+                parseQuestionnaireCommand(command);
+              await onboarding.notifyPrivate(scope, current);
+              if (questionnaire) {
+                const isCurrent = () => current() && !onboarding.privatePending(scope);
+                if (isCurrent())
+                  await channel.replyPrivateControl(
+                    vkChatId(message.authorId),
+                    `Чтобы продолжить, повторите ${command}.`,
+                    { signal, isCurrent, allow: async () => isCurrent() },
+                  );
+                return false;
+              }
+            }
             return !onboarding.privatePending(scope) && current();
           },
           async onMembershipChanged(scope, event, identity) {
@@ -490,6 +508,13 @@ export async function runApplication(
         signal,
       });
       const passports = createChatPassport({ storage, authorization, channel, lifecycle, signal });
+      const questionnaires = createQuestionnaireCommands({
+        storage,
+        authorization,
+        channel,
+        signal,
+        progress: createQuestionnaireProgress(storage),
+      });
       const address = createAddressPreferenceHandlers({ storage, channel, signal });
       const pausedChats = createPausedChatCommands({ channel, lifecycle, ownerId, signal });
       const router = createMessageRouter({
@@ -505,6 +530,7 @@ export async function runApplication(
           floodPublications.add(operation);
         },
         recognizeCommand: (message, replyToOther, scope) =>
+          questionnaires.recognize(message) ??
           passports.recognize(scope, message) ??
           chatControl.editor.recognizeReply(scope, message) ??
           (isUsageCommand(message.text)
@@ -524,6 +550,8 @@ export async function runApplication(
         identity: (scope, message) =>
           commandAuthorization.context({ scope, userId: message.userId }),
         async executeCommand(context, message, isCurrent, replayOnly) {
+          if (questionnaires.recognize(message))
+            return questionnaires.execute(context, message, isCurrent);
           if (passports.recognize(context.scope, message))
             return passports.execute(context, message, isCurrent);
           if (chatControl.editor.recognizeReply(context.scope, message))

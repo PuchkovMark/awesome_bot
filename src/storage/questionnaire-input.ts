@@ -15,10 +15,10 @@ export function questionnaireSource(
   const bounds = historyBounds(db, scope.chatId, now);
   const message = db
     .prepare(
-      "SELECT text,timestamp FROM personal_visible_messages WHERE id=? AND chat_id=? AND user_id=? AND role='user' AND purpose='conversation' AND sender_bot IS NOT 1 AND id>? AND timestamp>?",
+      "SELECT text,timestamp,platform_message_id AS platformMessageId FROM personal_visible_messages WHERE id=? AND chat_id=? AND user_id=? AND role='user' AND purpose='conversation' AND sender_bot IS NOT 1 AND id>? AND timestamp>?",
     )
     .get(id, scope.chatId, user, bounds.clearedThrough, bounds.expiredThrough) as
-    { text: string; timestamp: number } | undefined;
+    { text: string; timestamp: number; platformMessageId: string } | undefined;
   return message && profileAdmitted(db, scope, user, message.timestamp, 'write') ? message : null;
 }
 
@@ -35,15 +35,21 @@ export function acceptQuestionnaireInput(
   const key = [scope.chatId, scope.generation, user] as const;
   const row = db
     .prepare(
-      'SELECT attempt FROM questionnaire_progress WHERE ' +
+      'SELECT attempt,shown_message_id AS shownMessageId FROM questionnaire_progress WHERE ' +
         subject +
         " AND state='active' AND shown_at<=? AND shown_at>?",
     )
-    .get(...key, receivedAt, receivedAt - questionnaireHour) as { attempt: string } | undefined;
+    .get(...key, receivedAt, receivedAt - questionnaireHour) as
+    { attempt: string; shownMessageId: number | null } | undefined;
+  if (!row || (expectedAttempt !== undefined && expectedAttempt !== row.attempt)) return false;
+  const source = questionnaireSource(db, scope, user, messageId, receivedAt);
+  if (!source) return false;
+  const sequence = Number(source.platformMessageId);
   if (
-    !row ||
-    (expectedAttempt !== undefined && expectedAttempt !== row.attempt) ||
-    !questionnaireSource(db, scope, user, messageId, receivedAt)
+    row.shownMessageId !== null &&
+    (!Number.isSafeInteger(sequence) ||
+      String(sequence) !== source.platformMessageId ||
+      sequence <= row.shownMessageId)
   )
     return false;
   if (

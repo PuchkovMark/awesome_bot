@@ -56,7 +56,11 @@ export interface VkInboundOptions {
   readonly lifecycle: Lifecycle;
   readonly signal?: AbortSignal;
   readonly capturePrivateDisclosure?: (scope: ConnectionScope) => RoutedAdmissionGuard | undefined;
-  readonly notifyPrivate?: (scope: ConnectionScope, current: () => boolean) => Promise<boolean>;
+  readonly notifyPrivate?: (
+    scope: ConnectionScope,
+    current: () => boolean,
+    message: VkIncoming,
+  ) => Promise<boolean>;
   readonly onReady?: () => void;
   readonly onMembershipChanged?: (
     scope: ConnectionScope,
@@ -321,7 +325,7 @@ export function createVkInbound(
               message.authorId === message.peerId &&
               !isVkGroupChat(message.peerId) &&
               options.notifyPrivate &&
-              !(await options.notifyPrivate(admittedScope, isCurrent))
+              !(await options.notifyPrivate(admittedScope, isCurrent, message))
             )
               return;
             const enrichment = await api.enrich(message, { signal, isCurrent });

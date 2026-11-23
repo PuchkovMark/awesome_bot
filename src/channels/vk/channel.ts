@@ -71,6 +71,26 @@ export function createVkChannel(
     };
   }
 
+  async function confirmServicePart(
+    scope: ConnectionScope,
+    text: string,
+    guard: PublicationGuard & { readonly beforeSend?: () => boolean },
+  ) {
+    let receipt: PublishedPart | undefined;
+    const outcome = await outbound.send({
+      ...guard,
+      chatId: scope.chatId,
+      kind: 'service',
+      text,
+      sendId: randomInt(1, 0x80000000),
+      confirmPart(part) {
+        receipt = part;
+      },
+    });
+    if (outcome.kind === 'delivered' && receipt) return { kind: 'delivered', receipt } as const;
+    return { kind: outcome.kind === 'failed' ? 'failed' : 'unknown' } as const;
+  }
+
   const publicationPort: PublicationPort = Object.freeze({
     canReply(scope, requestSignal, sourceId, guard) {
       const combined = AbortSignal.any([signal, requestSignal]);
@@ -273,18 +293,29 @@ export function createVkChannel(
     ): Promise<PublishedPart | null> {
       const peer = vkLocalId(scope.chatId);
       if (peer === undefined || !isVkGroupChat(peer) || !guard.isCurrent()) return null;
-      let part: PublishedPart | null = null;
-      const outcome = await outbound.send({
-        ...guard,
-        chatId: scope.chatId,
-        text,
-        kind: 'service',
-        sendId: randomInt(1, 0x80000000),
-        confirmPart(receipt) {
-          part = receipt;
-        },
-      });
-      return outcome.kind === 'delivered' ? part : null;
+      const outcome = await confirmServicePart(scope, text, guard);
+      return outcome.kind === 'delivered' ? outcome.receipt : null;
+    },
+    async deliverQuestionnairePart(scope: ConnectionScope, text: string, guard: PublicationGuard) {
+      const id = vkLocalId(scope.chatId);
+      if (
+        id === undefined ||
+        id <= 0 ||
+        Buffer.byteLength(text) > vkMessageLength.value ||
+        !guard.isCurrent()
+      )
+        return { kind: 'failed' } as const;
+      if (
+        !isVkGroupChat(id) &&
+        !(await createVkAdministrationDelivery(
+          api,
+          outbound,
+          scope.chatId,
+          options.groupId,
+        ).canWrite(guard))
+      )
+        return { kind: 'failed' } as const;
+      return confirmServicePart(scope, text, { ...guard, beforeSend: guard.isCurrent });
     },
     async sendGreeting(
       scope: ConnectionScope,

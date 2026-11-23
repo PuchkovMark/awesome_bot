@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Database } from 'better-sqlite3';
-import type { ConnectionScope, UserId } from '../contracts/index';
+import type { ConnectionScope, PublishedPart, UserId } from '../contracts/index';
 import type { QuestionnaireRevision } from '../contracts/questionnaire';
 import type { Storage } from './types';
 import { lifecycleBackend } from './lifecycle-store';
@@ -13,7 +13,8 @@ import { profileAdmitted } from './personal-data-store';
 import { participantProfileAvailable, readDeparture } from './participant-departures';
 import { questionnaireStore } from './questionnaire-store';
 import { claimControlMessage, readChatControl } from './chat-control-store';
-import { timestamp } from './validation';
+import { requireInput, timestamp } from './validation';
+import { appendMessage } from './messages';
 
 const subject = 'chat_id=? AND generation=? AND user_id=?';
 
@@ -38,6 +39,7 @@ interface Row {
   state: State;
   shown_at: number | null;
   source_id: number | null;
+  warning_delivered: number;
 }
 
 function view(row: Row, now: number) {
@@ -89,19 +91,84 @@ export function questionnaireProgressStore(storage: Storage) {
           return view(read(db)!, now);
         });
       },
-      takePresentation(now: number) {
+      takePresentation(now: number, expected?: string) {
         timestamp(now);
         return lifecycle.transaction(scope, (db) => {
           const row = read(db);
-          if (row?.state !== 'showing' || !profileAdmitted(db, scope, user, now)) return null;
+          if (
+            row?.state !== 'showing' ||
+            (expected !== undefined && row.presentation !== expected) ||
+            !profileAdmitted(db, scope, user, now)
+          )
+            return null;
           db.prepare("UPDATE questionnaire_progress SET state='dispatching' WHERE " + subject).run(
             ...key,
           );
           const { template } = view(row, now);
           return {
             presentation: row.presentation,
+            warningDelivered: row.warning_delivered === 1,
             text: template.questions.map((q) => q.text).join('\n'),
           };
+        });
+      },
+      presenting(presentation: string, now: number) {
+        return lifecycle.transaction(scope, (db) => {
+          const row = read(db);
+          return (
+            row?.state === 'dispatching' &&
+            row.presentation === presentation &&
+            profileAdmitted(db, scope, user, now)
+          );
+        });
+      },
+      confirmPresentation(
+        presentation: string,
+        stage: 'warning' | 'questions',
+        part: PublishedPart,
+        at: number,
+        current: () => boolean,
+      ) {
+        timestamp(at);
+        const receipt = Number(part.messageId);
+        requireInput(
+          Number.isSafeInteger(receipt) &&
+            receipt > 0 &&
+            part.messageId === String(receipt) &&
+            part.replyToMessageId === undefined,
+        );
+        return lifecycle.transaction(scope, (db) => {
+          if (!current()) return false;
+          const row = read(db);
+          if (
+            row?.state !== 'dispatching' ||
+            row.presentation !== presentation ||
+            !profileAdmitted(db, scope, user, at)
+          )
+            return false;
+          const saved = appendMessage(db, {
+            chatId: scope.chatId,
+            role: 'assistant',
+            senderBot: true,
+            messageId: part.messageId,
+            userId: part.userId,
+            authorName: part.authorName,
+            text: part.text,
+            timestamp: part.timestamp,
+          });
+          requireInput(saved.status === 'inserted');
+          db.prepare("UPDATE messages SET purpose='service_notice' WHERE id=?").run(saved.id);
+          if (stage === 'warning')
+            db.prepare(
+              "UPDATE questionnaire_progress SET state='showing',warning_delivered=1 WHERE " +
+                subject,
+            ).run(...key);
+          else
+            db.prepare(
+              "UPDATE questionnaire_progress SET state='active',shown_at=?,shown_message_id=? WHERE " +
+                subject,
+            ).run(at, receipt, ...key);
+          return true;
         });
       },
       deliveryFailed(presentation: string) {
@@ -156,7 +223,7 @@ export function questionnaireProgressStore(storage: Storage) {
           )
             return null;
           db.prepare(
-            "UPDATE questionnaire_progress SET state='showing',shown_at=NULL,presentation=? WHERE " +
+            "UPDATE questionnaire_progress SET state='showing',shown_at=NULL,shown_message_id=NULL,warning_delivered=0,source_id=NULL,presentation=? WHERE " +
               subject,
           ).run(randomUUID(), ...key);
           return view(read(db)!, now);
