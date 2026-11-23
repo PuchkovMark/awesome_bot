@@ -13,80 +13,113 @@ export function createChatControlHandlers(options: {
   readonly storage: Storage;
   readonly authorization: Awaited<ReturnType<typeof createAuthorizationService>>;
   readonly lifecycle: ReturnType<typeof createLifecycleService>;
-  readonly channel: Pick<ReturnType<typeof createVkChannel>,'replyPrivateControl'|'replyGroupControl'>;
-  readonly ownerId:UserId;
-  readonly group:(chatId:ChatId)=>boolean;
-  readonly signal:AbortSignal;
+  readonly channel: Pick<
+    ReturnType<typeof createVkChannel>,
+    'replyPrivateControl' | 'replyGroupControl'
+  >;
+  readonly ownerId: UserId;
+  readonly group: (chatId: ChatId) => boolean;
+  readonly signal: AbortSignal;
 }) {
-  const {authorization,lifecycle,channel,ownerId,signal}=options;
-  const controls=chatControlStore(options.storage);
-  const diagnostics=createTraceDiagnostics({storage:options.storage,authorization});
+  const { authorization, lifecycle, channel, ownerId, signal } = options;
+  const controls = chatControlStore(options.storage);
+  const diagnostics = createTraceDiagnostics({ storage: options.storage, authorization });
 
   return {
     recognize(message: IncomingMessage, replyToOther?: boolean) {
-      if (!message.isGroupChat||message.isBot!==false) return null;
-      const request=parseChatControl(message.text,'group');
+      if (!message.isGroupChat || message.isBot !== false) return null;
+      const request = parseChatControl(message.text, 'group');
       if (!request) return null;
-      if (typeof request.command==='string') return {action:'chat.configure',minimumRole:'admin'} as const;
-      if (request.command.kind==='pause'&&replyToOther) return null;
+      if (typeof request.command === 'string')
+        return { action: 'chat.configure', minimumRole: 'admin' } as const;
+      if (request.command.kind === 'pause' && replyToOther) return null;
       return chatControlAction(request.command);
     },
-    async execute(context: AuthorizationContext,message: IncomingMessage,isCurrent:()=>boolean) {
-      const request=parseChatControl(message.text,'group');
-      if (!request||typeof request.command==='string') return;
-      const command=request.command;
-      const result=await authorization.controlChat(context,command,isCurrent);
-      if (!result.allowed||!result.value.state.enabled) return;
-      const reply=formatChatControl(context.scope,command,result.value,Date.now());
-      if (reply) await channel.replyGroupControl(context.scope,reply,{
-        signal,isCurrent:()=>isCurrent()&&controls.read(context.scope).enabled,
-        async allow() {
-          if (!isCurrent()) return false;
-          return (await authorization.check(context,chatControlAction(command).action)).allowed;
-        },
-      });
+    async execute(
+      context: AuthorizationContext,
+      message: IncomingMessage,
+      isCurrent: () => boolean,
+    ) {
+      const request = parseChatControl(message.text, 'group');
+      if (!request || typeof request.command === 'string') return;
+      const command = request.command;
+      const result = await authorization.controlChat(context, command, isCurrent);
+      if (!result.allowed || !result.value.state.enabled) return;
+      const reply = formatChatControl(context.scope, command, result.value, Date.now());
+      if (reply)
+        await channel.replyGroupControl(context.scope, reply, {
+          signal,
+          isCurrent: () => isCurrent() && controls.read(context.scope).enabled,
+          async allow() {
+            if (!isCurrent()) return false;
+            return (await authorization.check(context, chatControlAction(command).action)).allowed;
+          },
+        });
     },
-    privateCommand(message: VkIncoming,current:()=>boolean) {
+    privateCommand(message: VkIncoming, current: () => boolean) {
       if (isVkGroupChat(message.peerId)) return undefined;
-      const request=parseChatControl(message.text,'private');
+      const request = parseChatControl(message.text, 'private');
       if (!request) return undefined;
-      if (message.peerId!==message.authorId||message.authorId<=0||message.isMentioned||message.reply) return Promise.resolve();
-      const sender=`vk:${message.authorId}` as const;
-      const command=request.command;
-      if (command!=='explain'&&sender!==ownerId) return Promise.resolve();
-      return (async()=>{
-        const target=request.target;
-        if (!target||!options.group(target.chatId)||command==='invalid') return;
-        const scope=lifecycle.admissionScope(target.chatId);
-        if (scope.generation!==target.generation) return;
-        const state=controls.read(scope);
-        const isCurrent=()=>{
-          if (signal.aborted||!current()||!lifecycle.isAdmissionCurrent(scope)) return false;
-          if (sender===ownerId) return true;
-          const latest=controls.read(scope);
-          return latest.enabled&&latest.responseRevision===state.responseRevision;
+      if (
+        message.peerId !== message.authorId ||
+        message.authorId <= 0 ||
+        message.isMentioned ||
+        message.reply
+      )
+        return Promise.resolve();
+      const sender = `vk:${message.authorId}` as const;
+      const command = request.command;
+      if (command !== 'explain' && sender !== ownerId) return Promise.resolve();
+      return (async () => {
+        const target = request.target;
+        if (!target || !options.group(target.chatId) || command === 'invalid') return;
+        const scope = lifecycle.admissionScope(target.chatId);
+        if (scope.generation !== target.generation) return;
+        const state = controls.read(scope);
+        const isCurrent = () => {
+          if (signal.aborted || !current() || !lifecycle.isAdmissionCurrent(scope)) return false;
+          if (sender === ownerId) return true;
+          const latest = controls.read(scope);
+          return latest.enabled && latest.responseRevision === state.responseRevision;
         };
         if (!isCurrent()) return;
-        const context=authorization.context({scope,userId:sender,kind:sender===ownerId?'owner':'chat'});
-        if (command==='explain') {
-          const result=await diagnostics.explain(context);
+        const context = authorization.context({
+          scope,
+          userId: sender,
+          kind: sender === ownerId ? 'owner' : 'chat',
+        });
+        if (command === 'explain') {
+          const result = await diagnostics.explain(context);
           if (!result.allowed) return;
-          const answer=result.value;
-          await channel.replyPrivateControl(sender,answer?.text??'В этой беседе нет доступной сводки доставленного ответа.',{
-            signal,isCurrent,
-            async allow() {
-              if (!isCurrent()) return false;
-              if (!answer) return (await authorization.check(context,'diagnostics.read')).allowed;
-              const fresh=await diagnostics.explain(context,answer.jobId);
-              return fresh.allowed&&fresh.value!==null;
+          const answer = result.value;
+          await channel.replyPrivateControl(
+            sender,
+            answer?.text ?? 'В этой беседе нет доступной сводки доставленного ответа.',
+            {
+              signal,
+              isCurrent,
+              async allow() {
+                if (!isCurrent()) return false;
+                if (!answer)
+                  return (await authorization.check(context, 'diagnostics.read')).allowed;
+                const fresh = await diagnostics.explain(context, answer.jobId);
+                return fresh.allowed && fresh.value !== null;
+              },
             },
-          });
+          );
           return;
         }
-        const result=await authorization.controlChat(context,command,isCurrent,message.cmid);
+        const result = await authorization.controlChat(context, command, isCurrent, message.cmid);
         if (!result.allowed) return;
-        const reply=formatChatControl(scope,command,result.value,Date.now());
-        if (reply) await channel.replyPrivateControl(sender,reply,{signal,isCurrent,async allow(){return isCurrent();}});
+        const reply = formatChatControl(scope, command, result.value, Date.now());
+        if (reply)
+          await channel.replyPrivateControl(sender, reply, {
+            signal,
+            isCurrent,
+            async allow() {
+              return isCurrent();
+            },
+          });
       })();
     },
   };

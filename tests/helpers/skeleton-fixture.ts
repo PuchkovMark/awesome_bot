@@ -6,9 +6,17 @@ export function createSkeletonFixture(): { directory: string; cleanup: () => voi
   const directory = mkdtempSync(join(tmpdir(), 'awesome-bot-skeleton-'));
   try {
     for (const path of [
-      'package.json', 'package-lock.json', 'tsconfig.json', 'tsconfig.build.json',
-      '.gitignore', 'eslint.config.mjs', 'vitest.config.ts', 'vitest.queue-load.config.ts',
-      'src', 'scripts', 'tests',
+      'package.json',
+      'package-lock.json',
+      'tsconfig.json',
+      'tsconfig.build.json',
+      '.gitignore',
+      'eslint.config.mjs',
+      'vitest.config.ts',
+      'vitest.queue-load.config.ts',
+      'src',
+      'scripts',
+      'tests',
     ]) {
       cpSync(resolve(path), join(directory, path), { recursive: true });
     }

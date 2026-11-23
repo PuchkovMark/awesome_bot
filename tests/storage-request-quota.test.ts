@@ -10,10 +10,16 @@ import { scopeFor } from './helpers/connection-scope';
 import { storageFixture } from './helpers/storage-fixture';
 
 const token = 'test-queue';
-const route = () => ({ reason: 'mention', route: { kind: 'mention', mode: 'normal', isGroupChat: true } } as const);
+const route = () =>
+  ({ reason: 'mention', route: { kind: 'mention', mode: 'normal', isGroupChat: true } }) as const;
 const config = queueConfig({});
 const settings = { enabled: true, responseMode: 'normal', createdAt: 0 } as const;
-const limits = chatLimits({ userRequests: 1, chatRequests: 2, userWindowMs: 1000, chatWindowMs: 2000 });
+const limits = chatLimits({
+  userRequests: 1,
+  chatRequests: 2,
+  userWindowMs: 1000,
+  chatWindowMs: 2000,
+});
 
 test('две квоты считают одну запись и освобождают места на собственных границах', async () => {
   const files = storageFixture();
@@ -28,11 +34,21 @@ test('две квоты считают одну запись и освобожд
     let next = 0;
     function check(scope: ConnectionScope, userId: UserId, time: number) {
       const message = { ...queueMessage(scope.chatId, String(++next)), userId };
-      expect(backend.admitRouted(token, scope, message, route, config).admission.status).toBe('queued');
+      expect(backend.admitRouted(token, scope, message, route, config).admission.status).toBe(
+        'queued',
+      );
       const work = backend.take(token)!;
-      const result = backend.admitModelAttempt(token, work, limits, () => true, () => time);
+      const result = backend.admitModelAttempt(
+        token,
+        work,
+        limits,
+        () => true,
+        () => time,
+      );
       backend.finish(token, work, result === true ? 'completed' : 'failed');
-      expect(backend.admitRouted(token, scope, message, route, config).admission.status).toBe('duplicate');
+      expect(backend.admitRouted(token, scope, message, route, config).admission.status).toBe(
+        'duplicate',
+      );
       return result;
     }
     expect(check(first, 'vk:a', 1000)).toBe(true);
@@ -42,9 +58,14 @@ test('две квоты считают одну запись и освобожд
     expect(check(other, 'vk:a', 1003)).toBe(true);
     expect(check(first, 'vk:a', 2999)).toBe('quota_exhausted');
     expect(check(first, 'vk:a', 3000)).toBe(true);
-    expect(db.prepare('SELECT job_id,admitted_at FROM request_quota_admissions ORDER BY job_id').all())
-      .toEqual([{ job_id: 1, admitted_at: 1000 }, { job_id: 3, admitted_at: 1002 },
-        { job_id: 5, admitted_at: 1003 }, { job_id: 7, admitted_at: 3000 }]);
+    expect(
+      db.prepare('SELECT job_id,admitted_at FROM request_quota_admissions ORDER BY job_id').all(),
+    ).toEqual([
+      { job_id: 1, admitted_at: 1000 },
+      { job_id: 3, admitted_at: 1002 },
+      { job_id: 5, admitted_at: 1003 },
+      { job_id: 7, admitted_at: 3000 },
+    ]);
   } finally {
     db.close();
     await storage.close();
@@ -63,12 +84,38 @@ test('проверка перед допуском, повтор после ок
     await storage.chats.create(scope, settings);
     backend.admitRouted(token, scope, queueMessage(scope.chatId, '1'), route, config);
     const work = backend.take(token)!;
-    expect(backend.admitModelAttempt(token, work, limits, () => false, () => 1000)).toBe(false);
+    expect(
+      backend.admitModelAttempt(
+        token,
+        work,
+        limits,
+        () => false,
+        () => 1000,
+      ),
+    ).toBe(false);
     expect(db.prepare('SELECT * FROM request_quota_admissions').all()).toEqual([]);
-    expect(backend.admitModelAttempt(token, work, limits, () => true, () => 1000)).toBe(true);
+    expect(
+      backend.admitModelAttempt(
+        token,
+        work,
+        limits,
+        () => true,
+        () => 1000,
+      ),
+    ).toBe(true);
     expect(backend.pruneQuotas(token, limits, 'vk', 3000).requests).toBe(0);
-    expect(backend.admitModelAttempt(token, work, limits, () => true, () => 3000)).toBe(true);
-    expect(db.prepare('SELECT admitted_at FROM request_quota_admissions').all()).toEqual([{ admitted_at: 1000 }]);
+    expect(
+      backend.admitModelAttempt(
+        token,
+        work,
+        limits,
+        () => true,
+        () => 3000,
+      ),
+    ).toBe(true);
+    expect(db.prepare('SELECT admitted_at FROM request_quota_admissions').all()).toEqual([
+      { admitted_at: 1000 },
+    ]);
     backend.release(token);
     await storage.close();
     storage = await openStorage(files.path);
@@ -78,7 +125,9 @@ test('проверка перед допуском, повтор после ок
     expect(await storage.queue.get(current, work.id)).toMatchObject({ outcome: 'interrupted' });
     db.pragma('foreign_keys=ON');
     db.prepare('DELETE FROM queue_jobs WHERE id=?').run(work.id);
-    expect(db.prepare('SELECT admitted_at FROM request_quota_admissions').all()).toEqual([{ admitted_at: 1000 }]);
+    expect(db.prepare('SELECT admitted_at FROM request_quota_admissions').all()).toEqual([
+      { admitted_at: 1000 },
+    ]);
     expect(backend.pruneQuotas('next', limits, 'vk', 2999).requests).toBe(0);
     expect(backend.pruneQuotas('next', limits, 'vk', 3000).requests).toBe(1);
   } finally {

@@ -4,9 +4,14 @@ import { StorageError } from './errors';
 export function requireInput(condition: unknown): asserts condition {
   if (!condition) throw new StorageError('invalid_input');
 }
-export function object(value: unknown, keys: readonly string[]): asserts value is Record<string, unknown> {
+export function object(
+  value: unknown,
+  keys: readonly string[],
+): asserts value is Record<string, unknown> {
   requireInput(value !== null && typeof value === 'object' && !Array.isArray(value));
-  requireInput(Reflect.ownKeys(value).every((key) => typeof key === 'string' && keys.includes(key)));
+  requireInput(
+    Reflect.ownKeys(value).every((key) => typeof key === 'string' && keys.includes(key)),
+  );
 }
 export function string(value: unknown, nonempty = false): asserts value is string {
   requireInput(typeof value === 'string' && (!nonempty || value.length > 0));
@@ -25,8 +30,15 @@ export function databasePath(value: unknown): asserts value is string {
 }
 export function timezone(value: unknown): asserts value is string {
   string(value, true);
-  try { new Intl.DateTimeFormat('en', { timeZone: value }); }
-  catch { throw new StorageError('invalid_input'); }
+  try {
+    new Intl.DateTimeFormat('en', { timeZone: value });
+  } catch {
+    throw new StorageError('invalid_input');
+  }
 }
-export function mode(value: unknown): void { requireInput(value === 'silent' || value === 'normal' || value === 'active'); }
-export function nullableString(value: unknown): void { if (value !== null) string(value); }
+export function mode(value: unknown): void {
+  requireInput(value === 'silent' || value === 'normal' || value === 'active');
+}
+export function nullableString(value: unknown): void {
+  if (value !== null) string(value);
+}

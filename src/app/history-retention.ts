@@ -12,7 +12,10 @@ export function createHistoryHandlers(options: {
   readonly storage: Storage;
   readonly authorization: Awaited<ReturnType<typeof createAuthorizationService>>;
   readonly lifecycle: ReturnType<typeof createLifecycleService>;
-  readonly channel: Pick<ReturnType<typeof createVkChannel>, 'replyPrivateControl' | 'replyGroupControl'>;
+  readonly channel: Pick<
+    ReturnType<typeof createVkChannel>,
+    'replyPrivateControl' | 'replyGroupControl'
+  >;
   readonly ownerId: UserId;
   readonly group: (chatId: ChatId) => boolean;
   readonly signal: AbortSignal;
@@ -26,35 +29,87 @@ export function createHistoryHandlers(options: {
     recognize(message: IncomingMessage) {
       if (!message.isGroupChat || message.isBot !== false) return null;
       const command = parseHistoryCommand(message.text, 'group');
-      return command ? { action: 'chat.history.clear', minimumRole: 'admin', replayRequest: command.kind === 'request' } as const : null;
+      return command
+        ? ({
+            action: 'chat.history.clear',
+            minimumRole: 'admin',
+            replayRequest: command.kind === 'request',
+          } as const)
+        : null;
     },
-    async execute(context: AuthorizationContext, message: IncomingMessage, current: () => boolean, replayOnly = false) {
+    async execute(
+      context: AuthorizationContext,
+      message: IncomingMessage,
+      current: () => boolean,
+      replayOnly = false,
+    ) {
       const command = parseHistoryCommand(message.text, 'group');
       if (!command) return;
-      const isCurrent = () => options.isRunning() && current() && controls.read(context.scope).enabled;
-      const reply = await service.handle(context, message.chatId, message.messageId, command, isCurrent, replayOnly);
-      if (reply) await channel.replyGroupControl(context.scope, reply, {
-        signal, isCurrent,
-        async allow() { return isCurrent() && (await authorization.check(context, 'chat.history.clear')).allowed; },
-      });
+      const isCurrent = () =>
+        options.isRunning() && current() && controls.read(context.scope).enabled;
+      const reply = await service.handle(
+        context,
+        message.chatId,
+        message.messageId,
+        command,
+        isCurrent,
+        replayOnly,
+      );
+      if (reply)
+        await channel.replyGroupControl(context.scope, reply, {
+          signal,
+          isCurrent,
+          async allow() {
+            return (
+              isCurrent() && (await authorization.check(context, 'chat.history.clear')).allowed
+            );
+          },
+        });
     },
     privateCommand(message: VkIncoming, current: () => boolean) {
       if (isVkGroupChat(message.peerId)) return undefined;
       const command = parseHistoryCommand(message.text, 'private');
       if (!command) return undefined;
       const sender = vkChatId(message.authorId);
-      if (sender !== ownerId || message.peerId !== message.authorId || message.authorId <= 0 || message.isMentioned || message.reply ||
-        command.kind === 'invalid') return Promise.resolve();
+      if (
+        sender !== ownerId ||
+        message.peerId !== message.authorId ||
+        message.authorId <= 0 ||
+        message.isMentioned ||
+        message.reply ||
+        command.kind === 'invalid'
+      )
+        return Promise.resolve();
       return (async () => {
-        const target = command.kind === 'request' ? command.target :
-          service.privateTarget({ origin: sender, initiator: sender, owner: true }, command.code);
+        const target =
+          command.kind === 'request'
+            ? command.target
+            : service.privateTarget(
+                { origin: sender, initiator: sender, owner: true },
+                command.code,
+              );
         if (!target || !group(target.chatId)) return;
         const scope = lifecycle.admissionScope(target.chatId);
         if (scope.generation !== target.generation) return;
-        const isCurrent = () => !signal.aborted && current() && options.isRunning() && lifecycle.isAdmissionCurrent(scope);
+        const isCurrent = () =>
+          !signal.aborted &&
+          current() &&
+          options.isRunning() &&
+          lifecycle.isAdmissionCurrent(scope);
         const context = authorization.context({ scope, userId: sender, kind: 'owner' });
-        const reply = await service.handle(context, sender, String(message.cmid), command, isCurrent);
-        if (reply) await channel.replyPrivateControl(sender, reply, { signal, isCurrent, allow: async () => isCurrent() });
+        const reply = await service.handle(
+          context,
+          sender,
+          String(message.cmid),
+          command,
+          isCurrent,
+        );
+        if (reply)
+          await channel.replyPrivateControl(sender, reply, {
+            signal,
+            isCurrent,
+            allow: async () => isCurrent(),
+          });
       })();
     },
   };

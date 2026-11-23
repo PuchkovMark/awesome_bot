@@ -20,23 +20,30 @@ export function createLogger(options: LoggerOptions = {}): SafeLogger {
   if (!logLevels.includes(level)) throw new TypeError('Invalid log level');
   const sink = pino({ level, base: null }, options.destination ?? process.stdout);
   const additionalRedact = createRedactor(options.additionalSecrets ?? []);
-  const redact = (text: string) => (options.redact ?? ((value: string) => value))(additionalRedact(text));
+  const redact = (text: string) =>
+    (options.redact ?? ((value: string) => value))(additionalRedact(text));
   const eventLevels: readonly EventLevel[] = ['debug', 'info', 'warn', 'error', 'fatal'];
   const event: SafeLogger['event'] = (input, selectedLevel) => {
     const clean = safeEvent(input);
     if (!clean) return;
-    const target = selectedLevel ?? ((clean.event === 'config_loaded' || clean.event === 'queue_stats') ? 'info' : 'error');
+    const target =
+      selectedLevel ??
+      (clean.event === 'config_loaded' || clean.event === 'queue_stats' ? 'info' : 'error');
     if (!eventLevels.includes(target)) return;
     sink[target](clean);
   };
   return Object.freeze({
     event,
-    componentError(error: unknown) { event({ event: 'component_error', category: errorCategory(error) }); },
+    componentError(error: unknown) {
+      event({ event: 'component_error', category: errorCategory(error) });
+    },
     debugText(text: string) {
-      if (typeof text === 'string' && sink.isLevelEnabled('debug')) sink.debug({ event: 'debug_message', text: redact(text) });
+      if (typeof text === 'string' && sink.isLevelEnabled('debug'))
+        sink.debug({ event: 'debug_message', text: redact(text) });
     },
     debugError(error: unknown) {
-      if (sink.isLevelEnabled('debug')) sink.debug({ event: 'debug_error', text: redact(errorText(error)) });
+      if (sink.isLevelEnabled('debug'))
+        sink.debug({ event: 'debug_error', text: redact(errorText(error)) });
     },
   });
 }

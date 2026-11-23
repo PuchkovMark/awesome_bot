@@ -21,12 +21,16 @@ async function main(args: readonly string[]): Promise<number> {
     await writeLocalReport(output, results);
   } catch (error) {
     const exists = error instanceof Error && 'code' in error && error.code === 'EEXIST';
-    process.stderr.write(exists ? 'Файл отчёта уже существует.\n' : 'Не удалось сохранить отчёт по указанному пути.\n');
+    process.stderr.write(
+      exists ? 'Файл отчёта уже существует.\n' : 'Не удалось сохранить отчёт по указанному пути.\n',
+    );
     return 1;
   }
-  const passed = results.filter(result => result.outcome === 'passed').length;
-  const failed = results.filter(result => result.outcome === 'failed').length;
-  process.stdout.write(`Локальная оценка на подменах. Пройдено ${passed}, нарушений ${failed}, технических сбоев ${results.length - passed - failed}.\n`);
+  const passed = results.filter((result) => result.outcome === 'passed').length;
+  const failed = results.filter((result) => result.outcome === 'failed').length;
+  process.stdout.write(
+    `Локальная оценка на подменах. Пройдено ${passed}, нарушений ${failed}, технических сбоев ${results.length - passed - failed}.\n`,
+  );
   return passed === results.length ? 0 : 1;
 }
 

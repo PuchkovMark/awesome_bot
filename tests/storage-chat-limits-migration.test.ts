@@ -26,12 +26,18 @@ test('версия 17 сохраняет настройки, очередь, и�
         VALUES ('vk:10',1,1,1,100,'queued','direct_message','normal',0);
       INSERT INTO notice_periods(chat_id,generation,next_at) VALUES ('vk:10',1,110);`);
     storage = await openStorage(files.path);
-    expect(db.prepare('SELECT * FROM schema_migrations WHERE version<=16 ORDER BY version').all()).toEqual(previous);
+    expect(
+      db.prepare('SELECT * FROM schema_migrations WHERE version<=16 ORDER BY version').all(),
+    ).toEqual(previous);
     const lifecycle = lifecycleBackend(storage);
     const scope = lifecycle.current('vk:10');
     expect(await storage.queue.get(scope, 1)).toMatchObject({ state: 'queued', messageId: 1 });
     expect(await storage.messages.get(scope, 1)).toMatchObject({ text: 'Синтетическое обращение' });
-    expect(chatControlStore(storage).read(scope)).toMatchObject({ enabled: true, mode: 'active', pausedUntil: 50 });
+    expect(chatControlStore(storage).read(scope)).toMatchObject({
+      enabled: true,
+      mode: 'active',
+      pausedUntil: 50,
+    });
     expect(db.prepare('SELECT next_at FROM notice_periods').get()).toEqual({ next_at: 110 });
     expect(db.prepare('SELECT * FROM request_quota_admissions').all()).toEqual([]);
     expect(db.prepare('SELECT * FROM autonomous_quota_reservations').all()).toEqual([]);
@@ -39,8 +45,12 @@ test('версия 17 сохраняет настройки, очередь, и�
       INSERT INTO autonomous_quota_reservations(chat_id,generation,reserved_at,owner)
         VALUES ('vk:10',1,5,'test'),('vk:11',2,6,'test');`);
     lifecycle.ownerDecision(lifecycle.begin('vk:10'), 'new');
-    expect(db.prepare('SELECT chat_id FROM request_quota_admissions').all()).toEqual([{ chat_id: 'vk:11' }]);
-    expect(db.prepare('SELECT chat_id FROM autonomous_quota_reservations').all()).toEqual([{ chat_id: 'vk:11' }]);
+    expect(db.prepare('SELECT chat_id FROM request_quota_admissions').all()).toEqual([
+      { chat_id: 'vk:11' },
+    ]);
+    expect(db.prepare('SELECT chat_id FROM autonomous_quota_reservations').all()).toEqual([
+      { chat_id: 'vk:11' },
+    ]);
   } finally {
     await storage?.close();
     db.close();

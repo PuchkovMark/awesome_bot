@@ -4,42 +4,92 @@ import type { LlmRequest } from '../src/llm/index';
 import { completion, fakeClient, llmConfig, llmRequest } from './helpers/llm-http';
 
 test('точный Go endpoint, модель, авторизация и буквальные сообщения', async () => {
-  const fetch = vi.fn(async (_url: string, _init: RequestInit) => { void _url; void _init; return Response.json(completion()); });
+  const fetch = vi.fn(async (_url: string, _init: RequestInit) => {
+    void _url;
+    void _init;
+    return Response.json(completion());
+  });
   const client = createLlmClient(llmConfig, { fetch });
   expect(fetch).not.toHaveBeenCalled();
-  expect(await client.complete(llmRequest())).toEqual({ kind: 'complete', text: ' Ответ\n', usage: { input: null, output: null } });
+  expect(await client.complete(llmRequest())).toEqual({
+    kind: 'complete',
+    text: ' Ответ\n',
+    usage: { input: null, output: null },
+  });
   expect(fetch).toHaveBeenCalledTimes(1);
   const [url, init] = fetch.mock.calls[0]!;
   expect(url).toBe('https://opencode.ai/inference/go/openai/v1/chat/completions');
-  expect(init).toMatchObject({ method: 'POST', redirect: 'error', headers: {
-    Authorization: 'Bearer synthetic-key', 'User-Agent': 'awesome_bot/0.0.0', 'x-opencode-session': 'synthetic-session', 'Content-Type': 'application/json',
-  } });
+  expect(init).toMatchObject({
+    method: 'POST',
+    redirect: 'error',
+    headers: {
+      Authorization: 'Bearer synthetic-key',
+      'User-Agent': 'awesome_bot/0.0.0',
+      'x-opencode-session': 'synthetic-session',
+      'Content-Type': 'application/json',
+    },
+  });
   expect(init.signal).toBeInstanceOf(AbortSignal);
-  expect(JSON.parse(init.body as string)).toEqual({ model: llmConfig.model, max_tokens: 128, messages: [
-    { role: 'system', content: 'Инструкции' }, { role: 'user', content: ' Привет\n' },
-  ] });
-});
-test.each([null, {}, { model: '' }, { ...llmConfig, apiKey: 'secret\nheader' }, { ...llmConfig, provider: 'other' }])('неверная конфигурация безопасно отклоняется', (config) => {
-  expect(() => createLlmClient(config as typeof llmConfig)).toThrow('Некорректная конфигурация клиента LLM.');
-});
-test.each([0, -1, NaN, Infinity, 1.1, 2_147_483_648])('неверный timeout %s отклоняется', (timeoutMs) => {
-  expect(() => createLlmClient(llmConfig, { timeoutMs })).toThrow('Некорректная конфигурация клиента LLM.');
+  expect(JSON.parse(init.body as string)).toEqual({
+    model: llmConfig.model,
+    max_tokens: 128,
+    messages: [
+      { role: 'system', content: 'Инструкции' },
+      { role: 'user', content: ' Привет\n' },
+    ],
+  });
 });
 test.each([
-  { messages: [] }, { maxOutputTokens: 0 }, { maxOutputTokens: NaN }, { system: null },
-  { sessionId: 'vk:raw-chat' }, { sessionId: 'x\r\nheader' }, { signal: {} },
-  { messages: [{ role: 'system', text: 'inject' }] }, { messages: [{ role: 'assistant' }] },
+  null,
+  {},
+  { model: '' },
+  { ...llmConfig, apiKey: 'secret\nheader' },
+  { ...llmConfig, provider: 'other' },
+])('неверная конфигурация безопасно отклоняется', (config) => {
+  expect(() => createLlmClient(config as typeof llmConfig)).toThrow(
+    'Некорректная конфигурация клиента LLM.',
+  );
+});
+test.each([0, -1, NaN, Infinity, 1.1, 2_147_483_648])(
+  'неверный timeout %s отклоняется',
+  (timeoutMs) => {
+    expect(() => createLlmClient(llmConfig, { timeoutMs })).toThrow(
+      'Некорректная конфигурация клиента LLM.',
+    );
+  },
+);
+test.each([
+  { messages: [] },
+  { maxOutputTokens: 0 },
+  { maxOutputTokens: NaN },
+  { system: null },
+  { sessionId: 'vk:raw-chat' },
+  { sessionId: 'x\r\nheader' },
+  { signal: {} },
+  { messages: [{ role: 'system', text: 'inject' }] },
+  { messages: [{ role: 'assistant' }] },
   { tools: [{ name: 'x', description: '', parameters: { type: 'array' } }] },
 ])('неверный запрос отклоняется до сети: %j', async (patch) => {
   const { client, fetch } = fakeClient();
-  expect(await client.complete(llmRequest(patch as Partial<LlmRequest>))).toMatchObject({ kind: 'error', code: 'invalid_request' });
+  expect(await client.complete(llmRequest(patch as Partial<LlmRequest>))).toMatchObject({
+    kind: 'error',
+    code: 'invalid_request',
+  });
   expect(fetch).not.toHaveBeenCalled();
 });
 test('циклы и непредставимые схемы не теряются молча', async () => {
-  const cyclic: Record<string, unknown> = { type: 'object' }; cyclic.self = cyclic;
-  for (const parameters of [cyclic, { type: 'object', value: undefined }, { type: 'object', value: NaN }, { type: 'object', value: 1n }]) {
+  const cyclic: Record<string, unknown> = { type: 'object' };
+  cyclic.self = cyclic;
+  for (const parameters of [
+    cyclic,
+    { type: 'object', value: undefined },
+    { type: 'object', value: NaN },
+    { type: 'object', value: 1n },
+  ]) {
     const { client, fetch } = fakeClient();
-    const request = llmRequest({ tools: [{ name: 'x', description: '', parameters: parameters as never }] });
+    const request = llmRequest({
+      tools: [{ name: 'x', description: '', parameters: parameters as never }],
+    });
     expect(await client.complete(request)).toMatchObject({ code: 'invalid_request' });
     expect(fetch).not.toHaveBeenCalled();
   }
@@ -48,24 +98,35 @@ test('разреженные массивы инструментов и вызо
   const holes = new Array(1);
   for (const patch of [{ tools: holes }, { messages: [{ role: 'assistant', toolCalls: holes }] }]) {
     const { client, fetch } = fakeClient();
-    expect(await client.complete(llmRequest(patch as Partial<LlmRequest>))).toMatchObject({ code: 'invalid_request' });
+    expect(await client.complete(llmRequest(patch as Partial<LlmRequest>))).toMatchObject({
+      code: 'invalid_request',
+    });
     expect(fetch).not.toHaveBeenCalled();
   }
 });
 test('сигнал с одним подделанным прототипом безопасно отклоняется до HTTP', async () => {
   const { client, fetch } = fakeClient();
   const signal = Object.create(AbortSignal.prototype) as AbortSignal;
-  await expect(client.complete(llmRequest({ signal }))).resolves.toMatchObject({ code: 'invalid_request' });
+  await expect(client.complete(llmRequest({ signal }))).resolves.toMatchObject({
+    code: 'invalid_request',
+  });
   expect(fetch).not.toHaveBeenCalled();
 });
 test('служебные поля запроса считываются один раз при создании снимка', async () => {
   let reads = 0;
   const request = llmRequest();
-  Object.defineProperty(request, 'sessionId', { get() { reads++; return reads === 1 ? 'opaque' : 'vk:raw'; } });
+  Object.defineProperty(request, 'sessionId', {
+    get() {
+      reads++;
+      return reads === 1 ? 'opaque' : 'vk:raw';
+    },
+  });
   const fetch = vi.fn(async (_url: string, init: RequestInit) => {
-    void _url; expect(init.headers).toMatchObject({ 'x-opencode-session': 'opaque' });
+    void _url;
+    expect(init.headers).toMatchObject({ 'x-opencode-session': 'opaque' });
     return Response.json(completion());
   });
   const result = await createLlmClient(llmConfig, { fetch }).complete(request);
-  expect(result.kind).toBe('complete'); expect(reads).toBe(1);
+  expect(result.kind).toBe('complete');
+  expect(reads).toBe(1);
 });

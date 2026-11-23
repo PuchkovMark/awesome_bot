@@ -4,11 +4,20 @@ export type { AuthorizationTransaction, AdminGrant, RevocationAudit } from './au
 
 export interface AuthorizationStore {
   /** Promise из callback запрещён; исключение откатывает всю транзакцию. */
-  transaction<T>(chatId: ChatId, callback: (transaction: AuthorizationTransaction) => T): Promise<T>;
+  transaction<T>(
+    chatId: ChatId,
+    callback: (transaction: AuthorizationTransaction) => T,
+  ): Promise<T>;
   /** Внутреннее обслуживание, не интерфейс инструмента; не возвращает тексты. */
-  pruneReasons(now: Timestamp, retentionMs: number): Promise<{ readonly cleared: number; readonly nextRevokedAt: number | null }>;
+  pruneReasons(
+    now: Timestamp,
+    retentionMs: number,
+  ): Promise<{ readonly cleared: number; readonly nextRevokedAt: number | null }>;
 }
 export interface SyncAuthorizationStore {
-  transaction<T>(chatId:ChatId,callback:(transaction:AuthorizationTransaction)=>T):T;
-  pruneReasons(now:Timestamp,retentionMs:number):{readonly cleared:number;readonly nextRevokedAt:number|null};
+  transaction<T>(chatId: ChatId, callback: (transaction: AuthorizationTransaction) => T): T;
+  pruneReasons(
+    now: Timestamp,
+    retentionMs: number,
+  ): { readonly cleared: number; readonly nextRevokedAt: number | null };
 }

@@ -14,26 +14,43 @@ test('FK включены до callback на каждом новом соеди�
       try {
         expect(callback).toHaveBeenCalledOnce();
         expect(connection.run((db) => db.pragma('foreign_keys', { simple: true }))).toBe(1);
-      } finally { connection.close(); }
+      } finally {
+        connection.close();
+      }
     }
-  } finally { fixture.cleanup(); }
+  } finally {
+    fixture.cleanup();
+  }
 });
 test('отказ включения FK закрывает соединение до инициализации и даёт безопасную ошибку', async () => {
   const references: { open: boolean }[] = [];
   class RefusingDatabase {
     open = true;
-    constructor() { references.push(this); }
-    pragma() { return 0; }
-    close() { this.open = false; }
+    constructor() {
+      references.push(this);
+    }
+    pragma() {
+      return 0;
+    }
+    close() {
+      this.open = false;
+    }
   }
   const initialize = vi.fn();
   vi.doMock('better-sqlite3', () => ({ default: RefusingDatabase }));
   try {
-    const error: unknown = await openConnection(fixturePath(), initialize).catch((error: unknown) => error);
+    const error: unknown = await openConnection(fixturePath(), initialize).catch(
+      (error: unknown) => error,
+    );
     expect(error).toMatchObject({ code: 'unavailable', message: 'Storage: unavailable' });
     expect(error).not.toHaveProperty('cause');
     expect(initialize).not.toHaveBeenCalled();
-    expect(references).toHaveLength(1); expect(references[0]?.open).toBe(false);
-  } finally { vi.doUnmock('better-sqlite3'); }
+    expect(references).toHaveLength(1);
+    expect(references[0]?.open).toBe(false);
+  } finally {
+    vi.doUnmock('better-sqlite3');
+  }
 });
-function fixturePath(): string { return '/not-opened/SECRET.sqlite'; }
+function fixturePath(): string {
+  return '/not-opened/SECRET.sqlite';
+}

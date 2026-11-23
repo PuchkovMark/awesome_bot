@@ -6,7 +6,8 @@ import { vkRecord } from './normalize';
 const waitSeconds = 25;
 const accessDenied = new Set([5, 7, 15, 27]);
 
-export type VkPollGap = 'startup' | 'lost_position' | 'renew_server' | 'invalid_response' | 'transport_error';
+export type VkPollGap =
+  'startup' | 'lost_position' | 'renew_server' | 'invalid_response' | 'transport_error';
 
 interface VkPollListener {
   readonly onGap: (reason: VkPollGap) => Promise<void>;
@@ -36,8 +37,15 @@ function serverUrl(server: string): URL {
   } catch {
     throw new VkPollError('unsafe_server');
   }
-  if (url.protocol !== 'https:' || url.username || url.password || url.port
-    || !['vk.com', 'vk.ru', 'vk.me'].some(domain => url.hostname === domain || url.hostname.endsWith(`.${domain}`))) {
+  if (
+    url.protocol !== 'https:' ||
+    url.username ||
+    url.password ||
+    url.port ||
+    !['vk.com', 'vk.ru', 'vk.me'].some(
+      (domain) => url.hostname === domain || url.hostname.endsWith(`.${domain}`),
+    )
+  ) {
     throw new VkPollError('unsafe_server');
   }
   url.hash = '';
@@ -85,7 +93,11 @@ export function createVkLongPoll(options: {
           } catch (error) {
             if (signal.aborted) return;
             if (error instanceof VkPollError) throw error;
-            if (error instanceof VkApiError && error.code !== undefined && accessDenied.has(error.code)) {
+            if (
+              error instanceof VkApiError &&
+              error.code !== undefined &&
+              accessDenied.has(error.code)
+            ) {
               throw new VkPollError('access_denied', error.code);
             }
             await gap('transport_error');
@@ -103,9 +115,11 @@ export function createVkLongPoll(options: {
         let page: Record<string, unknown> | undefined;
         try {
           const response = await request(query, {
-            redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout((waitSeconds + 5) * 1000)]),
+            redirect: 'error',
+            signal: AbortSignal.any([signal, AbortSignal.timeout((waitSeconds + 5) * 1000)]),
           });
-          if (response.status === 401 || response.status === 403) throw new VkPollError('access_denied');
+          if (response.status === 401 || response.status === 403)
+            throw new VkPollError('access_denied');
           if (!response.ok) throw new Error('poll_http_failure');
           page = vkRecord(await response.json());
         } catch (error) {

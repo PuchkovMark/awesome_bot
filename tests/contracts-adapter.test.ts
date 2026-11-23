@@ -5,12 +5,29 @@ import { FakeAdapter } from './helpers/fake-adapters';
 describe.each(['test-a', 'test-b'] as const)('адаптер %s', (platform) => {
   test('передаёт оба вида событий и ожидает обработчик', async () => {
     const events: IncomingEvent[] = [
-      { kind: 'message', chatId: `${platform}:chat`, userId: `${platform}:known`,
-        authorName: 'Имя', isGroupChat: true, isAdmin: 'unknown', isBot: 'unknown',
-        text: 'Привет 🐈', messageId: '1', isReplyToBot: false, isMentioned: false,
-        timestamp: 0, attachments: [] },
-      { kind: 'membership', chatId: `${platform}:chat`, subjectId: null,
-        actorId: null, change: 'unknown', timestamp: 1 },
+      {
+        kind: 'message',
+        chatId: `${platform}:chat`,
+        userId: `${platform}:known`,
+        authorName: 'Имя',
+        isGroupChat: true,
+        isAdmin: 'unknown',
+        isBot: 'unknown',
+        text: 'Привет 🐈',
+        messageId: '1',
+        isReplyToBot: false,
+        isMentioned: false,
+        timestamp: 0,
+        attachments: [],
+      },
+      {
+        kind: 'membership',
+        chatId: `${platform}:chat`,
+        subjectId: null,
+        actorId: null,
+        change: 'unknown',
+        timestamp: 1,
+      },
     ];
     const adapter: ChannelAdapter = new FakeAdapter(platform, events);
     const received: IncomingEvent[] = [];
@@ -24,7 +41,11 @@ describe.each(['test-a', 'test-b'] as const)('адаптер %s', (platform) => 
   test('передаёт исходящий текст, reply и операции общего интерфейса', async () => {
     const fake = new FakeAdapter(platform);
     const adapter: ChannelAdapter = fake;
-    const message: OutgoingMessage = { chatId: `${platform}:chat`, text: 'Ответ 🐈', replyToMessageId: 'incoming-1' };
+    const message: OutgoingMessage = {
+      chatId: `${platform}:chat`,
+      text: 'Ответ 🐈',
+      replyToMessageId: 'incoming-1',
+    };
     const ids = await adapter.send(message);
     expect(fake.sent).toEqual([message]);
     expect(ids).toEqual(platform === 'test-a' ? ['part-1'] : ['part-1', 'part-2']);
@@ -36,8 +57,14 @@ describe.each(['test-a', 'test-b'] as const)('адаптер %s', (platform) => 
 
   test('сохраняет область снимка, неполноту и различия платформ', async () => {
     const adapter: ChannelAdapter = new FakeAdapter(platform);
-    const first = await adapter.capabilities({ chatId: `${platform}:one`, userId: `${platform}:known` });
-    const second = await adapter.capabilities({ chatId: `${platform}:two`, userId: `${platform}:other` });
+    const first = await adapter.capabilities({
+      chatId: `${platform}:one`,
+      userId: `${platform}:known`,
+    });
+    const second = await adapter.capabilities({
+      chatId: `${platform}:two`,
+      userId: `${platform}:other`,
+    });
     const chatOnly = await adapter.capabilities({ chatId: `${platform}:one` });
     expect(first.context).toEqual({ chatId: `${platform}:one`, userId: `${platform}:known` });
     expect(second.context).toEqual({ chatId: `${platform}:two`, userId: `${platform}:other` });
@@ -47,7 +74,9 @@ describe.each(['test-a', 'test-b'] as const)('адаптер %s', (platform) => 
     expect(chatOnly.support.directMessage).toBe('unknown');
     expect(first.support.adminInfo).toBe('unknown');
     expect(first.support.typing).toBe(platform === 'test-a' ? 'supported' : 'unsupported');
-    expect(first.maxMessageLength).toEqual(platform === 'test-a' ? { value: 100, unit: 'utf16' } : { value: 200, unit: 'utf8Bytes' });
+    expect(first.maxMessageLength).toEqual(
+      platform === 'test-a' ? { value: 100, unit: 'utf16' } : { value: 200, unit: 'utf8Bytes' },
+    );
     expect(first.textFormats).toEqual(platform === 'test-a' ? ['plain'] : ['plain', 'markdown']);
   });
 });

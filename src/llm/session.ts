@@ -7,8 +7,13 @@ export function createLlmSessionId(secret: string): (scope: ConnectionScope) => 
     throw new TypeError('Некорректный секрет сессии LLM.');
   }
   return (scope) => {
-    if (!scope || typeof scope.chatId !== 'string' || !/^[a-z][a-z0-9_-]*:[^\s]+$/.test(scope.chatId)
-      || !Number.isSafeInteger(scope.generation) || scope.generation <= 0) {
+    if (
+      !scope ||
+      typeof scope.chatId !== 'string' ||
+      !/^[a-z][a-z0-9_-]*:[^\s]+$/.test(scope.chatId) ||
+      !Number.isSafeInteger(scope.generation) ||
+      scope.generation <= 0
+    ) {
       throw new TypeError('Некорректная область сессии LLM.');
     }
     return createHmac('sha256', secret)

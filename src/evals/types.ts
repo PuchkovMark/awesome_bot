@@ -31,9 +31,19 @@ export interface Scenario {
 }
 
 type LoopResult = NonNullable<QueueCompletion['result']>;
-type TechnicalReason = 'setup_failed' | 'not_queued' | 'settlement_timeout' | 'trace_missing' | 'publication_failed'
-  | 'attempt_limit' | 'rate_limit' | 'deadline_exceeded' | 'cancelled' | 'processing_failed'
-  | NonNullable<QueueCompletion['preparationFailure']> | Extract<LoopResult, { kind: 'error' }>['code'];
+type TechnicalReason =
+  | 'setup_failed'
+  | 'not_queued'
+  | 'settlement_timeout'
+  | 'trace_missing'
+  | 'publication_failed'
+  | 'attempt_limit'
+  | 'rate_limit'
+  | 'deadline_exceeded'
+  | 'cancelled'
+  | 'processing_failed'
+  | NonNullable<QueueCompletion['preparationFailure']>
+  | Extract<LoopResult, { kind: 'error' }>['code'];
 
 export interface EvaluationResult {
   readonly scenarioId: string;

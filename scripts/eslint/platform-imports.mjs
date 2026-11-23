@@ -7,12 +7,16 @@ const platformImports = {
   meta: {
     type: 'problem',
     docs: { description: 'Запрещает платформенные импорты в ядре и инструментах' },
-    schema: [{
-      type: 'object',
-      properties: { packages: { type: 'array', items: { type: 'string', minLength: 1 }, uniqueItems: true } },
-      required: ['packages'],
-      additionalProperties: false,
-    }],
+    schema: [
+      {
+        type: 'object',
+        properties: {
+          packages: { type: 'array', items: { type: 'string', minLength: 1 }, uniqueItems: true },
+        },
+        required: ['packages'],
+        additionalProperties: false,
+      },
+    ],
     messages: {
       platformImport: 'Платформенная зависимость {{name}} запрещена в ядре и инструментах.',
       computedImport: 'Вычисляемое имя модуля не позволяет проверить платформенную границу.',
@@ -38,12 +42,24 @@ const platformImports = {
     }
 
     return {
-      ImportDeclaration(node) { check(node.source); },
-      ExportNamedDeclaration(node) { if (node.source) check(node.source); },
-      ExportAllDeclaration(node) { check(node.source); },
-      TSImportType(node) { check(node.source); },
-      TSExternalModuleReference(node) { check(node.expression); },
-      ImportExpression(node) { check(node.source); },
+      ImportDeclaration(node) {
+        check(node.source);
+      },
+      ExportNamedDeclaration(node) {
+        if (node.source) check(node.source);
+      },
+      ExportAllDeclaration(node) {
+        check(node.source);
+      },
+      TSImportType(node) {
+        check(node.source);
+      },
+      TSExternalModuleReference(node) {
+        check(node.expression);
+      },
+      ImportExpression(node) {
+        check(node.source);
+      },
       CallExpression(node) {
         if (node.callee.type === 'Identifier' && node.callee.name === 'require') {
           const source = node.arguments[0];

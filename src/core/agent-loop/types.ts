@@ -1,6 +1,9 @@
 import type { LlmErrorCode } from '../../llm/types';
 
-export interface AgentLoopMessage { readonly role: 'user' | 'assistant'; readonly text: string }
+export interface AgentLoopMessage {
+  readonly role: 'user' | 'assistant';
+  readonly text: string;
+}
 export interface AgentLoopInput {
   readonly system: string;
   readonly messages: readonly AgentLoopMessage[];
@@ -28,13 +31,25 @@ export interface AgentLoopSummary {
   readonly durationMs: number;
   readonly usage: { readonly input: TokenCounter; readonly output: TokenCounter };
 }
-export type AgentLoopErrorCode = Exclude<LlmErrorCode, 'rate_limit' | 'cancelled'> | 'invalid_input' | 'client_failure';
+export type AgentLoopErrorCode =
+  Exclude<LlmErrorCode, 'rate_limit' | 'cancelled'> | 'invalid_input' | 'client_failure';
 export type AttemptAdmission = boolean | 'quota_exhausted' | 'context_stale';
 export type AgentLoopOutcome =
   | { readonly kind: 'complete'; readonly text: string }
   | { readonly kind: 'incomplete'; readonly partialText: string }
-  | { readonly kind: 'refused' | 'empty' | 'rate_limit' | 'quota_exhausted' | 'tools_not_supported' | 'cancelled' | 'deadline_exceeded' }
+  | {
+      readonly kind:
+        | 'refused'
+        | 'empty'
+        | 'rate_limit'
+        | 'quota_exhausted'
+        | 'tools_not_supported'
+        | 'cancelled'
+        | 'deadline_exceeded';
+    }
   | { readonly kind: 'attempt_limit'; readonly lastErrorCode: 'server' }
   | { readonly kind: 'error'; readonly code: AgentLoopErrorCode; readonly message: string };
 export type AgentLoopResult = AgentLoopOutcome & { readonly summary: AgentLoopSummary };
-export interface AgentLoop { run(input: AgentLoopInput): Promise<AgentLoopResult> }
+export interface AgentLoop {
+  run(input: AgentLoopInput): Promise<AgentLoopResult>;
+}

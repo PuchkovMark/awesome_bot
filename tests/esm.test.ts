@@ -6,9 +6,16 @@ import { pathToFileURL } from 'node:url';
 import { expect, test } from 'vitest';
 
 test('Node.js загружает собранные ESM-модули без запуска приложения', () => {
-  const modules = ['core', 'channels', 'tools', 'storage', 'llm', 'config', 'logger', 'contracts'].map(
-    (layer) => pathToFileURL(resolve('dist', layer, 'index.js')).href,
-  );
+  const modules = [
+    'core',
+    'channels',
+    'tools',
+    'storage',
+    'llm',
+    'config',
+    'logger',
+    'contracts',
+  ].map((layer) => pathToFileURL(resolve('dist', layer, 'index.js')).href);
   modules.push(pathToFileURL(resolve('dist/storage/catalog-admin.js')).href);
   modules.push(pathToFileURL(resolve('dist/evals/runner.js')).href);
   modules.push(pathToFileURL(resolve('dist/evals/cli.js')).href);
@@ -36,7 +43,10 @@ test('Node.js загружает собранные ESM-модули без за
       process.stdout.write('IMPORT_COMPLETED');
     `;
     const output = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
-      cwd: directory, encoding: 'utf8', env: {}, timeout: 10_000,
+      cwd: directory,
+      encoding: 'utf8',
+      env: {},
+      timeout: 10_000,
     });
     expect(output.error).toBeUndefined();
     expect(output.status, output.stderr).toBe(0);
@@ -44,6 +54,19 @@ test('Node.js загружает собранные ESM-модули без за
     expect(output.stdout).toBe('IMPORT_COMPLETED');
     expect(output.stderr).toBe('');
     expect(readdirSync(directory)).toEqual([]);
-  } finally { rmSync(directory, { recursive: true, force: true }); }
-  expect(readdirSync('dist').sort()).toEqual(['app', 'channels', 'config', 'contracts', 'core', 'evals', 'llm', 'logger', 'storage', 'tools']);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+  expect(readdirSync('dist').sort()).toEqual([
+    'app',
+    'channels',
+    'config',
+    'contracts',
+    'core',
+    'evals',
+    'llm',
+    'logger',
+    'storage',
+    'tools',
+  ]);
 });

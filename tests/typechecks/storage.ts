@@ -9,7 +9,7 @@ export const missingMode: ChatInput = { enabled: true, createdAt: 0 };
 export const badPatch: ChatPatch = { createdAt: 1 };
 // @ts-expect-error — роли журнала не включают system.
 export const badRole: MessageInput['role'] = 'system';
-export function calls(storage: Storage, scope:ConnectionScope): void {
+export function calls(storage: Storage, scope: ConnectionScope): void {
   void storage.chats.create(scope, initial);
   // @ts-expect-error — старый API по одному chatId запрещён.
   void storage.chats.get('vk:1');

@@ -33,7 +33,10 @@ test('ESM-выпуск открывает БД вне проекта без ис
       process.stdout.write('STORAGE_COMPLETED');
     `;
     const result = spawnSync(process.execPath, ['--input-type=module', '--eval', code], {
-      cwd: fixture.directory, env: {}, encoding: 'utf8', timeout: 10_000,
+      cwd: fixture.directory,
+      env: {},
+      encoding: 'utf8',
+      timeout: 10_000,
     });
     expect(result.error).toBeUndefined();
     expect(result.status, result.stderr).toBe(0);
@@ -42,11 +45,45 @@ test('ESM-выпуск открывает БД вне проекта без ис
     expect(existsSync(fixture.path)).toBe(true);
     const inspection = new Database(fixture.path);
     try {
-      expect(inspection.prepare("SELECT name FROM sqlite_schema WHERE name IN ('chat_participants','participant_profiles','profile_facts') ORDER BY name").all())
-        .toEqual([{ name: 'chat_participants' }, { name: 'participant_profiles' }, { name: 'profile_facts' }]);
-      expect(inspection.prepare('SELECT version FROM schema_migrations ORDER BY version').all())
-        .toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 }, { version: 14 }, { version: 15 }, { version: 16 }, { version: 17 }, { version: 18 }, { version: 19 }]);
+      expect(
+        inspection
+          .prepare(
+            "SELECT name FROM sqlite_schema WHERE name IN ('chat_participants','participant_profiles','profile_facts') ORDER BY name",
+          )
+          .all(),
+      ).toEqual([
+        { name: 'chat_participants' },
+        { name: 'participant_profiles' },
+        { name: 'profile_facts' },
+      ]);
+      expect(
+        inspection.prepare('SELECT version FROM schema_migrations ORDER BY version').all(),
+      ).toEqual([
+        { version: 1 },
+        { version: 2 },
+        { version: 3 },
+        { version: 4 },
+        { version: 5 },
+        { version: 6 },
+        { version: 7 },
+        { version: 8 },
+        { version: 9 },
+        { version: 10 },
+        { version: 11 },
+        { version: 12 },
+        { version: 13 },
+        { version: 14 },
+        { version: 15 },
+        { version: 16 },
+        { version: 17 },
+        { version: 18 },
+        { version: 19 },
+      ]);
       expect(inspection.pragma('foreign_key_check')).toEqual([]);
-    } finally { inspection.close(); }
-  } finally { fixture.cleanup(); }
+    } finally {
+      inspection.close();
+    }
+  } finally {
+    fixture.cleanup();
+  }
 });

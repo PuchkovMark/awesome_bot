@@ -3,7 +3,10 @@ const sentences = new Intl.Segmenter('ru', { granularity: 'sentence' });
 
 export const vkMessageLength = Object.freeze({ value: 4000, unit: 'utf8Bytes' as const });
 
-interface Segment { readonly end: number; readonly bytes: number }
+interface Segment {
+  readonly end: number;
+  readonly bytes: number;
+}
 
 export function splitVkText(input: string): readonly string[] {
   const text = input.toWellFormed();
@@ -11,8 +14,12 @@ export function splitVkText(input: string): readonly string[] {
   const limit = vkMessageLength.value;
   if (Buffer.byteLength(text) <= limit) return [text];
 
-  const paragraphEnds = new Set(Array.from(text.matchAll(/\n[\t \r]*\n+/gu), match => match.index + match[0].length));
-  const sentenceEnds = new Set(Array.from(sentences.segment(text), piece => piece.index + piece.segment.length));
+  const paragraphEnds = new Set(
+    Array.from(text.matchAll(/\n[\t \r]*\n+/gu), (match) => match.index + match[0].length),
+  );
+  const sentenceEnds = new Set(
+    Array.from(sentences.segment(text), (piece) => piece.index + piece.segment.length),
+  );
   const segments: Segment[] = [];
   for (const { segment, index } of graphemes.segment(text)) {
     const bytes = Buffer.byteLength(segment);

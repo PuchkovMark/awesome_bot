@@ -1,12 +1,35 @@
-import type { Attachment, ChatId, IncomingMessage, KnownBoolean, MembershipEvent } from '../../contracts/index';
+import type {
+  Attachment,
+  ChatId,
+  IncomingMessage,
+  KnownBoolean,
+  MembershipEvent,
+} from '../../contracts/index';
 
 const chatPeerStart = 2_000_000_000;
 const attachmentKinds = new Set([
-  'audio', 'audio_message', 'call', 'doc', 'gift', 'graffiti', 'link', 'market', 'market_album',
-  'photo', 'poll', 'sticker', 'story', 'video', 'wall', 'wall_reply',
+  'audio',
+  'audio_message',
+  'call',
+  'doc',
+  'gift',
+  'graffiti',
+  'link',
+  'market',
+  'market_album',
+  'photo',
+  'poll',
+  'sticker',
+  'story',
+  'video',
+  'wall',
+  'wall_reply',
 ]);
 const membershipActions = new Set([
-  'chat_invite_user', 'chat_invite_user_by_link', 'chat_invite_user_by_message_request', 'chat_kick_user',
+  'chat_invite_user',
+  'chat_invite_user_by_link',
+  'chat_invite_user_by_message_request',
+  'chat_kick_user',
 ]);
 
 export interface VkReply {
@@ -31,12 +54,12 @@ export interface VkIncoming {
 type ParseResult =
   | { readonly kind: 'message'; readonly message: VkIncoming }
   | {
-    readonly kind: 'membership';
-    readonly chatId: ChatId;
-    readonly event: MembershipEvent | undefined;
-    readonly affectsConnection: boolean;
-    readonly signalKey: string | undefined;
-  }
+      readonly kind: 'membership';
+      readonly chatId: ChatId;
+      readonly event: MembershipEvent | undefined;
+      readonly affectsConnection: boolean;
+      readonly signalKey: string | undefined;
+    }
   | { readonly kind: 'ignored' | 'invalid' };
 
 export interface VkEnrichment {
@@ -48,12 +71,14 @@ export interface VkEnrichment {
 
 export function vkRecord(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
+    ? (value as Record<string, unknown>)
     : undefined;
 }
 
 export function vkId(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value !== 0 ? value : undefined;
+  return typeof value === 'number' && Number.isSafeInteger(value) && value !== 0
+    ? value
+    : undefined;
 }
 
 export function vkCmid(value: unknown): number | undefined {
@@ -62,7 +87,10 @@ export function vkCmid(value: unknown): number | undefined {
 }
 
 function toTimestamp(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && Number.isSafeInteger(value * 1000)
+  return typeof value === 'number' &&
+    Number.isSafeInteger(value) &&
+    value >= 0 &&
+    Number.isSafeInteger(value * 1000)
     ? value * 1000
     : undefined;
 }
@@ -88,26 +116,37 @@ function parseReply(value: unknown): VkReply | undefined {
 
 function parseAttachments(value: unknown): readonly Attachment[] {
   if (!Array.isArray(value)) return [];
-  return value.map(attachment => {
+  return value.map((attachment) => {
     const type = vkRecord(attachment)?.type;
     return { kind: typeof type === 'string' && attachmentKinds.has(type) ? type : 'unknown' };
   });
 }
 
-function membershipChange(type: string, actor: number | undefined, subject: number | undefined): MembershipEvent['change'] {
+function membershipChange(
+  type: string,
+  actor: number | undefined,
+  subject: number | undefined,
+): MembershipEvent['change'] {
   switch (type) {
-    case 'chat_invite_user': return 'invited';
-    case 'chat_invite_user_by_link': return 'joined';
+    case 'chat_invite_user':
+      return 'invited';
+    case 'chat_invite_user_by_link':
+      return 'joined';
     case 'chat_kick_user':
       if (actor === undefined || subject === undefined) return 'unknown';
       return actor === subject ? 'left' : 'removed';
-    default: return 'unknown';
+    default:
+      return 'unknown';
   }
 }
 
 function parseMembership(
-  row: Record<string, unknown>, action: Record<string, unknown>, type: string,
-  peerId: number, groupId: number, platformEventId: unknown,
+  row: Record<string, unknown>,
+  action: Record<string, unknown>,
+  type: string,
+  peerId: number,
+  groupId: number,
+  platformEventId: unknown,
 ): ParseResult {
   const actor = vkId(row.from_id);
   const subject = vkId(action.member_id);
@@ -117,20 +156,28 @@ function parseMembership(
 
   const chatId = vkChatId(peerId);
   const cmid = vkCmid(row.conversation_message_id);
-  const eventId = typeof platformEventId === 'string' && platformEventId.trim()
-    ? platformEventId
-    : cmid?.toString();
+  const eventId =
+    typeof platformEventId === 'string' && platformEventId.trim()
+      ? platformEventId
+      : cmid?.toString();
   return {
-    kind: 'membership', chatId, affectsConnection,
+    kind: 'membership',
+    chatId,
+    affectsConnection,
     // Локальный номер идентифицирует служебное сообщение в пределах беседы.
     signalKey: cmid === undefined ? undefined : String(cmid),
-    event: timestamp === undefined ? undefined : {
-      kind: 'membership', chatId, timestamp,
-      ...(eventId === undefined ? {} : { eventId }),
-      subjectId: subject === undefined ? null : `vk:${subject}`,
-      actorId: actor === undefined ? null : `vk:${actor}`,
-      change: membershipChange(type, actor, subject),
-    },
+    event:
+      timestamp === undefined
+        ? undefined
+        : {
+            kind: 'membership',
+            chatId,
+            timestamp,
+            ...(eventId === undefined ? {} : { eventId }),
+            subjectId: subject === undefined ? null : `vk:${subject}`,
+            actorId: actor === undefined ? null : `vk:${actor}`,
+            change: membershipChange(type, actor, subject),
+          },
   };
 }
 
@@ -144,36 +191,60 @@ export function parseVkIncoming(update: unknown, groupId: number): ParseResult {
   const action = vkRecord(row.action);
   if (action && typeof action.type === 'string' && membershipActions.has(action.type)) {
     if (peerId === undefined) return { kind: 'invalid' };
-    if (isVkGroupChat(peerId)) return parseMembership(row, action, action.type, peerId, groupId, event.event_id);
+    if (isVkGroupChat(peerId))
+      return parseMembership(row, action, action.type, peerId, groupId, event.event_id);
   }
   if (row.out === 1 || row.out === true || row.action != null) return { kind: 'ignored' };
 
   const authorId = vkId(row.from_id);
   const cmid = vkCmid(row.conversation_message_id);
   const timestamp = toTimestamp(row.date);
-  if (!peerId || !authorId || !cmid || timestamp === undefined || typeof row.text !== 'string'
-    || (row.out !== undefined && row.out !== 0 && row.out !== false)) return { kind: 'invalid' };
+  if (
+    !peerId ||
+    !authorId ||
+    !cmid ||
+    timestamp === undefined ||
+    typeof row.text !== 'string' ||
+    (row.out !== undefined && row.out !== 0 && row.out !== false)
+  )
+    return { kind: 'invalid' };
 
   const recipients = new Set<number>();
-  const withoutMention = row.text.replace(/\[(id|club|public)([0-9]+)\|[^[\]\r\n]+\]/gu, (match: string, type: string, id: string) => {
-    const recipient = vkId(Number(id) * (type === 'id' ? 1 : -1));
-    if (recipient === undefined) return match;
-    recipients.add(recipient);
-    return recipient === -groupId ? '' : match;
-  });
+  const withoutMention = row.text.replace(
+    /\[(id|club|public)([0-9]+)\|[^[\]\r\n]+\]/gu,
+    (match: string, type: string, id: string) => {
+      const recipient = vkId(Number(id) * (type === 'id' ? 1 : -1));
+      if (recipient === undefined) return match;
+      recipients.add(recipient);
+      return recipient === -groupId ? '' : match;
+    },
+  );
   const isMentioned = recipients.has(-groupId);
   const reply = parseReply(row.reply_message);
-  return { kind: 'message', message: {
-    peerId, authorId, cmid, timestamp, isMentioned, soleBotMention: isMentioned && recipients.size===1,
-    ...(row.reply_message!==undefined?{hasReply:true}:{}),
-    text: isMentioned ? withoutMention.trim() : row.text,
-    attachments: parseAttachments(row.attachments),
-    reply: reply && reply.cmid < cmid ? reply : undefined,
-  } };
+  return {
+    kind: 'message',
+    message: {
+      peerId,
+      authorId,
+      cmid,
+      timestamp,
+      isMentioned,
+      soleBotMention: isMentioned && recipients.size === 1,
+      ...(row.reply_message !== undefined ? { hasReply: true } : {}),
+      text: isMentioned ? withoutMention.trim() : row.text,
+      attachments: parseAttachments(row.attachments),
+      reply: reply && reply.cmid < cmid ? reply : undefined,
+    },
+  };
 }
 
-export function normalizeVkIncoming(message: VkIncoming, groupId: number, enrichment: VkEnrichment = {}): IncomingMessage {
-  const reply = enrichment.verifiedReply?.cmid === message.reply?.cmid ? enrichment.verifiedReply : undefined;
+export function normalizeVkIncoming(
+  message: VkIncoming,
+  groupId: number,
+  enrichment: VkEnrichment = {},
+): IncomingMessage {
+  const reply =
+    enrichment.verifiedReply?.cmid === message.reply?.cmid ? enrichment.verifiedReply : undefined;
   return {
     kind: 'message',
     chatId: vkChatId(message.peerId),
@@ -186,11 +257,18 @@ export function normalizeVkIncoming(message: VkIncoming, groupId: number, enrich
     messageId: String(message.cmid),
     ...(reply ? { replyToMessageId: String(reply.cmid) } : {}),
     isReplyToBot: reply?.authorId === -groupId,
-    ...(message.hasReply || message.reply ? {
-      replyAddress: reply?.authorId === undefined ? 'unknown' : reply.authorId === -groupId ? 'bot' : 'other',
-    } : {}),
+    ...(message.hasReply || message.reply
+      ? {
+          replyAddress:
+            reply?.authorId === undefined
+              ? 'unknown'
+              : reply.authorId === -groupId
+                ? 'bot'
+                : 'other',
+        }
+      : {}),
     isMentioned: message.isMentioned,
-    ...(message.soleBotMention === undefined ? {} : {soleBotMention:message.soleBotMention}),
+    ...(message.soleBotMention === undefined ? {} : { soleBotMention: message.soleBotMention }),
     timestamp: message.timestamp,
     attachments: message.attachments,
   };

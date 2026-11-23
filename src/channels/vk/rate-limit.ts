@@ -18,16 +18,22 @@ export class VkRequestCancelled extends Error {
 
 type Wait = (ms: number, signal?: AbortSignal) => Promise<unknown>;
 
-export function createVkRateLimiter(options: {
-  readonly now?: () => number;
-  readonly wait?: Wait;
-} = {}) {
+export function createVkRateLimiter(
+  options: {
+    readonly now?: () => number;
+    readonly wait?: Wait;
+  } = {},
+) {
   const now = options.now ?? (() => performance.now());
-  const wait: Wait = options.wait ?? ((ms, signal) => delay(ms, undefined, signal ? { signal } : undefined));
+  const wait: Wait =
+    options.wait ?? ((ms, signal) => delay(ms, undefined, signal ? { signal } : undefined));
   let nextAt = Number.NEGATIVE_INFINITY;
   let tail = Promise.resolve();
 
-  return function run<T>(call: () => Promise<T>, { signal, isCurrent, allow, beforeSend }: VkRequestGuard = {}): Promise<T> {
+  return function run<T>(
+    call: () => Promise<T>,
+    { signal, isCurrent, allow, beforeSend }: VkRequestGuard = {},
+  ): Promise<T> {
     if (signal?.aborted) return Promise.reject(new VkRequestCancelled());
     const result = Promise.withResolvers<T>();
     const abort = () => result.reject(new VkRequestCancelled());
@@ -41,8 +47,20 @@ export function createVkRateLimiter(options: {
           await wait(Math.ceil(remaining), signal);
           remaining = nextAt - now();
         }
-        if ((allow && !await Promise.race([allow(), result.promise.then(() => false, () => false)]))
-          || signal?.aborted || (isCurrent && !isCurrent()) || (beforeSend && !beforeSend())) throw new VkRequestCancelled();
+        if (
+          (allow &&
+            !(await Promise.race([
+              allow(),
+              result.promise.then(
+                () => false,
+                () => false,
+              ),
+            ]))) ||
+          signal?.aborted ||
+          (isCurrent && !isCurrent()) ||
+          (beforeSend && !beforeSend())
+        )
+          throw new VkRequestCancelled();
       } catch {
         result.reject(new VkRequestCancelled());
         return;
@@ -54,7 +72,9 @@ export function createVkRateLimiter(options: {
       result.resolve(call());
     });
     // Ограничивается запуск запросов. Ожидание ответа не держит очередь лимитера.
-    tail = turn.catch(error => { result.reject(error); });
+    tail = turn.catch((error) => {
+      result.reject(error);
+    });
     return result.promise;
   };
 }

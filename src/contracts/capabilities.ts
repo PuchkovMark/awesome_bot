@@ -1,13 +1,15 @@
 import type { ChatId, Timestamp, UserId } from './identifiers';
 
-export type CapabilityName = 'send' | 'typing' | 'reply' | 'getUserName'
-  | 'adminInfo' | 'membershipEvents' | 'directMessage';
+export type CapabilityName =
+  'send' | 'typing' | 'reply' | 'getUserName' | 'adminInfo' | 'membershipEvents' | 'directMessage';
 export type CapabilityState = 'supported' | 'unsupported' | 'unknown';
 export type TextFormat = 'plain' | 'markdown' | 'html';
-export type MessageLengthLimit = {
-  readonly value: number;
-  readonly unit: 'utf16' | 'unicodeCodePoints' | 'utf8Bytes';
-} | 'unknown';
+export type MessageLengthLimit =
+  | {
+      readonly value: number;
+      readonly unit: 'utf16' | 'unicodeCodePoints' | 'utf8Bytes';
+    }
+  | 'unknown';
 
 export interface CapabilityContext {
   readonly chatId: ChatId;

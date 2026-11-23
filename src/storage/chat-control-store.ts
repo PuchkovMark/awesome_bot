@@ -15,71 +15,124 @@ export interface ChatControlState {
   readonly responseRevision: number;
 }
 
-export type ChatPause = Pick<ChatControlState,'pausedUntil'|'nextParticipantPause'|'autonomousDisabled'>;
+export type ChatPause = Pick<
+  ChatControlState,
+  'pausedUntil' | 'nextParticipantPause' | 'autonomousDisabled'
+>;
 
 export function readChatControl(db: Database, chatId: ChatId): ChatControlState {
-  const row=db.prepare(`SELECT coalesce(s.enabled,1) AS enabled,coalesce(s.response_mode,'normal') AS mode,
+  const row = db
+    .prepare(
+      `SELECT coalesce(s.enabled,1) AS enabled,coalesce(s.response_mode,'normal') AS mode,
     coalesce(s.timezone,'Europe/Moscow') AS timezone,k.paused_until AS pausedUntil,k.next_participant_pause AS nextParticipantPause,
     coalesce(k.autonomous_disabled,0) AS autonomousDisabled,coalesce(k.response_revision,0) AS responseRevision
     FROM chat_connections c LEFT JOIN chats s USING(chat_id) LEFT JOIN chat_controls k USING(chat_id,generation)
-    WHERE c.chat_id=?`).get(chatId) as (Omit<ChatControlState,'enabled'|'autonomousDisabled'> & {
-      enabled:number;autonomousDisabled:number;
-    }) | undefined;
+    WHERE c.chat_id=?`,
+    )
+    .get(chatId) as
+    | (Omit<ChatControlState, 'enabled' | 'autonomousDisabled'> & {
+        enabled: number;
+        autonomousDisabled: number;
+      })
+    | undefined;
   requireInput(row);
-  return {...row,enabled:row.enabled===1,autonomousDisabled:row.autonomousDisabled===1};
+  return { ...row, enabled: row.enabled === 1, autonomousDisabled: row.autonomousDisabled === 1 };
 }
 
 export function revokeOrdinaryWork(db: Database, chatId: ChatId) {
-  const changed=db.prepare(`INSERT INTO chat_controls(chat_id,generation,response_revision)
+  const changed = db
+    .prepare(
+      `INSERT INTO chat_controls(chat_id,generation,response_revision)
     SELECT chat_id,generation,1 FROM chat_connections WHERE chat_id=?
-    ON CONFLICT(chat_id,generation) DO UPDATE SET response_revision=response_revision+1`).run(chatId);
+    ON CONFLICT(chat_id,generation) DO UPDATE SET response_revision=response_revision+1`,
+    )
+    .run(chatId);
   if (!changed.changes) return;
-  db.prepare(`UPDATE queue_jobs SET state='terminal',outcome='interrupted' WHERE chat_id=? AND state='queued'
-    AND route_kind IS NOT NULL AND generation=(SELECT generation FROM chat_connections WHERE chat_id=?)`).run(chatId,chatId);
+  db.prepare(
+    `UPDATE queue_jobs SET state='terminal',outcome='interrupted' WHERE chat_id=? AND state='queued'
+    AND route_kind IS NOT NULL AND generation=(SELECT generation FROM chat_connections WHERE chat_id=?)`,
+  ).run(chatId, chatId);
 }
 
 export function writeChatPause(db: Database, chatId: ChatId, pause: ChatPause) {
-  if (pause.pausedUntil!==null) timestamp(pause.pausedUntil);
-  if (pause.nextParticipantPause!==null) timestamp(pause.nextParticipantPause);
-  db.prepare(`INSERT INTO chat_controls(chat_id,generation,paused_until,next_participant_pause,autonomous_disabled)
+  if (pause.pausedUntil !== null) timestamp(pause.pausedUntil);
+  if (pause.nextParticipantPause !== null) timestamp(pause.nextParticipantPause);
+  db.prepare(
+    `INSERT INTO chat_controls(chat_id,generation,paused_until,next_participant_pause,autonomous_disabled)
     SELECT chat_id,generation,?,?,? FROM chat_connections WHERE chat_id=?
     ON CONFLICT(chat_id,generation) DO UPDATE SET paused_until=excluded.paused_until,
-      next_participant_pause=excluded.next_participant_pause,autonomous_disabled=excluded.autonomous_disabled`)
-    .run(pause.pausedUntil,pause.nextParticipantPause,Number(pause.autonomousDisabled),chatId);
+      next_participant_pause=excluded.next_participant_pause,autonomous_disabled=excluded.autonomous_disabled`,
+  ).run(pause.pausedUntil, pause.nextParticipantPause, Number(pause.autonomousDisabled), chatId);
 }
 
-export function claimControlMessage(db: Database, chatId: ChatId, actorId: UserId, messageId: number): boolean {
-  requireInput(Number.isSafeInteger(messageId)&&messageId>0);
-  return db.prepare(`INSERT INTO chat_control_commands(chat_id,generation,actor_id,message_id)
+export function claimControlMessage(
+  db: Database,
+  chatId: ChatId,
+  actorId: UserId,
+  messageId: number,
+): boolean {
+  requireInput(Number.isSafeInteger(messageId) && messageId > 0);
+  return (
+    db
+      .prepare(
+        `INSERT INTO chat_control_commands(chat_id,generation,actor_id,message_id)
     SELECT chat_id,generation,?,? FROM chat_connections WHERE chat_id=?
-    ON CONFLICT DO NOTHING`).run(actorId,messageId,chatId).changes===1;
+    ON CONFLICT DO NOTHING`,
+      )
+      .run(actorId, messageId, chatId).changes === 1
+  );
 }
 
-function ordinaryAllowed(state: ChatControlState) { return state.enabled && state.mode!=='silent'; }
+function ordinaryAllowed(state: ChatControlState) {
+  return state.enabled && state.mode !== 'silent';
+}
 export function allowsAutonomousReply(state: ChatControlState, now: number): boolean {
   timestamp(now);
-  return state.enabled && state.mode==='active' && !state.autonomousDisabled &&
-    (state.pausedUntil===null || now>=state.pausedUntil);
+  return (
+    state.enabled &&
+    state.mode === 'active' &&
+    !state.autonomousDisabled &&
+    (state.pausedUntil === null || now >= state.pausedUntil)
+  );
 }
 
 export function createChatControlStore(connection: Connection, lifecycle: LifecycleBackend) {
-  const read=(scope: ConnectionScope)=>lifecycle.transaction(scope,db=>readChatControl(db,scope.chatId));
+  const read = (scope: ConnectionScope) =>
+    lifecycle.transaction(scope, (db) => readChatControl(db, scope.chatId));
   return {
     read,
     capture(scope: ConnectionScope) {
-      const received=read(scope);
-      return ()=>{
+      const received = read(scope);
+      return () => {
         try {
-          const current=read(scope);
-          return {journal:received.enabled&&current.enabled,
-            ordinary:ordinaryAllowed(received)&&ordinaryAllowed(current)&&received.responseRevision===current.responseRevision};
-        } catch { return {journal:false,ordinary:false}; }
+          const current = read(scope);
+          return {
+            journal: received.enabled && current.enabled,
+            ordinary:
+              ordinaryAllowed(received) &&
+              ordinaryAllowed(current) &&
+              received.responseRevision === current.responseRevision,
+          };
+        } catch {
+          return { journal: false, ordinary: false };
+        }
       };
     },
-    allowsAutonomous(scope: ConnectionScope, now: number) { return allowsAutonomousReply(read(scope),now); },
+    allowsAutonomous(scope: ConnectionScope, now: number) {
+      return allowsAutonomousReply(read(scope), now);
+    },
   };
 }
 
-const stores=new WeakMap<Storage,ReturnType<typeof createChatControlStore>>();
-export function registerChatControl(storage: Storage, store: ReturnType<typeof createChatControlStore>) { stores.set(storage,store); }
-export function chatControlStore(storage: Storage) { const store=stores.get(storage);requireInput(store);return store; }
+const stores = new WeakMap<Storage, ReturnType<typeof createChatControlStore>>();
+export function registerChatControl(
+  storage: Storage,
+  store: ReturnType<typeof createChatControlStore>,
+) {
+  stores.set(storage, store);
+}
+export function chatControlStore(storage: Storage) {
+  const store = stores.get(storage);
+  requireInput(store);
+  return store;
+}

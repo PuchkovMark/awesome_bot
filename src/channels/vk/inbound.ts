@@ -1,4 +1,11 @@
-import type { ChatId, ConnectionScope, EventHandler, IncomingMessage, MembershipEvent, UserId } from '../../contracts/index';
+import type {
+  ChatId,
+  ConnectionScope,
+  EventHandler,
+  IncomingMessage,
+  MembershipEvent,
+  UserId,
+} from '../../contracts/index';
 import type { createLifecycleService, createMessageRouter } from '../../core/index';
 import type { RoutedAdmissionGuard } from '../../storage/queue-types';
 import { StorageError } from '../../storage/errors';
@@ -6,16 +13,40 @@ import { createVkSdkApi } from './api';
 import type { VkInboundApi } from './api';
 import { createVkLongPoll } from './long-poll';
 import type { VkPollGap, VkPollTransport } from './long-poll';
-import { isVkGroupChat, normalizeVkIncoming, parseVkIncoming, vkChatId, type VkIncoming } from './normalize';
+import {
+  isVkGroupChat,
+  normalizeVkIncoming,
+  parseVkIncoming,
+  vkChatId,
+  type VkIncoming,
+} from './normalize';
 
-type Lifecycle = Pick<ReturnType<typeof createLifecycleService>,
-  'current' | 'admissionScope' | 'isAdmissionCurrent' | 'activeChatIds' | 'verify' | 'recordConnectionSignal'>;
+type Lifecycle = Pick<
+  ReturnType<typeof createLifecycleService>,
+  | 'current'
+  | 'admissionScope'
+  | 'isAdmissionCurrent'
+  | 'activeChatIds'
+  | 'verify'
+  | 'recordConnectionSignal'
+>;
 type Router = Pick<ReturnType<typeof createMessageRouter>, 'receive'>;
-type Dispatch = (message: IncomingMessage, scope: ConnectionScope, isCurrent: () => boolean,
-  disclosure?:RoutedAdmissionGuard,replyToOther?:boolean) => Promise<void>;
+type Dispatch = (
+  message: IncomingMessage,
+  scope: ConnectionScope,
+  isCurrent: () => boolean,
+  disclosure?: RoutedAdmissionGuard,
+  replyToOther?: boolean,
+) => Promise<void>;
 type MembershipHandler = (event: MembershipEvent) => Promise<void>;
 interface AdministrationInbound {
-  readonly membership: (scope: ConnectionScope, userId: UserId, present: boolean, messageId: number, at: number) => void;
+  readonly membership: (
+    scope: ConnectionScope,
+    userId: UserId,
+    present: boolean,
+    messageId: number,
+    at: number,
+  ) => void;
   readonly command: (message: VkIncoming, isCurrent: () => boolean) => Promise<void> | undefined;
 }
 
@@ -33,7 +64,10 @@ interface VkInboundDependencies {
   readonly transport?: VkPollTransport;
 }
 
-export function createVkInbound(options: VkInboundOptions, dependencies: VkInboundDependencies = {}) {
+export function createVkInbound(
+  options: VkInboundOptions,
+  dependencies: VkInboundDependencies = {},
+) {
   const { groupId, token, lifecycle } = options;
   if (!Number.isSafeInteger(groupId) || groupId <= 0 || !token.trim()) {
     throw new TypeError('VK inbound: invalid configuration');
@@ -42,11 +76,22 @@ export function createVkInbound(options: VkInboundOptions, dependencies: VkInbou
   const api = dependencies.api ?? createVkSdkApi(groupId, token, signal);
   const transport = dependencies.transport ?? createVkLongPoll({ api });
   const counters = {
-    ignored: 0, invalid: 0, paused: 0, dispatched: 0, failed: 0,
-    connectionChanges: 0, membershipDispatched: 0, duplicateSignals: 0, staleSignals: 0,
+    ignored: 0,
+    invalid: 0,
+    paused: 0,
+    dispatched: 0,
+    failed: 0,
+    connectionChanges: 0,
+    membershipDispatched: 0,
+    duplicateSignals: 0,
+    staleSignals: 0,
   };
   const gaps: Record<VkPollGap, number> = {
-    startup: 0, lost_position: 0, renew_server: 0, invalid_response: 0, transport_error: 0,
+    startup: 0,
+    lost_position: 0,
+    renew_server: 0,
+    invalid_response: 0,
+    transport_error: 0,
   };
   const membershipObservations = new Map<ChatId, ConnectionScope>();
   let started = false;
@@ -80,7 +125,11 @@ export function createVkInbound(options: VkInboundOptions, dependencies: VkInbou
     }
   }
 
-  async function run(dispatch: Dispatch, membership?: MembershipHandler, administration?: AdministrationInbound): Promise<void> {
+  async function run(
+    dispatch: Dispatch,
+    membership?: MembershipHandler,
+    administration?: AdministrationInbound,
+  ): Promise<void> {
     if (started) throw new Error('VK inbound: already started');
     started = true;
     let subscription = Symbol();
@@ -104,10 +153,21 @@ export function createVkInbound(options: VkInboundOptions, dependencies: VkInbou
             counters.connectionChanges++;
             try {
               const actor = event?.actorId;
-              const invitation = administration && event?.change==='invited' && actor && /^vk:[1-9]\d*$/u.test(actor) &&
-                parsed.signalKey ? { actorId:actor,messageId:Number(parsed.signalKey),timestamp:event.timestamp } : undefined;
-              const { status } = invitation ? lifecycle.recordConnectionSignal(chatId,parsed.signalKey,invitation)
-                : lifecycle.recordConnectionSignal(chatId,parsed.signalKey);
+              const invitation =
+                administration &&
+                event?.change === 'invited' &&
+                actor &&
+                /^vk:[1-9]\d*$/u.test(actor) &&
+                parsed.signalKey
+                  ? {
+                      actorId: actor,
+                      messageId: Number(parsed.signalKey),
+                      timestamp: event.timestamp,
+                    }
+                  : undefined;
+              const { status } = invitation
+                ? lifecycle.recordConnectionSignal(chatId, parsed.signalKey, invitation)
+                : lifecycle.recordConnectionSignal(chatId, parsed.signalKey);
               if (status === 'stale') {
                 counters.staleSignals++;
                 continue;
@@ -122,20 +182,40 @@ export function createVkInbound(options: VkInboundOptions, dependencies: VkInbou
             }
           }
           if (event) {
-            const subject=event.subjectId;
-            if (administration && !parsed.affectsConnection && subject && /^vk:[1-9]\d*$/u.test(subject) &&
-              parsed.signalKey && event.change!=='unknown') {
+            const subject = event.subjectId;
+            if (
+              administration &&
+              !parsed.affectsConnection &&
+              subject &&
+              /^vk:[1-9]\d*$/u.test(subject) &&
+              parsed.signalKey &&
+              event.change !== 'unknown'
+            ) {
               try {
-                administration.membership(lifecycle.admissionScope(chatId),subject,
-                  event.change==='joined'||event.change==='invited',Number(parsed.signalKey),event.timestamp);
+                administration.membership(
+                  lifecycle.admissionScope(chatId),
+                  subject,
+                  event.change === 'joined' || event.change === 'invited',
+                  Number(parsed.signalKey),
+                  event.timestamp,
+                );
               } catch (error) {
-                if (!(error instanceof StorageError && (error.code==='uncertain_connection'||error.code==='stale_scope'))) counters.failed++;
+                if (!(
+                  error instanceof StorageError &&
+                  (error.code === 'uncertain_connection' || error.code === 'stale_scope')
+                ))
+                  counters.failed++;
               }
             }
             observeMembership(chatId);
             if (membership) {
               const task = deliverMembership(event, membership)
-                .catch(() => { counters.failed++; }).finally(() => { pending.delete(task); });
+                .catch(() => {
+                  counters.failed++;
+                })
+                .finally(() => {
+                  pending.delete(task);
+                });
               pending.add(task);
             }
           }
@@ -148,9 +228,18 @@ export function createVkInbound(options: VkInboundOptions, dependencies: VkInbou
         const message = parsed.message;
         const chatId = vkChatId(message.peerId);
         const receivedIn = subscription;
-        const command=administration?.command(message,()=>!signal.aborted&&receivedIn===subscription);
+        const command = administration?.command(
+          message,
+          () => !signal.aborted && receivedIn === subscription,
+        );
         if (command) {
-          const work=command.catch(()=>{counters.failed++;}).finally(()=>{pending.delete(work);});
+          const work = command
+            .catch(() => {
+              counters.failed++;
+            })
+            .finally(() => {
+              pending.delete(work);
+            });
           pending.add(work);
           continue;
         }
@@ -160,7 +249,9 @@ export function createVkInbound(options: VkInboundOptions, dependencies: VkInbou
         } catch (error) {
           if (error instanceof StorageError && error.code === 'stale_scope') {
             counters.paused++;
-            void pause(chatId).catch(() => { counters.failed++; });
+            void pause(chatId).catch(() => {
+              counters.failed++;
+            });
             continue;
           }
           if (error instanceof StorageError && error.code === 'uncertain_connection') {
@@ -171,47 +262,68 @@ export function createVkInbound(options: VkInboundOptions, dependencies: VkInbou
           continue;
         }
         function isCurrent() {
-          return !signal.aborted && receivedIn === subscription && lifecycle.isAdmissionCurrent(scope);
+          return (
+            !signal.aborted && receivedIn === subscription && lifecycle.isAdmissionCurrent(scope)
+          );
         }
-        const disclosure=isVkGroupChat(message.peerId) ? options.captureDisclosure?.(scope) : undefined;
-        if(disclosure && !disclosure().journal) { counters.paused++; continue; }
-        const task = (tails.get(chatId) ?? Promise.resolve()).then(async () => {
-          if (!isCurrent()) {
-            counters.paused++;
-            return;
-          }
-          const enrichment = await api.enrich(message, { signal, isCurrent });
-          if (!isCurrent()) {
-            counters.paused++;
-            return;
-          }
-          counters.dispatched++;
-          const normalized=normalizeVkIncoming(message, groupId, enrichment);
-          await dispatch(normalized,scope,isCurrent,disclosure,normalized.replyAddress==='other'||normalized.replyAddress==='unknown');
-        }).catch(() => { counters.failed++; }).finally(() => {
-          pending.delete(task);
-          if (tails.get(chatId) === task) tails.delete(chatId);
-        });
+        const disclosure = isVkGroupChat(message.peerId)
+          ? options.captureDisclosure?.(scope)
+          : undefined;
+        if (disclosure && !disclosure().journal) {
+          counters.paused++;
+          continue;
+        }
+        const task = (tails.get(chatId) ?? Promise.resolve())
+          .then(async () => {
+            if (!isCurrent()) {
+              counters.paused++;
+              return;
+            }
+            const enrichment = await api.enrich(message, { signal, isCurrent });
+            if (!isCurrent()) {
+              counters.paused++;
+              return;
+            }
+            counters.dispatched++;
+            const normalized = normalizeVkIncoming(message, groupId, enrichment);
+            await dispatch(
+              normalized,
+              scope,
+              isCurrent,
+              disclosure,
+              normalized.replyAddress === 'other' || normalized.replyAddress === 'unknown',
+            );
+          })
+          .catch(() => {
+            counters.failed++;
+          })
+          .finally(() => {
+            pending.delete(task);
+            if (tails.get(chatId) === task) tails.delete(chatId);
+          });
         tails.set(chatId, task);
         pending.add(task);
       }
     }
 
     try {
-      await transport.run({
-        ...(options.onReady ? { onReady: options.onReady } : {}),
-        async onGap(reason) {
-          gaps[reason]++;
-          const next = Symbol();
-          subscription = next;
-          observing = false;
-          tails.clear();
-          membershipObservations.clear();
-          await Promise.all(lifecycle.activeChatIds('vk').map(pause));
-          if (subscription === next) observing = true;
+      await transport.run(
+        {
+          ...(options.onReady ? { onReady: options.onReady } : {}),
+          async onGap(reason) {
+            gaps[reason]++;
+            const next = Symbol();
+            subscription = next;
+            observing = false;
+            tails.clear();
+            membershipObservations.clear();
+            await Promise.all(lifecycle.activeChatIds('vk').map(pause));
+            if (subscription === next) observing = true;
+          },
+          onUpdates,
         },
-        onUpdates,
-      }, signal);
+        signal,
+      );
     } finally {
       observing = false;
       subscription = Symbol();
@@ -223,13 +335,21 @@ export function createVkInbound(options: VkInboundOptions, dependencies: VkInbou
   return Object.freeze({
     platform: 'vk' as const,
     start(handler: EventHandler) {
-      return run(message => handler(message), handler);
+      return run((message) => handler(message), handler);
     },
     /** Доверенная композиция сохраняет область подключения внутри входного пути. */
-    startRouted(router: Router, membership?: MembershipHandler, administration?: AdministrationInbound) {
-      return run(async (message,scope,isCurrent,disclosure,replyToOther) => {
-        await router.receive(scope,message,undefined,isCurrent,disclosure,replyToOther);
-      },membership,administration);
+    startRouted(
+      router: Router,
+      membership?: MembershipHandler,
+      administration?: AdministrationInbound,
+    ) {
+      return run(
+        async (message, scope, isCurrent, disclosure, replyToOther) => {
+          await router.receive(scope, message, undefined, isCurrent, disclosure, replyToOther);
+        },
+        membership,
+        administration,
+      );
     },
     hasMembershipObservation(chatId: ChatId): boolean {
       const scope = membershipObservations.get(chatId);

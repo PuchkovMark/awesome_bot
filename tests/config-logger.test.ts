@@ -8,14 +8,26 @@ import type { AppConfig } from '../src/config/types';
 import { createLogger, reportConfigError } from '../src/logger/index';
 import { captureLogs } from './helpers/log-output';
 
-const valid = { BOT_OWNER_ID: 'vk:owner', VK_TOKEN: 'environment-vk-secret', OPENCODE_API_KEY: 'environment-opencode-secret', LLM_MODEL: 'deepseek-v4.1-flash', LOG_LEVEL: 'debug' };
-const absent = () => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); };
+const valid = {
+  BOT_OWNER_ID: 'vk:owner',
+  VK_TOKEN: 'environment-vk-secret',
+  OPENCODE_API_KEY: 'environment-opencode-secret',
+  LLM_MODEL: 'deepseek-v4.1-flash',
+  LOG_LEVEL: 'debug',
+};
+const absent = () => {
+  throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+};
 
 function compose(options: ConfigOptions, consumer: (config: AppConfig) => void) {
   const output = captureLogs();
   try {
     const loaded = loadConfig(options);
-    const logger = createLogger({ level: loaded.config.log.level, redact: loaded.redact, destination: output.destination });
+    const logger = createLogger({
+      level: loaded.config.log.level,
+      redact: loaded.redact,
+      destination: output.destination,
+    });
     logger.event({ event: 'config_loaded' });
     consumer(loaded.config);
     return { output, logger };
@@ -27,7 +39,10 @@ function compose(options: ConfigOptions, consumer: (config: AppConfig) => void) 
 
 test('некорректный конфиг не создаёт зависимый компонент, диагностика безопасна', () => {
   const factory = vi.fn();
-  const { output } = compose({ env: { ...valid, OPENCODE_API_KEY: '' }, readFile: absent }, factory);
+  const { output } = compose(
+    { env: { ...valid, OPENCODE_API_KEY: '' }, readFile: absent },
+    factory,
+  );
   expect(factory).not.toHaveBeenCalled();
   expect(output.records()).toHaveLength(1);
   expect(output.records()[0]?.parameters).toEqual(['OPENCODE_API_KEY']);
@@ -49,20 +64,40 @@ test('потребитель получает выбранную модель; �
 test('выходной отладочный текст очищает активные и перекрытые ключи обоих источников', () => {
   const directory = mkdtempSync(join(tmpdir(), 'awesome-config-logger-'));
   try {
-    writeFileSync(join(directory, '.env'), 'VK_TOKEN=file-vk-secret\nOPENCODE_API_KEY=file-opencode-secret\n');
+    writeFileSync(
+      join(directory, '.env'),
+      'VK_TOKEN=file-vk-secret\nOPENCODE_API_KEY=file-opencode-secret\n',
+    );
     const factory = vi.fn();
     const { output, logger } = compose({ env: valid, cwd: directory }, factory);
-    logger?.debugText(`${valid.VK_TOKEN} ${valid.OPENCODE_API_KEY} file-vk-secret file-opencode-secret`);
-    for (const value of [valid.VK_TOKEN, valid.OPENCODE_API_KEY, 'file-vk-secret', 'file-opencode-secret']) {
+    logger?.debugText(
+      `${valid.VK_TOKEN} ${valid.OPENCODE_API_KEY} file-vk-secret file-opencode-secret`,
+    );
+    for (const value of [
+      valid.VK_TOKEN,
+      valid.OPENCODE_API_KEY,
+      'file-vk-secret',
+      'file-opencode-secret',
+    ]) {
       expect(output.text()).not.toContain(value);
     }
     expect(output.records().at(-1)?.text).toBe('[REDACTED] [REDACTED] [REDACTED] [REDACTED]');
-  } finally { rmSync(directory, { recursive: true, force: true }); }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('ошибка чтения диагностируется до создания основного логгера', () => {
   const factory = vi.fn();
-  const { output } = compose({ env: valid, readFile: () => { throw new Error(`private path ${valid.OPENCODE_API_KEY}`); } }, factory);
+  const { output } = compose(
+    {
+      env: valid,
+      readFile: () => {
+        throw new Error(`private path ${valid.OPENCODE_API_KEY}`);
+      },
+    },
+    factory,
+  );
   expect(factory).not.toHaveBeenCalled();
   expect(output.records()[0]?.code).toBe('env_file_unreadable');
   expect(output.text()).not.toContain('private path');

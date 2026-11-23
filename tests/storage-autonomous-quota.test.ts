@@ -34,22 +34,36 @@ test('12:00 UTC, первая часть в 12:03, час и сутки от р�
     const second = quota.beginAttempt(reservation, noon + 4 * minute)!;
 
     expect(quota.inspect(scope, noon + 23 * minute)).toMatchObject({
-      intervalFrom: noon + 3 * minute, intervalUntil: noon + 23 * minute, daily: 1, open: true,
+      intervalFrom: noon + 3 * minute,
+      intervalUntil: noon + 23 * minute,
+      daily: 1,
+      open: true,
     });
     expect(quota.inspect(scope, noon + hour - 1)).toMatchObject({ hourly: 1 });
     expect(backend.pruneQuotas(token, limits, 'vk', noon + hour).autonomous).toBe(0);
-    expect(quota.inspect(scope, noon + hour)).toMatchObject({ hourly: 0, daily: 1, open: true, allowed: false });
+    expect(quota.inspect(scope, noon + hour)).toMatchObject({
+      hourly: 0,
+      daily: 1,
+      open: true,
+      allowed: false,
+    });
     expect(quota.reserve(scope, noon + hour)).toBeNull();
 
     expect(quota.confirmPart(reservation, second, noon + hour + 1)).toBe(true);
     expect(quota.finish(reservation)).toBe('delivered');
     expect(quota.inspect(scope, noon + hour + 1)).toMatchObject({
-      intervalFrom: noon + 3 * minute, hourly: 0, daily: 1, open: false, allowed: true,
+      intervalFrom: noon + 3 * minute,
+      hourly: 0,
+      daily: 1,
+      open: false,
+      allowed: true,
     });
     expect(quota.inspect(scope, noon + day - 1)).toMatchObject({ daily: 1 });
     expect(quota.inspect(scope, noon + day)).toMatchObject({ daily: 0 });
     expect(backend.pruneQuotas(token, limits, 'vk', noon + day).autonomous).toBe(1);
-  } finally { await storage.close(); }
+  } finally {
+    await storage.close();
+  }
 });
 
 test('отклонённая попытка освобождает резерв, неизвестная расходует его от момента попытки', async () => {
@@ -65,7 +79,11 @@ test('отклонённая попытка освобождает резерв,
     expect(quota.rejectAttempt(rejected, first)).toBe(true);
     expect(quota.rejectAttempt(rejected, first)).toBe(false);
     expect(quota.finish(rejected)).toBe('released');
-    expect(quota.inspect(scope, noon)).toMatchObject({ allowed: true, daily: 0, intervalFrom: null });
+    expect(quota.inspect(scope, noon)).toMatchObject({
+      allowed: true,
+      daily: 0,
+      intervalFrom: null,
+    });
 
     const unknown = quota.reserve(scope, noon)!;
     const attemptedAt = noon + 55 * minute;
@@ -73,10 +91,22 @@ test('отклонённая попытка освобождает резерв,
     expect(quota.finish(unknown)).toBe('unknown');
     expect(quota.confirmPart(unknown, attempt, attemptedAt + 1)).toBe(false);
     expect(quota.finish(unknown)).toBeNull();
-    expect(quota.inspect(scope, noon + hour)).toMatchObject({ open: false, hourly: 0, daily: 1, intervalFrom: attemptedAt, allowed: false });
+    expect(quota.inspect(scope, noon + hour)).toMatchObject({
+      open: false,
+      hourly: 0,
+      daily: 1,
+      intervalFrom: attemptedAt,
+      allowed: false,
+    });
     expect(quota.reserve(scope, attemptedAt + limits.autonomousIntervalMs - 1)).toBeNull();
-    expect(quota.inspect(scope, attemptedAt + limits.autonomousIntervalMs)).toMatchObject({ allowed: true });
-    expect(quota.inspect(neighbor, noon + hour)).toMatchObject({ allowed: true, daily: 0, intervalFrom: null });
+    expect(quota.inspect(scope, attemptedAt + limits.autonomousIntervalMs)).toMatchObject({
+      allowed: true,
+    });
+    expect(quota.inspect(neighbor, noon + hour)).toMatchObject({
+      allowed: true,
+      daily: 0,
+      intervalFrom: null,
+    });
 
     await storage.chats.update(neighbor, { responseMode: 'normal' });
     expect(quota.reserve(neighbor, noon + hour)).toBeNull();
@@ -88,16 +118,26 @@ test('отклонённая попытка освобождает резерв,
 
     await storage.chats.update(neighbor, { enabled: true });
     const pauseEnd = noon + hour + minute;
-    await storage.authorization.transaction(neighbor, tx => tx.writePause({
-      pausedUntil: pauseEnd, nextParticipantPause: pauseEnd + 15 * minute, autonomousDisabled: false,
-    }));
+    await storage.authorization.transaction(neighbor, (tx) =>
+      tx.writePause({
+        pausedUntil: pauseEnd,
+        nextParticipantPause: pauseEnd + 15 * minute,
+        autonomousDisabled: false,
+      }),
+    );
     expect(quota.reserve(neighbor, pauseEnd - 1)).toBeNull();
     expect(quota.inspect(neighbor, pauseEnd).allowed).toBe(true);
-    await storage.authorization.transaction(neighbor, tx => tx.writePause({
-      pausedUntil: null, nextParticipantPause: null, autonomousDisabled: true,
-    }));
+    await storage.authorization.transaction(neighbor, (tx) =>
+      tx.writePause({
+        pausedUntil: null,
+        nextParticipantPause: null,
+        autonomousDisabled: true,
+      }),
+    );
     expect(quota.reserve(neighbor, pauseEnd + day)).toBeNull();
-  } finally { await storage.close(); }
+  } finally {
+    await storage.close();
+  }
 });
 
 test('суточный лимит держится после освобождения часового окна', async () => {
@@ -113,9 +153,21 @@ test('суточный лимит держится после освобожде
       expect(quota.confirmPart(reservation, attempt, time)).toBe(true);
       expect(quota.finish(reservation)).toBe('delivered');
     }
-    expect(quota.inspect(scope, noon + day - 1)).toMatchObject({ hourly: 0, daily: 2, open: false, allowed: false });
-    expect(quota.inspect(scope, noon + day)).toMatchObject({ hourly: 0, daily: 1, open: false, allowed: true });
-  } finally { await storage.close(); }
+    expect(quota.inspect(scope, noon + day - 1)).toMatchObject({
+      hourly: 0,
+      daily: 2,
+      open: false,
+      allowed: false,
+    });
+    expect(quota.inspect(scope, noon + day)).toMatchObject({
+      hourly: 0,
+      daily: 1,
+      open: false,
+      allowed: true,
+    });
+  } finally {
+    await storage.close();
+  }
 });
 
 test('смена владельца восстанавливает подтверждение, неизвестную попытку и не начатый резерв', async () => {
@@ -137,7 +189,9 @@ test('смена владельца восстанавливает подтве�
     oldQuota.beginAttempt(second, noon + 2 * minute);
     expect(oldQuota.reserve(unused, noon)).not.toBeNull();
     expect(oldQuota.reserve(other, noon)).not.toBeNull();
-    expect(() => backend.acquire('next', 30_000, 1000, undefined, undefined, 'vk')).toThrow('queue_owned');
+    expect(() => backend.acquire('next', 30_000, 1000, undefined, undefined, 'vk')).toThrow(
+      'queue_owned',
+    );
     expect(oldQuota.inspect(confirmed, noon + 5 * minute).open).toBe(true);
 
     backend.release(token);
@@ -147,12 +201,29 @@ test('смена владельца восстанавливает подтве�
     backend.acquire('next', 30_000, 1000, undefined, undefined, 'vk');
     const current = backend.autonomousQuota('next', limits, 'vk');
     const read = (chatId: ChatId) => current.inspect(scopeFor(storage, chatId), noon + 5 * minute);
-    expect(read(confirmed.chatId)).toMatchObject({ open: false, daily: 1, intervalFrom: noon + 3 * minute });
-    expect(read(uncertain.chatId)).toMatchObject({ open: false, daily: 1, intervalFrom: noon + 2 * minute });
-    expect(read(unused.chatId)).toMatchObject({ open: false, daily: 0, intervalFrom: null, allowed: true });
+    expect(read(confirmed.chatId)).toMatchObject({
+      open: false,
+      daily: 1,
+      intervalFrom: noon + 3 * minute,
+    });
+    expect(read(uncertain.chatId)).toMatchObject({
+      open: false,
+      daily: 1,
+      intervalFrom: noon + 2 * minute,
+    });
+    expect(read(unused.chatId)).toMatchObject({
+      open: false,
+      daily: 0,
+      intervalFrom: null,
+      allowed: true,
+    });
     expect(() => read(other.chatId)).toThrow('invalid_input');
-    expect(backend.autonomousQuota('next', limits).inspect(scopeFor(storage, other.chatId), noon).open).toBe(true);
-    expect(() => backend.autonomousQuota(token, limits).inspect(scopeFor(storage, unused.chatId), noon)).toThrow('queue_lost_ownership');
+    expect(
+      backend.autonomousQuota('next', limits).inspect(scopeFor(storage, other.chatId), noon).open,
+    ).toBe(true);
+    expect(() =>
+      backend.autonomousQuota(token, limits).inspect(scopeFor(storage, unused.chatId), noon),
+    ).toThrow('queue_lost_ownership');
   } finally {
     await storage.close();
     files.cleanup();

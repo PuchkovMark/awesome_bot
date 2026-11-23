@@ -33,7 +33,17 @@ test('создание очереди вне исходников не запу�
       await queue.stop();
       process.stdout.write('OK');
     `;
-    const result = spawnSync(process.execPath, ['--input-type=module', '--eval', code], { cwd: directory, env: {}, encoding: 'utf8', timeout: 10_000 });
-    expect(result.error).toBeUndefined(); expect(result.status, result.stderr).toBe(0); expect(result.stdout).toBe('OK'); expect(result.stderr).toBe('');
-  } finally { rmSync(directory, { recursive: true, force: true }); }
+    const result = spawnSync(process.execPath, ['--input-type=module', '--eval', code], {
+      cwd: directory,
+      env: {},
+      encoding: 'utf8',
+      timeout: 10_000,
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe('OK');
+    expect(result.stderr).toBe('');
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

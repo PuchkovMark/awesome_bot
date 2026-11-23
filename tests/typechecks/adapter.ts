@@ -1,6 +1,10 @@
 import type {
-  CapabilitySnapshot, CapabilityState, ChannelAdapter, EventHandler,
-  MessageLengthLimit, SendResult,
+  CapabilitySnapshot,
+  CapabilityState,
+  ChannelAdapter,
+  EventHandler,
+  MessageLengthLimit,
+  SendResult,
 } from '../../src/contracts/index';
 import { FakeAdapter } from '../helpers/fake-adapters';
 
@@ -15,13 +19,21 @@ export const badState: CapabilityState = 'maybe';
 // @ts-expect-error — числовой предел требует единицы измерения.
 export const bareLimit: MessageLengthLimit = 100;
 // @ts-expect-error — метод start обязателен.
-export const missingMethod: ChannelAdapter = { platform: 'test-a', capabilities: adapter.capabilities, send: adapter.send, sendTyping: adapter.sendTyping, getUserName: adapter.getUserName };
+export const missingMethod: ChannelAdapter = {
+  platform: 'test-a',
+  capabilities: adapter.capabilities,
+  send: adapter.send,
+  sendTyping: adapter.sendTyping,
+  getUserName: adapter.getUserName,
+};
 // @ts-expect-error — обработчик асинхронный и принимает объединение событий.
 export const badHandler: EventHandler = (event: string) => event;
 // @ts-expect-error — id результата строковые.
 export const badSend: ChannelAdapter['send'] = async () => [42];
 export async function requireObservation(): Promise<CapabilitySnapshot> {
-  const { observedAt, ...withoutObservation } = await adapter.capabilities({ chatId: 'test-a:chat' });
+  const { observedAt, ...withoutObservation } = await adapter.capabilities({
+    chatId: 'test-a:chat',
+  });
   void observedAt;
   // @ts-expect-error — все остальные поля корректны, но время наблюдения обязательно.
   const incompleteSnapshot: CapabilitySnapshot = withoutObservation;

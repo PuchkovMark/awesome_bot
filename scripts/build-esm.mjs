@@ -3,11 +3,13 @@ import ts from 'typescript';
 
 /** @param {readonly ts.Diagnostic[]} diagnostics */
 function printDiagnostics(diagnostics) {
-  process.stderr.write(ts.formatDiagnosticsWithColorAndContext(diagnostics, {
-    getCanonicalFileName: (file) => file,
-    getCurrentDirectory: ts.sys.getCurrentDirectory,
-    getNewLine: () => ts.sys.newLine,
-  }));
+  process.stderr.write(
+    ts.formatDiagnosticsWithColorAndContext(diagnostics, {
+      getCanonicalFileName: (file) => file,
+      getCurrentDirectory: ts.sys.getCurrentDirectory,
+      getNewLine: () => ts.sys.newLine,
+    }),
+  );
 }
 
 /** @param {ts.CompilerOptions} options */
@@ -21,31 +23,52 @@ function completeRelativeImports(options) {
       if (!ts.isStringLiteralLike(specifier)) return specifier;
       if (!/^\.\.?($|\/)/.test(specifier.text)) return specifier;
 
-      const target = ts.resolveModuleName(specifier.text, source.fileName, options, ts.sys)
-        .resolvedModule;
+      const target = ts.resolveModuleName(
+        specifier.text,
+        source.fileName,
+        options,
+        ts.sys,
+      ).resolvedModule;
       if (target?.extension !== ts.Extension.Ts) return specifier;
 
       const path = relative(dirname(source.fileName), target.resolvedFileName)
-        .split(sep).join('/').replace(/\.ts$/, '.js');
+        .split(sep)
+        .join('/')
+        .replace(/\.ts$/, '.js');
       const completePath = path.startsWith('../') ? path : `./${path}`;
-      return completePath === specifier.text ? specifier : factory.createStringLiteral(completePath);
+      return completePath === specifier.text
+        ? specifier
+        : factory.createStringLiteral(completePath);
     }
 
     /** @type {ts.Visitor} */
     function visit(node) {
       if (ts.isImportDeclaration(node)) {
-        return factory.updateImportDeclaration(node, node.modifiers, node.importClause,
-          complete(node.moduleSpecifier), node.attributes);
+        return factory.updateImportDeclaration(
+          node,
+          node.modifiers,
+          node.importClause,
+          complete(node.moduleSpecifier),
+          node.attributes,
+        );
       }
       if (ts.isExportDeclaration(node) && node.moduleSpecifier) {
-        return factory.updateExportDeclaration(node, node.modifiers, node.isTypeOnly,
-          node.exportClause, complete(node.moduleSpecifier), node.attributes);
+        return factory.updateExportDeclaration(
+          node,
+          node.modifiers,
+          node.isTypeOnly,
+          node.exportClause,
+          complete(node.moduleSpecifier),
+          node.attributes,
+        );
       }
       if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
         const [specifier, ...attributes] = node.arguments;
         if (specifier) {
-          return factory.updateCallExpression(node, node.expression, node.typeArguments,
-            [complete(specifier), ...attributes]);
+          return factory.updateCallExpression(node, node.expression, node.typeArguments, [
+            complete(specifier),
+            ...attributes,
+          ]);
         }
       }
       return ts.visitEachChild(node, visit, context);
@@ -55,10 +78,14 @@ function completeRelativeImports(options) {
   };
 }
 
-const config = ts.getParsedCommandLineOfConfigFile('tsconfig.build.json', {}, {
-  ...ts.sys,
-  onUnRecoverableConfigFileDiagnostic: (diagnostic) => printDiagnostics([diagnostic]),
-});
+const config = ts.getParsedCommandLineOfConfigFile(
+  'tsconfig.build.json',
+  {},
+  {
+    ...ts.sys,
+    onUnRecoverableConfigFileDiagnostic: (diagnostic) => printDiagnostics([diagnostic]),
+  },
+);
 if (!config || config.errors.length > 0) {
   if (config) printDiagnostics(config.errors);
   process.exitCode = 1;

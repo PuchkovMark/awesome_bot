@@ -17,8 +17,8 @@ const forbidden = [
   "void import('vk-io');",
   'void import(`vk-io/lib`);',
   "require('vk-io');",
-  "void import(packageName);",
-  "require(packageName);",
+  'void import(packageName);',
+  'require(packageName);',
   'void import(`vk-${platform}`);',
 ];
 
@@ -45,18 +45,26 @@ for (const layer of ['core', 'tools', 'contracts']) {
 }
 
 test('адаптер может импортировать платформенную библиотеку', async () => {
-  const results = await eslint.lintText("import 'vk-io';", { filePath: 'src/channels/vk/example.ts' });
+  const results = await eslint.lintText("import 'vk-io';", {
+    filePath: 'src/channels/vk/example.ts',
+  });
   expect(results.flatMap((result) => result.messages)).toEqual([]);
 });
 
 test('список расширяется без установки нового SDK', async () => {
   const extended = new ESLint({
     cwd: resolve('.'),
-    overrideConfig: [{
-      files: ['src/core/**/*.ts'],
-      rules: { [ruleId]: ['error', { packages: ['vk-io', 'example-platform-sdk'] }] },
-    }],
+    overrideConfig: [
+      {
+        files: ['src/core/**/*.ts'],
+        rules: { [ruleId]: ['error', { packages: ['vk-io', 'example-platform-sdk'] }] },
+      },
+    ],
   });
-  const results = await extended.lintText("import 'example-platform-sdk/api';", { filePath: 'src/core/example.ts' });
-  expect(results.flatMap((result) => result.messages).map((message) => message.ruleId)).toEqual([ruleId]);
+  const results = await extended.lintText("import 'example-platform-sdk/api';", {
+    filePath: 'src/core/example.ts',
+  });
+  expect(results.flatMap((result) => result.messages).map((message) => message.ruleId)).toEqual([
+    ruleId,
+  ]);
 });

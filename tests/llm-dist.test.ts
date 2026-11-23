@@ -31,9 +31,18 @@ test('dist-клиент самостоятелен: импорт и создан
       if(result.kind !== 'complete' || result.text !== 'Ответ' || calls !== 1) throw Error('Call');
       process.stdout.write('OK');
     `;
-    const result = spawnSync(process.execPath, ['--input-type=module', '--eval', code], { cwd: directory, env: {}, encoding: 'utf8', timeout: 10_000 });
-    expect(result.error).toBeUndefined(); expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toBe('OK'); expect(result.stderr).toBe('');
+    const result = spawnSync(process.execPath, ['--input-type=module', '--eval', code], {
+      cwd: directory,
+      env: {},
+      encoding: 'utf8',
+      timeout: 10_000,
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe('OK');
+    expect(result.stderr).toBe('');
     expect(readdirSync(directory).sort()).toEqual(['llm', 'package.json']);
-  } finally { rmSync(directory, { recursive: true, force: true }); }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

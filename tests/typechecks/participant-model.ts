@@ -1,10 +1,36 @@
-import type { ParticipantRecord, ParticipantProfileRecord, ProfileFactRecord } from '../../src/storage/index';
+import type {
+  ParticipantRecord,
+  ParticipantProfileRecord,
+  ProfileFactRecord,
+} from '../../src/storage/index';
 export const participant: ParticipantRecord = {
-  chatId: 'test-a:chat', userId: 'test-a:user', joinedAt: null,
-  role: 'unknown', roleObservedAt: null, status: 'unknown', statusObservedAt: null, lastSeenAt: null,
+  chatId: 'test-a:chat',
+  userId: 'test-a:user',
+  joinedAt: null,
+  role: 'unknown',
+  roleObservedAt: null,
+  status: 'unknown',
+  statusObservedAt: null,
+  lastSeenAt: null,
 };
-export const profile: ParticipantProfileRecord = { chatId: participant.chatId, userId: participant.userId, createdAt: 0, updatedAt: 0 };
-export const fact: ProfileFactRecord = { ...profile, id: 1, fieldKey: 'synthetic', value: 'Тест', sourceKind: 'inferred', sourceUserId: null, sourceMessageId: null, sourceNote: null, reliability: 'unknown', visibility: 'unknown' };
+export const profile: ParticipantProfileRecord = {
+  chatId: participant.chatId,
+  userId: participant.userId,
+  createdAt: 0,
+  updatedAt: 0,
+};
+export const fact: ProfileFactRecord = {
+  ...profile,
+  id: 1,
+  fieldKey: 'synthetic',
+  value: 'Тест',
+  sourceKind: 'inferred',
+  sourceUserId: null,
+  sourceMessageId: null,
+  sourceNote: null,
+  reliability: 'unknown',
+  visibility: 'unknown',
+};
 // @ts-expect-error — роль владельца бота не является сведениями об участии.
 export const invalidRole: ParticipantRecord = { ...participant, role: 'botOwner' };
 // @ts-expect-error — произвольный статус не входит в словарь.
@@ -26,4 +52,12 @@ export const invalidSource: ProfileFactRecord = { ...fact, sourceKind: 'modelIns
 // @ts-expect-error — произвольная аудитория не поддерживается.
 export const invalidVisibility: ProfileFactRecord = { ...fact, visibility: 'allPlatforms' };
 // @ts-expect-error — nullable поле обязательно по форме сохранённой записи.
-export const missingObservation: ParticipantRecord = { chatId: 'a:c', userId: 'a:u', joinedAt: null, role: 'unknown', status: 'unknown', statusObservedAt: null, lastSeenAt: null };
+export const missingObservation: ParticipantRecord = {
+  chatId: 'a:c',
+  userId: 'a:u',
+  joinedAt: null,
+  role: 'unknown',
+  status: 'unknown',
+  statusObservedAt: null,
+  lastSeenAt: null,
+};

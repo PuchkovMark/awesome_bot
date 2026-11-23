@@ -10,14 +10,21 @@ for (const memory of [true, false]) {
     const connection = await openConnection(memory ? ':memory:' : fixture.path);
     try {
       connection.run((db) => {
-        db.exec("CREATE VIRTUAL TABLE smoke USING fts5(text); INSERT INTO smoke(text) VALUES ('кот');");
-        expect(db.prepare('SELECT text FROM smoke WHERE smoke MATCH ?').get('кот')).toEqual({ text: 'кот' });
+        db.exec(
+          "CREATE VIRTUAL TABLE smoke USING fts5(text); INSERT INTO smoke(text) VALUES ('кот');",
+        );
+        expect(db.prepare('SELECT text FROM smoke WHERE smoke MATCH ?').get('кот')).toEqual({
+          text: 'кот',
+        });
       });
       if (!memory) expect(existsSync(fixture.path)).toBe(true);
       connection.close();
       connection.close();
       expect(() => connection.run(() => 1)).toThrow('closed');
-    } finally { connection.close(); fixture.cleanup(); }
+    } finally {
+      connection.close();
+      fixture.cleanup();
+    }
   });
 }
 test('ошибки открытия не раскрывают путь и не создают родительский каталог', async () => {
@@ -29,13 +36,17 @@ test('ошибки открытия не раскрывают путь и не �
     expect(error).not.toHaveProperty('cause');
     expect(String(error)).not.toContain('SECRET-PATH');
     expect(existsSync(join(fixture.directory, 'SECRET-PATH'))).toBe(false);
-  } finally { fixture.cleanup(); }
+  } finally {
+    fixture.cleanup();
+  }
 });
 test('ошибка инициализации закрывает соединение и скрывает SQL', async () => {
   let reference: import('better-sqlite3').Database | undefined;
-  await expect(openConnection(':memory:', (db) => {
-    reference = db;
-    db.exec('SECRET SQL');
-  })).rejects.toMatchObject({ code: 'unavailable' });
+  await expect(
+    openConnection(':memory:', (db) => {
+      reference = db;
+      db.exec('SECRET SQL');
+    }),
+  ).rejects.toMatchObject({ code: 'unavailable' });
   expect(reference?.open).toBe(false);
 });

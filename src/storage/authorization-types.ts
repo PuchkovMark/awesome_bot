@@ -1,6 +1,6 @@
 import type { ChatId, UserId, GrantBasis, Timestamp } from '../contracts/index';
 import type { RecoveryCommand, RecoveryOperation } from './admin-recovery-store';
-import type { ChatControlState,ChatPause } from './chat-control-store';
+import type { ChatControlState, ChatPause } from './chat-control-store';
 import type { ChatPatch } from './types';
 
 export interface AdminGrant {
@@ -23,7 +23,10 @@ export interface AuthorizationTransaction {
   settings(): { readonly enabled: boolean } | null;
   updateTimezone(value: string): void;
   controlState(): ChatControlState;
-  updateControlSettings(patch: Pick<ChatPatch,'enabled'|'responseMode'>, createdAt: Timestamp): void;
+  updateControlSettings(
+    patch: Pick<ChatPatch, 'enabled' | 'responseMode'>,
+    createdAt: Timestamp,
+  ): void;
   writePause(pause: ChatPause): void;
   claimControlMessage(actorId: UserId, messageId: number): boolean;
   holder(basis: GrantBasis): UserId | null;
@@ -36,6 +39,10 @@ export interface AuthorizationTransaction {
   audit(userId: UserId): RevocationAudit | null;
   recoveryBlocked(): boolean;
   recoveryCommand(ownerId: UserId, commandId: number): RecoveryOperation | undefined;
-  recordRecovery(input: RecoveryCommand, result: RecoveryOperation['result'], at: Timestamp): RecoveryOperation;
+  recordRecovery(
+    input: RecoveryCommand,
+    result: RecoveryOperation['result'],
+    at: Timestamp,
+  ): RecoveryOperation;
 }
 export type AuthorizationStore = import('./scoped-types').ScopedStorage['authorization'];

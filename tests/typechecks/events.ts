@@ -1,15 +1,39 @@
-import type { ChatId, IncomingEvent, IncomingMessage, MembershipEvent, OutgoingMessage } from '../../src/contracts/index';
+import type {
+  ChatId,
+  IncomingEvent,
+  IncomingMessage,
+  MembershipEvent,
+  OutgoingMessage,
+} from '../../src/contracts/index';
 
 export const message: IncomingMessage = {
-  kind: 'message', chatId: 'test-a:chat', userId: 'test-a:user', authorName: 'Имя',
-  isGroupChat: true, isAdmin: 'unknown', isBot: false, text: 'Текст', messageId: '1',
-  isReplyToBot: false, isMentioned: true, timestamp: 0, attachments: [],
+  kind: 'message',
+  chatId: 'test-a:chat',
+  userId: 'test-a:user',
+  authorName: 'Имя',
+  isGroupChat: true,
+  isAdmin: 'unknown',
+  isBot: false,
+  text: 'Текст',
+  messageId: '1',
+  isReplyToBot: false,
+  isMentioned: true,
+  timestamp: 0,
+  attachments: [],
 };
 export const membership: MembershipEvent = {
-  kind: 'membership', chatId: 'test-a:chat', timestamp: 0,
-  subjectId: null, actorId: null, change: 'unknown',
+  kind: 'membership',
+  chatId: 'test-a:chat',
+  timestamp: 0,
+  subjectId: null,
+  actorId: null,
+  change: 'unknown',
 };
-export const outgoing: OutgoingMessage = { chatId: 'test-a:chat', text: 'Ответ', replyToMessageId: '1' };
+export const outgoing: OutgoingMessage = {
+  chatId: 'test-a:chat',
+  text: 'Ответ',
+  replyToMessageId: '1',
+};
 
 // @ts-expect-error — составной идентификатор требует префикса с двоеточием.
 export const missingPrefix: ChatId = 'chat';
@@ -26,7 +50,13 @@ export const invalidKind: IncomingEvent = { ...message, kind: 'other' };
 // @ts-expect-error — поля сообщения не относятся к служебному варианту.
 export const mixedEvent: MembershipEvent = { ...membership, text: 'Текст' };
 // @ts-expect-error — null участник допустим, но отсутствие поля недопустимо.
-export const missingSubject: MembershipEvent = { kind: 'membership', chatId: 'test-a:chat', timestamp: 0, actorId: null, change: 'left' };
+export const missingSubject: MembershipEvent = {
+  kind: 'membership',
+  chatId: 'test-a:chat',
+  timestamp: 0,
+  actorId: null,
+  change: 'left',
+};
 
 export function requiresNarrowing(event: IncomingEvent): void {
   // @ts-expect-error — до сужения вида нельзя получить текст сообщения.

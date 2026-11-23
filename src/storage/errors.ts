@@ -1,5 +1,15 @@
-export type StorageErrorCode = 'queue_owned' | 'queue_lost_ownership' | 'invalid_input' | 'limit_exceeded' | 'unavailable' | 'schema_incompatible'
-  | 'stale_scope' | 'uncertain_connection' | 'migration_failed' | 'operation_failed' | 'closed';
+export type StorageErrorCode =
+  | 'queue_owned'
+  | 'queue_lost_ownership'
+  | 'invalid_input'
+  | 'limit_exceeded'
+  | 'unavailable'
+  | 'schema_incompatible'
+  | 'stale_scope'
+  | 'uncertain_connection'
+  | 'migration_failed'
+  | 'operation_failed'
+  | 'closed';
 
 export class StorageError extends Error {
   readonly code: StorageErrorCode;

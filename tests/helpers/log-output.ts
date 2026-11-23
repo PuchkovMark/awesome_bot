@@ -7,8 +7,18 @@ export function captureLogs(): {
 } {
   let text = '';
   return {
-    destination: { write(chunk: string) { text += chunk; } },
+    destination: {
+      write(chunk: string) {
+        text += chunk;
+      },
+    },
     text: () => text,
-    records: () => text.trim() ? text.trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>) : [],
+    records: () =>
+      text.trim()
+        ? text
+            .trim()
+            .split('\n')
+            .map((line) => JSON.parse(line) as Record<string, unknown>)
+        : [],
   };
 }
