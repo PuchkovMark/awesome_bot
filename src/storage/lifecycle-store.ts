@@ -3,8 +3,10 @@ import type {
   ChatId,
   ConnectionPauseReason,
   ConnectionScope,
+  ConnectionVersion,
   KnownBoolean,
   LifecycleObservation,
+  PausedConnection,
   UserId,
 } from '../contracts/index';
 import type { Connection } from './connection';
@@ -203,6 +205,18 @@ export function createLifecycleBackend(connection: Connection) {
           )
           .all(prefix.length, prefix) as { chatId: ChatId }[];
         return rows.map((row) => row.chatId);
+      });
+    },
+    pausedConnections(platform: string): readonly PausedConnection[] {
+      return connection.run((db) => {
+        const prefix = `${platform}:`;
+        return db
+          .prepare(
+            `SELECT chat_id AS chatId,generation,revision,pause_reason AS reason
+            FROM chat_connections WHERE state='uncertain' AND substr(chat_id,1,?)=?
+            ORDER BY chat_id`,
+          )
+          .all(prefix.length, prefix) as PausedConnection[];
       });
     },
     restore(expected: { readonly chatId: ChatId; readonly generation: number }): ConnectionScope {
@@ -534,7 +548,11 @@ export function createLifecycleBackend(connection: Connection) {
           .immediate();
       });
     },
-    ownerDecision(proof: Verification, decision: 'continue' | 'new'): ConnectionScope {
+    ownerDecision(
+      proof: Verification,
+      decision: 'continue' | 'new',
+      selected?: ConnectionVersion,
+    ): ConnectionScope {
       return connection.run((db) => {
         requireInput(!db.inTransaction);
         return db
@@ -544,6 +562,21 @@ export function createLifecycleBackend(connection: Connection) {
             if (!matches(db, proof.expected)) throw new StorageError('stale_scope');
             const { chatId } = proof.expected;
             const state = read(db, chatId);
+            if (selected) {
+              requireInput(
+                chatId === selected.chatId &&
+                  Number.isSafeInteger(selected.generation) &&
+                  selected.generation > 0 &&
+                  Number.isSafeInteger(selected.revision) &&
+                  selected.revision >= 0,
+              );
+              if (
+                state?.state !== 'uncertain' ||
+                state.generation !== selected.generation ||
+                state.revision !== selected.revision
+              )
+                throw new StorageError('stale_scope');
+            }
             if (decision === 'new') {
               const invite =
                 state &&

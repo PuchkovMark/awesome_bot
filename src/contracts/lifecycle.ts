@@ -8,6 +8,14 @@ export interface ConnectionScope {
 }
 export type ConnectionPauseReason =
   'startup' | 'observation_lost' | 'first_seen' | 'membership_signal' | 'verification_uncertain';
+export interface ConnectionVersion {
+  readonly chatId: ChatId;
+  readonly generation: number;
+  readonly revision: number;
+}
+export interface PausedConnection extends ConnectionVersion {
+  readonly reason: ConnectionPauseReason | null;
+}
 export interface LifecycleObservation {
   readonly confidence: 'confirmed' | 'uncertain' | 'unavailable';
   readonly bot: 'present' | 'absent' | 'unknown';

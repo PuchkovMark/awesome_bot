@@ -2,6 +2,7 @@ import { observationOf } from './source';
 import type {
   ChatId,
   ConnectionScope,
+  ConnectionVersion,
   KnownBoolean,
   UserId,
   LifecycleObservation,
@@ -23,6 +24,40 @@ export function createLifecycleService(options: {
   const backend = lifecycleBackend(options.storage);
   const owners = new WeakMap<object, symbol | undefined>();
   const failedPauses = new Map<ChatId, symbol>();
+  type OwnerProof = ReturnType<typeof backend.begin>;
+
+  function requireOwner(userId: UserId) {
+    if (userId !== ownerId) throw new TypeError('Lifecycle: forbidden');
+  }
+  function requirePlatform(platform: string) {
+    if (!/^[a-z][a-z0-9_-]*$/u.test(platform)) throw new TypeError('Lifecycle: invalid_platform');
+  }
+  /** Личность до вызова подтверждает приложение; функция не аутентифицирует VK. */
+  function owner(chatId: ChatId, userId: UserId) {
+    requireOwner(userId);
+    if (!validId(chatId)) throw new TypeError('Lifecycle: forbidden');
+    const proof = backend.begin(chatId);
+    owners.set(proof, failedPauses.get(chatId));
+    return proof;
+  }
+  function consumeOwner(proof: OwnerProof) {
+    if (!proof || !owners.has(proof)) throw new TypeError('Lifecycle: forbidden');
+    const pauseAtDecisionStart = owners.get(proof);
+    owners.delete(proof);
+    if (pauseAtDecisionStart !== failedPauses.get(proof.expected.chatId))
+      throw new StorageError('stale_scope');
+  }
+  function applyDecision(
+    proof: OwnerProof,
+    decision: 'continue' | 'new',
+    selected?: ConnectionVersion,
+  ) {
+    consumeOwner(proof);
+    const scope = backend.ownerDecision(proof, decision, selected);
+    failedPauses.delete(scope.chatId);
+    return scope;
+  }
+
   return Object.freeze({
     /** Только доверенная входная граница приложения, не параметры модели. */
     current(chatId: ChatId) {
@@ -34,8 +69,19 @@ export function createLifecycleService(options: {
       return backend.current(chatId, true);
     },
     activeChatIds(platform: string) {
-      if (!/^[a-z][a-z0-9_-]*$/u.test(platform)) throw new TypeError('Lifecycle: invalid_platform');
+      requirePlatform(platform);
       return backend.activeChatIds(platform);
+    },
+    /** Личность до вызова подтверждает доверенная граница приложения. */
+    pausedConnections(platform: string, userId: UserId) {
+      requireOwner(userId);
+      requirePlatform(platform);
+      return backend.pausedConnections(platform);
+    },
+    decidePaused(selected: ConnectionVersion, userId: UserId, decision: 'continue' | 'new') {
+      const proof = owner(selected.chatId, userId);
+      if (failedPauses.has(selected.chatId)) throw new StorageError('stale_scope');
+      return applyDecision(proof, decision, selected);
     },
     isAdmissionCurrent(scope: ConnectionScope) {
       try {
@@ -108,29 +154,12 @@ export function createLifecycleService(options: {
       }
       return backend.apply(proof, observationOf(observation, chatId.split(':')[0]!));
     },
-    /** Личность до вызова подтверждает приложение; функция не аутентифицирует VK. */
-    owner(chatId: ChatId, userId: UserId) {
-      if (!validId(chatId) || userId !== ownerId) throw new TypeError('Lifecycle: forbidden');
-      const proof = backend.begin(chatId);
-      owners.set(proof, failedPauses.get(chatId));
-      return proof;
+    owner,
+    decide(proof: OwnerProof, decision: 'continue' | 'new') {
+      return applyDecision(proof, decision);
     },
-    decide(proof: ReturnType<typeof backend.begin>, decision: 'continue' | 'new') {
-      if (!proof || !owners.has(proof)) throw new TypeError('Lifecycle: forbidden');
-      const pauseAtDecisionStart = owners.get(proof);
-      owners.delete(proof);
-      if (pauseAtDecisionStart !== failedPauses.get(proof.expected.chatId))
-        throw new StorageError('stale_scope');
-      const scope = backend.ownerDecision(proof, decision);
-      failedPauses.delete(scope.chatId);
-      return scope;
-    },
-    deleteData(proof: ReturnType<typeof backend.begin>, generation: number) {
-      if (!proof || !owners.has(proof)) throw new TypeError('Lifecycle: forbidden');
-      const pauseAtDecisionStart = owners.get(proof);
-      owners.delete(proof);
-      if (pauseAtDecisionStart !== failedPauses.get(proof.expected.chatId))
-        throw new StorageError('stale_scope');
+    deleteData(proof: OwnerProof, generation: number) {
+      consumeOwner(proof);
       backend.ownerDelete(proof, generation);
       failedPauses.delete(proof.expected.chatId);
     },

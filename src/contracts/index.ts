@@ -37,8 +37,10 @@ export type {
 export type {
   ConnectionPauseReason,
   ConnectionScope,
+  ConnectionVersion,
   LifecycleObservation,
   LifecycleSource,
+  PausedConnection,
 } from './lifecycle';
 export type {
   ContentKind,
