@@ -27,160 +27,216 @@ export interface ContextBuilderOptions {
   readonly sessionId: (scope: ConnectionScope) => string;
   readonly now?: () => number;
 }
+
 export function createContextBuilder(options: ContextBuilderOptions) {
-  const c = contextConfig(options.config),
-    metrics = createContextMetrics();
-  const emit = () => {
+  const config = contextConfig(options.config);
+  const metrics = createContextMetrics();
+
+  const reportStats = () => {
     try {
       options.onStats?.(metrics.snapshot());
     } catch {
-      /* Диагностика не меняет подготовку. */
+      // Сбой диагностики не должен прерывать подготовку.
     }
   };
-  async function build(w: ContextWork, signal: AbortSignal): Promise<PreparationResult> {
-    const valid = () => !signal.aborted && w.isCurrent();
-    if (!valid()) return { kind: 'cancelled' };
-    if (!w.route) return { kind: 'unavailable' };
-    const current = await options.messages.get(w.scope, w.messageId);
-    if (!valid()) return { kind: 'cancelled' };
-    if (!current || current.role !== 'user') return { kind: 'unavailable' };
-    const settings = await options.state.settings(w.scope);
-    if (!valid()) return { kind: 'cancelled' };
+
+  async function build(work: ContextWork, signal: AbortSignal): Promise<PreparationResult> {
+    const isWorkCurrent = () => !signal.aborted && work.isCurrent();
+    if (!isWorkCurrent()) return { kind: 'cancelled' };
+
+    const { scope, route } = work;
+    if (!route) return { kind: 'unavailable' };
+
+    const currentMessage = await options.messages.get(scope, work.messageId);
+    if (!isWorkCurrent()) return { kind: 'cancelled' };
+    if (!currentMessage || currentMessage.role !== 'user') return { kind: 'unavailable' };
+    const currentJournalId = currentMessage.id;
+
+    const settings = await options.state.settings(scope);
+    if (!isWorkCurrent()) return { kind: 'cancelled' };
     if (!settings?.enabled || settings.responseMode === 'silent') return { kind: 'cancelled' };
-    const version = await options.state.systemPrompt(w.scope);
-    if (!valid()) return { kind: 'cancelled' };
-    const failure = validateContextStartup(version, c);
-    if (failure) return { kind: 'failed', reason: failure };
-    if (!version || version.ref.area !== 'global' || version.ref.kind !== 'system_prompt')
-      return { kind: 'failed', reason: 'internal_error' };
-    const caps = await options.capabilities(w.scope);
-    if (!valid()) return { kind: 'cancelled' };
+
+    const systemPrompt = await options.state.systemPrompt(scope);
+    if (!isWorkCurrent()) return { kind: 'cancelled' };
+    const startupFailure = validateContextStartup(systemPrompt, config);
+    if (startupFailure) return { kind: 'failed', reason: startupFailure };
     if (
-      caps.context.chatId !== w.scope.chatId ||
-      (caps.context.userId !== undefined && caps.context.userId !== current.userId)
-    )
+      !systemPrompt ||
+      systemPrompt.ref.area !== 'global' ||
+      systemPrompt.ref.kind !== 'system_prompt'
+    ) {
       return { kind: 'failed', reason: 'internal_error' };
-    const env = formatEnvironment({
+    }
+
+    const capabilities = await options.capabilities(scope);
+    if (!isWorkCurrent()) return { kind: 'cancelled' };
+    if (
+      capabilities.context.chatId !== scope.chatId ||
+      (capabilities.context.userId !== undefined &&
+        capabilities.context.userId !== currentMessage.userId)
+    ) {
+      return { kind: 'failed', reason: 'internal_error' };
+    }
+
+    const environment = formatEnvironment({
       now: options.now?.() ?? Date.now(),
       timezone: settings.timezone,
-      platform: w.scope.chatId.split(':')[0]!,
-      capabilities: caps,
-      route: w.route,
+      platform: scope.chatId.split(':')[0]!,
+      capabilities,
+      route,
     });
-    if (Buffer.byteLength(env) > c.environmentReserveTokens)
+    if (Buffer.byteLength(environment) > config.environmentReserveTokens) {
       return { kind: 'failed', reason: 'internal_error' };
-    const system = version.text + contextSeparator + env;
+    }
+    const system = systemPrompt.text + contextSeparator + environment;
+
+    const replyPlatformMessageId = currentMessage.replyToMessageId;
     let reply: ContextEntry | null = null;
-    let replyState: 'none' | 'included' | 'truncated' | 'unavailable' = current.replyToMessageId
+    let replyState: 'none' | 'included' | 'truncated' | 'unavailable' = replyPlatformMessageId
       ? 'unavailable'
       : 'none';
     const history: ContextEntry[] = [];
-    const serialize = () =>
-      formatMessages(history, current, reply, replyState, w.route!.isGroupChat, settings.timezone);
-    // Неиспользованный резерв окружения остаётся резервом, а не историей.
-    const cost = () =>
-      estimateInput(system, serialize()) + c.environmentReserveTokens - Buffer.byteLength(env);
-    if (cost() > c.inputBudgetTokens)
-      return { kind: 'failed', reason: 'current_message_too_large' };
-    let replyId: number | undefined;
-    if (current.replyToMessageId) {
-      const source = await options.messages.reply(
-        w.scope,
-        current.replyToMessageId,
-        current.id,
-        c.replyTextCodePoints,
+    const serializeMessages = () =>
+      formatMessages(
+        history,
+        currentMessage,
+        reply,
+        replyState,
+        route.isGroupChat,
+        settings.timezone,
       );
-      if (!valid()) return { kind: 'cancelled' };
-      if (source && source.id !== current.id) {
-        replyId = source.id;
-        reply = { message: source, truncated: source.truncated };
-        replyState = source.truncated ? 'truncated' : 'included';
-        // Двоичный поиск выдержки: работа ограничена, текущий текст не обрезается.
-        if (cost() > c.inputBudgetTokens) {
-          const points = Array.from(source.text);
-          let low = 0,
-            high = points.length;
-          while (low < high) {
-            const mid = Math.ceil((low + high) / 2);
+    // Неиспользованный резерв окружения не увеличивает окно истории.
+    const fitsInputBudget = () => {
+      const inputTokens = estimateInput(system, serializeMessages());
+      const unusedEnvironmentTokens =
+        config.environmentReserveTokens - Buffer.byteLength(environment);
+      return inputTokens + unusedEnvironmentTokens <= config.inputBudgetTokens;
+    };
+    if (!fitsInputBudget()) return { kind: 'failed', reason: 'current_message_too_large' };
+
+    let replyJournalId: number | undefined;
+    if (replyPlatformMessageId) {
+      const quotedMessage = await options.messages.reply(
+        scope,
+        replyPlatformMessageId,
+        currentJournalId,
+        config.replyTextCodePoints,
+      );
+      if (!isWorkCurrent()) return { kind: 'cancelled' };
+
+      if (quotedMessage && quotedMessage.id !== currentJournalId) {
+        replyJournalId = quotedMessage.id;
+        reply = { message: quotedMessage, truncated: quotedMessage.truncated };
+        replyState = quotedMessage.truncated ? 'truncated' : 'included';
+
+        if (!fitsInputBudget()) {
+          // Двоичный поиск ограничивает число проверок бюджета при подборе выдержки.
+          const codePoints = Array.from(quotedMessage.text);
+          let minCodePoints = 0;
+          let maxCodePoints = codePoints.length;
+          replyState = 'truncated';
+
+          while (minCodePoints < maxCodePoints) {
+            const candidateCodePoints = Math.ceil((minCodePoints + maxCodePoints) / 2);
             reply = {
-              message: { ...source, text: points.slice(0, mid).join('') },
+              message: {
+                ...quotedMessage,
+                text: codePoints.slice(0, candidateCodePoints).join(''),
+              },
               truncated: true,
             };
-            replyState = 'truncated';
-            if (cost() <= c.inputBudgetTokens) low = mid;
-            else high = mid - 1;
+            if (fitsInputBudget()) minCodePoints = candidateCodePoints;
+            else maxCodePoints = candidateCodePoints - 1;
           }
-          reply = low
-            ? { message: { ...source, text: points.slice(0, low).join('') }, truncated: true }
+
+          reply = minCodePoints
+            ? {
+                message: { ...quotedMessage, text: codePoints.slice(0, minCodePoints).join('') },
+                truncated: true,
+              }
             : null;
-          replyState = low ? 'truncated' : 'unavailable';
+          replyState = reply ? 'truncated' : 'unavailable';
         }
       }
     }
-    let before = current.id,
-      scanned = 0,
-      truncated = !!reply && c.maxHistoryMessages === 1,
-      done = false;
+
+    let beforeJournalId = currentJournalId;
+    let scannedMessages = 0;
+    let historyTruncated = !!reply && config.maxHistoryMessages === 1;
+    let stopReadingHistory = false;
     while (
-      !done &&
-      scanned < c.maxScannedMessages &&
-      history.length + (reply ? 1 : 0) < c.maxHistoryMessages
+      !stopReadingHistory &&
+      scannedMessages < config.maxScannedMessages &&
+      history.length + (reply ? 1 : 0) < config.maxHistoryMessages
     ) {
-      const limit = Math.min(c.historyPageSize, c.maxScannedMessages - scanned);
-      const page = await options.messages.page(w.scope, {
-        cutoffId: current.id,
-        beforeId: before,
-        limit,
-        textLimit: c.historyTextCodePoints,
+      const pageLimit = Math.min(
+        config.historyPageSize,
+        config.maxScannedMessages - scannedMessages,
+      );
+      const page = await options.messages.page(scope, {
+        cutoffId: currentJournalId,
+        beforeId: beforeJournalId,
+        limit: pageLimit,
+        textLimit: config.historyTextCodePoints,
       });
-      if (!valid()) return { kind: 'cancelled' };
+      if (!isWorkCurrent()) return { kind: 'cancelled' };
       if (!page.length) break;
+
       for (const message of page) {
-        scanned++;
-        before = message.id;
-        if (message.id === replyId) continue;
-        const entry: ContextEntry = { message, truncated: message.truncated };
-        history.unshift(entry);
-        if (cost() > c.inputBudgetTokens) {
+        scannedMessages++;
+        beforeJournalId = message.id;
+        if (message.id === replyJournalId) continue;
+
+        history.unshift({ message, truncated: message.truncated });
+        if (!fitsInputBudget()) {
           history.shift();
-          truncated = true;
-          done = true;
+          historyTruncated = true;
+          stopReadingHistory = true;
           break;
         }
-        if (message.truncated) truncated = true;
-        if (history.length + (reply ? 1 : 0) >= c.maxHistoryMessages) {
-          truncated = true;
-          done = true;
+        if (message.truncated) historyTruncated = true;
+        if (history.length + (reply ? 1 : 0) >= config.maxHistoryMessages) {
+          historyTruncated = true;
+          stopReadingHistory = true;
           break;
         }
       }
-      if (page.length < limit) break;
+      if (page.length < pageLimit) break;
+
       await yieldImmediate();
-      if (!valid()) return { kind: 'cancelled' };
+      if (!isWorkCurrent()) return { kind: 'cancelled' };
     }
-    if (scanned >= c.maxScannedMessages) truncated = true;
-    const latest = await options.state.settings(w.scope);
-    if (!valid() || !latest?.enabled || latest.responseMode === 'silent')
+    if (scannedMessages >= config.maxScannedMessages) historyTruncated = true;
+
+    const latestSettings = await options.state.settings(scope);
+    if (!isWorkCurrent()) return { kind: 'cancelled' };
+    if (!latestSettings?.enabled || latestSettings.responseMode === 'silent') {
       return { kind: 'cancelled' };
-    const messages = Object.freeze(serialize().map((m) => Object.freeze({ ...m })));
+    }
+
+    const messages = Object.freeze(
+      serializeMessages().map((message) => Object.freeze({ ...message })),
+    );
     const estimatedTokens = estimateInput(system, messages);
-    if (estimatedTokens > c.inputBudgetTokens) return { kind: 'failed', reason: 'internal_error' };
+    if (estimatedTokens > config.inputBudgetTokens) {
+      return { kind: 'failed', reason: 'internal_error' };
+    }
     const metadata = Object.freeze({
-      version: Object.freeze({ ...version.ref }),
-      cutoffId: current.id,
+      version: Object.freeze({ ...systemPrompt.ref }),
+      cutoffId: currentJournalId,
       messageIds: Object.freeze([
-        ...history.map((e) => e.message.id),
+        ...history.map((entry) => entry.message.id),
         ...(reply ? [reply.message.id] : []),
-        current.id,
+        currentJournalId,
       ]),
       layerBytes: Object.freeze({
-        system: Buffer.byteLength(version.text),
-        environment: Buffer.byteLength(env),
-        messages: messages.reduce((n, m) => n + Buffer.byteLength(m.text), 0),
+        system: Buffer.byteLength(systemPrompt.text),
+        environment: Buffer.byteLength(environment),
+        messages: messages.reduce((bytes, message) => bytes + Buffer.byteLength(message.text), 0),
       }),
       estimatedTokens,
-      scanned,
-      historyTruncated: truncated,
+      scanned: scannedMessages,
+      historyTruncated,
       reply: replyState,
       absentLayers: Object.freeze(['persona', 'passport', 'profiles', 'memory', 'summaries']),
     });
@@ -189,31 +245,32 @@ export function createContextBuilder(options: ContextBuilderOptions) {
       input: Object.freeze({
         system,
         messages,
-        maxOutputTokens: c.maxOutputTokens,
-        sessionId: options.sessionId(w.scope),
+        maxOutputTokens: config.maxOutputTokens,
+        sessionId: options.sessionId(scope),
       }),
       metadata,
     };
   }
+
   return Object.freeze({
-    config: c,
+    config,
     stats: metrics.snapshot,
     checkStartup(version: Parameters<typeof validateContextStartup>[0]) {
-      const failure = validateContextStartup(version, c);
+      const failure = validateContextStartup(version, config);
       if (failure) metrics.record(failure);
-      emit();
+      reportStats();
       return failure;
     },
     async prepare(work: ContextWork): Promise<PreparationResult> {
-      const timer = new AbortController();
-      const signal = AbortSignal.any([work.signal, timer.signal]);
-      let abort: () => void = () => {};
+      const deadline = new AbortController();
+      const signal = AbortSignal.any([work.signal, deadline.signal]);
+      let onAbort: () => void = () => {};
       const interrupted = new Promise<PreparationResult>((resolve) => {
-        abort = () => resolve({ kind: work.signal.aborted ? 'cancelled' : 'deadline_exceeded' });
-        signal.addEventListener('abort', abort, { once: true });
-        if (signal.aborted) abort();
+        onAbort = () => resolve({ kind: work.signal.aborted ? 'cancelled' : 'deadline_exceeded' });
+        signal.addEventListener('abort', onAbort, { once: true });
+        if (signal.aborted) onAbort();
       });
-      const timeout = setTimeout(() => timer.abort(), c.preparationTimeoutMs);
+      const timeout = setTimeout(() => deadline.abort(), config.preparationTimeoutMs);
       try {
         const result = await Promise.race([
           build(work, signal).catch((): PreparationResult =>
@@ -224,11 +281,11 @@ export function createContextBuilder(options: ContextBuilderOptions) {
           interrupted,
         ]);
         metrics.record(result);
-        emit();
+        reportStats();
         return result;
       } finally {
         clearTimeout(timeout);
-        signal.removeEventListener('abort', abort);
+        signal.removeEventListener('abort', onAbort);
       }
     },
   });
