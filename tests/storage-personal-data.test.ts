@@ -226,7 +226,7 @@ test('перечень источников F5.8 охватывает табли
       personal:
         'chat_participants participant_profiles profile_facts chat_author_labels messages request_quota_admissions chat_control_commands history_clear_requests personal_profile_choices personal_exports address_preferences',
       dependent:
-        'messages_fts messages_fts_config messages_fts_data messages_fts_docsize messages_fts_idx personal_answer_sources queue_jobs response_traces mention_flood_inputs autonomous_questions autonomous_reply_parts',
+        'messages_fts messages_fts_config messages_fts_data messages_fts_docsize messages_fts_idx personal_answer_sources tool_answer_subjects queue_jobs response_traces mention_flood_inputs autonomous_questions autonomous_reply_parts',
       authority:
         'admin_presence admin_observations admin_recovery_operations bot_admin_grants bot_admin_revocations bot_admin_revocation_audit personal_retained_denials',
       privateReminders:

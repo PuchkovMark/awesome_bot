@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import { expect, test } from 'vitest';
 import { migrate } from '../src/storage/migrate';
 const tables = [
+  'tool_answer_subjects',
   'address_preferences',
   'participant_sync',
   'participant_events',

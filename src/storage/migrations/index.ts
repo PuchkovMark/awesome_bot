@@ -1,3 +1,4 @@
+import { toolAnswerSubjects } from './030-tool-answer-subjects';
 import { profileFactEvents } from './029-profile-fact-events';
 import { delegationFinalBudget } from './028-delegation-final-budget';
 import { addressPreferences } from './027-address-preferences';
@@ -62,4 +63,5 @@ export const migrations: readonly Migration[] = [
   addressPreferences,
   delegationFinalBudget,
   profileFactEvents,
+  toolAnswerSubjects,
 ];

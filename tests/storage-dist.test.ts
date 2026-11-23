@@ -88,6 +88,7 @@ test('ESM-выпуск открывает БД вне проекта без ис
         { version: 27 },
         { version: 28 },
         { version: 29 },
+        { version: 30 },
       ]);
       expect(inspection.pragma('foreign_key_check')).toEqual([]);
     } finally {
