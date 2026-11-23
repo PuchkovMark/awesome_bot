@@ -18,7 +18,7 @@ function call(name: string, id: string, params: unknown): LlmToolCall {
 function calls(...calls: LlmToolCall[]) {
   return { kind: 'tool_calls' as const, calls, text: null, usage: { input: 1, output: 1 } };
 }
-async function seed(app: App) {
+async function seed(app: App, lastText = 'Маяк вечером') {
   const append = (id: string, text: string, time: number) =>
     app.storage.messages.append(app.scope, {
       chatId: chat,
@@ -31,7 +31,7 @@ async function seed(app: App) {
       text,
     });
   const first = await append('first', 'Маяк утром', app.start - 8000);
-  const last = await append('last', 'Маяк вечером', app.start - 4000);
+  const last = await append('last', lastText, app.start - 4000);
   // Обе строки находятся за пределами недавнего окна.
   for (let n = 0; n < 24; n++)
     await append('divider' + n, 'Переписка '.repeat(110), app.start - 2000);
@@ -172,14 +172,19 @@ test.each([false, true])(
   async (remove) => {
     const app = await fixture();
     try {
-      const { last } = await seed(app);
+      const { last } = await seed(app, 'Маяк вечером "🌊" '.repeat(300));
       app.complete.mockImplementation(async (req) => {
         const tool = req.messages.find((m) => m.role === 'tool');
         if (req.system.includes('Выполни указанную подзадачу')) {
           expect(estimateRequestInput(req)).toBeLessThanOrEqual(2560);
           if (!tool) return calls(lookup);
           const material = JSON.parse(tool.text);
-          expect(JSON.parse(material.text)).toMatchObject({ found: 2, shown: 1 });
+          expect(JSON.parse(material.text)).toMatchObject({
+            found: 2,
+            shown: 1,
+            messages: [{ truncated: true }],
+          });
+          expect(Buffer.byteLength(JSON.stringify(tool)) + 32).toBeLessThanOrEqual(2048);
           if (remove) app.db.prepare('DELETE FROM messages WHERE id=?').run(last);
           return {
             ...answer,
