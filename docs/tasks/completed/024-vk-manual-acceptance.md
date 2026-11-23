@@ -5,7 +5,7 @@
 - Статус: выполнено
 - Дата: 2026-11-22
 - Дата завершения: 2026-11-22
-- Связанные документы: [F3.5](../../roadmap.md#веха-3-vk-работает), [план фичи](../../plans/completed/024-vk-manual-acceptance.md), [план реализации](../../impl-plans/completed/024-vk-manual-acceptance.md), [запуск приложения F3.4](023-application-lifecycle.md), [набор сценариев F2.8](019-evaluation-harness.md), [защита контекста F2.7](../018-untrusted-context.md), [доступ провайдера F2.9](../011-go-model-validation.md).
+- Связанные документы: [F3.5](../../roadmap.md#веха-3-vk-работает), [план фичи](../../plans/completed/024-vk-manual-acceptance.md), [план реализации](../../impl-plans/completed/024-vk-manual-acceptance.md), [запуск приложения F3.4](023-application-lifecycle.md), [набор сценариев F2.8](019-evaluation-harness.md), [защита контекста F2.7](../018-untrusted-context.md), [доступ провайдера F2.9](011-go-model-validation.md).
 
 ## Проблема или цель
 

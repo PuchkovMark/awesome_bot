@@ -8,7 +8,7 @@
 - Подтверждение: пользователь утвердил задачу 2026-11-22 сообщением «подтверждаю, продолжай»; поведенческие уточнения получены 2026-11-22 и отражены ниже.
 - План фичи: [014 — подход и решения](../../plans/completed/014-message-router.md), утверждён человеком 2026-11-22.
 - План реализации: [014 — шаги и проверки](../../impl-plans/completed/014-message-router.md), выполнено.
-- Связанные документы: [F2.4](../../roadmap.md#веха-2-ядро-без-платформы), [проект](../../project.md), [архитектура](../../specs/architecture.md), [этикет](../../specs/chat-etiquette.md), [хранилище](../../specs/storage.md), [безопасность](../../specs/security.md), [каналы](../../specs/channels.md), [команды и лимиты](../../specs/commands-and-limits.md), [агентный цикл](../../specs/agent-loop.md), [оценочные сценарии](../../specs/evals.md), [очередь F2.3](013-chat-queue.md), [цикл F2.2](../012-agent-loop.md).
+- Связанные документы: [F2.4](../../roadmap.md#веха-2-ядро-без-платформы), [проект](../../project.md), [архитектура](../../specs/architecture.md), [этикет](../../specs/chat-etiquette.md), [хранилище](../../specs/storage.md), [безопасность](../../specs/security.md), [каналы](../../specs/channels.md), [команды и лимиты](../../specs/commands-and-limits.md), [агентный цикл](../../specs/agent-loop.md), [оценочные сценарии](../../specs/evals.md), [очередь F2.3](013-chat-queue.md), [цикл F2.2](012-agent-loop.md).
 
 ## Проблема или цель
 

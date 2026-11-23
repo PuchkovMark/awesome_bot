@@ -5,7 +5,7 @@
 - Статус: выполнено
 - Дата: 2026-11-22
 - Дата завершения: 2026-11-22
-- Связанные документы: [F2.6](../../roadmap.md#веха-2-ядро-без-платформы), [проект](../../project.md), [решения](../../decisions.md), [цикл](../../specs/agent-loop.md#трассировка-ответа), [контекст](../../specs/context.md), [хранилище](../../specs/storage.md), [privacy](../../specs/privacy.md), [безопасность](../../specs/security.md#полномочия-владельца-бота), [команды](../../specs/commands-and-limits.md#объяснение-ответа-и-расход), [завершённая F2.5](015-context-builder.md), [цикл F2.2](../012-agent-loop.md).
+- Связанные документы: [F2.6](../../roadmap.md#веха-2-ядро-без-платформы), [проект](../../project.md), [решения](../../decisions.md), [цикл](../../specs/agent-loop.md#трассировка-ответа), [контекст](../../specs/context.md), [хранилище](../../specs/storage.md), [privacy](../../specs/privacy.md), [безопасность](../../specs/security.md#полномочия-владельца-бота), [команды](../../specs/commands-and-limits.md#объяснение-ответа-и-расход), [завершённая F2.5](015-context-builder.md), [цикл F2.2](012-agent-loop.md).
 
 Задача утверждена человеком 2026-11-22 сообщением «подтверждаю, продолжай». [План фичи](../../plans/completed/017-response-tracing.md) утверждён; [план реализации](../../impl-plans/completed/017-response-tracing.md) утверждён человеком и реализован.
 

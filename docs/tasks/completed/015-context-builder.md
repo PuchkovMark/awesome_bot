@@ -5,7 +5,7 @@
 - Статус: выполнено
 - Дата: 2026-11-22
 - Дата завершения: 2026-11-22
-- Связанные документы: [F2.5](../../roadmap.md#веха-2-ядро-без-платформы), [проект](../../project.md), [контекст](../../specs/context.md), [архитектура](../../specs/architecture.md), [хранилище](../../specs/storage.md), [безопасность](../../specs/security.md), [каналы](../../specs/channels.md), [цикл](../../specs/agent-loop.md), [evals](../../specs/evals.md), [версии F1.7](009-prompt-and-persona-versioning.md), [очередь F2.3](013-chat-queue.md), [роутер F2.4](014-message-router.md), [цикл F2.2](../012-agent-loop.md).
+- Связанные документы: [F2.5](../../roadmap.md#веха-2-ядро-без-платформы), [проект](../../project.md), [контекст](../../specs/context.md), [архитектура](../../specs/architecture.md), [хранилище](../../specs/storage.md), [безопасность](../../specs/security.md), [каналы](../../specs/channels.md), [цикл](../../specs/agent-loop.md), [evals](../../specs/evals.md), [версии F1.7](009-prompt-and-persona-versioning.md), [очередь F2.3](013-chat-queue.md), [роутер F2.4](014-message-router.md), [цикл F2.2](012-agent-loop.md).
 
 ## Проблема или цель
 

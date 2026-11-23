@@ -8,7 +8,7 @@
 - Подтверждение: пользователь утвердил обновлённую задачу 2026-11-22 сообщением «Да, задачу можно утверждать».
 - План фичи: [013 — подход и решения](../../plans/completed/013-chat-queue.md), утверждён с правками 2026-11-22.
 - План реализации: [013 — шаги и проверки](../../impl-plans/completed/013-chat-queue.md), утверждён человеком 2026-11-22 и выполнен.
-- Связанные документы: [F2.3](../../roadmap.md#веха-2-ядро-без-платформы), [проект](../../project.md), [архитектура](../../specs/architecture.md), [хранилище](../../specs/storage.md), [агентный цикл](../../specs/agent-loop.md), [privacy](../../specs/privacy.md), [правила команд](../../specs/commands-and-limits.md), [жизненный цикл F1.6b](007-chat-connection-lifecycle.md), [цикл F2.2](../012-agent-loop.md).
+- Связанные документы: [F2.3](../../roadmap.md#веха-2-ядро-без-платформы), [проект](../../project.md), [архитектура](../../specs/architecture.md), [хранилище](../../specs/storage.md), [агентный цикл](../../specs/agent-loop.md), [privacy](../../specs/privacy.md), [правила команд](../../specs/commands-and-limits.md), [жизненный цикл F1.6b](007-chat-connection-lifecycle.md), [цикл F2.2](012-agent-loop.md).
 
 ## Проблема или цель
 

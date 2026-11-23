@@ -5,7 +5,7 @@
 - Статус: утверждено
 - Дата: 2026-11-22
 - Дата завершения: —
-- Связанные документы: [задача 018](../tasks/018-untrusted-context.md), [дорожная карта](../roadmap.md#веха-2-ядро-без-платформы), [решения](../decisions.md#утверждение-задачи-f27-и-порядка-приёмки), [контекст](../specs/context.md), [безопасность](../specs/security.md), [оценочные тесты](../specs/evals.md), [архитектура](../specs/architecture.md), [цикл](../specs/agent-loop.md), [хранилище](../specs/storage.md), [проверка провайдера](../tasks/011-go-model-validation.md).
+- Связанные документы: [задача 018](../tasks/018-untrusted-context.md), [дорожная карта](../roadmap.md#веха-2-ядро-без-платформы), [решения](../decisions.md#утверждение-задачи-f27-и-порядка-приёмки), [контекст](../specs/context.md), [безопасность](../specs/security.md), [оценочные тесты](../specs/evals.md), [архитектура](../specs/architecture.md), [цикл](../specs/agent-loop.md), [хранилище](../specs/storage.md), [проверка провайдера](../tasks/completed/011-go-model-validation.md).
 
 ## Подход и ключевые решения
 
