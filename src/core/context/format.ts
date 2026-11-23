@@ -13,15 +13,19 @@ function formatData(fields: object): string {
   return JSON.stringify({ ...dataMarker, ...fields });
 }
 
-export function messageData(entry: ContextEntry, timezone: string) {
+export function createMessageTimeFormatter(timezone: string) {
+  return new Intl.DateTimeFormat('ru-RU', {
+    timeZone: timezone,
+    dateStyle: 'short',
+    timeStyle: 'medium',
+  });
+}
+
+function messageData(entry: ContextEntry, time: Intl.DateTimeFormat) {
   const m = entry.message;
   return {
     author: m.authorName,
-    time: new Intl.DateTimeFormat('ru-RU', {
-      timeZone: timezone,
-      dateStyle: 'short',
-      timeStyle: 'medium',
-    }).format(m.timestamp),
+    time: time.format(m.timestamp),
     bot: m.role === 'assistant',
     text:
       m.text ||
@@ -37,25 +41,25 @@ export function formatMessages(
   reply: ContextEntry | null,
   replyState: string,
   group: boolean,
-  timezone: string,
+  time: Intl.DateTimeFormat,
 ): readonly AgentLoopMessage[] {
   const quote = reply
-    ? messageData(reply, timezone)
+    ? messageData(reply, time)
     : replyState === 'unavailable'
       ? { unavailable: true }
       : null;
-  const latest = { reply: quote, current: messageData({ message: current }, timezone) };
+  const latest = { reply: quote, current: messageData({ message: current }, time) };
   if (group)
     return [
       {
         role: 'user',
-        text: formatData({ history: history.map((m) => messageData(m, timezone)), ...latest }),
+        text: formatData({ history: history.map((m) => messageData(m, time)), ...latest }),
       },
     ];
   return [
     ...history.map((entry) => ({
       role: entry.message.role,
-      text: formatData({ history: messageData(entry, timezone) }),
+      text: formatData({ history: messageData(entry, time) }),
     })),
     { role: 'user', text: formatData(latest) },
   ];

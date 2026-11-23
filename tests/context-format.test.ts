@@ -1,5 +1,6 @@
 import { expect, test } from 'vitest';
-import { formatMessages } from '../src/core/context/format';
+import { createMessageTimeFormatter, formatMessages } from '../src/core/context/format';
+const utc = createMessageTimeFormatter('UTC');
 const current = {
   id: 1,
   chatId: 'vk:a',
@@ -13,7 +14,7 @@ const current = {
 } as const;
 const history = { message: { ...current, id: 2, role: 'assistant' as const } };
 test('данные не создают системную роль, текущее сообщение ровно один раз', () => {
-  const messages = formatMessages([], current, history, 'included', true, 'UTC');
+  const messages = formatMessages([], current, history, 'included', true, utc);
   expect(messages.map((message) => message.role)).toEqual(['user']);
   const data = JSON.parse(messages[0]!.text);
   expect(Object.keys(data)).toEqual(['kind', 'history', 'reply', 'current']);
@@ -36,7 +37,7 @@ test('роли лички и честная заглушка одного вло
     null,
     'none',
     false,
-    'UTC',
+    utc,
   );
   expect(messages.map((m) => m.role)).toEqual(['assistant', 'user']);
   expect(JSON.parse(messages[0]!.text)).toEqual({
@@ -59,7 +60,7 @@ test('роли лички и честная заглушка одного вло
     },
   });
   expect(
-    formatMessages([], { ...current, text: '' }, null, 'none', false, 'UTC')[0]!.text,
+    formatMessages([], { ...current, text: '' }, null, 'none', false, utc)[0]!.text,
   ).not.toContain('Вложение:');
 });
 
@@ -67,7 +68,7 @@ test.each([true, false])('точный JSON пустого окна, бесед�
   const entry = { ...current, authorName: 'Яна "Я"', text: 'Да\n"😀"' };
   const data = String.raw`{"author":"Яна \"Я\"","time":"01.01.1970, 00:00:00","bot":false,"text":"Да\n\"😀\""}`;
   const historyField = isGroupChat ? '"history":[],' : '';
-  expect(formatMessages([], entry, null, 'none', isGroupChat, 'UTC')).toEqual([
+  expect(formatMessages([], entry, null, 'none', isGroupChat, utc)).toEqual([
     {
       role: 'user',
       text: `{"kind":"untrusted_chat_data",${historyField}"reply":null,"current":${data}}`,

@@ -6,7 +6,7 @@ import { contextConfig, type ContextConfig } from './config';
 import { contextSeparator, estimateInput } from './budget';
 import { validateContextStartup } from './startup';
 import { formatEnvironment, type ContextRoute } from './environment';
-import { formatMessages, type ContextEntry } from './format';
+import { createMessageTimeFormatter, formatMessages, type ContextEntry } from './format';
 import type { PreparationResult } from './types';
 import { createContextMetrics } from './metrics';
 export interface ContextWork {
@@ -96,15 +96,9 @@ export function createContextBuilder(options: ContextBuilderOptions) {
       ? 'unavailable'
       : 'none';
     const history: ContextEntry[] = [];
+    const messageTime = createMessageTimeFormatter(settings.timezone);
     const serializeMessages = () =>
-      formatMessages(
-        history,
-        currentMessage,
-        reply,
-        replyState,
-        route.isGroupChat,
-        settings.timezone,
-      );
+      formatMessages(history, currentMessage, reply, replyState, route.isGroupChat, messageTime);
     // Неиспользованный резерв окружения не увеличивает окно истории.
     const fitsInputBudget = () => {
       const inputTokens = estimateInput(system, serializeMessages());
