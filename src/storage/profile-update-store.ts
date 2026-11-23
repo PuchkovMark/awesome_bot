@@ -1,10 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import type { Database } from 'better-sqlite3';
-import type { ChatId, ConnectionScope, UserId } from '../contracts/index';
+import type { ChatId, ConnectionScope } from '../contracts/index';
 import type { Connection } from './connection';
+import type { LlmUsage } from '../llm/types';
+import {
+  canReserveTokens,
+  insertTokenReservation,
+  reconcileTokenReservation,
+} from './token-budget-store';
 import { historyBounds } from './history-retention-store';
 import type { LifecycleBackend } from './lifecycle-store';
-import { profileAdmitted } from './personal-data-store';
+import { actualMessage, sourceAdmitted, type ProfileUpdateSource } from './profile-update-intake';
 import type { Storage } from './types';
 import { requireInput, timestamp } from './validation';
 
@@ -13,12 +19,6 @@ export const profileUpdateWaitMs = 3_600_000;
 export const profileUpdateIntervalMs = 300_000;
 const inScope = 'chat_id=? AND generation=?';
 
-export interface ProfileUpdateSource {
-  readonly id: number;
-  readonly user: UserId;
-  readonly text: string;
-  readonly at: number;
-}
 interface WaitingSource extends ProfileUpdateSource {
   readonly queuedAt: number;
 }
@@ -34,42 +34,6 @@ interface Run {
 
 function enabled(db: Database, scope: ConnectionScope) {
   return !!db.prepare('SELECT 1 FROM chats WHERE chat_id=? AND enabled=1').get(scope.chatId);
-}
-
-function sourceAdmitted(db: Database, scope: ConnectionScope, source: ProfileUpdateSource) {
-  return (
-    Boolean(source.text.trim()) &&
-    !db
-      .prepare(
-        "SELECT 1 FROM chat_participants WHERE chat_id=? AND user_id=? AND status IN ('left','removed','absent')",
-      )
-      .get(scope.chatId, source.user) &&
-    profileAdmitted(db, scope, source.user, source.at, 'write')
-  );
-}
-
-const actualMessage = "m.role='user' AND m.sender_bot=0 AND m.purpose='conversation'";
-
-/** Вызывается при регистрации принятой обычной реплики в транзакции журнала. */
-export function rememberProfileUpdate(
-  db: Database,
-  scope: ConnectionScope,
-  messageId: number,
-  now: number,
-) {
-  requireInput(db.inTransaction);
-  const bounds = historyBounds(db, scope.chatId, now);
-  const source = db
-    .prepare(
-      `SELECT id,user_id AS user,text,timestamp AS at FROM personal_visible_messages m
-    WHERE m.chat_id=? AND m.id=? AND m.id>? AND m.timestamp>? AND ${actualMessage}`,
-    )
-    .get(scope.chatId, messageId, bounds.clearedThrough, bounds.expiredThrough) as
-    ProfileUpdateSource | undefined;
-  if (!source || !sourceAdmitted(db, scope, source)) return;
-  db.prepare(
-    'INSERT OR IGNORE INTO profile_update_waiting(message_id,chat_id,generation,queued_at) VALUES(?,?,?,?)',
-  ).run(messageId, scope.chatId, scope.generation, now);
 }
 
 function previousRun(db: Database, scope: ConnectionScope) {
@@ -147,19 +111,41 @@ export function createProfileUpdateStore(connection: Connection, lifecycle: Life
       scope: ConnectionScope,
       ids: readonly number[],
       now: number,
+      budget: { readonly group: boolean; readonly input: number; readonly output: number },
     ): ProfileUpdateAttempt | null {
       timestamp(now);
       requireInput(ids.length > 0 && ids.length <= profileUpdateBatchSize);
       return lifecycle.transaction(scope, (db) => {
         const ready = readySources(db, scope, now);
         if (!ready || !ids.every((id, index) => ready[index]?.id === id)) return null;
+        if (
+          db
+            .prepare(
+              `SELECT 1 FROM queue_jobs WHERE ${inScope}
+          AND route_kind IN ('direct_message','mention','reply','name')
+          AND (state='running' OR (state='queued' AND expires_at>?)) LIMIT 1`,
+            )
+            .get(scope.chatId, scope.generation, now)
+        )
+          return null;
         const key = randomUUID();
+        const reservation = {
+          purpose: 'profile_update' as const,
+          key,
+          input: budget.input,
+          output: budget.output,
+        };
+        if (!canReserveTokens(db, scope, budget.group, reservation, now)) return null;
+        insertTokenReservation(db, scope, reservation, now);
         db.prepare(
           `INSERT INTO profile_update_runs(chat_id,generation,started_at,attempt_key) VALUES(?,?,?,?)
           ON CONFLICT(chat_id,generation) DO UPDATE SET started_at=excluded.started_at,attempt_key=excluded.attempt_key`,
         ).run(scope.chatId, scope.generation, now, key);
         return { scope, key, ids: [...ids] };
       });
+    },
+    reconcile({ scope, key }: ProfileUpdateAttempt, usage: LlmUsage) {
+      return connection.run((db) => reconcileTokenReservation(db, scope, key, usage));
     },
     finish(attempt: ProfileUpdateAttempt, now: number, consumed: boolean) {
       timestamp(now);

@@ -111,6 +111,7 @@ export function checkCatalogBoundary(root = process.cwd()) {
           ['participant-registry.ts', 'registerParticipantRegistry'],
           ['address-preference-store.ts', 'registerAddressPreferences'],
           ['profile-fact-store.ts', 'registerProfileInference'],
+          ['profile-update-store.ts', 'registerProfileUpdates'],
           ['greeting-store.ts', 'registerGreetings'],
           ['profile-command-store.ts', 'registerProfileCommands'],
           ['chat-passport-store.ts', 'registerChatPassport'],
@@ -141,6 +142,8 @@ export function checkCatalogBoundary(root = process.cwd()) {
                     (e.propertyName ?? e.name).text === 'createAddressPreferenceStore') ||
                   (moduleName === 'profile-fact-store.ts' &&
                     (e.propertyName ?? e.name).text === 'createProfileFactStore') ||
+                  (moduleName === 'profile-update-store.ts' &&
+                    (e.propertyName ?? e.name).text === 'createProfileUpdateStore') ||
                   (moduleName === 'greeting-store.ts' &&
                     (e.propertyName ?? e.name).text === 'createGreetingStore') ||
                   (moduleName === 'profile-command-store.ts' &&
@@ -184,7 +187,19 @@ export function checkCatalogBoundary(root = process.cwd()) {
                     ['participantSync', 'applyParticipantSnapshot'].includes(name))
                 );
               });
-            if (!storageFactory && !registryType && !queueBudget && !membership)
+            const profileBudget =
+              moduleName === 'token-budget-store.ts' &&
+              file === resolve(root, 'src/storage/profile-update-store.ts') &&
+              bindings &&
+              ts.isNamedImports(bindings) &&
+              bindings.elements.every((e) =>
+                [
+                  'canReserveTokens',
+                  'insertTokenReservation',
+                  'reconcileTokenReservation',
+                ].includes((e.propertyName ?? e.name).text),
+              );
+            if (!storageFactory && !registryType && !queueBudget && !membership && !profileBudget)
               result.privileged = true;
           }
         }

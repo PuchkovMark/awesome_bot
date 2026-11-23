@@ -14,7 +14,7 @@ const tokensPerPerson = 15_000;
 
 export interface TokenReservation {
   readonly key: string;
-  readonly purpose: 'direct' | 'initiative';
+  readonly purpose: 'direct' | 'initiative' | 'profile_update';
   readonly input: number;
   readonly output: number;
 }
@@ -84,6 +84,7 @@ function readBudget(
   const settings = limits(db, scope);
   const total: Spending = { confirmed: 0n, reserved: 0n, incompleteAttempts: 0 };
   const initiative: Spending = { ...total };
+  const profileUpdate: Spending = { ...total };
   for (const attempt of db
     .prepare(
       `SELECT purpose,input_reserve AS inputReserve,output_reserve AS outputReserve,
@@ -93,6 +94,7 @@ function readBudget(
     .iterate(scope.chatId, scope.generation, now - tokenBudgetWindowMs, now) as Iterable<Attempt>) {
     addUsage(total, attempt);
     if (attempt.purpose === 'initiative') addUsage(initiative, attempt);
+    if (attempt.purpose === 'profile_update') addUsage(profileUpdate, attempt);
   }
   for (const hold of db
     .prepare(
@@ -108,13 +110,12 @@ function readBudget(
     total.reserved += BigInt(hold.final_budget);
     if (hold.route_kind === 'initiative') initiative.reserved += BigInt(hold.final_budget);
   }
+  const totalLimit = settings.total ?? (group ? (settings.people ?? 1) * tokensPerPerson : 500_000);
   return {
     period: { from: now - tokenBudgetWindowMs, through: now },
     people: group ? settings.people : null,
-    total: balance(
-      settings.total ?? (group ? (settings.people ?? 1) * tokensPerPerson : 500_000),
-      total,
-    ),
+    total: balance(totalLimit, total),
+    profileUpdate: balance(Number(BigInt(totalLimit) / 20n), profileUpdate),
     initiative: group ? balance(settings.initiative ?? 10_000, initiative) : null,
   };
 }
@@ -130,7 +131,7 @@ export function canReserveTokens(
   requireInput(
     typeof attempt.key === 'string' && attempt.key.length > 0 && attempt.key.length <= 256,
   );
-  requireInput(attempt.purpose === 'direct' || attempt.purpose === 'initiative');
+  requireInput(['direct', 'initiative', 'profile_update'].includes(attempt.purpose));
   timestamp(attempt.input);
   timestamp(attempt.output);
   const current = readBudget(db, scope, group, now, final?.jobId);
@@ -156,6 +157,8 @@ export function canReserveTokens(
       current.initiative.confirmed + current.initiative.reserved + requested >
         BigInt(current.initiative.limit))
   )
+    return false;
+  if (attempt.purpose === 'profile_update' && requested > BigInt(current.profileUpdate.remaining))
     return false;
   return !db
     .prepare(

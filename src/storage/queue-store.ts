@@ -1,5 +1,5 @@
 import { acceptQuestionnaireInput } from './questionnaire-input';
-import { rememberProfileUpdate } from './profile-update-store';
+import { rememberProfileUpdate } from './profile-update-intake';
 import { noteParticipantMessage } from './participant-registry';
 import {
   acceptsHistoryInput,

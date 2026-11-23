@@ -92,3 +92,103 @@ test('раздельные резервы, нулевая и поздняя св
     await storage.close();
   }
 });
+
+test('фоновая доля 5% входит в общий остаток, переживает рестарт и меняется вместе с численностью', async () => {
+  const files = storageFixture();
+  let first = await openStorage(files.path);
+  const second = await openStorage(files.path);
+  const chat = 'vk:profile-budget';
+  try {
+    let scope = scopeFor(first, chat);
+    const other = scopeFor(second, chat);
+    let store = tokenBudgetStore(first);
+    const members = Array.from({ length: 20 }, (_, i) => ({
+      userId: `vk:${i + 1}` as const,
+      role: 'member' as const,
+    }));
+    const refresh = (people: number, at: number) =>
+      store.finishObservation(
+        scope,
+        store.beginObservation(scope, at),
+        { complete: true, people, members: members.slice(0, people) },
+        at,
+      );
+    expect(refresh(20, noon)).toBe(true);
+    const initial = store.read(scope, true, noon);
+    expect(initial.total.limit).toBe(300_000);
+    expect(initial.profileUpdate.limit).toBe(15_000);
+    const background = {
+      key: 'profile-1',
+      purpose: 'profile_update',
+      input: 14_900,
+      output: 100,
+    } as const;
+    expect(store.reserve(scope, true, { ...background, input: 14_901 }, noon)).toBe(false);
+    expect(store.reserve(scope, true, background, noon)).toBe(true);
+    expect(
+      tokenBudgetStore(second).reserve(
+        other,
+        true,
+        { ...background, key: 'profile-2', input: 1, output: 0 },
+        noon,
+      ),
+    ).toBe(false);
+    expect(store.reserve(scope, true, { ...attempt, input: 285_001, output: 0 }, noon)).toBe(false);
+    expect(store.reserve(scope, true, { ...attempt, input: 285_000, output: 0 }, noon)).toBe(true);
+    expect(store.reconcile(scope, background.key, { input: null, output: 100 })).toBe(true);
+    expect(store.read(scope, true, noon).initiative?.remaining).toBe(10_000);
+    expect(refresh(19, noon + 10)).toBe(true);
+    await first.close();
+    first = await openStorage(files.path);
+    scope = scopeFor(first, chat);
+    store = tokenBudgetStore(first);
+    expect(store.read(scope, true, noon + 10).profileUpdate).toEqual({
+      limit: 14_250,
+      remaining: 0,
+      confirmed: 100n,
+      reserved: 14_900n,
+      incompleteAttempts: 1,
+    });
+    expect(store.read(scope, true, noon + tokenBudgetWindowMs).profileUpdate.remaining).toBe(
+      14_250,
+    );
+    expect(
+      store.update(scope, false, { total: 319 }, noon + tokenBudgetWindowMs).profileUpdate.limit,
+    ).toBe(15);
+  } finally {
+    await first.close();
+    await second.close();
+    files.cleanup();
+  }
+});
+
+test('расширение назначения попыток переносит оплаченную инициативу и резерв прямого ответа', async () => {
+  const files = storageFixture();
+  const db = new Database(files.path);
+  try {
+    migrate(db, migrations.slice(0, 39));
+    db.prepare(
+      "INSERT INTO chat_connections(chat_id,generation,revision,state) VALUES('vk:budget',1,0,'active')",
+    ).run();
+    db.prepare(
+      `INSERT INTO token_budget_attempts VALUES
+      ('vk:budget',1,'direct',?,'direct',10,30,8,NULL),
+      ('vk:budget',1,'initiative',?,'initiative',20,20,12,4)`,
+    ).run(noon, noon);
+    migrate(db, migrations);
+    expect(
+      db
+        .prepare(
+          'SELECT purpose,input_tokens,output_tokens FROM token_budget_attempts ORDER BY purpose',
+        )
+        .all(),
+    ).toEqual([
+      { purpose: 'direct', input_tokens: 8, output_tokens: null },
+      { purpose: 'initiative', input_tokens: 12, output_tokens: 4 },
+    ]);
+    expect(db.pragma('foreign_key_check')).toEqual([]);
+  } finally {
+    db.close();
+    files.cleanup();
+  }
+});

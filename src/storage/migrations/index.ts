@@ -1,6 +1,7 @@
 import { questionnaireProgress } from './036-questionnaire-progress';
 import { participantDepartures } from './037-participant-departures';
 import { questionnaireDelivery } from './038-questionnaire-delivery';
+import { profileUpdateBudget } from './040-profile-update-budget';
 import { profileUpdateQueue } from './039-profile-update-queue';
 import { questionnaireTemplate } from './035-questionnaire-template';
 import { chatPassport } from './034-chat-passport';
@@ -82,4 +83,5 @@ export const migrations: readonly Migration[] = [
   participantDepartures,
   questionnaireDelivery,
   profileUpdateQueue,
+  profileUpdateBudget,
 ];

@@ -199,13 +199,28 @@ test('прямой отказ делит период уведомлений, а
     expect(complete).toHaveBeenCalledOnce();
     expect(budget.read(scope, false, at).total).toMatchObject({ confirmed: 80n, reserved: 0n });
 
+    expect(
+      budget.reserve(
+        scope,
+        false,
+        {
+          key: 'profile-test',
+          purpose: 'profile_update',
+          input: 21,
+          output: 9,
+        },
+        at,
+      ),
+    ).toBe(true);
+    expect(budget.reconcile(scope, 'profile-test', { input: 15, output: 2 })).toBe(true);
     submit(55, 'показать расход');
     submit(owner, 'показать расход');
     await vi.waitFor(() => expect(reports()).toHaveLength(1));
     expect(reports()[0]).toMatchObject({
       peer: owner,
-      text: expect.stringContaining('подтверждено 80 из 7000'),
+      text: expect.stringContaining('подтверждено 97 из 7000'),
     });
+    expect(reports()[0]?.text).toContain('Обновление профилей — подтверждено 17 из 350');
     expect(reports()[0]?.text).toContain('2026-11-23T12:00:00.000Z');
     expect(reports()[0]?.text).not.toContain('Синтетическое обращение');
     await shutdown?.();
