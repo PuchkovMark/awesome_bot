@@ -1,3 +1,4 @@
+import { delegationFinalBudget } from './028-delegation-final-budget';
 import { addressPreferences } from './027-address-preferences';
 import { participantRegistry } from './026-participant-registry';
 import { personalReminders } from './024-personal-reminders';
@@ -58,4 +59,5 @@ export const migrations: readonly Migration[] = [
   personalData,
   participantRegistry,
   addressPreferences,
+  delegationFinalBudget,
 ];

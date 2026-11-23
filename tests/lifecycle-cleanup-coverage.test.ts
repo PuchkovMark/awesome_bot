@@ -67,6 +67,7 @@ const tables = [
   'sqlite_sequence',
 ];
 const others = [
+  'queue_release_final_budget',
   'personal_visible_messages',
   'active_admin_denials',
   'personal_reminders_scope',
