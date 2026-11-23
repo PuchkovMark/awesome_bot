@@ -7,6 +7,7 @@ export const traceRows = [
   'unsuccessful',
   'queue_full',
   'quota_exhausted',
+  'token_budget_exhausted',
   'current_message_too_large',
   'static_budget_too_small',
   'trace_write_failed',

@@ -3,7 +3,7 @@ import type { Connection } from './connection';
 import type { LifecycleBackend } from './lifecycle-store';
 import type { ConnectionScope } from '../contracts/index';
 import type { NoticeBackend, NoticePermit } from './notice-types';
-import { noticeTemplate } from './notice-types';
+import { isRateLimitedNotice, noticeTemplate } from './notice-types';
 import { readMessage, createMessageStore } from './messages';
 import { requireInput, timestamp, string } from './validation';
 export function createNoticeBackend(
@@ -21,10 +21,7 @@ export function createNoticeBackend(
     },
     reserve(scope, messageId, route, interval, now, kind = 'generic') {
       requireInput(
-        kind === 'generic' ||
-          kind === 'current_message_too_large' ||
-          kind === 'quota_exhausted' ||
-          kind === 'mention_flood',
+        kind === 'generic' || kind === 'current_message_too_large' || isRateLimitedNotice(kind),
       );
       timestamp(now);
       requireInput(Number.isSafeInteger(interval) && interval > 0);
@@ -40,8 +37,7 @@ export function createNoticeBackend(
         )
           return null;
         if (
-          kind !== 'quota_exhausted' &&
-          kind !== 'mention_flood' &&
+          !isRateLimitedNotice(kind) &&
           (route.mode !== 'normal' || (route.isGroupChat && settings.mode === 'active'))
         )
           return null;

@@ -45,6 +45,7 @@ for (const action of [
   'admin.restore',
   'admin.audit.read',
   'usage.read',
+  'usage.configure',
   'consent.edit',
 ] as const) {
   test(`${action}: только владелец`, () => {

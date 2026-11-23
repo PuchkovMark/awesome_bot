@@ -7,6 +7,7 @@ import {
   createLifecycleService,
   createMessageRouter,
   createPublicationService,
+  createTokenBudgetAdministration,
   QueueError,
 } from '../core/index';
 import type { ChatQueue } from '../core/index';
@@ -33,6 +34,7 @@ import { createChatControlHandlers } from './chat-control';
 import { createHistoryHandlers } from './history-retention';
 import type { ChatLimits } from '../core/chat-limits/config';
 import { createTokenBudgetMembership } from '../core/chat-limits/token-budget-membership';
+import { createUsageCommand, isUsageCommand } from './token-budget';
 
 interface ApplicationDependencies {
   readonly vk?: Parameters<typeof createVkChannel>[1];
@@ -235,6 +237,7 @@ export async function runApplication(
         modelName: config.llm.model,
         tracing: config.tracing,
         limits: dependencies.chatLimits ?? {},
+        tokenBudget: true,
         responseRate: config.responseRate,
         client: dependencies.client ?? createLlmClient(config.llm),
         disclosure: checkDisclosure,
@@ -291,6 +294,12 @@ export async function runApplication(
         isRunning: queue.isRunning,
         wakeMaintenance: queue.wakeHistoryMaintenance ?? (() => {}),
       });
+      const usage = createUsageCommand({
+        channel,
+        ownerId,
+        signal,
+        budget: createTokenBudgetAdministration({ storage, authorization, isGroupChat: group }),
+      });
       const router = createMessageRouter({
         storage,
         queue,
@@ -304,6 +313,9 @@ export async function runApplication(
           floodPublications.add(operation);
         },
         recognizeCommand: (message, replyToOther) =>
+          (isUsageCommand(message.text)
+            ? ({ action: 'usage.read', minimumRole: 'owner' } as const)
+            : null) ??
           history.recognize(message) ??
           chatControl.recognize(message, replyToOther) ??
           (message.isGroupChat &&
@@ -332,6 +344,7 @@ export async function runApplication(
             const command = parseAdminRecoveryCommand(message.text);
             if (!command)
               return (
+                usage(message, isCurrent) ??
                 history.privateCommand(message, isCurrent) ??
                 chatControl.privateCommand(message, isCurrent)
               );

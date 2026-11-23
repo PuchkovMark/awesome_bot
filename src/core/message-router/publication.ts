@@ -27,6 +27,8 @@ export function publicationDecision(
   }
   if (kind === 'mention_flood') return { kind: 'notice', template: 'mention_flood' };
   if (kind === 'quota_exhausted') return { kind: 'notice', template: 'quota_exhausted' };
+  if (kind === 'token_budget_exhausted')
+    return { kind: 'notice', template: 'token_budget_exhausted' };
   if (route.mode === 'active' || (route.isGroupChat && current.responseMode === 'active'))
     return silence;
   if (kind === 'current_message_too_large')
@@ -68,6 +70,7 @@ export function publicationRow(
       'complete',
       'queue_full',
       'quota_exhausted',
+      'token_budget_exhausted',
       'current_message_too_large',
       'static_budget_too_small',
       'trace_write_failed',

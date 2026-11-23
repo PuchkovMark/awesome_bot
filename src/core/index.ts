@@ -67,3 +67,5 @@ export type {
 export { createTraceDiagnostics, createTraceMaintenance } from './response-tracing/diagnostics';
 export { traceConfig } from './response-tracing/config';
 export type { TraceConfig } from './response-tracing/config';
+
+export { createTokenBudgetAdministration } from './chat-limits/token-budget-administration';

@@ -6,8 +6,16 @@ const templates = {
   current_message_too_large: 'Сообщение слишком большое для ответа. Попробуйте сократить его.',
   mention_flood: 'Слишком много обращений подряд. Попробуйте чуть позже.',
   quota_exhausted: 'Сейчас слишком много запросов. Попробуй чуть позже.',
+  token_budget_exhausted: 'Бюджет токенов этой беседы исчерпан. Попробуйте позже.',
 };
 export type NoticeKind = keyof typeof templates;
+export type RateLimitedNotice = 'quota_exhausted' | 'mention_flood' | 'token_budget_exhausted';
+
+export function isRateLimitedNotice(kind: NoticeKind | undefined): kind is RateLimitedNotice {
+  return (
+    kind === 'quota_exhausted' || kind === 'mention_flood' || kind === 'token_budget_exhausted'
+  );
+}
 export function noticeTemplate(kind: NoticeKind): string {
   return templates[kind];
 }

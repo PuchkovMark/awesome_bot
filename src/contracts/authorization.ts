@@ -19,6 +19,7 @@ export type AuthorizationAction =
   | 'admin.audit.read'
   | 'diagnostics.read'
   | 'usage.read'
+  | 'usage.configure'
   | 'consent.edit'
   | 'profile.admin.add'
   | 'profile.self.manage'

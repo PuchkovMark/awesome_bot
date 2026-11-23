@@ -24,6 +24,7 @@ const minimum: Record<AuthorizationAction, BotRole> = {
   'admin.audit.read': 'owner',
   'diagnostics.read': 'admin',
   'usage.read': 'owner',
+  'usage.configure': 'owner',
   'consent.edit': 'owner',
   'profile.admin.add': 'admin',
   'profile.self.manage': 'member',
@@ -41,6 +42,7 @@ const ownerScope = new Set<AuthorizationAction>([
   'admin.recover',
   'admin.audit.read',
   'usage.read',
+  'usage.configure',
 ]);
 export function botRole(
   userId: UserId,

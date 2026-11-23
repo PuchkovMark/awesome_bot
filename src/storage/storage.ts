@@ -63,7 +63,7 @@ export async function openStorage(
     registerAdminRecovery(storage, createAdminRecoveryStore(connection, backend));
     registerChatControl(storage, createChatControlStore(connection, backend));
     registerTraces(storage, traces);
-    registerTokenBudgets(storage, createTokenBudgetStore(backend));
+    registerTokenBudgets(storage, createTokenBudgetStore(connection, backend));
     registerNotices(storage, createNoticeBackend(connection, backend));
     registerQueue(storage, queue);
     registerLifecycle(storage, backend);

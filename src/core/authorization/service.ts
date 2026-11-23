@@ -105,12 +105,20 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
         authority.confirmMembership(scope, userId, tx.revision()),
       );
     },
+    /** Доверенная граница личных команд удостоверяет отправителя установки. */
+    checkInstallationOwner(userId: UserId, action: 'usage.read'): AuthorizationDecision {
+      if (disposed) return deny('invalid_context');
+      if (action !== 'usage.read') return deny('unknown_action');
+      return userId === config.ownerId ? { allowed: true } : deny('forbidden');
+    },
     async check(
       context: AuthorizationContext,
       action: unknown,
       subjectId?: UserId,
     ): Promise<AuthorizationDecision> {
-      return guarded(context, action, subjectId, () => ({ allowed: true, value: undefined }));
+      return guarded(context, action, subjectId, () => ({ allowed: true, value: undefined }), {
+        allowInitialOwnerSettings: action === 'usage.read' || action === 'usage.configure',
+      });
     },
     async setTimezone(
       context: AuthorizationContext,

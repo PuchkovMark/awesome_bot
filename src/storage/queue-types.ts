@@ -108,7 +108,7 @@ export interface ResponsePublication {
   readonly messageId: number;
   readonly route: RouteMetadata;
   readonly notice?: {
-    readonly kind: 'quota_exhausted' | 'mention_flood';
+    readonly kind: import('./notice-types').RateLimitedNotice;
     readonly interval: number;
   };
   readonly flood?: FloodNotice;

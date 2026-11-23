@@ -1,7 +1,9 @@
 import type { Database } from 'better-sqlite3';
-import type { ConnectionScope } from '../contracts/index';
+import type { ChatId, ConnectionScope } from '../contracts/index';
 import type { LlmUsage } from '../llm/types';
 import type { LifecycleBackend } from './lifecycle-store';
+import type { Connection } from './connection';
+type BudgetScope = Pick<ConnectionScope, 'chatId' | 'generation'>;
 import { StorageError } from './errors';
 import { object, requireInput, timestamp } from './validation';
 
@@ -36,7 +38,7 @@ type Attempt = {
   readonly outputTokens: number | null;
 };
 
-function limits(db: Database, scope: ConnectionScope): Limits {
+function limits(db: Database, scope: BudgetScope): Limits {
   return (
     (db
       .prepare(
@@ -66,7 +68,7 @@ function balance(limit: number, spending: Spending) {
   return { limit, remaining: remaining > 0n ? Number(remaining) : 0, ...spending };
 }
 
-function readBudget(db: Database, scope: ConnectionScope, group: boolean, now: number) {
+function readBudget(db: Database, scope: BudgetScope, group: boolean, now: number) {
   timestamp(now);
   const settings = limits(db, scope);
   const total: Spending = { confirmed: 0n, reserved: 0n, incompleteAttempts: 0 };
@@ -181,8 +183,23 @@ export function pruneTokenBudget(db: Database, now: number) {
     .run(now - tokenBudgetWindowMs).changes;
 }
 
-export function createTokenBudgetStore(lifecycle: LifecycleBackend) {
+export function createTokenBudgetStore(connection: Connection, lifecycle: LifecycleBackend) {
   return {
+    overview(isGroupChat: (chatId: ChatId) => boolean, now: number) {
+      timestamp(now);
+      return connection.run((db) =>
+        db.transaction(() => {
+          const scopes = db
+            .prepare('SELECT chat_id AS chatId,generation FROM chat_connections ORDER BY chat_id')
+            .all() as BudgetScope[];
+          const chats = scopes.map((scope) => ({
+            ...scope,
+            ...readBudget(db, scope, isGroupChat(scope.chatId), now),
+          }));
+          return { period: { from: now - tokenBudgetWindowMs, through: now }, chats };
+        })(),
+      );
+    },
     read(scope: ConnectionScope, group: boolean, now: number) {
       return lifecycle.transaction(scope, (db) => readBudget(db, scope, group, now));
     },

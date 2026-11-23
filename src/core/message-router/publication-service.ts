@@ -1,3 +1,4 @@
+import { isRateLimitedNotice } from '../../storage/notice-types';
 import type { ConnectionScope, PublishedPart } from '../../contracts/index';
 import type { Storage } from '../../storage/index';
 import type {
@@ -200,11 +201,7 @@ export function createPublicationService(options: {
       if (!withoutJob && traces.get(scope, jobId)?.payload.publication.status !== 'pending_checks')
         return 'silence';
       if (decision.kind === 'notice' && reply !== true) return suppressed('no_reply');
-      if (
-        decision.kind === 'notice' &&
-        (!budget ||
-          (decision.template !== 'quota_exhausted' && decision.template !== 'mention_flood'))
-      ) {
+      if (decision.kind === 'notice' && (!budget || !isRateLimitedNotice(decision.template))) {
         permit =
           notices.reserve(
             scope,
@@ -235,8 +232,7 @@ export function createPublicationService(options: {
       }
       if (!(await guard.allow())) return suppressed('guard');
       const notice =
-        decision.kind === 'notice' &&
-        (decision.template === 'quota_exhausted' || decision.template === 'mention_flood')
+        decision.kind === 'notice' && isRateLimitedNotice(decision.template)
           ? { kind: decision.template, interval }
           : undefined;
       if (budget && (decision.kind === 'answer' || notice)) {
