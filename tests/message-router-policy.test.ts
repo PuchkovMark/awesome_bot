@@ -108,7 +108,6 @@ for (const kind of [
   'incomplete',
   'refused',
   'empty',
-  'rate_limit',
   'tools_not_supported',
   'deadline_exceeded',
   'attempt_limit',
@@ -133,6 +132,25 @@ for (const kind of [
       ),
     ).toEqual({ kind: 'silence' });
   });
+test.each(['rate_limit', 'llm_wait_timeout', 'llm_provider_paused'] as const)(
+  'публикация результата доступности модели %s',
+  (kind) => {
+    const route = { kind: 'name', mode: 'normal', isGroupChat: true } as const;
+    expect(publicationDecision(route, { enabled: true, responseMode: 'normal' }, { kind })).toEqual(
+      {
+        kind: 'notice',
+        template: kind,
+      },
+    );
+    expect(
+      publicationDecision(
+        { ...route, mode: 'active' },
+        { enabled: true, responseMode: 'active' },
+        { kind },
+      ),
+    ).toEqual({ kind: 'silence' });
+  },
+);
 for (const kind of ['cancelled', 'expired', 'interrupted', 'message_missing', 'UNKNOWN'])
   test('молчание ' + kind, () =>
     expect(

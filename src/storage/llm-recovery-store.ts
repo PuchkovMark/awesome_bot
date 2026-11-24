@@ -94,16 +94,21 @@ export function createLlmRecoveryStore(
               db,
               paused(state, retry ?? until(at, settings.initialPauseMs), settings.initialPauseMs),
             );
-          else if (retry !== undefined && state.pausedUntil !== null && retry > state.pausedUntil)
-            save(db, paused(state, retry, state.delayMs));
+          else if (
+            retry !== undefined &&
+            state.pausedUntil !== null &&
+            retry > Math.max(at, state.pausedUntil)
+          )
+            save(db, { ...state, pausedUntil: retry });
           return;
         }
         if (permit.probe) {
           if (state.probeOwner !== owner) return;
+          const pausedUntil = state.pausedUntil ?? at;
           if (failure === 'server' || failure === 'rate_limit') {
             const delayMs = Math.min(settings.maxPauseMs, state.delayMs * 2);
-            save(db, paused(state, Math.max(until(at, delayMs), retry ?? 0), delayMs));
-          } else if (result && result.kind !== 'error') {
+            save(db, paused(state, Math.max(pausedUntil, until(at, delayMs), retry ?? 0), delayMs));
+          } else if (result && result.kind !== 'error' && at >= pausedUntil) {
             save(db, {
               pausedUntil: null,
               delayMs: 0,

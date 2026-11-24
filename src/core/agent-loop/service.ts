@@ -26,7 +26,7 @@ export function createAgentLoop(
   scheduling?: {
     readonly admission: LlmAdmission;
     readonly deadline?: number;
-    readonly jobSignal: AbortSignal;
+    readonly jobSignal?: AbortSignal;
     readonly current: () => boolean;
   },
 ): AgentLoop {
@@ -168,7 +168,7 @@ export function createAgentLoop(
             ? await scheduling.admission.direct(
                 {
                   signal: controller.signal,
-                  jobSignal: scheduling.jobSignal,
+                  ...(scheduling.jobSignal ? { jobSignal: scheduling.jobSignal } : {}),
                   deadline: Math.min(deadline, scheduling.deadline ?? Infinity),
                   current: () => scheduling.current() && safeCurrent(),
                 },

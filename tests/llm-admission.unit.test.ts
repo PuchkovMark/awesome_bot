@@ -181,6 +181,22 @@ test('истечение срока во время синхронного до�
   expect(finish).toHaveBeenCalledExactlyOnceWith(permit, undefined);
 });
 
+test('резервирование при свободном месте учитывает срок задания и может занять больше времени ожидания', async () => {
+  let now = 0;
+  const gate = createLlmAdmission({ parallel: 1, background: 1, waitMs: 80 }, () => now);
+  const invoke = vi.fn(async () => result);
+  const admission = await gate.direct(
+    { signal: new AbortController().signal, current: () => true, deadline: 1_000 },
+    (send) => {
+      now = 120;
+      return send(invoke);
+    },
+  );
+  expect(admission.kind).toBe('ready');
+  expect(invoke).toHaveBeenCalledOnce();
+  if (admission.kind === 'ready') await admission.value;
+});
+
 test('фоновый предел общий, следующее место получает ожидающий прямой вызов', async () => {
   const f = fixture();
   const first = await f.occupy(3);

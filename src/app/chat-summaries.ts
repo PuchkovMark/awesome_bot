@@ -122,13 +122,15 @@ export function applicationSummaries(options: {
               },
             );
           };
-          const deadline = firstDeadline?.() ?? work?.deadline;
+          const deadline = work?.deadline;
+          const waitDeadline = firstDeadline?.();
           const scheduled = await scheduleLlmCall(
             options.llmAdmission,
             {
               signal: abort,
               current: allowed,
               ...(deadline === undefined ? {} : { deadline }),
+              ...(waitDeadline === undefined ? {} : { waitDeadline }),
               ...(work ? { jobSignal: work.signal } : {}),
             },
             perform,
@@ -287,7 +289,8 @@ export function applicationSummaries(options: {
                       {
                         signal: work.signal,
                         jobSignal: work.signal,
-                        deadline: firstDeadline,
+                        waitDeadline: firstDeadline,
+                        ...(work.deadline === undefined ? {} : { deadline: work.deadline }),
                         current,
                       },
                       () => true,

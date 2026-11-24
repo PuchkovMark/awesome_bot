@@ -11,8 +11,10 @@ export interface LlmAdmissionSettings {
 
 interface CallLifetime {
   readonly signal: AbortSignal;
+  /** Общий сигнал пользовательского задания, в том числе у его помощников. */
   readonly jobSignal?: AbortSignal;
   readonly deadline?: number;
+  readonly waitDeadline?: number;
   readonly current: () => boolean;
 }
 
@@ -23,7 +25,7 @@ export type SendLlmCall = (
 type Prepare<T> = (send: SendLlmCall) => T;
 type NotSent = 'cancelled' | 'llm_wait_timeout';
 export type LlmAdmissionEvent = 'rate_limit' | 'llm_wait_timeout' | 'llm_provider_paused';
-export class LlmCallNotSent extends Error {
+class LlmCallNotSent extends Error {
   readonly kind: NotSent;
   constructor(kind: NotSent) {
     super(kind);
@@ -95,7 +97,6 @@ export function createLlmAdmission(
     kind: 'direct' | 'background',
     prepare: Prepare<T>,
     lifetime: CallLifetime,
-    until: number,
   ): Admission<T> {
     preparing = true;
     let canSend = true;
@@ -115,7 +116,7 @@ export function createLlmAdmission(
         canSend = false;
         let interruption: NotSent | undefined;
         try {
-          interruption = denied(lifetime, until);
+          interruption = denied(lifetime, lifetime.deadline ?? Infinity);
         } catch (error) {
           cancelBeforeSend?.();
           throw error;
@@ -176,14 +177,18 @@ export function createLlmAdmission(
     waitUntil,
     direct<T>(lifetime: CallLifetime, prepare: Prepare<T>): Promise<Admission<T>> {
       const { signal, jobSignal } = lifetime;
-      const until = waitUntil(lifetime.deadline);
+      const deadline = lifetime.deadline ?? Infinity;
+      const until = waitUntil(Math.min(deadline, lifetime.waitDeadline ?? Infinity));
       return new Promise((resolve, reject) => {
         let timer: ReturnType<typeof setTimeout> | undefined;
         const settle = (result: Admission<T>) => {
-          if (result.kind === 'llm_wait_timeout' || result.kind === 'llm_provider_paused') {
+          if (
+            jobSignal &&
+            (result.kind === 'llm_wait_timeout' || result.kind === 'llm_provider_paused')
+          ) {
             const reported = reportedForJob[result.kind];
-            if (!jobSignal || !reported.has(jobSignal)) {
-              if (jobSignal) reported.add(jobSignal);
+            if (!reported.has(jobSignal)) {
+              reported.add(jobSignal);
               report(result.kind);
             }
           }
@@ -209,11 +214,11 @@ export function createLlmAdmission(
           try {
             const interruption = waitedUntilDeadline()
               ? 'llm_wait_timeout'
-              : denied(lifetime, until);
+              : denied(lifetime, deadline);
             if (interruption) settle({ kind: interruption });
             else if (state === 'stopped') settle({ kind: 'cancelled' });
             else if (state === 'paused') settle({ kind: 'llm_provider_paused' });
-            else settle(admit('direct', prepare, lifetime, until));
+            else settle(admit('direct', prepare, lifetime));
           } catch (error) {
             reject(error);
           }
@@ -226,8 +231,7 @@ export function createLlmAdmission(
       });
     },
     background<T>(lifetime: CallLifetime, prepare: Prepare<T>): Admission<T> {
-      const until = lifetime.deadline ?? Infinity;
-      const interruption = denied(lifetime, until);
+      const interruption = denied(lifetime, lifetime.deadline ?? Infinity);
       if (interruption) return { kind: interruption };
       const state = availability();
       if (state === 'stopped') return { kind: 'cancelled' };
@@ -242,7 +246,7 @@ export function createLlmAdmission(
       )
         return { kind: 'background_busy' };
       try {
-        return admit('background', prepare, lifetime, until);
+        return admit('background', prepare, lifetime);
       } finally {
         drain();
       }

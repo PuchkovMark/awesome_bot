@@ -125,7 +125,7 @@ export function createJobModelAttempts(
         admission,
         {
           signal: request.signal ?? work.signal,
-          jobSignal: work.signal,
+          ...(work.route && work.route.kind !== 'initiative' ? { jobSignal: work.signal } : {}),
           current: proceed,
           ...(work.deadline === undefined ? {} : { deadline: work.deadline }),
         },

@@ -102,6 +102,42 @@ test('окно 5xx скользит, успех прерывает серию, �
   }
 });
 
+test.each(['до срока', 'после срока'] as const)(
+  'запоздалый Retry-After сохраняет единственную проверку, завершившуюся %s',
+  async (finished) => {
+    const f = await setup();
+    try {
+      const { recovery } = f.owner('owner');
+      const trigger = recovery.begin()!;
+      const oldWithZero = recovery.begin()!;
+      const oldWithLongerDeadline = recovery.begin()!;
+      recovery.finish(trigger, limited(date + 50));
+      f.at(50);
+      const probe = recovery.begin()!;
+      f.at(60);
+      recovery.finish(oldWithZero, limited(date + 60));
+      expect(recovery.availability()).toBe('probing');
+      expect(recovery.begin()).toBeNull();
+      recovery.finish(oldWithLongerDeadline, limited(date + 120));
+      expect(recovery.availability()).toBe('paused');
+      if (finished === 'до срока') {
+        recovery.finish(probe, ok);
+        expect(recovery.begin()).toBeNull();
+        f.at(120);
+        expect(recovery.begin()?.probe).toBe(true);
+      } else {
+        f.at(120);
+        expect(recovery.availability()).toBe('probing');
+        expect(recovery.begin()).toBeNull();
+        recovery.finish(probe, ok);
+        expect(recovery.begin()?.probe).toBe(false);
+      }
+    } finally {
+      await f.close();
+    }
+  },
+);
+
 test('проверочные сбои дают 30, 60, 120, 240 и 300 секунд, более долгий срок провайдера сохраняется', async () => {
   const f = await setup();
   try {
