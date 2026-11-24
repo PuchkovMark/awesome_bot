@@ -3,6 +3,7 @@ import { agentError } from './errors';
 import { createAttemptSummary } from './summary';
 import { loopOptions, parseAttempt, prepareLoopInput } from './validation';
 import type { ParsedAttempt } from './validation';
+import type { LlmAdmission, SendLlmCall } from '../llm-admission';
 import type {
   AgentLoop,
   LoopTools,
@@ -22,6 +23,11 @@ export function createAgentLoop(
   allowAttempt?: (request: Readonly<LlmRequest>, ordinal: number) => AttemptAdmission,
   tools?: LoopTools,
   decorateRequest?: (request: LlmRequest) => LlmRequest,
+  scheduling?: {
+    readonly admission: LlmAdmission;
+    readonly deadline?: number;
+    readonly current: () => boolean;
+  },
 ): AgentLoop {
   const config = loopOptions(options);
   let invoke: LlmClient['complete'];
@@ -102,63 +108,84 @@ export function createAgentLoop(
             signal: controller.signal,
           };
           const request = decorateRequest?.(base) ?? base;
-          const before = checkStopped();
-          if (before) return finish(before);
-          const admission = allowAttempt ? allowAttempt(request, attempts + 1) : true;
-          if (
-            admission === 'quota_exhausted' ||
-            admission === 'token_budget_exhausted' ||
-            admission === 'initiative_budget_exhausted'
-          ) {
-            return finish({ kind: admission });
-          }
-          if (admission === false || admission === 'context_stale') {
-            return finish({ kind: 'cancelled' });
-          }
-          const reservation = admission === true ? undefined : admission;
           let calls: readonly LlmToolCall[] | undefined;
-          let counted = false;
-          let pending: Promise<ParsedAttempt> | undefined;
-          try {
-            if (!checkStopped()) {
-              summary.beginAttempt(parentStep);
-              counted = true;
-              onAttempt?.(
-                summary.snapshot(
-                  Math.max(0, performance.now() - started),
-                  tools?.helperSummary?.(),
-                ),
-              );
+          const perform = (
+            send: SendLlmCall,
+          ):
+            | AgentLoopOutcome
+            | { readonly kind: 'started'; readonly pending: Promise<ParsedAttempt> } => {
+            const before = checkStopped();
+            if (before) return before;
+            const admission = allowAttempt ? allowAttempt(request, attempts + 1) : true;
+            if (
+              admission === 'quota_exhausted' ||
+              admission === 'token_budget_exhausted' ||
+              admission === 'initiative_budget_exhausted'
+            )
+              return { kind: admission };
+            if (admission === false || admission === 'context_stale') return { kind: 'cancelled' };
+            const reservation = admission === true ? undefined : admission;
+            let counted = false;
+            let pending: Promise<ParsedAttempt> | undefined;
+            try {
               if (!checkStopped()) {
-                attempts++;
-                stepAttempts++;
-                try {
-                  pending = Promise.resolve(invoke(request)).then(
-                    (value) => {
-                      if (tools && value?.kind === 'tool_calls') calls = value.calls;
-                      return parseAttempt(value);
-                    },
-                    () => parseAttempt(undefined),
-                  );
-                } catch {
-                  pending = Promise.resolve(parseAttempt(undefined));
+                summary.beginAttempt(parentStep);
+                counted = true;
+                onAttempt?.(
+                  summary.snapshot(
+                    Math.max(0, performance.now() - started),
+                    tools?.helperSummary?.(),
+                  ),
+                );
+                if (!checkStopped()) {
+                  attempts++;
+                  stepAttempts++;
+                  try {
+                    pending = Promise.resolve(send(() => invoke(request))).then(
+                      (value) => {
+                        if (tools && value?.kind === 'tool_calls') calls = value.calls;
+                        return parseAttempt(value);
+                      },
+                      () => parseAttempt(undefined),
+                    );
+                  } catch {
+                    pending = Promise.resolve(parseAttempt(undefined));
+                  }
                 }
               }
+            } finally {
+              if (!pending) {
+                if (counted) summary.cancelAttempt(parentStep);
+                reservation?.cancelBeforeSend();
+              }
             }
-          } finally {
-            if (!pending) {
-              if (counted) summary.cancelAttempt(parentStep);
-              reservation?.cancelBeforeSend();
-            }
+            if (!pending) return checkStopped() ?? agentError('client_failure');
+            return {
+              kind: 'started',
+              pending: pending.then((result) => {
+                if (result.usage.input !== null || result.usage.output !== null)
+                  reservation?.recordUsage(result.usage);
+                return result;
+              }),
+            };
+          };
+          const scheduled = scheduling
+            ? await scheduling.admission.direct(
+                {
+                  signal: controller.signal,
+                  deadline: Math.min(deadline, scheduling.deadline ?? Infinity),
+                  current: () => scheduling.current() && safeCurrent(),
+                },
+                perform,
+              )
+            : { kind: 'ready' as const, value: perform((send) => send()) };
+          if (scheduled.kind !== 'ready') {
+            if (scheduled.kind === 'llm_wait_timeout' || scheduled.kind === 'llm_provider_paused')
+              return finish(checkStopped() ?? { kind: scheduled.kind });
+            return finish(checkStopped() ?? { kind: 'cancelled' });
           }
-          if (!pending) return finish(checkStopped() ?? agentError('client_failure'));
-          const reconciled = pending.then((result) => {
-            if (result.usage.input !== null || result.usage.output !== null) {
-              reservation?.recordUsage(result.usage);
-            }
-            return result;
-          });
-          const result = await Promise.race([reconciled, halted]);
+          if (scheduled.value.kind !== 'started') return finish(scheduled.value);
+          const result = await Promise.race([scheduled.value.pending, halted]);
           const after = checkStopped();
           if (after) return finish(after);
           summary.recordUsage(result.usage);

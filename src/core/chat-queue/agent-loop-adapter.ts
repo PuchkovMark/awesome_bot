@@ -24,6 +24,7 @@ import { queueConfig } from './validation';
 import { QueueError } from './errors';
 import type { ChatQueueOptions, QueueHandlerInput, QueueConfig, QueueCompletion } from './types';
 import type { PreparationResult } from '../context/types';
+import type { LlmAdmission } from '../llm-admission';
 export type QueuePreparation =
   | {
       readonly kind: 'ready';
@@ -51,6 +52,7 @@ export interface AgentLoopQueueOptions extends Omit<ChatQueueOptions, 'handler' 
   readonly questionnaireAnswer?: (work: QueueHandlerInput) => Promise<QueueCompletion | null>;
   readonly modelName: string;
   readonly client: LlmClient;
+  readonly llmAdmission?: LlmAdmission;
   readonly loopOptions?: AgentLoopOptions;
   readonly config?: Omit<Partial<QueueConfig>, 'loopTimeoutMs'>;
   readonly preparationTimeoutMs?: number;
@@ -385,6 +387,13 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
                     ? withCards.messages[messageIndex]
                     : undefined;
                 return enriched?.request ?? withPassport;
+              }
+            : undefined,
+          options.llmAdmission
+            ? {
+                admission: options.llmAdmission,
+                ...(work.deadline === undefined ? {} : { deadline: work.deadline }),
+                current: () => !lifetime.aborted && work.isCurrent(),
               }
             : undefined,
         );

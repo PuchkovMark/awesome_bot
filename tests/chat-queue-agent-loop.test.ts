@@ -1,6 +1,9 @@
 import { expect, test, vi } from 'vitest';
 import { openStorage } from '../src/storage/index';
 import { createAgentLoopQueue } from '../src/core/index';
+import { createLlmAdmission } from '../src/core/llm-admission';
+import type { LlmResult } from '../src/llm/types';
+import { tokenBudgetStore } from '../src/storage/token-budget-store';
 import { scopeFor } from './helpers/connection-scope';
 import { queueMessage, flushQueue } from './helpers/chat-queue';
 const prepare = async () => ({
@@ -11,6 +14,76 @@ const prepare = async () => ({
     maxOutputTokens: 1,
     sessionId: 'opaque',
   },
+});
+
+test('ожидание места не расходует бюджет и сохраняет порядок обработки в чате', async () => {
+  vi.useFakeTimers();
+  const storage = await openStorage(':memory:');
+  const first = scopeFor(storage, 'vk:first');
+  const other = scopeFor(storage, 'vk:other');
+  const budget = tokenBudgetStore(storage);
+  const delayed = Promise.withResolvers<LlmResult>();
+  const response = { kind: 'complete', text: 'Ответ', usage: { input: 10, output: 2 } } as const;
+  const sent: string[] = [];
+  const q = createAgentLoopQueue({
+    storage,
+    tokenBudget: true,
+    llmAdmission: createLlmAdmission({ parallel: 1, background: 1, waitMs: 100 }),
+    modelName: 'synthetic',
+    tracing: { messageRetentionDays: 30 },
+    async prepare(work) {
+      const prepared = await prepare();
+      return { ...prepared, input: { ...prepared.input, sessionId: String(work.jobId) } };
+    },
+    client: {
+      async complete(request) {
+        sent.push(request.sessionId);
+        return sent.length === 1 ? delayed.promise : response;
+      },
+    },
+  });
+  const enqueue = (scope: typeof first, messageId: string) =>
+    q.admitRouted(scope, queueMessage(scope.chatId, messageId), () => ({
+      reason: 'mention',
+      route: { kind: 'mention', mode: 'normal', isGroupChat: true },
+    }));
+  try {
+    for (const scope of [first, other]) {
+      await storage.chats.create(scope, { enabled: true, responseMode: 'normal', createdAt: 0 });
+      budget.update(scope, true, { total: 50_000 }, Date.now());
+    }
+    await q.start();
+    await enqueue(first, '1');
+    await flushQueue();
+    await enqueue(first, '2');
+    await enqueue(other, '1');
+    await flushQueue();
+    expect(sent).toEqual(['1']);
+    await vi.advanceTimersByTimeAsync(100);
+    expect((await storage.traces.last(other))?.payload).toMatchObject({
+      resultKind: 'llm_wait_timeout',
+      summary: { attempts: 0 },
+      model: { invoked: 'no' },
+    });
+    expect(budget.read(other, true, Date.now()).total).toMatchObject({
+      confirmed: 0n,
+      reserved: 0n,
+      incompleteAttempts: 0,
+    });
+    delayed.resolve(response);
+    await flushQueue();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(sent).toEqual(['1', '2']);
+    expect(budget.read(first, true, Date.now()).total).toMatchObject({
+      confirmed: 24n,
+      reserved: 0n,
+    });
+  } finally {
+    delayed.resolve(response);
+    await q.stop();
+    await storage.close();
+    vi.useRealTimers();
+  }
 });
 test('rate_limit конечен, server повторяется только внутри цикла, очередь продолжает', async () => {
   vi.useFakeTimers();

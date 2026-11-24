@@ -1,4 +1,5 @@
 import { createQuestionnaireProgress } from '../core/questionnaire/progress';
+import { createLlmAdmission } from '../core/llm-admission';
 import { createPersonaCommands, isPersonaCommand } from './persona-commands';
 import {
   createQuestionnaireCommands,
@@ -464,6 +465,7 @@ export async function runApplication(
             : (checkDisclosure(work)?.allowed ?? true),
       });
       const modelClient = dependencies.client ?? createLlmClient(config.llm);
+      const llmAdmission = createLlmAdmission(config.llmAdmission);
       const profileUpdates = createProfileUpdates({
         storage,
         logger,
@@ -477,6 +479,7 @@ export async function runApplication(
       });
       const questionnaireAttempts = questionnaireProgressStore(storage);
       queue = createAgentLoopQueue({
+        llmAdmission,
         recapAnswer: summaries.answer,
         questionnaireAnswer: questionnaireAnswerHandler({
           store: questionnaireAttempts,

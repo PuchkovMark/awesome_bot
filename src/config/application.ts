@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import { contextConfig } from '../core/context/config';
 import { responseRateConfig } from '../core/chat-limits/response-rate-config';
 import { traceConfig } from '../core/response-tracing/config';
+import { llmAdmissionDefaults } from '../core/llm-admission';
 import {
   baseConfig,
   ConfigError,
@@ -36,6 +37,19 @@ function vkOwner(values: ConfigValues) {
     throw new ConfigError('invalid', ['BOT_OWNER_ID']);
   }
   return id;
+}
+
+function llmAdmission(values: ConfigValues) {
+  const parallel = positiveParameter(values, 'LLM_CONCURRENT_CALLS', llmAdmissionDefaults.parallel);
+  const background = positiveParameter(
+    values,
+    'LLM_BACKGROUND_CALLS',
+    llmAdmissionDefaults.background,
+  );
+  if (background > parallel) throw new ConfigError('invalid', ['LLM_BACKGROUND_CALLS']);
+  const waitMs = positiveParameter(values, 'LLM_SLOT_WAIT_MS', llmAdmissionDefaults.waitMs);
+  if (waitMs > 2_147_483_647) throw new ConfigError('invalid', ['LLM_SLOT_WAIT_MS']);
+  return Object.freeze({ parallel, background, waitMs });
 }
 
 export function loadApplicationConfig(options?: ConfigOptions) {
@@ -89,6 +103,7 @@ export function loadApplicationConfig(options?: ConfigOptions) {
       vk: Object.freeze({ ...base.vk, groupId: positiveParameter(values, 'VK_GROUP_ID') }),
       databasePath: databasePath(cwd, values),
       context: modelContext(values),
+      llmAdmission: llmAdmission(values),
       auxiliaryModel:
         values.LLM_AUX_MODEL === undefined
           ? 'claude-haiku-5-5'

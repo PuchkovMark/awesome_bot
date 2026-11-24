@@ -330,6 +330,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
         const outcome: unknown = await handler(
           Object.freeze({
             jobId: work.id,
+            deadline: task.deadline,
             recordTrace: (update: Partial<TracePayload>) => {
               if (task.done || !backend.valid(token, work)) return;
               const next = { ...task.trace, ...update };

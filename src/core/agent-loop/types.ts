@@ -52,6 +52,8 @@ export type AgentLoopOutcome =
         | 'refused'
         | 'empty'
         | 'rate_limit'
+        | 'llm_wait_timeout'
+        | 'llm_provider_paused'
         | 'quota_exhausted'
         | 'token_budget_exhausted'
         | 'initiative_budget_exhausted'

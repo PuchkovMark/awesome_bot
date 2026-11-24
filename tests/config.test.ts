@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { ConfigError, loadConfig } from '../src/config/index';
 import { createRedactor } from '../src/config/secrets';
+import { loadApplicationConfig } from '../src/config/application';
 
 const valid = {
   BOT_OWNER_ID: 'vk:owner',
@@ -14,6 +15,27 @@ const valid = {
 const absent = () => {
   throw Object.assign(new Error('private path'), { code: 'ENOENT' });
 };
+
+test('пределы отправки модели имеют общие значения по умолчанию и проверяются при настройке', () => {
+  const env = {
+    ...valid,
+    BOT_OWNER_ID: 'vk:73',
+    DATABASE_PATH: 'bot.sqlite',
+    VK_GROUP_ID: '314',
+    MESSAGE_RETENTION_DAYS: '30',
+    MODEL_CONTEXT_TOKENS: '16000',
+    LLM_SESSION_SECRET: 'distinct-secret',
+  };
+  const load = (extra = {}) =>
+    loadApplicationConfig({ env: { ...env, ...extra }, readFile: absent }).config.llmAdmission;
+  expect(load()).toEqual({ parallel: 4, background: 1, waitMs: 10_000 });
+  expect(
+    load({ LLM_CONCURRENT_CALLS: '7', LLM_BACKGROUND_CALLS: '2', LLM_SLOT_WAIT_MS: '42' }),
+  ).toEqual({ parallel: 7, background: 2, waitMs: 42 });
+  expect(() => load({ LLM_CONCURRENT_CALLS: '0' })).toThrow('LLM_CONCURRENT_CALLS');
+  expect(() => load({ LLM_BACKGROUND_CALLS: '5' })).toThrow('LLM_BACKGROUND_CALLS');
+  expect(() => load({ LLM_SLOT_WAIT_MS: '2147483648' })).toThrow('LLM_SLOT_WAIT_MS');
+});
 
 test('валидный неизменяемый конфиг и info по умолчанию, без изменения окружения', () => {
   const env = { ...valid, PRIVATE_EXTRA: 'not copied' };

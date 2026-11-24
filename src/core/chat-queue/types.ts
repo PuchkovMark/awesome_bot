@@ -26,6 +26,8 @@ export type {
 } from '../../storage/queue-types';
 export interface QueueHandlerInput {
   readonly jobId: number;
+  /** Монотонный срок задания, включая подготовку. */
+  readonly deadline?: number;
   readonly recordTrace: (
     update: Partial<
       Pick<
