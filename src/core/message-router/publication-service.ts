@@ -18,6 +18,7 @@ import { noticeBackend } from '../../storage/notice-store';
 import { lifecycleBackend } from '../../storage/lifecycle-store';
 import {
   beginMeasuredPublication,
+  chatRequestMetricsStore,
   confirmMeasuredPart,
   finishMeasuredPublication,
   type DeliveryOutcome,
@@ -97,6 +98,7 @@ export function createPublicationService(options: {
     notices = noticeBackend(options.storage),
     traces = traceBackend(options.storage);
   const lifecycle = lifecycleBackend(options.storage);
+  const measurements = chatRequestMetricsStore(options.storage);
   const questionnaireAccess = questionnaireAccessStore(options.storage);
   const questionnairePresentations = questionnairePresentationStore(options.storage);
   const questionnaireViews = questionnaireViewStore(options.storage);
@@ -496,7 +498,12 @@ export function createPublicationService(options: {
         (preferenceDenied || (result?.kind === 'failed' && !addressCurrent()))
       )
         return suppressed('address_preference_changed');
-      deliveryOutcome = journalFailed ? 'unknown' : (result?.kind ?? 'unknown');
+      if (
+        measurementStarted ||
+        result?.kind === 'unknown' ||
+        (result?.kind === 'failed' && isCurrent())
+      )
+        deliveryOutcome = journalFailed ? 'unknown' : (result?.kind ?? 'unknown');
       if (journalFailed) {
         report('journal_failed');
         if (parts.size > 0) report('partial_delivery');
@@ -542,12 +549,15 @@ export function createPublicationService(options: {
         try {
           const job = measuredJob,
             outcome = deliveryOutcome;
-          const current = lifecycle.current(scope.chatId);
-          if (current.generation === scope.generation)
-            lifecycle.transaction(current, (db) => {
-              measureStart(db);
-              finishMeasuredPublication(db, current, job, outcome);
-            });
+          if (measurementStarted) measurements.finishPublication(scope, job, outcome);
+          else {
+            const current = lifecycle.current(scope.chatId);
+            if (current.generation === scope.generation)
+              lifecycle.transaction(current, (db) => {
+                measureStart(db);
+                finishMeasuredPublication(db, current, job, outcome);
+              });
+          }
         } catch {
           /* Сохранённые подтверждения учитываются при восстановлении очереди. */
         }

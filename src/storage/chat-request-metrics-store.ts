@@ -11,6 +11,7 @@ import type {
 } from '../contracts/chat-metrics';
 import type { ConnectionScope } from '../contracts/index';
 import type { LlmUsage } from '../llm/types';
+import type { Connection } from './connection';
 import { requireInput, timestamp } from './validation';
 
 const hourMs = 3_600_000;
@@ -281,8 +282,14 @@ export function pruneChatMetrics(db: Database, now: number): void {
 
 export function createChatRequestMetricsStore(
   transaction: <T>(scope: ConnectionScope, operation: (db: Database) => T) => T,
+  connection: Pick<Connection, 'run'>,
 ) {
   return Object.freeze({
+    finishPublication(scope: MetricsScope, jobId: number, outcome: DeliveryOutcome) {
+      return connection.run((db) =>
+        db.transaction(() => finishMeasuredPublication(db, scope, jobId, outcome)).immediate(),
+      );
+    },
     read(scope: ConnectionScope, grain: MetricsGrain, from: number, through: number) {
       timestamp(from);
       timestamp(through);

@@ -116,7 +116,10 @@ export async function openStorage(
     registerChatControl(storage, createChatControlStore(connection, backend));
     registerTraces(storage, traces);
     registerTokenBudgets(storage, createTokenBudgetStore(connection, backend));
-    registerChatRequestMetrics(storage, createChatRequestMetricsStore(backend.transaction));
+    registerChatRequestMetrics(
+      storage,
+      createChatRequestMetricsStore(backend.transaction, connection),
+    );
     registerNotices(storage, createNoticeBackend(connection, backend));
     registerQueue(storage, queue);
     registerLifecycle(storage, backend);

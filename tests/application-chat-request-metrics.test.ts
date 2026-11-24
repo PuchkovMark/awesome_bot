@@ -2,6 +2,7 @@ import { expect, test, vi } from 'vitest';
 import type { ConnectionScope } from '../src/contracts/index';
 import type { MetricsSeries } from '../src/contracts/chat-metrics';
 import { createAgentLoopQueue, createChatQueue, createPublicationService } from '../src/core/index';
+import { createAttemptSummary } from '../src/core/agent-loop/summary';
 import { queueConfig } from '../src/core/chat-queue/validation';
 import {
   beginMeasuredPublication,
@@ -256,6 +257,76 @@ test(
 const route = () =>
   ({ reason: 'mention', route: { kind: 'mention', mode: 'normal', isGroupChat: true } }) as const;
 const day = Date.UTC(2026, 10, 24);
+
+test('известная часть остаётся в метриках при приостановке и продолжении подключения', async () => {
+  const storage = await openStorage(':memory:');
+  const scope = scopeFor(storage, 'vk:chat');
+  const life = lifecycleBackend(storage);
+  const finished = Promise.withResolvers<void>();
+  await storage.chats.create(scope, {
+    enabled: true,
+    responseMode: 'normal',
+    createdAt: Date.now(),
+  });
+  const publication = createPublicationService({
+    storage,
+    port: {
+      async canReply() {
+        return true;
+      },
+      async publish(input) {
+        if (!input.beforeSend?.()) return { kind: 'failed' };
+        input.confirmPart({
+          messageId: 'out:1',
+          userId: 'vk:bot',
+          authorName: '',
+          text: 'Первая часть',
+          timestamp: Date.now(),
+          replyToMessageId: '1',
+        });
+        life.applyConnectionSignal(life.begin(scope.chatId), 'pause-after-part');
+        return { kind: 'unknown', confirmedParts: 1 };
+      },
+    },
+  });
+  const queue = createChatQueue({
+    storage,
+    tracing: { messageRetentionDays: 30 },
+    async handler() {
+      return {
+        outcome: 'completed',
+        result: {
+          kind: 'complete',
+          text: 'Ответ из двух частей',
+          summary: createAttemptSummary().snapshot(0),
+        },
+      };
+    },
+    async onSettled(work, completion) {
+      try {
+        await publication.onSettled(work, completion);
+      } finally {
+        finished.resolve();
+      }
+    },
+  });
+  try {
+    await queue.start();
+    await queue.admitRouted(scope, queueMessage(scope.chatId, '1'), route);
+    await finished.promise;
+    const active = life.ownerDecision(life.begin(scope.chatId), 'continue');
+    expect(active.generation).toBe(scope.generation);
+    expect(requests(storage, active)).toMatchObject({
+      requests: 1n,
+      partial: 1n,
+      delivered: 0n,
+      unknown_delivery: 0n,
+    });
+  } finally {
+    await queue.stop();
+    await storage.close();
+  }
+});
 
 test('полная, частичная и неизвестная доставка различаются после удаления трассировок и перезапуска', async () => {
   const app = await fixture();
