@@ -260,6 +260,10 @@ test('ранний личный путь принимает целую кома�
         grantedBy: ownerId,
       }),
     );
+    f.update(f.event('/помощь'));
+    await vi.waitFor(() => expect(f.sends.at(-1)?.text).toContain('Приостановленные беседы'));
+    expect(f.sends.at(-1)?.text).not.toContain('/анкета');
+    f.sends.length = 0;
     f.update(f.event(overview));
     await vi.waitFor(() =>
       expect(f.sends).toEqual([{ peer: owner, text: 'Приостановленных бесед нет.' }]),

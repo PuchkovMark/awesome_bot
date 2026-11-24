@@ -1,4 +1,10 @@
-import { addressedSlash, helpAction, unknownHint } from './command-help';
+import {
+  addressedSlash,
+  commandHelp,
+  isCommandHelp,
+  helpAction,
+  unknownHint,
+} from './command-help';
 import { createQuestionnaireProgress } from '../core/questionnaire/progress';
 import { createLlmAdmission } from '../core/llm-admission';
 import { createPersonaCommands, isPersonaCommand } from './persona-commands';
@@ -649,13 +655,37 @@ export async function runApplication(
           commandAuthorization.context({ scope, userId: message.userId }),
         async executeCommand(context, message, isCurrent, replayOnly, command) {
           if (command?.action === 'commands.read') {
+            const role = await commandAuthorization.role(context);
+            if (!role.allowed || !isCurrent()) return;
+            const state = controls.read(context.scope);
+            const current = () => {
+              if (!isCurrent()) return false;
+              const latest = controls.read(context.scope);
+              return latest.enabled === state.enabled && latest.mode === state.mode;
+            };
             const guard = {
               signal,
-              isCurrent,
-              allow: async () =>
-                isCurrent() && (await commandAuthorization.check(context, 'commands.read')).allowed,
+              isCurrent: current,
+              allow: async () => {
+                if (!current()) return false;
+                const fresh = await commandAuthorization.role(context);
+                return (
+                  fresh.allowed &&
+                  fresh.value === role.value &&
+                  (await commandAuthorization.check(context, 'commands.read')).allowed &&
+                  current()
+                );
+              },
             };
-            const text = unknownHint(message.text);
+            const text = isCommandHelp(message.text)
+              ? commandHelp(
+                  role.value,
+                  message.isGroupChat,
+                  state.enabled,
+                  state.mode,
+                  message.userId,
+                )
+              : unknownHint(message.text);
             return message.isGroupChat
               ? channel.replyGroupControl(context.scope, text, guard)
               : channel.replyPrivateControl(message.userId, text, guard);
@@ -714,6 +744,26 @@ export async function runApplication(
             lifecycle.observeAdminMembership(scope, userId, present, messageId, at);
           },
           command(message, isCurrent) {
+            if (
+              isCommandHelp(message.text) &&
+              message.peerId === ownerPeer &&
+              message.authorId === ownerPeer &&
+              ownerPeer !== undefined &&
+              ownerPeer > 0 &&
+              !isVkGroupChat(ownerPeer) &&
+              !message.isMentioned &&
+              !message.hasReply &&
+              !message.hasForwarded &&
+              !message.attachments.length
+            ) {
+              const active = lifecycle.activeChatIds('vk').includes(ownerId);
+              if (!active || !controls.read(lifecycle.admissionScope(ownerId)).enabled)
+                return channel.replyPrivateControl(
+                  ownerId,
+                  commandHelp('owner', false, false, 'silent', ownerId),
+                  { signal, isCurrent, allow: async () => isCurrent() },
+                );
+            }
             if (
               passports.beforePersonalCommands(message) ||
               chatControl.editor.beforePersonalCommands(message)
