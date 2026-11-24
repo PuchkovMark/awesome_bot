@@ -11,6 +11,31 @@ interface AppliedMigration {
 function checksum(migration: Migration): string {
   return createHash('sha256').update(migration.sql).digest('hex');
 }
+
+export function verifyMigrationHistory(
+  database: Database,
+  available: readonly Migration[],
+): number {
+  let applied: AppliedMigration[];
+  try {
+    applied = database
+      .prepare('SELECT version, name, checksum FROM schema_migrations ORDER BY version')
+      .all() as AppliedMigration[];
+  } catch {
+    throw new StorageError('schema_incompatible');
+  }
+  for (const [index, recorded] of applied.entries()) {
+    const expected = available[index];
+    if (
+      !expected ||
+      recorded.version !== expected.version ||
+      recorded.name !== expected.name ||
+      recorded.checksum !== checksum(expected)
+    )
+      throw new StorageError('schema_incompatible');
+  }
+  return applied.length;
+}
 /** Внутренний механизм; набор можно менять только во внутренних тестах. */
 export function migrate(database: Database, available: readonly Migration[] = migrations): void {
   try {
@@ -27,29 +52,11 @@ export function migrate(database: Database, available: readonly Migration[] = mi
         database.exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
         version INTEGER PRIMARY KEY, name TEXT NOT NULL, checksum TEXT NOT NULL
       ) STRICT;`);
-        let applied: AppliedMigration[];
-        try {
-          applied = database
-            .prepare('SELECT version, name, checksum FROM schema_migrations ORDER BY version')
-            .all() as AppliedMigration[];
-        } catch {
-          throw new StorageError('schema_incompatible');
-        }
-        for (const [index, recorded] of applied.entries()) {
-          const expected = available[index];
-          if (
-            !expected ||
-            recorded.version !== expected.version ||
-            recorded.name !== expected.name ||
-            recorded.checksum !== checksum(expected)
-          ) {
-            throw new StorageError('schema_incompatible');
-          }
-        }
+        const applied = verifyMigrationHistory(database, available);
         const record = database.prepare(
           'INSERT INTO schema_migrations(version, name, checksum) VALUES (?, ?, ?)',
         );
-        for (const migration of available.slice(applied.length)) {
+        for (const migration of available.slice(applied)) {
           database.exec(migration.sql);
           record.run(migration.version, migration.name, checksum(migration));
         }
