@@ -6,6 +6,7 @@ import { openStorage } from '../src/storage/index';
 import { lifecycleBackend } from '../src/storage/lifecycle-store';
 import { createSnapshot, openExisting, openCandidate } from '../src/storage/database-backup';
 import { reconcileConnections } from '../src/storage/database-restore';
+import { profileFixture, alice, set } from './helpers/profile-fact-fixture';
 import { reconcileRestore } from '../src/storage/backup-history';
 import { personalDataStore } from '../src/storage/personal-data-store';
 
@@ -48,11 +49,11 @@ test('сброшенное поколение исключено, отзыв д�
       admin.close();
       const staged = openExisting(temp, false);
       try {
-        expect(
-          source.transaction(() =>
-            staged.transaction(() => reconcileConnections(staged, source))(),
-          )(),
-        ).toEqual({ access: 'partial', admitted: 1, closed: 1 });
+        const reconcile = source.transaction(() =>
+          staged.transaction(() => reconcileConnections(staged, source))(),
+        );
+        expect(reconcile()).toEqual({ access: 'partial', admitted: 1, closed: 1 });
+        expect(reconcile()).toEqual({ access: 'partial', admitted: 1, closed: 1 });
         expect(staged.prepare('SELECT text FROM messages').pluck().all()).toEqual(['vk:b']);
         expect(staged.prepare('SELECT count(*) FROM bot_admin_grants').pluck().get()).toBe(0);
         expect(staged.prepare('SELECT user_id FROM active_admin_denials').pluck().all()).toEqual([
@@ -153,5 +154,51 @@ test('очистка без личного удаления, свежий сро
   } finally {
     await app.close();
     f.cleanup();
+  }
+});
+
+test('личное ограничение видимости обычного поля после снимка переживает восстановление', async () => {
+  const f = await profileFixture(),
+    newer = openExisting(f.path),
+    now = Date.now();
+  try {
+    const scope = await f.chat();
+    f.deliver(scope);
+    const original = await f.message(scope, alice, '101', now);
+    expect(await f.change(scope, alice, alice, original, set('city', 'Пермь'))).toMatchObject({
+      value: 'recorded',
+    });
+    const saved = f.path + '.backup',
+      candidate = f.path + '.stage';
+    await createSnapshot(newer, saved, 'one', now);
+    const update = await f.message(scope, alice, '102', now + 1);
+    expect(
+      await f.change(scope, alice, alice, update, {
+        kind: 'visibility',
+        fieldKey: 'city',
+        visibility: 'bot',
+      }),
+    ).toMatchObject({ value: 'recorded' });
+    await openCandidate(saved, candidate, 'one', now + 2);
+    const staged = openExisting(candidate, false);
+    try {
+      expect(reconcileRestore(staged, newer, now + 2, 30 * 86400000).access).toBe('full');
+    } finally {
+      staged.close();
+    }
+    const app = await openStorage(candidate);
+    try {
+      const subject = scopeFor(app, scope.chatId);
+      expect(
+        await app.authorization.transaction(subject, (tx) => tx.readOwnProfile(alice, now + 2)),
+      ).toEqual(
+        expect.arrayContaining([expect.objectContaining({ value: 'Пермь', visibility: 'bot' })]),
+      );
+    } finally {
+      await app.close();
+    }
+  } finally {
+    newer.close();
+    await f.close();
   }
 });

@@ -69,12 +69,28 @@ function reconcileHistory(staged: Database, newer: Database, now: number, durati
   );
 }
 
+function restoreProfileEdits(staged: Database, newer: Database) {
+  const columns =
+    'chat_id,user_id,field_key,value,source_kind,source_user_id,source_message_id,source_note,reliability,visibility,created_at,updated_at,generation,source_at,event_key,interest_key,change_kind';
+  const edits = newer.prepare(`SELECT ${columns} FROM profile_facts WHERE source_kind='self'
+    AND (change_kind IN ('visibility','withdraw') OR event_key GLOB '2:profile:*') ORDER BY id`);
+  const insert = staged.prepare(`INSERT OR IGNORE INTO profile_facts(${columns})
+    SELECT ${columns
+      .split(',')
+      .map((name) => '@' + name)
+      .join(',')}
+    WHERE EXISTS(SELECT 1 FROM profile_facts f JOIN chat_connections c USING(chat_id)
+      WHERE c.generation=@generation AND f.chat_id=@chat_id AND f.user_id=@user_id AND f.field_key=@field_key)`);
+  for (const row of edits.iterate() as Iterable<object>) insert.run(row);
+}
+
 export function reconcileRestore(staged: Database, newer: Database, now: number, duration: number) {
   return newer
     .transaction(() => {
       const result = staged
         .transaction(() => {
           const access = reconcileConnections(staged, newer);
+          restoreProfileEdits(staged, newer);
           reconcileHistory(staged, newer, now, duration);
           return access;
         })

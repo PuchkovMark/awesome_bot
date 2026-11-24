@@ -1,12 +1,13 @@
-import Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 import { lstatSync, mkdirSync, realpathSync, unlinkSync } from 'node:fs';
 import {
   BackupFailure,
+  backupLifetimeMs,
   checkDatabase,
   fileIdentity,
   openExisting,
+  openMaintenanceDatabase,
   snapshotMetadata,
   syncFile,
 } from './database-backup';
@@ -61,7 +62,7 @@ export function privateDirectory(path: string) {
 export function lockDatabase(p: BackupPaths, mode: 'shared' | 'maintenance' | 'exclusive') {
   privateDirectory(p.service);
   fileIdentity(p.guard);
-  const db = new Database(p.guard, { timeout: 0 });
+  const db = openMaintenanceDatabase(p.guard, { timeout: 0 });
   try {
     db.exec(
       mode === 'shared' ? 'BEGIN' : mode === 'maintenance' ? 'BEGIN IMMEDIATE' : 'BEGIN EXCLUSIVE',
@@ -76,7 +77,7 @@ export function lockDatabase(p: BackupPaths, mode: 'shared' | 'maintenance' | 'e
 
 export function openControl(p: BackupPaths) {
   fileIdentity(p.control);
-  const db = new Database(p.control);
+  const db = openMaintenanceDatabase(p.control);
   try {
     db.pragma('synchronous=FULL');
     db.exec(
@@ -155,6 +156,7 @@ export function finishSwitch(p: BackupPaths, control: BackupControl) {
       db.close();
     }
     syncFile(p.root);
+    syncFile(p.service);
     s.live = actual;
     if (s.attempt) s.attempt.outcome = 'restored';
   } else if (actual !== s.live) throw new BackupFailure('untrusted_source');
@@ -163,10 +165,19 @@ export function finishSwitch(p: BackupPaths, control: BackupControl) {
   control.persist();
 }
 
-export function finishPublication(p: BackupPaths, control: BackupControl) {
+export function finishPublication(p: BackupPaths, control: BackupControl, now: number) {
   const s = control.state;
   if (!s.publishing) return;
   if (fileIdentity(p.latest) === s.publishing.file) {
+    if (now - s.publishing.createdAt >= backupLifetimeMs) {
+      removeOwnedFile(p.latest);
+      syncFile(p.directory);
+      s.latest = null;
+      s.publishing = null;
+      if (s.attempt) s.attempt.outcome = 'snapshot_expired';
+      control.persist();
+      return;
+    }
     inspectSnapshot(p.latest, s.publishing);
     syncFile(p.directory);
     s.latest = s.publishing;
@@ -174,4 +185,50 @@ export function finishPublication(p: BackupPaths, control: BackupControl) {
   } else if (s.attempt) s.attempt.outcome = 'interrupted';
   s.publishing = null;
   control.persist();
+}
+
+export function expireLatest(paths: BackupPaths, control: BackupControl, now: number) {
+  const state = control.state,
+    latest = state.latest;
+  if (!latest || now - latest.createdAt < backupLifetimeMs) return;
+  const file = fileIdentity(paths.latest);
+  if (file) {
+    if (file !== latest.file) {
+      // A moved snapshot keeps its original timestamp. Protect unrelated files at the reserved path.
+      const db = openExisting(paths.latest);
+      try {
+        const actual = snapshotMetadata(db);
+        if (actual?.id !== latest.id || actual.installation !== latest.installation)
+          throw new BackupFailure('snapshot_replaced');
+      } finally {
+        db.close();
+      }
+    }
+    removeOwnedFile(paths.latest);
+    syncFile(paths.directory);
+  }
+  state.latest = null;
+  control.persist();
+}
+
+export function cleanupExpiredOnStartup(paths: BackupPaths, now: number) {
+  let lock;
+  try {
+    lock = lockDatabase(paths, 'maintenance');
+  } catch (error) {
+    if ((error as { code?: string }).code === 'SQLITE_BUSY') return;
+    throw error;
+  }
+  try {
+    const control = openControl(paths);
+    try {
+      finishPublication(paths, control, now);
+      cleanStaging(paths);
+      expireLatest(paths, control, now);
+    } finally {
+      control.close();
+    }
+  } finally {
+    lock.close();
+  }
 }

@@ -1,4 +1,5 @@
-import Database from 'better-sqlite3';
+import type Database from 'better-sqlite3';
+import { createRequire } from 'node:module';
 import { closeSync, fsyncSync, lstatSync, openSync, statSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { migrations } from './migrations/index';
@@ -32,10 +33,18 @@ export function syncFile(path: string) {
   }
 }
 
+const loadNativeDriver = createRequire(import.meta.url);
+
+// These administrative operations are synchronous. Keep native loading at the first actual open.
+export function openMaintenanceDatabase(path: string, options: Database.Options = {}) {
+  const Driver = loadNativeDriver('better-sqlite3') as typeof Database;
+  return new Driver(path, options);
+}
+
 export function openExisting(path: string, readonly = true) {
   if (!fileIdentity(path)) throw new BackupFailure('database_missing');
   if (!statSync(path).size) throw new BackupFailure('database_empty');
-  const db = new Database(path, { readonly, fileMustExist: true });
+  const db = openMaintenanceDatabase(path, { readonly, fileMustExist: true });
   try {
     db.pragma('foreign_keys = ON');
     return db;

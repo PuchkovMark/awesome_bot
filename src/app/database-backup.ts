@@ -2,7 +2,6 @@ import { renameSync } from 'node:fs';
 import { performance } from 'node:perf_hooks';
 import {
   BackupFailure,
-  backupLifetimeMs,
   checkAge,
   checkDatabase,
   copyDatabase,
@@ -22,7 +21,7 @@ import {
   lockDatabase,
   openControl,
   privateDirectory,
-  removeOwnedFile,
+  expireLatest,
 } from '../storage/backup-control';
 import type { BackupControl, BackupPaths } from '../storage/backup-control';
 import { reconcileRestore } from '../storage/backup-history';
@@ -41,17 +40,6 @@ function errorCode(error: unknown) {
   if (code === 'SQLITE_BUSY' || code === 'SQLITE_LOCKED') return 'backup_busy';
   if (code === 'SQLITE_CORRUPT' || code === 'SQLITE_NOTADB') return 'database_corrupt';
   return 'backup_failed';
-}
-
-function expireLatest(p: BackupPaths, c: BackupControl, at: number) {
-  const s = c.state;
-  if (!s.latest || at - s.latest.createdAt < backupLifetimeMs) return;
-  if (fileIdentity(p.latest) === s.latest.file) {
-    removeOwnedFile(p.latest);
-    syncFile(p.directory);
-  }
-  s.latest = null;
-  c.persist();
 }
 
 function trustedSource(p: BackupPaths, c: BackupControl, initialize: boolean) {
@@ -172,7 +160,7 @@ async function updateDailySnapshot({ paths, control, config, now, hooks }: Opera
     checkAge(stamp, now());
     renameSync(paths.incoming, paths.latest);
     await hooks.checkpoint?.('after_publish');
-    finishPublication(paths, control);
+    finishPublication(paths, control, now());
     return 'created';
   } finally {
     source.close();
@@ -200,7 +188,7 @@ async function runOperation(action: BackupAction, operation: Operation) {
     at = now(),
     started = performance.now();
   finishSwitch(paths, control);
-  finishPublication(paths, control);
+  finishPublication(paths, control, at);
   if (state.attempt?.outcome === 'running') {
     state.attempt.outcome = 'interrupted';
     control.persist();

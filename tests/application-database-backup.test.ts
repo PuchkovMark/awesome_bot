@@ -285,3 +285,15 @@ test('после обрыва на границе переключения об�
     stdout: expect.stringContaining('restored'),
   });
 });
+
+test('обычный запуск после простоя удаляет просроченный снимок, даже перенесённый на другой inode', async () => {
+  const { f, config, latest } = await setup();
+  const old = Date.now() - 31 * day;
+  expect((await runBackup(config, 'create', { now: () => old })).ok).toBe(true);
+  const moved = latest + '.moving';
+  copyFileSync(latest, moved);
+  renameSync(moved, latest);
+  const app = await openApplicationStorage(f.path);
+  await app.close();
+  expect(readdirSync(join(f.directory, 'backups'))).toEqual([]);
+});

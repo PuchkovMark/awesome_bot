@@ -42,6 +42,7 @@ function restorePermissions(staged: Database, newer: Database, scope: Scope) {
     'bot_admin_revocation_audit',
     'bot_admin_controls',
     'personal_retained_denials',
+    'address_preferences',
     'admin_observations',
     'admin_presence',
     'admin_recovery_operations',
@@ -88,7 +89,8 @@ export function reconcileConnections(staged: Database, newer: Database): Restore
     staged.name === newer.name
   )
     throw new BackupFailure('untrusted_source');
-  staged.exec('UPDATE queue_lease SET token=NULL,expires_at=0,safety_ms=0');
+  staged.exec(`UPDATE queue_lease SET token=NULL,expires_at=0,safety_ms=0;
+    CREATE TEMP TABLE IF NOT EXISTS restore_inventory AS SELECT count(*) AS total FROM chat_connections`);
   const scopes = staged.prepare('SELECT chat_id,generation FROM chat_connections').all() as Scope[];
   const active = newer.prepare(
     "SELECT 1 FROM chat_connections WHERE chat_id=? AND generation=? AND state='active'",
@@ -114,9 +116,8 @@ export function reconcileConnections(staged: Database, newer: Database): Restore
     restorePermissions(staged, newer, scope);
     admitted++;
   }
-  staged
-    .prepare('UPDATE lifecycle_clock SET value=max(value,?) WHERE singleton=1')
-    .run(latestClock);
-  const closed = scopes.length - admitted;
+  staged.prepare('UPDATE lifecycle_clock SET value=? WHERE singleton=1').run(latestClock);
+  const total = staged.prepare('SELECT total FROM temp.restore_inventory').pluck().get() as number;
+  const closed = total - admitted;
   return { access: closed === 0 ? 'full' : admitted ? 'partial' : 'denied', admitted, closed };
 }

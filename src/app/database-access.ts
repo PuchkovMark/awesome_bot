@@ -1,12 +1,19 @@
-import Database from 'better-sqlite3';
 import { basename } from 'node:path';
 import { statSync } from 'node:fs';
-import { backupPaths, finishSwitch, lockDatabase, openControl } from '../storage/backup-control';
+import {
+  backupPaths,
+  cleanupExpiredOnStartup,
+  finishSwitch,
+  lockDatabase,
+  openControl,
+} from '../storage/backup-control';
 import type { BackupPaths, BackupState } from '../storage/backup-control';
 import {
   BackupFailure,
+  backupLifetimeMs,
   fileIdentity,
   openExisting,
+  openMaintenanceDatabase,
   snapshotMetadata,
 } from '../storage/database-backup';
 import { openStorage } from '../storage/index';
@@ -16,8 +23,12 @@ function readBinding(p: BackupPaths) {
     if (fileIdentity(p.latest)) throw new BackupFailure('installation_unknown');
     return undefined;
   }
-  const db = new Database(p.control, { readonly: true, fileMustExist: true });
+  const db = openMaintenanceDatabase(p.control, { readonly: true, fileMustExist: true });
   try {
+    if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE name='backup_control'").get()) {
+      if (fileIdentity(p.latest)) throw new BackupFailure('installation_unknown');
+      return undefined;
+    }
     const row = db.prepare('SELECT state FROM backup_control WHERE id=1').pluck().get() as
       string | undefined;
     const state = row ? (JSON.parse(row) as BackupState) : undefined;
@@ -48,6 +59,12 @@ export async function openApplicationStorage(
       guard = lockDatabase(p, 'shared');
       binding = readBinding(p);
     }
+    const now = Date.now();
+    if (
+      binding?.publishing ||
+      (binding?.latest && now - binding.latest.createdAt >= backupLifetimeMs)
+    )
+      cleanupExpiredOnStartup(p, now);
     const actual = fileIdentity(p.database);
     if (binding?.live && binding.live !== actual) throw new BackupFailure('untrusted_source');
     if (actual && statSync(p.database).size > 0) {

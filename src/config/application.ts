@@ -78,6 +78,20 @@ function llmRecovery(values: ConfigValues) {
   return Object.freeze({ failureThreshold, failureWindowMs, initialPauseMs, maxPauseMs });
 }
 
+function retentionConfig(values: ConfigValues) {
+  const messageRetentionDays = positiveParameter(
+    values,
+    'MESSAGE_RETENTION_DAYS',
+    undefined,
+    86_400_000,
+  );
+  try {
+    return traceConfig({ messageRetentionDays });
+  } catch {
+    throw new ConfigError('invalid', ['MESSAGE_RETENTION_DAYS']);
+  }
+}
+
 export function loadApplicationConfig(options?: ConfigOptions) {
   const { cwd, values, redact } = readConfigParameters(options);
   const base = baseConfig(values);
@@ -86,18 +100,7 @@ export function loadApplicationConfig(options?: ConfigOptions) {
   if (sessionSecret === base.vk.token || sessionSecret === base.llm.apiKey) {
     throw new ConfigError('invalid', ['LLM_SESSION_SECRET']);
   }
-  const messageRetentionDays = positiveParameter(
-    values,
-    'MESSAGE_RETENTION_DAYS',
-    undefined,
-    86_400_000,
-  );
-  let tracing;
-  try {
-    tracing = traceConfig({ messageRetentionDays });
-  } catch {
-    throw new ConfigError('invalid', ['MESSAGE_RETENTION_DAYS']);
-  }
+  const tracing = retentionConfig(values);
   const intervalMs = positiveParameter(values, 'SUMMARY_INTERVAL_MS', 300_000);
   if (intervalMs > 2147483647) throw new ConfigError('invalid', ['SUMMARY_INTERVAL_MS']);
   const defaults = responseRateConfig();
@@ -167,11 +170,6 @@ export function loadBackupConfig(options?: ConfigOptions) {
   const { cwd, values } = readConfigParameters(options);
   return {
     databasePath: databasePath(cwd, values),
-    messageRetentionDays: positiveParameter(
-      values,
-      'MESSAGE_RETENTION_DAYS',
-      undefined,
-      86_400_000,
-    ),
+    messageRetentionDays: retentionConfig(values).messageRetentionDays,
   };
 }
