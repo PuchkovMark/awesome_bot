@@ -1,3 +1,4 @@
+import { questionnaireHistory } from './046-questionnaire-history';
 import { questionnaireProfile } from './045-questionnaire-profile';
 import { starterPersonas } from './044-starter-personas';
 import { summaryBudget } from './043-summary-budget';
@@ -94,4 +95,5 @@ export const migrations: readonly Migration[] = [
   summaryBudget,
   starterPersonas,
   questionnaireProfile,
+  questionnaireHistory,
 ];

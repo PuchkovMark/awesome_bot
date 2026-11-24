@@ -389,7 +389,7 @@ test.each([false, true])(
       );
       const progress = () =>
         app.db
-          .prepare('SELECT state,answers FROM questionnaire_progress WHERE chat_id=? AND user_id=?')
+          .prepare('SELECT state FROM questionnaire_progress WHERE chat_id=? AND user_id=?')
           .get(app.scope.chatId, 'vk:101');
       expect(progress()).toBeUndefined();
       app.at(32_000);
@@ -412,9 +412,17 @@ test.each([false, true])(
       app.at(33_000);
       const answerId = app.submit('Пенёк, я Аня. Остальное пропущу.', 101);
       await until(() =>
-        expect(app.sends.some((s) => s.text === 'Спасибо! Анкета заполнена.')).toBe(true),
+        expect(app.sends.some((s) => s.text.startsWith('Спасибо! Анкета заполнена.'))).toBe(true),
       );
-      expect(progress()).toEqual({ state: 'completed', answers: '{"2":"Аня"}' });
+      expect(progress()).toEqual({ state: 'completed' });
+      expect(
+        app.db
+          .prepare(
+            `SELECT q.position,f.value FROM questionnaire_answer_facts q
+        JOIN profile_facts f ON f.id=q.fact_id WHERE q.chat_id=? AND q.user_id=?`,
+          )
+          .all(app.scope.chatId, 'vk:101'),
+      ).toEqual([{ position: 2, value: 'Аня' }]);
       expect(
         app.db
           .prepare(

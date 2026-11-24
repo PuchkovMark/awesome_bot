@@ -297,7 +297,7 @@ export function questionnaireProgressStore(storage: Storage) {
       )
       .get(scope.chatId, scope.generation, id) as (Row & { user_id: UserId }) | undefined;
     if (!row) return null;
-    const msg = questionnaireSource(db, scope, row.user_id, id, now);
+    const msg = questionnaireSource(db, scope, row.user_id, id, now, true);
     return (
       msg && { ...msg, attempt: row.attempt, template: view(row, now).template, user: row.user_id }
     );

@@ -4,6 +4,7 @@ import {
   createQuestionnaireCommands,
   openQuestionnaire,
   parseQuestionnaireCommand,
+  parseQuestionnaireView,
 } from './questionnaire-commands';
 import { questionnaireAnswerHandler } from '../core/questionnaire/answer';
 import { questionnaireProgressStore } from '../storage/questionnaire-progress-store';
@@ -109,6 +110,7 @@ export async function runApplication(
   let stopTimer: ReturnType<typeof setTimeout> | undefined;
   const typing = new Set<Promise<void>>();
   const floodPublications = new Set<Promise<void>>();
+  const questionnairePublications = new Set<Promise<void>>();
 
   function stop(failure: ApplicationFailure | null) {
     if (signal.aborted) return;
@@ -191,7 +193,7 @@ export async function runApplication(
               const questionnaire =
                 !message.hasForwarded &&
                 !message.attachments.length &&
-                parseQuestionnaireCommand(command);
+                (parseQuestionnaireCommand(command) || parseQuestionnaireView(command));
               await onboarding.notifyPrivate(scope, current);
               if (questionnaire) {
                 const isCurrent = () => current() && !onboarding.privatePending(scope);
@@ -585,6 +587,12 @@ export async function runApplication(
         channel,
         signal,
         progress: questionnaireProgress,
+        track(work) {
+          const publication = work
+            .catch((error: unknown) => logger.componentError(error))
+            .finally(() => questionnairePublications.delete(publication));
+          questionnairePublications.add(publication);
+        },
       });
       const address = createAddressPreferenceHandlers({ storage, channel, signal });
       const personas = createPersonaCommands({ storage, authorization, channel, signal });
@@ -725,6 +733,7 @@ export async function runApplication(
       summaryWork,
       ...typing,
       ...floodPublications,
+      ...questionnairePublications,
     ]);
     authorization?.dispose();
     try {

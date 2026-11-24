@@ -141,7 +141,8 @@ test('обновление переносит только проверяемы�
       db.exec(`DROP TABLE questionnaire_answer_facts;
         DROP TABLE questionnaire_access;
         DROP INDEX questionnaire_progress_attempt;
-        DELETE FROM schema_migrations WHERE version=45;`);
+        DELETE FROM schema_migrations WHERE version>=45;
+        UPDATE messages SET purpose='conversation' WHERE id IN (SELECT message_id FROM questionnaire_inputs);`);
       db.prepare(
         "UPDATE questionnaire_progress SET state='completed',answers=? WHERE source_id=?",
       ).run(JSON.stringify({ ...answers, '2': 'Отсутствующая цитата' }), first.id);

@@ -11,10 +11,12 @@ export function admitRequestQuota(db: Database, work: QueueWork, limits: ChatLim
 
   const source = db
     .prepare(
-      `SELECT user_id AS userId FROM messages
-    WHERE id=? AND chat_id=? AND role='user' AND purpose='conversation'`,
+      `SELECT user_id AS userId FROM messages m
+    WHERE id=? AND chat_id=? AND role='user' AND (purpose='conversation' OR EXISTS (
+      SELECT 1 FROM questionnaire_inputs q WHERE q.message_id=m.id AND q.chat_id=m.chat_id AND q.generation=?
+    ))`,
     )
-    .get(messageId, scope.chatId) as { userId: UserId } | undefined;
+    .get(messageId, scope.chatId, scope.generation) as { userId: UserId } | undefined;
   if (!source) return false;
 
   const total = db

@@ -317,6 +317,15 @@ export function createVkChannel(
         return { kind: 'failed' } as const;
       return confirmServicePart(scope, text, { ...guard, beforeSend: guard.isCurrent });
     },
+    questionnaireMention(text: string): UserId | null {
+      const bracket = /^\[id([1-9]\d*)\|[^\]\r\n]+\]$/u.exec(text);
+      const plain = /^@id([1-9]\d*)$/u.exec(text);
+      const id = bracket?.[1] ?? plain?.[1];
+      if (!id) return null;
+      const user = `vk:${id}` as const;
+      const local = vkLocalId(user);
+      return local !== undefined && !isVkGroupChat(local) ? user : null;
+    },
     async sendGreeting(
       scope: ConnectionScope,
       text: string,

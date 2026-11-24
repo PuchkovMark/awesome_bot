@@ -11,14 +11,21 @@ export function questionnaireSource(
   user: UserId,
   id: number,
   now: number,
+  pending = false,
 ) {
   const bounds = historyBounds(db, scope.chatId, now);
   const message = db
     .prepare(
-      "SELECT text,timestamp,platform_message_id AS platformMessageId FROM personal_visible_messages WHERE id=? AND chat_id=? AND user_id=? AND role='user' AND purpose='conversation' AND sender_bot IS NOT 1 AND id>? AND timestamp>?",
+      "SELECT text,timestamp,platform_message_id AS platformMessageId FROM personal_visible_messages WHERE id=? AND chat_id=? AND user_id=? AND role='user' AND purpose=? AND sender_bot IS NOT 1 AND id>? AND timestamp>?",
     )
-    .get(id, scope.chatId, user, bounds.clearedThrough, bounds.expiredThrough) as
-    { text: string; timestamp: number; platformMessageId: string } | undefined;
+    .get(
+      id,
+      scope.chatId,
+      user,
+      pending ? 'service_notice' : 'conversation',
+      bounds.clearedThrough,
+      bounds.expiredThrough,
+    ) as { text: string; timestamp: number; platformMessageId: string } | undefined;
   return message && profileAdmitted(db, scope, user, message.timestamp, 'write') ? message : null;
 }
 
@@ -73,5 +80,6 @@ export function acceptQuestionnaireInput(
   db.prepare(
     "UPDATE questionnaire_progress SET state='processing',source_id=? WHERE " + subject,
   ).run(messageId, scope.chatId, scope.generation, user);
+  db.prepare("UPDATE messages SET purpose='service_notice' WHERE id=?").run(messageId);
   return true;
 }

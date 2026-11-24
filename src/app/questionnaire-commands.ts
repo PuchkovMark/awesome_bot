@@ -1,17 +1,28 @@
 import type { createVkChannel } from '../channels/vk/channel';
-import { vkMessageLength } from '../channels/vk/outbound-text';
-import type { AuthorizationContext, ConnectionScope, IncomingMessage } from '../contracts/index';
+import { isVkGroupChat } from '../channels/vk/normalize';
+import { vkLocalId } from '../channels/vk/outbound';
+import { splitVkText, vkMessageLength } from '../channels/vk/outbound-text';
+import type {
+  AuthorizationContext,
+  ChatId,
+  ConnectionScope,
+  IncomingMessage,
+} from '../contracts/index';
 import type { createAuthorizationService } from '../core/authorization/service';
 import type { createLifecycleService } from '../core/lifecycle/service';
 import type { createQuestionnaireProgress } from '../core/questionnaire/progress';
 import { chatControlStore } from '../storage/chat-control-store';
+import { StorageError } from '../storage/errors';
 import {
   questionnaireAccessStore,
   questionnaireMessageSequence,
   type QuestionnaireAccessDecision,
 } from '../storage/questionnaire-access-store';
 import type { QuestionnaireCommand } from '../storage/questionnaire-progress-store';
+import { questionnaireViewStore } from '../storage/questionnaire-view-store';
 import type { Storage } from '../storage/types';
+import type { PublicationGuard } from '../core/message-router/publication-service';
+import { questionnaireListText } from './questionnaire-list-text';
 
 export const openQuestionnaire = '/анкета';
 const cancelQuestionnaire = '/анкета отмена';
@@ -40,6 +51,12 @@ function accessReply(text: string): QuestionnaireAccessDecision | null {
   if (choice === 'закрыть' || choice === 'нет') return 'closed';
   return null;
 }
+
+export function parseQuestionnaireView(text: string) {
+  return /^\/анкета\s+показать(?:\s+([\s\S]+))?$/iu.exec(text.trim());
+}
+
+const unavailable = 'Анкета недоступна.';
 const ownCommand = {
   action: 'onboarding.self.manage',
   minimumRole: 'member',
@@ -71,28 +88,91 @@ export function createQuestionnaireCommands(options: {
   readonly storage: Storage;
   readonly progress: ReturnType<typeof createQuestionnaireProgress>;
   readonly authorization: Awaited<ReturnType<typeof createAuthorizationService>>;
-  readonly lifecycle: Pick<ReturnType<typeof createLifecycleService>, 'current'>;
+  readonly lifecycle: Pick<ReturnType<typeof createLifecycleService>, 'current' | 'admissionScope'>;
   readonly channel: Pick<
     ReturnType<typeof createVkChannel>,
-    'deliverQuestionnairePart' | 'replyGroupControl' | 'replyPrivateControl'
+    | 'deliverQuestionnairePart'
+    | 'replyGroupControl'
+    | 'replyPrivateControl'
+    | 'questionnaireMention'
   >;
+  readonly track: (work: Promise<void>) => void;
   readonly signal: AbortSignal;
 }) {
   const { channel, progress, authorization, lifecycle, signal } = options;
   const controls = chatControlStore(options.storage);
   const access = questionnaireAccessStore(options.storage);
+  const views = questionnaireViewStore(options.storage);
   function commandOf(scope: ConnectionScope, message: IncomingMessage) {
     if (message.isBot !== false || (!message.isGroupChat && message.chatId !== message.userId))
       return null;
     const text = (message.literalText ?? message.text).trim();
     const progress = parseQuestionnaireCommand(text);
     if (progress) return progress;
+    const view = parseQuestionnaireView(text);
+    if (view) return { view: view[1] ?? '' };
     if (!message.isGroupChat) return null;
     const direct = accessCommand(text);
     if (direct) return { access: direct };
     const reply = accessReply(text);
     const receipt = message.replyToMessageId ?? message.unverifiedReplyToMessageId;
     return reply && receipt && access.hasPrompt(scope, receipt) ? { access: reply, receipt } : null;
+  }
+
+  async function show(
+    delivery: ConnectionScope,
+    message: IncomingMessage,
+    args: string,
+    guard: PublicationGuard,
+  ) {
+    let scope = delivery;
+    const context = /^(vk:[1-9]\d*)(?:\s+([\s\S]+))?$/u.exec(args);
+    if (context) {
+      const chatId = context[1]! as ChatId;
+      const local = vkLocalId(chatId);
+      if (message.isGroupChat || local === undefined || !isVkGroupChat(local)) {
+        await channel.deliverQuestionnairePart(delivery, unavailable, guard);
+        return;
+      }
+      try {
+        scope = lifecycle.admissionScope(chatId);
+      } catch (error) {
+        if (!(error instanceof StorageError)) throw error;
+        await channel.deliverQuestionnairePart(delivery, unavailable, guard);
+        return;
+      }
+      args = context[2] ?? '';
+    }
+    const requester = message.userId;
+    const subject = args ? channel.questionnaireMention(args) : requester;
+    const read = () => {
+      try {
+        return subject ? views.read(scope, delivery, requester, subject, Date.now()) : null;
+      } catch (error) {
+        if (error instanceof StorageError) return null;
+        throw error;
+      }
+    };
+    if (!guard.isCurrent()) return;
+    const view = read();
+    if (!view) {
+      await channel.deliverQuestionnairePart(delivery, unavailable, guard);
+      return;
+    }
+    const current = () => guard.isCurrent() && read()?.signature === view.signature;
+    const deliveryGuard = {
+      ...guard,
+      isCurrent: current,
+      allow: async () => current() && (await guard.allow()) && current(),
+    };
+    const text = view.pairs.length
+      ? questionnaireListText(view.pairs, 'Анкета')
+      : 'В анкете нет доступных ответов.';
+    for (const part of splitVkText(text)) {
+      if (!current()) return;
+      const result = await channel.deliverQuestionnairePart(delivery, part, deliveryGuard);
+      if (result.kind !== 'delivered') return;
+    }
   }
 
   return {
@@ -125,6 +205,10 @@ export function createQuestionnaireCommands(options: {
       if (!(await allowed())) return;
 
       const guard = { signal, isCurrent: current, allow: allowed };
+      if (typeof command !== 'string' && 'view' in command) {
+        options.track(show(scope, message, command.view, guard));
+        return;
+      }
       if (typeof command !== 'string') {
         const receipt = command.receipt ? questionnaireMessageSequence(command.receipt) : null;
         if (
