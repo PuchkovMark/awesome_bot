@@ -110,6 +110,21 @@ test('удаление источника после промежуточног�
   }
 });
 
+test('исчерпанная квота обращения останавливает пересказ до промежуточного reply', async () => {
+  const f = await fixture({ userRequests: 1 });
+  try {
+    await appendSource(f, 'Решение для пересказа', 0);
+    await f.published(f.submit('[club314|Пенёк] Ответь на вопрос.'));
+    const recap = f.submit(question);
+    expect((await f.trace(recap)).payload.resultKind).toBe('quota_exhausted');
+    expect(f.sends.some(({ text }) => text === 'собираю, минутку')).toBe(false);
+    expect(f.complete).toHaveBeenCalledOnce();
+    expect(f.requests()).toBe(1);
+  } finally {
+    await f.close();
+  }
+});
+
 test('при нехватке токенов пересказ сообщает о частичном покрытии, а пустой день обходится без модели', async () => {
   const f = await fixture({ summaryFragmentSize: 1 });
   try {

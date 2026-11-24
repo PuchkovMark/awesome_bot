@@ -121,6 +121,7 @@ export function questionnaireAnswerHandler(options: {
       options.llmAdmission,
       {
         signal: work.signal,
+        jobSignal: work.signal,
         current: allowed,
         ...(work.deadline === undefined ? {} : { deadline: work.deadline }),
       },

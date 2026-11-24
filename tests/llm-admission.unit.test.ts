@@ -114,6 +114,45 @@ test('истечение таймера снимает ожидание, пок�
   }
 });
 
+test('исчерпание срока задания отмечается один раз для двух ожидающих помощников', async () => {
+  const report = vi.fn();
+  const held = Promise.withResolvers<LlmResult>();
+  let now = 0;
+  const admission = createLlmAdmission(
+    { parallel: 1, background: 1, waitMs: 10_000 },
+    () => now,
+    undefined,
+    report,
+  );
+  const occupied = await admission.direct(
+    { signal: AbortSignal.timeout(1_000), current: () => true },
+    (send) => send(() => held.promise),
+  );
+  const controller = new AbortController();
+  const prepare = vi.fn();
+  const helpers = [1, 2].map(() =>
+    admission.direct(
+      {
+        signal: AbortSignal.any([controller.signal]),
+        jobSignal: controller.signal,
+        current: () => !controller.signal.aborted,
+        deadline: 300,
+      },
+      prepare,
+    ),
+  );
+  now = 300;
+  controller.abort();
+  expect(await Promise.all(helpers)).toEqual([
+    { kind: 'llm_wait_timeout' },
+    { kind: 'llm_wait_timeout' },
+  ]);
+  expect(report).toHaveBeenCalledExactlyOnceWith('llm_wait_timeout');
+  expect(prepare).not.toHaveBeenCalled();
+  held.resolve(result);
+  if (occupied.kind === 'ready') await occupied.value;
+});
+
 test('истечение срока во время синхронного допуска отменяет оформленный резерв и освобождает пробу', async () => {
   const permit = { epoch: 3, probe: true };
   const finish = vi.fn();

@@ -36,6 +36,7 @@ export type LogEvent =
       >
     >)
   | { event: 'router_stats'; window: 'run'; senderUnknown: number }
+  | { event: 'llm_admission'; outcome: import('../core/llm-admission').LlmAdmissionEvent }
   | {
       event: 'router_silence';
       reason: 'reply_other' | 'reply_unknown' | 'mention_flood';

@@ -11,6 +11,7 @@ export interface LlmAdmissionSettings {
 
 interface CallLifetime {
   readonly signal: AbortSignal;
+  readonly jobSignal?: AbortSignal;
   readonly deadline?: number;
   readonly current: () => boolean;
 }
@@ -21,6 +22,7 @@ export type SendLlmCall = (
 ) => Promise<LlmResult>;
 type Prepare<T> = (send: SendLlmCall) => T;
 type NotSent = 'cancelled' | 'llm_wait_timeout';
+export type LlmAdmissionEvent = 'rate_limit' | 'llm_wait_timeout' | 'llm_provider_paused';
 export class LlmCallNotSent extends Error {
   readonly kind: NotSent;
   constructor(kind: NotSent) {
@@ -50,9 +52,14 @@ export function createLlmAdmission(
   settings: LlmAdmissionSettings = llmAdmissionDefaults,
   now = () => performance.now(),
   recovery?: () => LlmRecovery | undefined,
+  onEvent?: (outcome: LlmAdmissionEvent) => void,
 ) {
   const waiting = new Set<(availability: LlmAvailability) => void>();
   const releaseListeners = new Set<() => void>();
+  const reportedForJob = {
+    llm_wait_timeout: new WeakSet<AbortSignal>(),
+    llm_provider_paused: new WeakSet<AbortSignal>(),
+  };
   let active = 0;
   let background = 0;
   let preparing = false;
@@ -61,6 +68,14 @@ export function createLlmAdmission(
   const availability = () => recovery?.()?.availability() ?? 'available';
   const denied = ({ signal, current }: CallLifetime, until: number): NotSent | undefined =>
     signal.aborted || !current() ? 'cancelled' : now() >= until ? 'llm_wait_timeout' : undefined;
+
+  function report(outcome: LlmAdmissionEvent) {
+    try {
+      onEvent?.(outcome);
+    } catch {
+      /* Диагностика не меняет исход вызова. */
+    }
+  }
 
   function drain() {
     if (preparing || draining) return;
@@ -116,6 +131,7 @@ export function createLlmAdmission(
           try {
             if (permit) provider!.finish(permit, result);
           } finally {
+            if (result?.kind === 'error' && result.code === 'rate_limit') report('rate_limit');
             active--;
             if (kind === 'background') background--;
             drain();
@@ -159,10 +175,21 @@ export function createLlmAdmission(
     },
     waitUntil,
     direct<T>(lifetime: CallLifetime, prepare: Prepare<T>): Promise<Admission<T>> {
-      const { signal, current } = lifetime;
+      const { signal, jobSignal } = lifetime;
       const until = waitUntil(lifetime.deadline);
       return new Promise((resolve, reject) => {
         let timer: ReturnType<typeof setTimeout> | undefined;
+        const settle = (result: Admission<T>) => {
+          if (result.kind === 'llm_wait_timeout' || result.kind === 'llm_provider_paused') {
+            const reported = reportedForJob[result.kind];
+            if (!jobSignal || !reported.has(jobSignal)) {
+              if (jobSignal) reported.add(jobSignal);
+              report(result.kind);
+            }
+          }
+          resolve(result);
+        };
+        const waitedUntilDeadline = () => timer !== undefined && now() >= until;
         const cleanup = () => {
           if (!waiting.delete(run)) return false;
           clearTimeout(timer);
@@ -170,21 +197,23 @@ export function createLlmAdmission(
           return true;
         };
         const cancel = () => {
-          if (cleanup()) resolve({ kind: 'cancelled' });
+          if (cleanup()) settle({ kind: waitedUntilDeadline() ? 'llm_wait_timeout' : 'cancelled' });
         };
         const expire = () => {
           const remaining = until - now();
           if (remaining > 0) timer = setTimeout(expire, Math.ceil(remaining));
-          else if (cleanup()) resolve({ kind: 'llm_wait_timeout' });
+          else if (cleanup()) settle({ kind: 'llm_wait_timeout' });
         };
         const run = (state: LlmAvailability) => {
           if (!cleanup()) return;
           try {
-            const interruption = denied({ signal, current }, until);
-            if (interruption) resolve({ kind: interruption });
-            else if (state === 'stopped') resolve({ kind: 'cancelled' });
-            else if (state === 'paused') resolve({ kind: 'llm_provider_paused' });
-            else resolve(admit('direct', prepare, lifetime, until));
+            const interruption = waitedUntilDeadline()
+              ? 'llm_wait_timeout'
+              : denied(lifetime, until);
+            if (interruption) settle({ kind: interruption });
+            else if (state === 'stopped') settle({ kind: 'cancelled' });
+            else if (state === 'paused') settle({ kind: 'llm_provider_paused' });
+            else settle(admit('direct', prepare, lifetime, until));
           } catch (error) {
             reject(error);
           }

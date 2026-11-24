@@ -4,7 +4,7 @@ import type { UserId } from '../contracts/index';
 import type { QueueWork } from './queue-types';
 import { timestamp } from './validation';
 
-export function admitRequestQuota(db: Database, work: QueueWork, limits: ChatLimits, now: number) {
+export function checkRequestQuota(db: Database, work: QueueWork, limits: ChatLimits, now: number) {
   timestamp(now);
   const { id, scope, messageId } = work;
   if (db.prepare('SELECT 1 FROM request_quota_admissions WHERE job_id=?').get(id)) return true;
@@ -35,10 +35,16 @@ export function admitRequestQuota(db: Database, work: QueueWork, limits: ChatLim
   };
   if (total.n >= limits.chatRequests || byUser.n >= limits.userRequests)
     return 'quota_exhausted' as const;
+  return source;
+}
 
+export function admitRequestQuota(db: Database, work: QueueWork, limits: ChatLimits, now: number) {
+  const allowed = checkRequestQuota(db, work, limits, now);
+  if (typeof allowed !== 'object') return allowed;
+  const { id, scope } = work;
   db.prepare(
     `INSERT INTO request_quota_admissions(job_id,chat_id,generation,user_id,admitted_at) VALUES(?,?,?,?,?)`,
-  ).run(id, scope.chatId, scope.generation, source.userId, now);
+  ).run(id, scope.chatId, scope.generation, allowed.userId, now);
   return 'charged' as const;
 }
 

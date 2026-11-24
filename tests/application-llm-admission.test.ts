@@ -1,6 +1,8 @@
 import { expect, test, vi } from 'vitest';
 import type { LlmRequest, LlmResult } from '../src/llm/types';
+import type { SafeLogger } from '../src/logger/index';
 import { lifecycleBackend } from '../src/storage/lifecycle-store';
+import { noticeText } from '../src/storage/notice-types';
 import { tokenBudgetStore } from '../src/storage/token-budget-store';
 import { answer, fixture, mention, peer, until } from './helpers/application-response-fixture';
 
@@ -46,6 +48,233 @@ function running(app: App, destination: number, event: number) {
     .pluck()
     .get(`vk:${destination}`, String(event));
 }
+
+function diagnosticLog() {
+  const event = vi.fn<SafeLogger['event']>();
+  return {
+    logger: { event, componentError() {}, debugText() {}, debugError() {} },
+    outcomes: () =>
+      event.mock.calls.flatMap(([entry]) =>
+        entry.event === 'llm_admission' ? [entry.outcome] : [],
+      ),
+  };
+}
+
+const destinations = [
+  { mode: 'нормальная беседа', destination: peer, active: false, private: false },
+  { mode: 'активная беседа', destination: peer, active: true, private: false },
+  { mode: 'личка', destination: 41, active: false, private: true },
+] as const;
+
+async function readyPrivate(app: App) {
+  app.submit('/персонаж', 41, undefined, 41);
+  await until(() =>
+    expect(
+      app.sends.some(({ peer_id, text }) => peer_id === 41 && text.includes('Текущий персонаж')),
+    ).toBe(true),
+  );
+}
+
+function spending(app: App, destination: number) {
+  const requests = app.db
+    .prepare('SELECT count(*) FROM request_quota_admissions WHERE chat_id=?')
+    .pluck()
+    .get(`vk:${destination}`);
+  const attempts = app.db
+    .prepare(
+      'SELECT input_tokens AS input,output_tokens AS output FROM token_budget_attempts WHERE chat_id=?',
+    )
+    .all(`vk:${destination}`);
+  return { requests, attempts };
+}
+
+test.each(destinations)(
+  '$mode — один 429, два локальных отказа и общий период уведомлений',
+  async ({ destination, active, private: directMessage }) => {
+    const diagnostics = diagnosticLog();
+    const app = await fixture({ active, logger: diagnostics.logger });
+    try {
+      await app.connectGroup(other);
+      if (directMessage) await readyPrivate(app);
+      app.at(1_000);
+      app.complete.mockResolvedValueOnce(rateLimit);
+      const first = app.submit(dialog('Провайдер ограничил запросы'), 41, undefined, other);
+      expect((await app.trace(first, 1_800, other)).payload).toMatchObject({
+        resultKind: 'rate_limit',
+        summary: { attempts: 1 },
+      });
+      for (let i = 0; i < 2; i++) {
+        const text = `Обращение в паузе ${i + 1}`;
+        const id = app.submit(directMessage ? text : dialog(text), 41, undefined, destination);
+        const sent = !active && i === 0;
+        expect((await app.trace(id, 1_800, destination)).payload).toMatchObject({
+          resultKind: 'llm_provider_paused',
+          summary: { attempts: 0 },
+          model: { invoked: 'no' },
+          publication: {
+            rowId: 'llm_provider_paused',
+            status: sent ? 'delivered' : 'suppressed',
+            reason: active || sent ? 'none' : 'notice_period',
+          },
+        });
+        expect(
+          app.sends.find((item) => item.reply_message?.conversation_message_id === id)?.text,
+        ).toBe(sent ? noticeText : undefined);
+      }
+      expect(app.complete).toHaveBeenCalledOnce();
+      expect(diagnostics.outcomes()).toEqual([
+        'rate_limit',
+        'llm_provider_paused',
+        'llm_provider_paused',
+      ]);
+      expect(spending(app, destination)).toEqual({ requests: 0, attempts: [] });
+      expect(spending(app, other)).toEqual({
+        requests: 1,
+        attempts: [{ input: null, output: null }],
+      });
+    } finally {
+      await app.close();
+    }
+  },
+);
+
+test.each(destinations)(
+  '$mode — истечение ожидания без отправки и расхода',
+  async ({ destination, active, private: directMessage }) => {
+    const held = pending();
+    const diagnostics = diagnosticLog();
+    const app = await fixture({
+      active,
+      logger: diagnostics.logger,
+      llmEnv: { LLM_CONCURRENT_CALLS: '1', LLM_SLOT_WAIT_MS: '80' },
+    });
+    try {
+      await app.connectGroup(other);
+      if (directMessage) await readyPrivate(app);
+      app.complete.mockImplementationOnce(() => held.promise);
+      const first = app.submit(dialog('Занятое место'), 41, undefined, other);
+      await until(() => expect(app.complete).toHaveBeenCalledOnce());
+      for (let i = 0; i < 2; i++) {
+        const text = `Ожидающее обращение ${i + 1}`;
+        const id = app.submit(directMessage ? text : dialog(text), 41, undefined, destination);
+        const sent = !active && i === 0;
+        expect((await app.trace(id, 1_800, destination)).payload).toMatchObject({
+          resultKind: 'llm_wait_timeout',
+          summary: { attempts: 0 },
+          model: { invoked: 'no' },
+          publication: {
+            rowId: 'llm_wait_timeout',
+            status: sent ? 'delivered' : 'suppressed',
+            reason: active || sent ? 'none' : 'notice_period',
+          },
+        });
+      }
+      held.resolve(answer);
+      await app.published(first);
+      expect(app.complete).toHaveBeenCalledOnce();
+      expect(diagnostics.outcomes()).toEqual(['llm_wait_timeout', 'llm_wait_timeout']);
+      expect(spending(app, destination)).toEqual({ requests: 0, attempts: [] });
+      expect(spending(app, other)).toEqual({ requests: 1, attempts: [{ input: 1, output: 1 }] });
+    } finally {
+      held.resolve(answer);
+      await app.close();
+    }
+  },
+);
+
+test.each(['анкета', 'пересказ'] as const)(
+  '429 в пути «%s» прекращает работу и ставит другой путь на паузу',
+  async (firstPath) => {
+    const diagnostics = diagnosticLog();
+    const app = await fixture({
+      profileNotice: 'В беседе разрешён профиль.',
+      logger: diagnostics.logger,
+    });
+    try {
+      await app.connectGroup(other);
+      app.at(1_000);
+      const questionnaire = firstPath === 'анкета' ? peer : other;
+      const recap = firstPath === 'пересказ' ? peer : other;
+      app.submit('/анкета', 41, undefined, questionnaire);
+      await until(() =>
+        expect(
+          app.db
+            .prepare('SELECT state FROM questionnaire_progress WHERE chat_id=?')
+            .pluck()
+            .get(`vk:${questionnaire}`),
+        ).toBe('active'),
+      );
+      const scope = lifecycleBackend(app.storage).current(`vk:${recap}`);
+      await app.storage.messages.append(scope, {
+        chatId: scope.chatId,
+        messageId: 'recap-source',
+        userId: 'vk:41',
+        authorName: 'Ира',
+        role: 'user',
+        text: 'Встречаемся завтра.',
+        timestamp: app.start - 86_400_000,
+      });
+      const input = (destination: number) =>
+        app.submit(
+          destination === recap ? dialog('Что было вчера?') : dialog('Я Ира. Люблю походы.'),
+          41,
+          undefined,
+          destination,
+        );
+      app.at(2_000);
+      app.complete.mockResolvedValueOnce(rateLimit);
+      const first = input(peer);
+      expect((await app.trace(first)).payload).toMatchObject({
+        resultKind: 'rate_limit',
+        summary: { attempts: 1 },
+        publication: { status: 'delivered' },
+      });
+      const second = input(other);
+      expect((await app.trace(second, 1_800, other)).payload).toMatchObject({
+        resultKind: 'llm_provider_paused',
+        summary: { attempts: 0 },
+        publication: { status: 'delivered' },
+      });
+      expect(
+        app.sends.filter(({ text }) => text === 'собираю, минутку').map(({ peer_id }) => peer_id),
+      ).toEqual(firstPath === 'пересказ' ? [peer] : []);
+      expect(app.complete).toHaveBeenCalledOnce();
+      expect(diagnostics.outcomes()).toEqual(['rate_limit', 'llm_provider_paused']);
+      expect(spending(app, peer)).toEqual({
+        requests: 1,
+        attempts: [{ input: null, output: null }],
+      });
+      expect(spending(app, other)).toEqual({ requests: 0, attempts: [] });
+    } finally {
+      await app.close();
+    }
+  },
+);
+
+test('429 от помощника завершает родительское задание без продолжения', async () => {
+  const diagnostics = diagnosticLog();
+  const app = await fixture({ logger: diagnostics.logger });
+  try {
+    tokenBudgetStore(app.storage).update(app.scope, true, { total: 60_000 }, app.start);
+    app.complete.mockResolvedValueOnce(toolCalls('ветвь')).mockResolvedValueOnce(rateLimit);
+    const id = app.submit(dialog('Проверь это помощником'));
+    expect((await app.trace(id)).payload).toMatchObject({
+      resultKind: 'rate_limit',
+      summary: { attempts: 2 },
+    });
+    expect(app.complete).toHaveBeenCalledTimes(2);
+    expect(diagnostics.outcomes()).toEqual(['rate_limit']);
+    expect(spending(app, peer)).toEqual({
+      requests: 1,
+      attempts: [
+        { input: 10, output: 5 },
+        { input: null, output: null },
+      ],
+    });
+  } finally {
+    await app.close();
+  }
+});
 
 test('две модели делят четыре места, пятый вызов ждёт освобождения помощника', async () => {
   const held = new Map(

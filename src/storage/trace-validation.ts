@@ -6,6 +6,8 @@ export const traceRows = [
   'complete',
   'unusable_response',
   'unsuccessful',
+  'llm_wait_timeout',
+  'llm_provider_paused',
   'queue_full',
   'quota_exhausted',
   'token_budget_exhausted',

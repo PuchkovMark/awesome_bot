@@ -56,6 +56,15 @@ export function safeEvent(input: unknown): LogEvent | undefined {
     if (Number.isSafeInteger(n) && (n as number) >= 0)
       return { event, window: 'run', senderUnknown: n as number };
   }
+  if (event === 'llm_admission') {
+    const outcome = ownData(input, 'outcome');
+    if (
+      outcome === 'rate_limit' ||
+      outcome === 'llm_wait_timeout' ||
+      outcome === 'llm_provider_paused'
+    )
+      return { event, outcome };
+  }
   if (event === 'queue_stats' && ownData(input, 'window') === 'run') {
     const keys = [
       'depthQueued',

@@ -97,4 +97,6 @@ test('разные строки таблицы имеют разные усто�
   const route = { kind: 'name', mode: 'normal', isGroupChat: true } as const;
   expect(publicationRow(route, { kind: 'empty' })).toBe('unusable_response');
   expect(publicationRow(route, { kind: 'rate_limit' })).toBe('unsuccessful');
+  expect(publicationRow(route, { kind: 'llm_wait_timeout' })).toBe('llm_wait_timeout');
+  expect(publicationRow(route, { kind: 'llm_provider_paused' })).toBe('llm_provider_paused');
 });

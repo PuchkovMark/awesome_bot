@@ -51,6 +51,7 @@ export interface QueueHandlerInput {
   readonly isCurrent: () => boolean;
   readonly disclosureVersion?: number;
   readonly initiativeEvidenceId?: number;
+  readonly checkRequestQuota?: () => boolean | 'quota_exhausted';
   readonly admitModelAttempt?: (
     allow: () => boolean,
     contextIds?: readonly number[],
@@ -81,7 +82,7 @@ export interface QueueCompletion {
 }
 export interface QueueSettlement extends Omit<
   QueueHandlerInput,
-  'recordTrace' | 'jobId' | 'admitModelAttempt'
+  'recordTrace' | 'jobId' | 'admitModelAttempt' | 'checkRequestQuota'
 > {
   readonly jobId?: number;
   readonly route: import('../../storage/queue-types').RouteMetadata | null;

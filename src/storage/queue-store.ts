@@ -27,7 +27,12 @@ import type { QueueWork, QueueOutcome, QueueRecord } from './queue-types';
 import { StorageError } from './errors';
 import { requireInput, timestamp } from './validation';
 import { readChatControl } from './chat-control-store';
-import { admitRequestQuota, pruneRequestQuota, releaseRequestQuota } from './request-quota-store';
+import {
+  admitRequestQuota,
+  checkRequestQuota,
+  pruneRequestQuota,
+  releaseRequestQuota,
+} from './request-quota-store';
 import {
   canReserveTokens,
   type FinalBudget,
@@ -793,6 +798,13 @@ export function createQueueBackend(
     },
     checkInitiativePublication(token: string, work: QueueWork) {
       return transaction(token, (db) => currentInitiative(db, work, Date.now()));
+    },
+    checkRequestQuota(token: string, work: QueueWork, limits: ChatLimits) {
+      return transaction(token, (db) => {
+        if (!running(db, token, work)) return false;
+        const quota = checkRequestQuota(db, work, limits, Date.now());
+        return typeof quota === 'object' ? true : quota;
+      });
     },
     admitModelAttempt(
       token: string,

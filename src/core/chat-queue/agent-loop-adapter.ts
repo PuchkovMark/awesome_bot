@@ -393,6 +393,7 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
           options.llmAdmission
             ? {
                 admission: options.llmAdmission,
+                jobSignal: work.signal,
                 ...(work.deadline === undefined ? {} : { deadline: work.deadline }),
                 current: () => !lifetime.aborted && work.isCurrent(),
               }

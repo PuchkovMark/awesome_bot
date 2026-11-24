@@ -347,6 +347,9 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
               ? {}
               : { initiativeEvidenceId: work.initiativeEvidenceId }),
             isCurrent,
+            ...(limits && work.route && work.route.kind !== 'initiative'
+              ? { checkRequestQuota: () => backend.checkRequestQuota(token, work, limits) }
+              : {}),
             ...((limits && work.route) ||
             responseRate ||
             options.tokenBudget ||

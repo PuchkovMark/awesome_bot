@@ -1,6 +1,7 @@
 import { expect, test, vi } from 'vitest';
 import { tokenBudgetStore } from '../src/storage/token-budget-store';
 import { createAgentLoopQueue } from '../src/core/index';
+import { createLlmAdmission } from '../src/core/llm-admission';
 import type { LlmResult } from '../src/llm/types';
 import { openStorage } from '../src/storage/index';
 import { flushQueue, queueMessage } from './helpers/chat-queue';
@@ -180,8 +181,10 @@ test('поздний usage после тайм-аута сохраняется �
   const budget = tokenBudgetStore(storage);
   const delayed = Promise.withResolvers<LlmResult>();
   const complete = vi.fn(() => delayed.promise);
+  const llmAdmission = createLlmAdmission();
   const queue = createAgentLoopQueue({
     storage,
+    llmAdmission,
     tokenBudget: true,
     tracing: { messageRetentionDays: 30 },
     modelName: 'synthetic',
@@ -197,6 +200,7 @@ test('поздний usage после тайм-аута сохраняется �
     await vi.advanceTimersByTimeAsync(100);
     expect(await storage.queue.get(scope, 1)).toMatchObject({ outcome: 'deadline_exceeded' });
     expect(budget.read(scope, true, Date.now()).total.incompleteAttempts).toBe(1);
+    expect(llmAdmission.stats().active).toBe(1);
     delayed.resolve({ ...response, usage: { input: 600, output: 0 } });
     await flushQueue();
     expect(budget.read(scope, true, Date.now()).total).toMatchObject({
@@ -205,6 +209,7 @@ test('поздний usage после тайм-аута сохраняется �
       incompleteAttempts: 0,
     });
     expect(complete).toHaveBeenCalledOnce();
+    expect(llmAdmission.stats().active).toBe(0);
   } finally {
     await queue.stop();
     await storage.close();

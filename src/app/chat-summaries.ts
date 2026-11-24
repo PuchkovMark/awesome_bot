@@ -129,6 +129,7 @@ export function applicationSummaries(options: {
               signal: abort,
               current: allowed,
               ...(deadline === undefined ? {} : { deadline }),
+              ...(work ? { jobSignal: work.signal } : {}),
             },
             perform,
             work ? 'direct' : 'background',
@@ -283,7 +284,12 @@ export function applicationSummaries(options: {
                   if (options.llmAdmission) {
                     firstDeadline = options.llmAdmission.waitUntil(work.deadline);
                     const ready = await options.llmAdmission.direct(
-                      { signal: work.signal, deadline: firstDeadline, current },
+                      {
+                        signal: work.signal,
+                        jobSignal: work.signal,
+                        deadline: firstDeadline,
+                        current,
+                      },
                       () => true,
                     );
                     if (ready.kind !== 'ready')
@@ -291,7 +297,16 @@ export function applicationSummaries(options: {
                         ready.kind === 'background_busy' ? 'busy' : ready.kind,
                       );
                   }
+                  const quota = work.checkRequestQuota?.();
+                  if (quota === 'quota_exhausted') throw new SummaryFailure('quota');
+                  if (quota === false) throw new SummaryFailure('cancelled');
+                  const noticeStarted = performance.now();
                   await notify(work, source.messageId, current);
+                  if (firstDeadline !== undefined)
+                    firstDeadline = Math.min(
+                      firstDeadline + performance.now() - noticeStarted,
+                      work.deadline ?? Infinity,
+                    );
                 })()),
             },
             period,

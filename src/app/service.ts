@@ -407,6 +407,7 @@ export async function runApplication(
         config.llmAdmission,
         undefined,
         () => queue?.llmRecovery,
+        (outcome) => logger.event({ event: 'llm_admission', outcome }, 'info'),
       );
       const auxiliaryClient =
         dependencies.auxiliaryClient ??

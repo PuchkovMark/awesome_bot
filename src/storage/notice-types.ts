@@ -7,9 +7,18 @@ const templates = {
   mention_flood: 'Слишком много обращений подряд. Попробуйте чуть позже.',
   quota_exhausted: 'Сейчас слишком много запросов. Попробуй чуть позже.',
   token_budget_exhausted: 'Бюджет токенов этой беседы исчерпан. Попробуйте позже.',
+  rate_limit: noticeText,
+  llm_wait_timeout: noticeText,
+  llm_provider_paused: noticeText,
 };
 export type NoticeKind = keyof typeof templates;
 export type RateLimitedNotice = 'quota_exhausted' | 'mention_flood' | 'token_budget_exhausted';
+
+export function isLlmAvailabilityNotice(
+  kind: unknown,
+): kind is 'rate_limit' | 'llm_wait_timeout' | 'llm_provider_paused' {
+  return kind === 'rate_limit' || kind === 'llm_wait_timeout' || kind === 'llm_provider_paused';
+}
 
 export function isRateLimitedNotice(kind: NoticeKind | undefined): kind is RateLimitedNotice {
   return (

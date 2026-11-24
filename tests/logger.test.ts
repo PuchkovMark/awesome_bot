@@ -145,3 +145,18 @@ test('диагностика конфигурации безопасна без 
   expect(output.records()[0]?.parameters).toEqual(['OPENCODE_API_KEY']);
   expect(output.text()).not.toContain(secret);
 });
+
+test('диагностика вызовов модели сохраняет только согласованные исходы', () => {
+  const output = captureLogs();
+  const logger = createLogger({ destination: output.destination });
+  const values = ['rate_limit', 'llm_wait_timeout', 'llm_provider_paused'] as const;
+  for (const outcome of values)
+    logger.event(
+      { event: 'llm_admission', outcome, body: humanText, retryAfter: secret } as LogEvent,
+      'info',
+    );
+  logger.event({ event: 'llm_admission', outcome: secret } as unknown as LogEvent, 'info');
+  expect(output.records().map(({ outcome }) => outcome)).toEqual(values);
+  expect(output.text()).not.toContain(humanText);
+  expect(output.text()).not.toContain(secret);
+});

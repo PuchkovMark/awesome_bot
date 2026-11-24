@@ -49,6 +49,7 @@ export async function fixture(
     auxiliaryModel?: string;
     llmEnv?: Partial<Record<`LLM_${string}`, string>>;
     modelClients?: { client?: LlmClient; auxiliaryClient?: LlmClient };
+    logger?: SafeLogger;
     upload?: (peer: number, data: Buffer) => Promise<string>;
     threshold?: number;
     window?: number;
@@ -267,7 +268,7 @@ export async function fixture(
   let stop = new AbortController();
   const complete = vi.fn<(request: LlmRequest) => Promise<LlmResult>>(async () => answer);
   const launch = () =>
-    runApplication(config, logger, stop.signal, {
+    runApplication(config, options.logger ?? logger, stop.signal, {
       vk: {
         api: { ...api, ...(options.upload ? { uploadPrivateDocument: options.upload } : {}) },
         transport,
@@ -397,7 +398,9 @@ export async function fixture(
       failSend(fault: typeof sendFault) {
         sendFault = fault;
       },
-      async trace(id: number, timeout = 1800): Promise<TraceRecord> {
+      async trace(id: number, timeout = 1800, destination = peer): Promise<TraceRecord> {
+        const target =
+          destination === peer ? scope : lifecycleBackend(storage).current(`vk:${destination}`);
         let result: Awaited<ReturnType<typeof storage.traces.get>> = null;
         await vi.waitFor(
           async () => {
@@ -406,9 +409,9 @@ export async function fixture(
                 `SELECT j.id FROM queue_jobs j JOIN messages m ON j.message_id=m.id
             WHERE j.chat_id=? AND m.platform_message_id=?`,
               )
-              .get(chat, String(id)) as { id: number } | undefined;
+              .get(target.chatId, String(id)) as { id: number } | undefined;
             expect(job).toBeDefined();
-            result = await storage.traces.get(scope, job!.id);
+            result = await storage.traces.get(target, job!.id);
             expect(result?.finishedAt).not.toBeNull();
             expect(result?.payload.publication.status).toBeDefined();
             expect(result?.payload.publication.status).not.toBe('pending_checks');

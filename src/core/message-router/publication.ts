@@ -1,6 +1,7 @@
 import type { PublicationDecision } from './types';
 import type { RouteMetadata } from '../../storage/queue-types';
 import type { ResponseMode } from '../../storage/index';
+import { isLlmAvailabilityNotice } from '../../storage/notice-types';
 export { noticeText, noticeTemplate } from '../../storage/notice-types';
 export function publicationDecision(
   route: RouteMetadata | null,
@@ -35,12 +36,12 @@ export function publicationDecision(
     return silence;
   if (kind === 'current_message_too_large')
     return { kind: 'notice', template: 'current_message_too_large' };
+  if (isLlmAvailabilityNotice(kind)) return { kind: 'notice', template: kind };
   return typeof kind === 'string' &&
     [
       'incomplete',
       'refused',
       'empty',
-      'rate_limit',
       'tools_not_supported',
       'step_limit',
       'deadline_exceeded',
@@ -67,6 +68,7 @@ export function publicationRow(
       ? (Object.getOwnPropertyDescriptor(outcome, 'kind')?.value as unknown)
       : undefined;
   if (typeof kind !== 'string') return 'silent_outcome';
+  if (kind === 'llm_wait_timeout' || kind === 'llm_provider_paused') return kind;
   if (['incomplete', 'refused', 'empty'].includes(kind)) return 'unusable_response';
   if (
     [

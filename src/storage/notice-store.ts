@@ -3,7 +3,7 @@ import type { Connection } from './connection';
 import type { LifecycleBackend } from './lifecycle-store';
 import type { ConnectionScope } from '../contracts/index';
 import type { NoticeBackend, NoticePermit } from './notice-types';
-import { isRateLimitedNotice, noticeTemplate } from './notice-types';
+import { isLlmAvailabilityNotice, isRateLimitedNotice, noticeTemplate } from './notice-types';
 import { readMessage, createMessageStore } from './messages';
 import { requireInput, timestamp, string } from './validation';
 export function createNoticeBackend(
@@ -21,7 +21,10 @@ export function createNoticeBackend(
     },
     reserve(scope, messageId, route, interval, now, kind = 'generic') {
       requireInput(
-        kind === 'generic' || kind === 'current_message_too_large' || isRateLimitedNotice(kind),
+        kind === 'generic' ||
+          kind === 'current_message_too_large' ||
+          isRateLimitedNotice(kind) ||
+          isLlmAvailabilityNotice(kind),
       );
       timestamp(now);
       requireInput(Number.isSafeInteger(interval) && interval > 0);
@@ -42,7 +45,17 @@ export function createNoticeBackend(
         )
           return null;
         const source = readMessage(db, scope.chatId, messageId);
-        if (!source || source.purpose !== 'conversation') return null;
+        if (!source) return null;
+        if (
+          source.purpose !== 'conversation' &&
+          (!isLlmAvailabilityNotice(kind) ||
+            !db
+              .prepare(
+                'SELECT 1 FROM questionnaire_inputs WHERE chat_id=? AND generation=? AND message_id=?',
+              )
+              .get(scope.chatId, scope.generation, messageId))
+        )
+          return null;
         const changed = db
           .prepare(
             `INSERT INTO notice_periods(chat_id,generation,next_at) VALUES(?,?,?)
