@@ -11,10 +11,54 @@ import type {
   LlmResult,
 } from './types';
 
-function httpFailure(status: number): LlmFailure {
+function retryAt(header: string | null, receivedAt: number): number | undefined {
+  if (!header) return undefined;
+  if (/^\d+$/u.test(header)) {
+    const deadline = receivedAt + Number(header) * 1_000;
+    return Number.isSafeInteger(deadline) && deadline <= 8_640_000_000_000_000
+      ? deadline
+      : undefined;
+  }
+  const fixed = /^[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT$/u;
+  const long = /^([A-Z][a-z]+), (\d{2})-([A-Z][a-z]{2})-(\d{2}) (\d{2}:\d{2}:\d{2}) GMT$/u.exec(
+    header,
+  );
+  const short = /^([A-Z][a-z]{2}) ([A-Z][a-z]{2}) ( \d|\d{2}) (\d{2}:\d{2}:\d{2}) (\d{4})$/u.exec(
+    header,
+  );
+  let canonical: string;
+  if (long) {
+    const [, dayOfWeek, day, month, suffix, time] = long;
+    const now = new Date(receivedAt).getUTCFullYear();
+    const candidate = now + ((Number(suffix) - (now % 100) + 100) % 100);
+    const weekday = dayOfWeek!.slice(0, 3);
+    const date = (year: number) => `${weekday}, ${day} ${month} ${year} ${time} GMT`;
+    const horizon = new Date(receivedAt);
+    horizon.setUTCFullYear(now + 50);
+    canonical = date(Date.parse(date(candidate)) > horizon.getTime() ? candidate - 100 : candidate);
+    const parsed = new Date(canonical);
+    if (parsed.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' }) !== dayOfWeek)
+      return undefined;
+  } else if (short) {
+    const [, weekday, month, day, time, year] = short;
+    canonical = `${weekday}, ${day!.trim().padStart(2, '0')} ${month} ${year} ${time} GMT`;
+  } else if (fixed.test(header)) canonical = header;
+  else return undefined;
+
+  const deadline = Date.parse(canonical);
+  return Number.isSafeInteger(deadline) && new Date(deadline).toUTCString() === canonical
+    ? Math.max(receivedAt, deadline)
+    : undefined;
+}
+
+function httpFailure(status: number, retryHeader: string | null): LlmFailure {
   if (status === 401) return llmFailure('authentication');
   if (status === 403) return llmFailure('forbidden');
-  if (status === 429) return llmFailure('rate_limit');
+  if (status === 429) {
+    const failure = llmFailure('rate_limit');
+    const deadline = retryAt(retryHeader, Date.now());
+    return deadline === undefined ? failure : Object.freeze({ ...failure, retryAt: deadline });
+  }
   if (status >= 500 && status <= 599) return llmFailure('server');
   return llmFailure('http');
 }
@@ -92,13 +136,19 @@ export function createLlmClient(config: LlmConfig, options: LlmClientOptions = {
               body: prepared.body,
             });
             if (stopped || response.redirected || response.status !== 200) {
+              const failure =
+                stopped ??
+                httpFailure(
+                  response.status,
+                  response.status === 429 ? response.headers.get('Retry-After') : null,
+                );
               // При позднем ответе или HTTP-отказе тело не накапливается.
               try {
                 void response.body?.cancel().catch(() => {});
               } catch {
                 /* Без raw-ошибки. */
               }
-              return stopped ?? httpFailure(response.status);
+              return failure;
             }
             if (!response.body) return llmFailure('invalid_response');
             reader = response.body.getReader();

@@ -61,6 +61,8 @@ export interface LlmFailure {
   readonly kind: 'error';
   readonly code: LlmErrorCode;
   readonly message: string;
+  /** UTC unix ms для HTTP 429 с корректным Retry-After. */
+  readonly retryAt?: number;
 }
 export type LlmResult = LlmResponse | LlmFailure;
 export interface LlmClient {

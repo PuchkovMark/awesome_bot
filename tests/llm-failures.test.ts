@@ -32,6 +32,41 @@ test.each([
   expect(fetch).toHaveBeenCalledTimes(1);
   if (status !== 204) expect(cancel).toHaveBeenCalledOnce();
 });
+
+test.each([
+  ['17', 17_000],
+  ['0', 0],
+  ['Tue, 24 Nov 2026 12:00:25 GMT', 25_000],
+  ['Tuesday, 24-Nov-26 12:00:25 GMT', 25_000],
+  ['Tue Nov 24 12:00:25 2026', 25_000],
+  ['Tue, 24 Nov 2026 11:59:59 GMT', 0],
+  [null, undefined],
+  ['-1', undefined],
+  ['1.5', undefined],
+  ['8640000000000', undefined],
+  ['Tue, 31 Nov 2026 12:00:25 GMT', undefined],
+  ['2026-11-24T12:00:25Z', undefined],
+  ['SENSITIVE_BAD HEADER', undefined],
+] as const)('HTTP 429 с Retry-After %s', async (header, delay) => {
+  const now = Date.UTC(2026, 10, 24, 12);
+  vi.spyOn(Date, 'now').mockReturnValue(now);
+  const cancel = vi.fn();
+  const body = new ReadableStream({ cancel });
+  const headers = {
+    'x-private': 'SENSITIVE_HEADER',
+    ...(header === null ? {} : { 'Retry-After': header }),
+  };
+  const fetch = vi.fn(async () => new Response(body, { status: 429, headers }));
+  const result = await createLlmClient(llmConfig, { fetch }).complete(llmRequest());
+  expect(result).toEqual({
+    kind: 'error',
+    code: 'rate_limit',
+    message: 'Достигнут лимит провайдера.',
+    ...(delay === undefined ? {} : { retryAt: now + delay }),
+  });
+  expect(fetch).toHaveBeenCalledOnce();
+  expect(cancel).toHaveBeenCalledOnce();
+});
 test.each([
   new Error('SENSITIVE', { cause: 'SENSITIVE_CAUSE' }),
   'SENSITIVE',
