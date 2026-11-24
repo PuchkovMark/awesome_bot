@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the awesome_bot daily SQLite backup
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 UTC
+Persistent=true
+Unit=awesome-bot-backup.service
+
+[Install]
+WantedBy=timers.target

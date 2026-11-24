@@ -1,0 +1,11 @@
+[Unit]
+Description=Create and verify the daily awesome_bot SQLite backup
+
+[Service]
+Type=oneshot
+User=awesome-bot
+WorkingDirectory=/opt/awesome-bot
+EnvironmentFile=/etc/awesome-bot/backup.env
+ExecStart=/usr/bin/node /opt/awesome-bot/dist/app/cli.js backup create
+UMask=0077
+NoNewPrivileges=true
