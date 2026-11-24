@@ -1,6 +1,12 @@
 import type { Database } from 'better-sqlite3';
 import type { ChatId, ConnectionScope, HumanMembership } from '../contracts/index';
 import type { LlmUsage } from '../llm/types';
+import type { ModelAttemptMeter } from '../contracts/chat-metrics';
+import {
+  reconcileModelMetrics,
+  recordFailedModelAttempt,
+  recordSentModelAttempt,
+} from './chat-request-metrics-store';
 import type { LifecycleBackend } from './lifecycle-store';
 import type { Connection } from './connection';
 type BudgetScope = Pick<ConnectionScope, 'chatId' | 'generation'>;
@@ -205,25 +211,49 @@ export function reconcileTokenReservation(
 ) {
   if (usage.input !== null) timestamp(usage.input);
   if (usage.output !== null) timestamp(usage.output);
-  return (
-    db
-      .prepare(
-        `UPDATE token_budget_attempts
+  return db
+    .transaction(() => {
+      const budget =
+        db
+          .prepare(
+            `UPDATE token_budget_attempts
        SET input_tokens=coalesce(input_tokens,?),output_tokens=coalesce(output_tokens,?)
        WHERE chat_id=? AND generation=? AND attempt_key=?`,
-      )
-      .run(usage.input, usage.output, scope.chatId, scope.generation, key).changes === 1
-  );
+          )
+          .run(usage.input, usage.output, scope.chatId, scope.generation, key).changes === 1;
+      return reconcileModelMetrics(db, scope, key, usage) || budget;
+    })
+    .immediate();
 }
 
 export function deleteUnsentTokenReservation(db: Database, scope: ConnectionScope, key: string) {
   return (
     db
       .prepare(
-        'DELETE FROM token_budget_attempts WHERE chat_id=? AND generation=? AND attempt_key=? AND input_tokens IS NULL AND output_tokens IS NULL',
+        `DELETE FROM token_budget_attempts WHERE chat_id=? AND generation=? AND attempt_key=?
+         AND input_tokens IS NULL AND output_tokens IS NULL
+         AND NOT EXISTS(SELECT 1 FROM chat_metrics_attempts m WHERE m.chat_id=token_budget_attempts.chat_id
+           AND m.generation=token_budget_attempts.generation AND m.attempt_key=token_budget_attempts.attempt_key)`,
       )
       .run(scope.chatId, scope.generation, key).changes === 1
   );
+}
+
+export function createTokenAttemptMeter(
+  connection: Connection,
+  lifecycle: Pick<LifecycleBackend, 'transaction'>,
+  scope: ConnectionScope,
+  key: string,
+  cancelBeforeSend: () => void,
+): ModelAttemptMeter {
+  return {
+    cancelBeforeSend,
+    sent: () => lifecycle.transaction(scope, (db) => recordSentModelAttempt(db, scope, key)),
+    failed: () =>
+      connection.run((db) =>
+        db.transaction(() => recordFailedModelAttempt(db, scope, key)).immediate(),
+      ),
+  };
 }
 
 export function pruneTokenBudget(db: Database, now: number) {
@@ -379,8 +409,10 @@ export function createTokenBudgetStore(connection: Connection, lifecycle: Lifecy
         return true;
       });
     },
-    cancelReservation(scope: ConnectionScope, key: string) {
-      return connection.run((db) => deleteUnsentTokenReservation(db, scope, key));
+    meter(scope: ConnectionScope, key: string) {
+      return createTokenAttemptMeter(connection, lifecycle, scope, key, () => {
+        connection.run((db) => deleteUnsentTokenReservation(db, scope, key));
+      });
     },
     reconcile(scope: ConnectionScope, key: string, usage: LlmUsage) {
       return lifecycle.transaction(scope, (db) => reconcileTokenReservation(db, scope, key, usage));

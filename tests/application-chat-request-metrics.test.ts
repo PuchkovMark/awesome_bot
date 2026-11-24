@@ -1,17 +1,19 @@
 import { expect, test, vi } from 'vitest';
 import type { ConnectionScope } from '../src/contracts/index';
 import type { MetricsSeries } from '../src/contracts/chat-metrics';
-import { createChatQueue } from '../src/core/index';
+import { createAgentLoopQueue, createChatQueue } from '../src/core/index';
 import { queueConfig } from '../src/core/chat-queue/validation';
 import { chatRequestMetricsStore } from '../src/storage/chat-request-metrics-store';
 import { openStorage } from '../src/storage/index';
 import { queueBackend } from '../src/storage/queue-registry';
+import { lifecycleBackend } from '../src/storage/lifecycle-store';
 import type { Storage } from '../src/storage/types';
 import type { LlmRequest, LlmResult, LlmToolCall } from '../src/llm/types';
 import { tokenBudgetStore } from '../src/storage/token-budget-store';
-import { answer, fixture, mention, peer } from './helpers/application-response-fixture';
+import { answer, fixture, mention, peer, until } from './helpers/application-response-fixture';
 import { flushQueue, queueMessage } from './helpers/chat-queue';
 import { scopeFor } from './helpers/connection-scope';
+import { storageFixture } from './helpers/storage-fixture';
 
 function totals(storage: Storage, scope: ConnectionScope, series: MetricsSeries) {
   return chatRequestMetricsStore(storage)
@@ -43,7 +45,7 @@ test(
   'чтение и повтор субагента дают отдельные шаги, попытки и инструменты',
   { timeout: 10_000 },
   async () => {
-    const app = await fixture();
+    const app = await fixture({ summaryIntervalMs: 25, summaryFragmentSize: 1 });
     try {
       tokenBudgetStore(app.storage).update(app.scope, true, { total: 100_000 }, app.start);
       app.complete
@@ -61,6 +63,10 @@ test(
         attempts: 2n,
         errors: 0n,
         tools: 1n,
+        input_tokens: 60n,
+        output_tokens: 10n,
+        unknown_input: 0n,
+        unknown_output: 0n,
       });
       expect(totals(app.storage, app.scope, 'subagent')).toMatchObject({
         steps: 2n,
@@ -69,10 +75,42 @@ test(
         tools: 1n,
         branches_started: 1n,
         branches_finished: 1n,
+        input_tokens: 25n,
+        output_tokens: 5n,
+        unknown_input: 1n,
+        unknown_output: 1n,
       });
       expect(
         JSON.stringify(app.db.prepare('SELECT * FROM chat_metrics_attempts').all()),
       ).not.toMatch(/закрыт|Маяк|Сбой|Результат/u);
+      app.complete
+        .mockResolvedValue({ ...answer, usage: { input: 0, output: 0 } })
+        .mockResolvedValueOnce({ ...answer, usage: { input: 10, output: 0 } });
+      await app.storage.messages.append(app.scope, {
+        chatId: app.scope.chatId,
+        messageId: 'old-summary',
+        userId: 'vk:42',
+        authorName: 'Ира',
+        role: 'user',
+        text: 'Вчера встретились у маяка.',
+        timestamp: app.start - 86_400_000,
+      });
+      await until(() =>
+        expect(totals(app.storage, app.scope, 'summary')).toMatchObject({
+          attempts: BigInt(app.complete.mock.calls.length - 5),
+          input_tokens: 10n,
+          output_tokens: 0n,
+          unknown_input: 0n,
+          unknown_output: 0n,
+        }),
+      );
+      const calculated = chatRequestMetricsStore(app.storage)
+        .read(app.scope, 'day', 0, Date.now())
+        .buckets.reduce((sum, row) => sum + row.totals.input_tokens + row.totals.output_tokens, 0n);
+      expect(calculated).toBe(110n);
+      expect(tokenBudgetStore(app.storage).read(app.scope, true, Date.now()).total.confirmed).toBe(
+        calculated,
+      );
     } finally {
       await app.close();
     }
@@ -279,3 +317,118 @@ test('восстановление очереди завершает работ�
     clock.mockRestore();
   }
 });
+
+test.each(['до очистки F4.6', 'после очистки F4.6'] as const)(
+  'позднее уточнение %s меняет только день отправки и учитывается один раз',
+  async (mode) => {
+    const files = storageFixture();
+    const received = day + 86_340_000;
+    const sent = day + 86_460_000;
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(received);
+    let storage = await openStorage(files.path);
+    const scope = scopeFor(storage, 'vk:metrics');
+    await storage.chats.create(scope, {
+      enabled: true,
+      responseMode: 'normal',
+      createdAt: received,
+    });
+    const preparation = Promise.withResolvers<void>();
+    const entered = Promise.withResolvers<void>();
+    const queue = createAgentLoopQueue({
+      storage,
+      tokenBudget: true,
+      config: { leaseMs: 180_000 },
+      tracing: { messageRetentionDays: 30 },
+      modelName: 'synthetic',
+      client: {
+        async complete() {
+          return { ...answer, usage: { input: 0, output: null } };
+        },
+      },
+      async prepare() {
+        entered.resolve();
+        await preparation.promise;
+        return {
+          kind: 'ready',
+          input: {
+            system: '',
+            messages: [{ role: 'user', text: 'Вход' }],
+            maxOutputTokens: 2,
+            sessionId: 'test',
+          },
+        };
+      },
+    });
+    try {
+      await queue.start();
+      const { admission } = await queue.admitRouted(scope, queueMessage(scope.chatId, '1'), route);
+      expect(admission.status).toBe('queued');
+      await entered.promise;
+      clock.mockReturnValue(sent);
+      preparation.resolve();
+      await until(async () =>
+        expect(await storage.queue.get(scope, 1)).toMatchObject({ outcome: 'completed' }),
+      );
+      await queue.stop();
+      const intent = lifecycleBackend(storage).transaction(scope, (db) =>
+        db
+          .prepare(
+            'SELECT attempt_key AS key,admitted_at AS at FROM token_budget_attempts WHERE chat_id=?',
+          )
+          .get(scope.chatId),
+      ) as { key: string; at: number };
+      expect(intent.at).toBe(sent);
+      let metrics = chatRequestMetricsStore(storage);
+      expect(
+        metrics.read(scope, 'day', 0, sent).buckets.map((row) => [row.at, row.series]),
+      ).toEqual([
+        [day, 'requests'],
+        [day + 86_400_000, 'main'],
+      ]);
+      expect(totals(storage, scope, 'main')).toMatchObject({
+        attempts: 1n,
+        input_tokens: 0n,
+        unknown_input: 0n,
+        unknown_output: 1n,
+      });
+      const later = day + 172_800_000 + (mode === 'после очистки F4.6' ? 120_000 : 0);
+      clock.mockReturnValue(later);
+      const backend = queueBackend(storage);
+      backend.acquire('maintenance', 30_000, 1);
+      expect(backend.pruneTokenBudget('maintenance')).toBe(mode === 'после очистки F4.6' ? 1 : 0);
+      backend.pruneMetrics('maintenance');
+      backend.release('maintenance');
+      lifecycleBackend(storage).transaction(scope, (db) =>
+        db.prepare('DELETE FROM response_traces').run(),
+      );
+      await storage.close();
+      storage = await openStorage(files.path);
+      const restored = scopeFor(storage, scope.chatId);
+      metrics = chatRequestMetricsStore(storage);
+      const budget = tokenBudgetStore(storage);
+      for (let retry = 0; retry < 2; retry++)
+        expect(budget.reconcile(restored, intent.key, { input: 7, output: 9 })).toBe(true);
+      const snapshots = metrics.read(restored, 'day', 0, later).buckets;
+      expect(snapshots.map((row) => [row.at, row.series])).toEqual([
+        [day, 'requests'],
+        [day + 86_400_000, 'main'],
+      ]);
+      expect(snapshots[1]?.totals).toMatchObject({
+        input_tokens: 0n,
+        output_tokens: 9n,
+        unknown_input: 0n,
+        unknown_output: 0n,
+      });
+      expect(metrics.read(restored, 'hour', 0, later).buckets).toEqual([]);
+      expect(budget.read(restored, true, sent).total.confirmed).toBe(
+        mode === 'после очистки F4.6' ? 0n : 9n,
+      );
+    } finally {
+      preparation.resolve();
+      await queue.stop();
+      await storage.close();
+      files.cleanup();
+      clock.mockRestore();
+    }
+  },
+);

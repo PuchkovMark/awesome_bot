@@ -101,32 +101,28 @@ export function applicationSummaries(options: {
             if (admission === 'quota_exhausted') throw new SummaryFailure('quota');
             if (!admission || admission === 'context_stale') throw new SummaryFailure('cancelled');
             if (typeof admission === 'string') throw new SummaryFailure('limit');
-            return send(
-              async () => {
-                usage.beginAttempt();
-                work?.recordTrace({
-                  model: { name: options.model, invoked: 'possible' },
-                  summary: usage.snapshot(0),
-                });
-                const response = await measureModelCall(
-                  typeof admission === 'object' ? admission : undefined,
-                  () => options.client.complete(request),
-                  { executor: 'main', step: step++ },
-                ).catch(() => {
-                  throw new SummaryFailure(abort.aborted ? 'cancelled' : 'unavailable');
-                });
-                if ('usage' in response) {
-                  usage.recordUsage(response.usage);
-                  if (typeof admission === 'object') admission.recordUsage(response.usage);
-                  else budgets.reconcile(scope, attempt.key, response.usage);
-                }
-                return response;
-              },
-              () => {
-                if (typeof admission === 'object') admission.cancelBeforeSend();
-                else budgets.cancelReservation(scope, attempt.key);
-              },
-            );
+            const meter =
+              typeof admission === 'object' ? admission : budgets.meter(scope, attempt.key);
+            return send(async () => {
+              usage.beginAttempt();
+              work?.recordTrace({
+                model: { name: options.model, invoked: 'possible' },
+                summary: usage.snapshot(0),
+              });
+              const response = await measureModelCall(
+                meter,
+                () => options.client.complete(request),
+                { executor: 'main', step: step++ },
+              ).catch(() => {
+                throw new SummaryFailure(abort.aborted ? 'cancelled' : 'unavailable');
+              });
+              if ('usage' in response) {
+                usage.recordUsage(response.usage);
+                if (typeof admission === 'object') admission.recordUsage(response.usage);
+                else budgets.reconcile(scope, attempt.key, response.usage);
+              }
+              return response;
+            }, meter.cancelBeforeSend);
           };
           const deadline = work?.deadline;
           const waitDeadline = firstDeadline?.();

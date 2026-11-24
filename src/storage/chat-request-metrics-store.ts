@@ -10,6 +10,7 @@ import type {
   ModelStep,
 } from '../contracts/chat-metrics';
 import type { ConnectionScope } from '../contracts/index';
+import type { LlmUsage } from '../llm/types';
 import { requireInput, timestamp } from './validation';
 
 const hourMs = 3_600_000;
@@ -56,16 +57,24 @@ export function addChatMetrics(
   const keys = metricCounters.filter((key) => delta[key] !== undefined);
   if (!keys.length) return false;
   const values = keys.map((key) => delta[key]!);
-  const upsert = db.prepare(
-    `INSERT INTO chat_metrics_buckets(chat_id,generation,grain,bucket_at,series,${keys.join(',')})
+  const correction = values.some((value) => value < 0);
+  const write = db.prepare(
+    correction
+      ? `UPDATE chat_metrics_buckets SET ${keys.map((key) => `${key}=min(9223372036854775807,${key}+?)`).join(',')}
+       WHERE chat_id=? AND generation=? AND grain=? AND bucket_at=? AND series=?`
+      : `INSERT INTO chat_metrics_buckets(chat_id,generation,grain,bucket_at,series,${keys.join(',')})
      VALUES(?,?,?,?,?,${keys.map(() => '?').join(',')})
      ON CONFLICT(chat_id,generation,grain,bucket_at,series) DO UPDATE SET
      ${keys.map((key) => `${key}=min(9223372036854775807,${key}+excluded.${key})`).join(',')}`,
   );
+  const apply = (grain: MetricsGrain, bucket: number) => {
+    const id = [scope.chatId, scope.generation, grain, bucket, series];
+    if (correction) write.run(...values, ...id);
+    else write.run(...id, ...values);
+  };
   const day = floor(at, dayMs);
-  upsert.run(scope.chatId, scope.generation, 'day', day, series, ...values);
-  if (day === floor(now, dayMs))
-    upsert.run(scope.chatId, scope.generation, 'hour', floor(at, hourMs), series, ...values);
+  apply('day', day);
+  if (day === floor(now, dayMs)) apply('hour', floor(at, hourMs));
   return true;
 }
 
@@ -121,7 +130,7 @@ export function recordSentModelAttempt(
     )
     .run(scope.chatId, scope.generation, key, at, series).changes;
   if (!inserted) return;
-  addChatMetrics(db, scope, at, series, { attempts: 1 }, now);
+  addChatMetrics(db, scope, at, series, { attempts: 1, unknown_input: 1, unknown_output: 1 }, now);
   if (job && step) {
     const branch = step.executor === 'subagent' ? step.branch : 0;
     recordChatMetric(
@@ -146,6 +155,35 @@ export function recordFailedModelAttempt(db: Database, scope: MetricsScope, key:
     )
     .get(scope.chatId, scope.generation, key) as AttemptFact | undefined;
   if (attempt) addChatMetrics(db, scope, attempt.at, attempt.series, { errors: 1 });
+}
+
+export function reconcileModelMetrics(
+  db: Database,
+  scope: MetricsScope,
+  key: string,
+  usage: LlmUsage,
+) {
+  requireInput(db.inTransaction);
+  if (usage.input === null && usage.output === null) return false;
+  const attempt = db
+    .prepare(
+      `SELECT admitted_at AS at,series,input_tokens AS input,output_tokens AS output
+     FROM chat_metrics_attempts WHERE chat_id=? AND generation=? AND attempt_key=?`,
+    )
+    .get(scope.chatId, scope.generation, key) as (AttemptFact & LlmUsage) | undefined;
+  if (!attempt) return false;
+  const input = attempt.input === null ? usage.input : null;
+  const output = attempt.output === null ? usage.output : null;
+  if (input === null && output === null) return true;
+  db.prepare(
+    `UPDATE chat_metrics_attempts SET input_tokens=coalesce(input_tokens,?),output_tokens=coalesce(output_tokens,?)
+     WHERE chat_id=? AND generation=? AND attempt_key=?`,
+  ).run(input, output, scope.chatId, scope.generation, key);
+  addChatMetrics(db, scope, attempt.at, attempt.series, {
+    ...(input === null ? {} : { input_tokens: input, unknown_input: -1 }),
+    ...(output === null ? {} : { output_tokens: output, unknown_output: -1 }),
+  });
+  return true;
 }
 
 export function pruneChatMetrics(db: Database, now: number): void {

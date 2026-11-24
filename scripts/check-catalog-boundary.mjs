@@ -195,6 +195,7 @@ export function checkCatalogBoundary(root = process.cwd()) {
               bindings.elements.every((e) =>
                 [
                   'profileUpdateAllowance',
+                  'createTokenAttemptMeter',
                   'insertTokenReservation',
                   'deleteUnsentTokenReservation',
                   'reconcileTokenReservation',

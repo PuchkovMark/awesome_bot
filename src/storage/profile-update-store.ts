@@ -5,6 +5,7 @@ import type { Connection } from './connection';
 import type { LlmUsage } from '../llm/types';
 import {
   profileUpdateAllowance,
+  createTokenAttemptMeter,
   deleteUnsentTokenReservation,
   insertTokenReservation,
   reconcileTokenReservation,
@@ -190,6 +191,11 @@ export function createProfileUpdateStore(connection: Connection, lifecycle: Life
     },
     reconcile({ scope, key }: ProfileUpdateAttempt, usage: LlmUsage) {
       return connection.run((db) => reconcileTokenReservation(db, scope, key, usage));
+    },
+    meter(attempt: ProfileUpdateAttempt) {
+      return createTokenAttemptMeter(connection, lifecycle, attempt.scope, attempt.key, () =>
+        this.cancelBeforeSend(attempt),
+      );
     },
     cancelBeforeSend(attempt: ProfileUpdateAttempt) {
       const { scope, key } = attempt;

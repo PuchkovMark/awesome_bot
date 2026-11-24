@@ -10,6 +10,7 @@ import type { Storage } from '../../storage/types';
 import { estimateRequestInput } from '../context/budget';
 import { parseProfileUpdates, profileUpdateRequest } from './request';
 import { scheduleLlmCall, type LlmAdmission } from '../llm-admission';
+import { measureModelCall } from '../model-measurement';
 
 function connectionChanged(error: unknown) {
   return (
@@ -79,17 +80,15 @@ export function createProfileUpdates(options: {
       (send) => {
         const attempt = store.begin(scope, Date.now(), options.group(scope.chatId), candidates);
         if (!attempt) return;
+        const meter = store.meter(attempt);
         const { request, portion } = candidates.find(
           ({ ids }) => ids.length === attempt.ids.length,
         )!;
-        const pending = send(
-          async () => {
-            const response = await options.client.complete(request);
-            if ('usage' in response) store.reconcile(attempt, response.usage);
-            return response;
-          },
-          () => store.cancelBeforeSend(attempt),
-        );
+        const pending = send(async () => {
+          const response = await measureModelCall(meter, () => options.client.complete(request));
+          if ('usage' in response) store.reconcile(attempt, response.usage);
+          return response;
+        }, meter.cancelBeforeSend);
         return { attempt, portion, pending };
       },
       'background',

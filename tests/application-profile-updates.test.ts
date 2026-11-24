@@ -8,6 +8,7 @@ import { applyHistoryRetention } from '../src/storage/history-retention-store';
 import { lifecycleBackend } from '../src/storage/lifecycle-store';
 import { personalDataStore } from '../src/storage/personal-data-store';
 import { tokenBudgetStore } from '../src/storage/token-budget-store';
+import { chatRequestMetricsStore } from '../src/storage/chat-request-metrics-store';
 import {
   answer,
   chat,
@@ -83,6 +84,14 @@ test('прямое обращение даёт приоритет до фоно�
     const budget = tokenBudgetStore(f.storage).read(f.scope, true, Date.now());
     expect(budget.profileUpdate).toMatchObject({ confirmed: 120n, reserved: 0n });
     expect(budget.total.confirmed).toBe(124n);
+    const metrics = chatRequestMetricsStore(f.storage).read(f.scope, 'day', 0, Date.now()).buckets;
+    expect(metrics.find((bucket) => bucket.series === 'profile_update')?.totals).toMatchObject({
+      attempts: 1n,
+      input_tokens: 101n,
+      output_tokens: 19n,
+      unknown_input: 0n,
+      unknown_output: 0n,
+    });
     expect(f.sends.filter((row) => row.peer_id === peer).map((row) => row.text)).toEqual([
       answer.text,
       answer.text,
