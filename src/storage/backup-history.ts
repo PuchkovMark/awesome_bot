@@ -3,6 +3,7 @@ import type { ChatId } from '../contracts/index';
 import { applyHistoryRetention, historyBounds } from './history-retention-store';
 import { reconcileStagedPersonalData } from './personal-data-restore';
 import { reconcileConnections } from './database-restore';
+import { reconcileRestoredWork } from './restore-work';
 
 function reconcileHistory(staged: Database, newer: Database, now: number, duration: number) {
   applyHistoryRetention(staged, duration, now);
@@ -79,6 +80,7 @@ export function reconcileRestore(staged: Database, newer: Database, now: number,
         })
         .immediate();
       reconcileStagedPersonalData(staged, newer, now);
+      staged.transaction(() => reconcileRestoredWork(staged, newer, now)).immediate();
       return result;
     })
     .deferred();

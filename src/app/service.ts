@@ -42,7 +42,7 @@ import type { LlmClient } from '../llm/index';
 import type { SafeLogger } from '../logger/index';
 import type { ApplicationFailure } from '../logger/types';
 import { catalogAdministration, installStarterPersonas } from '../storage/catalog-admin';
-import { openStorage } from '../storage/index';
+import { openApplicationStorage } from './database-access';
 import type { Storage } from '../storage/index';
 import { createChatOnboarding } from '../core/chat-onboarding/service';
 import { canonicalTimezone, parseTimezoneCommand } from '../core/chat-onboarding/timezone';
@@ -133,7 +133,7 @@ export async function runApplication(
     let startupFailure: ApplicationFailure = 'storage_failed';
     try {
       if (signal.aborted) return;
-      storage = await openStorage(config.databasePath, {
+      storage = await openApplicationStorage(config.databasePath, {
         versioning: config.versioning,
         messageRetentionDays: config.tracing.messageRetentionDays,
       });

@@ -42,7 +42,10 @@ export async function runCli(args: readonly string[], options: CliOptions = {}):
   try {
     if (args[0] === 'backup') {
       const action = args[1];
-      if (args.length !== 2 || (action !== 'create' && action !== 'verify' && action !== 'status'))
+      if (
+        args.length !== 2 ||
+        (action !== 'create' && action !== 'verify' && action !== 'status' && action !== 'restore')
+      )
         return fail('invalid_arguments');
       const result = await runBackup(loadBackupConfig(options.config), action);
       destination.write(JSON.stringify(result) + '\n');

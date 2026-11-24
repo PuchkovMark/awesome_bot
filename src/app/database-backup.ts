@@ -29,8 +29,9 @@ import { reconcileRestore } from '../storage/backup-history';
 import { verifyMigrationHistory } from '../storage/migrate';
 import { migrations } from '../storage/migrations/index';
 import { openStorage } from '../storage/storage';
+import { switchDatabase } from './database-cutover';
 
-export type BackupAction = 'create' | 'verify' | 'status';
+export type BackupAction = 'create' | 'verify' | 'status' | 'restore';
 type BackupConfig = { databasePath: string; messageRetentionDays: number };
 type Hooks = { now?: () => number; checkpoint?: (phase: string) => Promise<void> | void };
 
@@ -136,104 +137,124 @@ async function rehearse(
   }
 }
 
-export async function runBackup(config: BackupConfig, action: BackupAction, hooks: Hooks = {}) {
-  const now = hooks.now ?? Date.now,
-    started = performance.now();
+interface Operation {
+  paths: BackupPaths;
+  control: BackupControl;
+  config: BackupConfig;
+  now: () => number;
+  hooks: Hooks;
+}
+
+async function updateDailySnapshot({ paths, control, config, now, hooks }: Operation) {
+  const state = control.state,
+    source = trustedSource(paths, control, true);
   try {
-    const p = backupPaths(config.databasePath);
-    const guard = lockDatabase(p, 'maintenance');
-    try {
-      privateDirectory(p.directory);
-      const c = openControl(p),
-        s = c.state;
+    const previous = state.latest;
+    if (
+      previous &&
+      Math.floor(previous.createdAt / 86_400_000) === Math.floor(now() / 86_400_000)
+    ) {
       try {
-        finishSwitch(p, c);
-        finishPublication(p, c);
-        if (s.attempt?.outcome === 'running') {
-          s.attempt.outcome = 'interrupted';
-          c.persist();
-        }
-        cleanStaging(p);
-        expireLatest(p, c, now());
-        if (action !== 'status') {
-          s.attempt = { action, at: now(), outcome: 'running' };
-          c.persist();
-        }
-        let outcome = 'status';
-        if (action === 'create') {
-          const source = trustedSource(p, c, true);
-          try {
-            let sameDay = false;
-            if (
-              s.latest &&
-              Math.floor(s.latest.createdAt / 86_400_000) === Math.floor(now() / 86_400_000)
-            ) {
-              try {
-                inspectSnapshot(p.latest, s.latest);
-                checkAge(s.latest, now());
-                sameDay = true;
-              } catch {
-                sameDay = false;
-              }
-            }
-            if (sameDay) outcome = 'already_created_today';
-            else {
-              const stamp = await createSnapshot(source, p.incoming, s.installation, now());
-              await hooks.checkpoint?.('copied');
-              await rehearse(p, c, p.incoming, config, now, hooks);
-              checkAge(stamp, now());
-              syncFile(p.incoming);
-              s.publishing = { ...stamp, file: fileIdentity(p.incoming)! };
-              c.persist();
-              await hooks.checkpoint?.('before_publish');
-              renameSync(p.incoming, p.latest);
-              await hooks.checkpoint?.('after_publish');
-              finishPublication(p, c);
-              outcome = 'created';
-            }
-          } finally {
-            source.close();
-          }
-        } else if (action === 'verify') {
-          if (!s.latest) throw new BackupFailure('snapshot_missing');
-          inspectSnapshot(p.latest, s.latest);
-          checkAge(s.latest, now());
-          await rehearse(p, c, p.latest, config, now, hooks);
-          outcome = 'verified';
-        } else if (s.latest) inspectSnapshot(p.latest, s.latest);
-        if (action !== 'status' && s.attempt) {
-          s.attempt.outcome = outcome;
-          s.attempt.durationMs = Math.round(performance.now() - started);
-          c.persist();
-        }
-        return {
-          ok: true,
-          outcome,
-          latestAt: s.latest?.createdAt ?? null,
-          attempt: s.attempt,
-          verification: s.verification,
-        };
-      } catch (error) {
-        const reason = errorCode(error);
-        if (action !== 'status' && s.attempt) {
-          s.attempt.outcome = reason;
-          s.attempt.durationMs = Math.round(performance.now() - started);
-          c.persist();
-        }
-        return {
-          ok: false,
-          outcome: reason,
-          latestAt: s.latest?.createdAt ?? null,
-          attempt: s.attempt,
-          verification: s.verification,
-        };
+        inspectSnapshot(paths.latest, previous);
+        checkAge(previous, now());
+        return 'already_created_today';
+      } catch {
+        // A damaged file from this date must be replaced with a verified snapshot.
+      }
+    }
+    const stamp = await createSnapshot(source, paths.incoming, state.installation, now());
+    await hooks.checkpoint?.('copied');
+    await rehearse(paths, control, paths.incoming, config, now, hooks);
+    syncFile(paths.incoming);
+    state.publishing = { ...stamp, file: fileIdentity(paths.incoming)! };
+    control.persist();
+    await hooks.checkpoint?.('before_publish');
+    checkAge(stamp, now());
+    renameSync(paths.incoming, paths.latest);
+    await hooks.checkpoint?.('after_publish');
+    finishPublication(paths, control);
+    return 'created';
+  } finally {
+    source.close();
+  }
+}
+
+async function perform(action: BackupAction, operation: Operation) {
+  const { paths, control, config, now, hooks } = operation;
+  const latest = control.state.latest;
+  if (action === 'create') return updateDailySnapshot(operation);
+  if (latest) inspectSnapshot(paths.latest, latest);
+  if (action === 'status') return 'status';
+  if (!latest) throw new BackupFailure('snapshot_missing');
+  checkAge(latest, now());
+  await rehearse(paths, control, paths.latest, config, now, hooks);
+  checkAge(latest, now());
+  if (action === 'verify') return 'verified';
+  await switchDatabase(paths, control, now, hooks.checkpoint);
+  return 'restored';
+}
+
+async function runOperation(action: BackupAction, operation: Operation) {
+  const { paths, control, now } = operation;
+  const state = control.state,
+    at = now(),
+    started = performance.now();
+  finishSwitch(paths, control);
+  finishPublication(paths, control);
+  if (state.attempt?.outcome === 'running') {
+    state.attempt.outcome = 'interrupted';
+    control.persist();
+  }
+  cleanStaging(paths);
+  expireLatest(paths, control, at);
+  if (action !== 'status') {
+    state.attempt = { action, at, outcome: 'running' };
+    control.persist();
+  }
+  let ok = true,
+    outcome: string;
+  try {
+    outcome = await perform(action, operation);
+  } catch (error) {
+    ok = false;
+    outcome = errorCode(error);
+    if (action === 'verify' || action === 'restore')
+      state.verification = { at, durationMs: Math.round(performance.now() - started), outcome };
+  } finally {
+    cleanStaging(paths);
+    expireLatest(paths, control, now());
+  }
+  if (action !== 'status' && state.attempt) {
+    state.attempt.outcome = outcome;
+    state.attempt.durationMs = Math.round(performance.now() - started);
+    control.persist();
+  }
+  return {
+    ok,
+    outcome,
+    latestAt: state.latest?.createdAt ?? null,
+    attempt: state.attempt,
+    verification: state.verification,
+  };
+}
+
+export async function runBackup(config: BackupConfig, action: BackupAction, hooks: Hooks = {}) {
+  try {
+    const paths = backupPaths(config.databasePath);
+    const guard = lockDatabase(paths, action === 'restore' ? 'exclusive' : 'maintenance');
+    try {
+      privateDirectory(paths.directory);
+      const control = openControl(paths);
+      try {
+        return await runOperation(action, {
+          paths,
+          control,
+          config,
+          hooks,
+          now: hooks.now ?? Date.now,
+        });
       } finally {
-        try {
-          cleanStaging(p);
-          expireLatest(p, c, now());
-        } finally {
-          c.close();
-        }
+        control.close();
       }
     } finally {
       guard.close();

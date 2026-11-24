@@ -8,7 +8,7 @@ import type { ChatId, LifecycleSource } from '../contracts/index';
 import { createLifecycleService, validateContextStartup } from '../core/index';
 import type { ApplicationFailure } from '../logger/types';
 import { catalogAdministration } from '../storage/catalog-admin';
-import { openStorage } from '../storage/index';
+import { openApplicationStorage } from './database-access';
 import { disclosureStore, type DisclosureInput } from '../storage/chat-disclosure-store';
 import { adminRecoveryStore } from '../storage/admin-recovery-store';
 import { createVkChannel } from '../channels/index';
@@ -31,7 +31,9 @@ export async function initializePrompt(
   config: ReturnType<typeof loadPromptConfig>,
   path: string,
 ): Promise<ApplicationFailure | null> {
-  const storage = await openStorage(config.databasePath, { versioning: config.versioning });
+  const storage = await openApplicationStorage(config.databasePath, {
+    versioning: config.versioning,
+  });
   try {
     const catalog = catalogAdministration(storage);
     const selected = await catalog.systemPrompt();
@@ -86,7 +88,7 @@ export async function resolveApplicationChat(
   chatId: ChatId,
   decision: 'continue' | 'new',
 ) {
-  const storage = await openStorage(config.databasePath);
+  const storage = await openApplicationStorage(config.databasePath);
   try {
     const lifecycle = createLifecycleService({
       storage,
@@ -107,7 +109,7 @@ export function applicationGroupId(value: string) {
 
 export async function configureDisclosure(config: LocalConfig, path: string) {
   const input = JSON.parse(await readFile(path, 'utf8')) as DisclosureInput;
-  const storage = await openStorage(config.databasePath);
+  const storage = await openApplicationStorage(config.databasePath);
   try {
     return disclosureStore(storage).register(input, Date.now());
   } finally {
@@ -116,7 +118,7 @@ export async function configureDisclosure(config: LocalConfig, path: string) {
 }
 
 export async function readOnboarding(config: LocalConfig, chatId?: ChatId) {
-  const storage = await openStorage(config.databasePath);
+  const storage = await openApplicationStorage(config.databasePath);
   try {
     const store = disclosureStore(storage);
     return chatId ? store.status(chatId) : { states: store.diagnostics() };
@@ -126,7 +128,7 @@ export async function readOnboarding(config: LocalConfig, chatId?: ChatId) {
 }
 
 export async function readAdminRecovery(config: LocalConfig, chatId: ChatId) {
-  const storage = await openStorage(config.databasePath);
+  const storage = await openApplicationStorage(config.databasePath);
   try {
     const store = adminRecoveryStore(storage);
     return {
@@ -139,7 +141,7 @@ export async function readAdminRecovery(config: LocalConfig, chatId: ChatId) {
 }
 
 export async function requestDisclosureUpdate(config: LocalConfig, chatId: ChatId) {
-  const storage = await openStorage(config.databasePath);
+  const storage = await openApplicationStorage(config.databasePath);
   try {
     const lifecycle = createLifecycleService({
       storage,
@@ -169,7 +171,7 @@ export async function deleteApplicationChatData(
   chatId: ChatId,
   generation: number,
 ) {
-  const storage = await openStorage(config.databasePath);
+  const storage = await openApplicationStorage(config.databasePath);
   try {
     const lifecycle = createLifecycleService({
       storage,
@@ -188,7 +190,7 @@ export async function confirmApplicationDisclosure(
   receipt: string,
   version?: number,
 ) {
-  const storage = await openStorage(config.databasePath);
+  const storage = await openApplicationStorage(config.databasePath);
   try {
     const lifecycle = createLifecycleService({
       storage,

@@ -4,6 +4,8 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, expect, test } from 'vitest';
 import { runBackup } from '../src/app/database-backup';
+import { openApplicationStorage } from '../src/app/database-access';
+import { lifecycleBackend } from '../src/storage/lifecycle-store';
 import { openStorage } from '../src/storage/index';
 import { openExisting } from '../src/storage/database-backup';
 import { storageFixture } from './helpers/storage-fixture';
@@ -162,4 +164,124 @@ test('CLI без сетевых секретов, параллельная по�
   });
   truncateSync(latest, 200);
   expect((await runBackup(config, 'verify')).ok).toBe(false);
+});
+
+test('ручное переключение исключает писателей и повторяет сверку после пробного восстановления', async () => {
+  const { f, config, latest } = await setup();
+  const app = await openApplicationStorage(f.path);
+  const a = scopeFor(app, 'vk:a'),
+    b = scopeFor(app, 'vk:b');
+  const now = Date.now();
+  const make = (chatId: typeof a.chatId, messageId: string) => ({
+    chatId,
+    messageId,
+    role: 'user' as const,
+    userId: 'vk:u' as const,
+    authorName: '',
+    text: messageId,
+    timestamp: now,
+  });
+  await app.messages.append(b, make(b.chatId, 'стереть'));
+  const kept = await app.messages.append(a, make(a.chatId, 'ожидает'));
+  const sent = await app.messages.append(a, make(a.chatId, 'доставлено'));
+  const unclear = await app.messages.append(a, make(a.chatId, 'неизвестно'));
+  const db = openExisting(f.path, false);
+  for (const message of [kept, sent, unclear])
+    db.prepare(
+      "INSERT INTO queue_jobs(chat_id,generation,message_id,received_at,expires_at,state) VALUES (?,?,?, ?,?,'queued')",
+    ).run(a.chatId, a.generation, message.id, now, now + 86400000);
+  expect((await runBackup(config, 'create')).ok).toBe(true);
+  expect(cli(f.path, 'verify').status).toBe(0);
+  expect(cli(f.path, 'restore')).toMatchObject({
+    status: 1,
+    stdout: expect.stringContaining('backup_busy'),
+  });
+  db.prepare("UPDATE queue_jobs SET state='terminal',outcome='completed' WHERE message_id=?").run(
+    sent.id,
+  );
+  db.prepare("UPDATE queue_jobs SET state='running',owner='lost' WHERE message_id=?").run(
+    unclear.id,
+  );
+  lifecycleBackend(app).ownerDecision(lifecycleBackend(app).begin(b.chatId), 'new');
+  db.close();
+  await app.close();
+  const inode = statSync(latest).ino;
+  const original = statSync(f.path).ino;
+  const failed = await runBackup(config, 'restore', {
+    checkpoint: (stage) => {
+      if (stage === 'before_switch') throw Error('interruption');
+    },
+  });
+  expect(failed.ok).toBe(false);
+  expect(statSync(f.path).ino).toBe(original);
+  let blocked = false;
+  const result = await runBackup(config, 'restore', {
+    checkpoint: async (stage) => {
+      if (stage === 'before_switch') {
+        await expect(openApplicationStorage(f.path)).rejects.toThrow();
+        const admin = spawnSync(
+          process.execPath,
+          [resolve('dist/app/cli.js'), 'onboarding-status'],
+          {
+            cwd: f.directory,
+            env: { DATABASE_PATH: f.path, BOT_OWNER_ID: 'vk:73' },
+            encoding: 'utf8',
+          },
+        );
+        blocked = admin.status === 1;
+      }
+    },
+  });
+  expect(result).toMatchObject({
+    ok: true,
+    outcome: 'restored',
+    verification: { access: { access: 'partial', admitted: 1, closed: 1 } },
+  });
+  expect(blocked).toBe(true);
+  expect(statSync(latest).ino).toBe(inode);
+  expect(statSync(f.path).ino).not.toBe(original);
+  const restored = openExisting(f.path);
+  try {
+    expect(
+      restored.prepare('SELECT state FROM queue_jobs WHERE message_id=?').pluck().get(kept.id),
+    ).toBe('queued');
+    expect(
+      restored
+        .prepare('SELECT outcome FROM queue_jobs WHERE message_id IN (?,?)')
+        .pluck()
+        .all(sent.id, unclear.id),
+    ).toEqual(['interrupted', 'interrupted']);
+    expect(restored.prepare("SELECT 1 FROM messages WHERE chat_id='vk:b'").get()).toBeUndefined();
+  } finally {
+    restored.close();
+  }
+});
+
+test('после обрыва на границе переключения обычный запуск восстанавливает привязку к установленной БД', async () => {
+  const { f, config } = await setup();
+  expect((await runBackup(config, 'create')).ok).toBe(true);
+  const module = pathToFileURL(resolve('dist/app/database-backup.js')).href;
+  const killed = spawnSync(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      `
+    const {runBackup}=await import(process.argv[1]);
+    await runBackup({databasePath:process.argv[2],messageRetentionDays:30},'restore',{
+      checkpoint:stage=>{if(stage==='after_switch')process.kill(process.pid,'SIGKILL')}
+    });
+  `,
+      module,
+      f.path,
+    ],
+    { cwd: f.directory, timeout: 20000 },
+  );
+  expect(killed.signal).toBe('SIGKILL');
+  const restarted = await openApplicationStorage(f.path);
+  await restarted.close();
+  expect(cli(f.path, 'status')).toMatchObject({
+    status: 0,
+    stdout: expect.stringContaining('restored'),
+  });
 });

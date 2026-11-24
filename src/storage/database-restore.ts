@@ -34,6 +34,8 @@ function copyRows(staged: Database, newer: Database, table: string, chat?: ChatI
 
 function restorePermissions(staged: Database, newer: Database, scope: Scope) {
   const chat = scope.chat_id;
+  if (!staged.prepare('SELECT 1 FROM chats WHERE chat_id=?').get(chat))
+    copyRows(staged, newer, 'chats', chat);
   const tables = [
     'bot_admin_grants',
     'bot_admin_revocations',
@@ -48,6 +50,11 @@ function restorePermissions(staged: Database, newer: Database, scope: Scope) {
     'disclosure_publications',
     'chat_token_budgets',
     'token_budget_attempts',
+    'request_quota_admissions',
+    'response_rate_clock',
+    'response_rate_publications',
+    'mention_flood_state',
+    'mention_flood_inputs',
   ];
   // Remove dependent audit rows before their revocation, then restore parents first.
   for (const table of [...tables].reverse())
@@ -96,6 +103,8 @@ export function reconcileConnections(staged: Database, newer: Database): Restore
   )
     throw new BackupFailure('untrusted_source');
   copyRows(staged, newer, 'disclosure_versions');
+  staged.exec('DELETE FROM llm_recovery');
+  copyRows(staged, newer, 'llm_recovery');
   let admitted = 0;
   for (const scope of scopes) {
     if (!active.get(scope.chat_id, scope.generation)) {
