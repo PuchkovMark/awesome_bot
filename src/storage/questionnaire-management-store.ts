@@ -54,6 +54,15 @@ export function eraseQuestionnaireAttempt(
     generation,
     attempt,
   );
+  // Старые ответы на сообщения бота остаются служебными и после нового заполнения.
+  db.prepare(
+    `INSERT OR IGNORE INTO questionnaire_management_prompts
+    (chat_id,generation,receipt,first_position,last_position,expires_at)
+    SELECT chat_id,generation,legacy_access_prompt_id,0,0,0 FROM questionnaire_progress
+    WHERE ${key} AND legacy_access_prompt_id IS NOT NULL
+    UNION ALL SELECT chat_id,generation,prompt_message_id,0,0,0 FROM questionnaire_presentations
+    WHERE ${key} AND prompt_message_id IS NOT NULL`,
+  ).run(...args, ...args);
   db.prepare('DELETE FROM questionnaire_progress WHERE ' + key).run(...args);
 }
 export function questionnaireManagementStore(storage: Storage) {

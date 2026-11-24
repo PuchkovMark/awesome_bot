@@ -108,6 +108,21 @@ test('удаление подтверждает только автор в бе�
   const app = await setup();
   try {
     await fill(app);
+    let refused = false;
+    app.failSend((text) => {
+      if (!text.startsWith('Удалить вашу анкету')) return undefined;
+      refused = true;
+      return 901;
+    });
+    app.submit('/анкета удалить');
+    await until(() => expect(refused).toBe(true));
+    expect(
+      app.db
+        .prepare("SELECT count(*) FROM questionnaire_management_prompts WHERE action='delete'")
+        .pluck()
+        .get(),
+    ).toBe(0);
+    app.failSend(undefined);
     const cancel = await send(app, '/анкета удалить', 'В течение 15 минут');
     await app.journaled(app.submit('Удалить', 42, cancel));
     await send(app, 'Оставить', 'Анкета сохранена', cancel);

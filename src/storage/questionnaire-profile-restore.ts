@@ -26,14 +26,49 @@ export function reconcileStagedQuestionnaires(staged: Database, newer: Database)
       .get()
   )
     return;
+  const rememberReceipt = staged.prepare(`INSERT OR IGNORE INTO questionnaire_management_prompts
+    (chat_id,generation,receipt,first_position,last_position,expires_at)
+    SELECT chat_id,generation,@receipt,0,0,0 FROM chat_connections WHERE chat_id=@chat_id AND generation=@generation`);
+  function ignoreReceipts(sql: string) {
+    for (const row of newer.prepare(sql).iterate() as Iterable<object>) rememberReceipt.run(row);
+  }
+  if (
+    newer.prepare("SELECT 1 FROM sqlite_schema WHERE name='questionnaire_management_prompts'").get()
+  )
+    ignoreReceipts('SELECT chat_id,generation,receipt FROM questionnaire_management_prompts');
+  // Снимок может предшествовать доставке последнего вопроса старой версии.
+  if (newer.prepare("SELECT 1 FROM sqlite_schema WHERE name='questionnaire_access'").get())
+    ignoreReceipts(
+      'SELECT chat_id,generation,prompt_message_id AS receipt FROM questionnaire_access WHERE prompt_message_id IS NOT NULL',
+    );
+  else if (
+    newer
+      .prepare(
+        "SELECT 1 FROM pragma_table_info('questionnaire_progress') WHERE name='legacy_access_prompt_id'",
+      )
+      .get()
+  )
+    ignoreReceipts(
+      'SELECT chat_id,generation,legacy_access_prompt_id AS receipt FROM questionnaire_progress WHERE legacy_access_prompt_id IS NOT NULL',
+    );
   if (newer.prepare("SELECT 1 FROM sqlite_schema WHERE name='questionnaire_removals'").get()) {
     const copy = staged.prepare(`INSERT OR IGNORE INTO questionnaire_removals
       SELECT chat_id,generation,@user_id,@attempt,@removed_at,@event_id FROM chat_connections WHERE chat_id=@chat_id AND generation=@generation`);
+    const previous = staged.prepare(`SELECT 1 FROM questionnaire_progress WHERE ${subject}`);
+    const replacement =
+      newer.prepare(`SELECT * FROM questionnaire_progress WHERE chat_id=@chat_id AND generation=@generation
+      AND user_id=@user_id AND attempt<>@attempt AND state='completed'`);
+    const adopt =
+      staged.prepare(`INSERT INTO questionnaire_progress(chat_id,generation,user_id,attempt,presentation,template,
+      state,shown_at,response_message_id,legacy_access_prompt_id) VALUES(@chat_id,@generation,@user_id,@attempt,@presentation,
+      @template,'completed',@shown_at,@response_message_id,@legacy_access_prompt_id)`);
     for (const row of newer
       .prepare('SELECT * FROM questionnaire_removals')
       .iterate() as Iterable<Attempt>) {
       copy.run(row);
+      const replacing = previous.get(row) && replacement.get(row);
       eraseQuestionnaireAttempt(staged, row.chat_id, row.generation, row.user_id, row.attempt);
+      if (replacing) adopt.run(replacing);
     }
   }
   const latestBinding = newer.prepare(

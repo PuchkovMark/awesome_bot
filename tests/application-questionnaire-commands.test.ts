@@ -311,7 +311,13 @@ test.each([peer, 41])('опечатка при заполнении на %d не
       ).toBe(true),
     );
     expect(attempt(app, destination)?.state).toBe('active');
-    send('/Анкета  пауза');
+    const start = app.sends.length;
+    send(destination === peer ? 'Пенёк, /неизвестная' : '/неизвестная');
+    await until(() =>
+      expect(app.sends.slice(start).some((s) => s.text.includes('/анкета пауза'))).toBe(true),
+    );
+    expect(attempt(app, destination)?.state).toBe('active');
+    send(destination === peer ? '[club314|Пенёк] /Анкета  пауза' : '/Анкета  пауза');
     await until(() => expect(attempt(app, destination)?.state).toBe('paused'));
     expect(app.complete).not.toHaveBeenCalled();
   } finally {

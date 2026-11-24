@@ -191,6 +191,18 @@ test('беседа и проверенная личка показывают т�
       expect(app.sends.some(({ text }) => text === 'Профиль обновлён.')).toBe(true),
     );
     expect(await requestView(app, `/анкета показать ${chat}`, 41, 41)).toContain('Личный факт');
+    app.submit('/анкета изменить');
+    await until(() =>
+      expect(app.sends.some((row) => row.text.includes('3. ' + hidden))).toBe(true),
+    );
+    const edit = app.sends.find((row) => row.text.includes('3. ' + hidden))!;
+    app.submit('3 Исправленный личный факт', 41, edit);
+    await until(() =>
+      expect(app.sends.some((row) => row.text.includes('№ 3 сохранён'))).toBe(true),
+    );
+    expect(await requestView(app, `/анкета показать ${chat}`, 41, 41)).toContain(
+      'Исправленный личный факт',
+    );
     expect(await requestView(app, stranger, 42)).toBe(expected);
     expect(await requestView(app, stranger, 73)).toBe(expected);
     expect(await requestView(app, '/анкета показать', 41)).toBe(expected);

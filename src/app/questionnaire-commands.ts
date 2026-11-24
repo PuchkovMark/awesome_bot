@@ -23,11 +23,12 @@ import {
   type QuestionnairePresentationGrant,
 } from '../storage/questionnaire-presentation-store';
 import { questionnaireManagementStore } from '../storage/questionnaire-management-store';
+import { slashText } from './command-help';
 import { questionnaireEditorParts } from './questionnaire-management';
 import { questionnaireViewStore } from '../storage/questionnaire-view-store';
 import type { Storage } from '../storage/types';
 import type { PublicationGuard } from '../core/message-router/publication-service';
-import { questionnaireListText } from '../core/questionnaire/text';
+import { completedQuestionnaireActions, questionnaireListText } from '../core/questionnaire/text';
 
 export const openQuestionnaire = '/анкета';
 const cancelQuestionnaire = '/анкета отмена';
@@ -106,7 +107,11 @@ export function createQuestionnaireCommands(options: {
   function commandOf(scope: ConnectionScope, message: IncomingMessage) {
     if (message.isBot !== false || (!message.isGroupChat && message.chatId !== message.userId))
       return null;
-    const text = (message.literalText ?? message.text).trim();
+    const raw = slashText(message);
+    const text =
+      raw.startsWith('/') && !message.hasOtherAddress
+        ? raw
+        : (message.literalText ?? message.text).trim();
     const progress = parseQuestionnaireCommand(text);
     if (progress) return progress;
     const view = parseQuestionnaireView(text);
@@ -181,9 +186,7 @@ export function createQuestionnaireCommands(options: {
       text = view.pairs.length
         ? questionnaireListText(view.pairs, 'Анкета')
         : 'Анкета\n\nНет публичных ответов';
-      if (ownActions && message.isGroupChat)
-        text +=
-          '\n\nПосмотреть — /анкета показать. Исправить ответ — /анкета изменить. Удалить анкету — /анкета удалить.';
+      if (ownActions && message.isGroupChat) text += '\n\n' + completedQuestionnaireActions;
     }
     for (const part of splitVkText(text)) {
       if (!current()) return;

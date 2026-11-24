@@ -2,6 +2,7 @@ import {
   addressedSlash,
   commandHelp,
   isCommandHelp,
+  slashText,
   helpAction,
   unknownHint,
 } from './command-help';
@@ -677,7 +678,8 @@ export async function runApplication(
                 );
               },
             };
-            const text = isCommandHelp(message.text)
+            const input = slashText(message);
+            const text = isCommandHelp(input)
               ? commandHelp(
                   role.value,
                   message.isGroupChat,
@@ -685,7 +687,12 @@ export async function runApplication(
                   state.mode,
                   message.userId,
                 )
-              : unknownHint(message.text);
+              : unknownHint(
+                  input,
+                  questionnaireProgress
+                    .participant(context.scope, message.userId)
+                    .current(Date.now())?.state === 'active',
+                );
             return message.isGroupChat
               ? channel.replyGroupControl(context.scope, text, guard)
               : channel.replyPrivateControl(message.userId, text, guard);
@@ -729,11 +736,15 @@ export async function runApplication(
           const text = timezone
             ? `Часовой пояс сохранён: ${timezone}.`
             : 'Укажите часовой пояс, например /часовой-пояс Europe/Moscow.';
+          const current = () =>
+            isCurrent() && (!timezone || controls.read(context.scope).timezone === timezone);
           await channel.replyGroupControl(context.scope, text, {
             signal,
-            isCurrent,
+            isCurrent: current,
             allow: async () =>
-              isCurrent() && (await commandAuthorization.check(context, 'chat.configure')).allowed,
+              current() &&
+              (await commandAuthorization.check(context, 'chat.configure')).allowed &&
+              current(),
           });
         },
       });

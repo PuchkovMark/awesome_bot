@@ -141,3 +141,64 @@ test('недоступный FTS-модуль: отказ миграции и з
   ).rejects.toMatchObject({ code: 'migration_failed' });
   expect(reference?.open).toBe(false);
 });
+
+test('миграция готовых анкет сохраняет старые квитанции и отдельные решения о представлении', () => {
+  const db = new Database(':memory:');
+  try {
+    db.pragma('foreign_keys=ON');
+    migrate(db, migrations.slice(0, 49));
+    db.exec(
+      "INSERT INTO chat_connections(chat_id,generation,revision,state) VALUES('vk:group',1,1,'active')",
+    );
+    for (const [i, access] of ['open', 'closed', null].entries()) {
+      const user = 'vk:' + i,
+        attempt = 'form-' + i;
+      db.prepare(
+        "INSERT INTO questionnaire_progress(chat_id,generation,user_id,attempt,presentation,template,state) VALUES('vk:group',1,?,?,?,'{}','completed')",
+      ).run(user, attempt, attempt);
+      db.prepare("INSERT INTO questionnaire_access VALUES('vk:group',1,?,?,?,?,?,?,?)").run(
+        user,
+        attempt,
+        100 + i,
+        200 + i,
+        1000,
+        access,
+        access ? 300 + i : null,
+      );
+      db.prepare("INSERT INTO questionnaire_presentations VALUES('vk:group',1,?,?,?,?,?,?)").run(
+        user,
+        attempt,
+        400 + i,
+        i < 2 ? 500 + i : null,
+        ['delivered', 'declined', 'waiting'][i],
+        i === 0 ? 2 : 0,
+      );
+    }
+    migrate(db);
+    expect(
+      db
+        .prepare(
+          'SELECT response_message_id,legacy_access_prompt_id FROM questionnaire_progress ORDER BY user_id',
+        )
+        .raw()
+        .all(),
+    ).toEqual([
+      [100, 200],
+      [101, 201],
+      [102, 202],
+    ]);
+    expect(
+      db
+        .prepare('SELECT state,confirmed_parts FROM questionnaire_presentations ORDER BY user_id')
+        .raw()
+        .all(),
+    ).toEqual([
+      ['delivered', 2],
+      ['declined', 0],
+      ['waiting', 0],
+    ]);
+    expect(db.pragma('foreign_key_check')).toEqual([]);
+  } finally {
+    db.close();
+  }
+});

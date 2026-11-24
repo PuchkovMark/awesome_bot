@@ -70,6 +70,19 @@ export function commandHelp(
   return lines.join('\n');
 }
 
+export function slashText(message: IncomingMessage) {
+  const own = message.text.trim();
+  if (
+    !message.isGroupChat ||
+    message.hasForwarded ||
+    message.hasOtherAddress ||
+    message.replyAddress === 'other' ||
+    message.replyAddress === 'unknown'
+  )
+    return own;
+  return /^\s*пен[её]к\s*,\s*(\/[\s\S]*)$/iu.exec(own)?.[1] ?? own;
+}
+
 export function addressedSlash(message: IncomingMessage) {
   if (
     message.isBot !== false ||
@@ -80,9 +93,10 @@ export function addressedSlash(message: IncomingMessage) {
     message.hasOtherAddress
   )
     return false;
-  const text = message.text.trim();
+  const text = slashText(message);
   if (!text.startsWith('/')) return false;
   return (
+    text !== message.text.trim() ||
     isCommandHelp(text) ||
     !message.isGroupChat ||
     message.isMentioned ||
@@ -91,8 +105,11 @@ export function addressedSlash(message: IncomingMessage) {
   );
 }
 
-export function unknownHint(text: string) {
-  return /^\/анкета(?:\s|$)/iu.test(text.trim())
+export function unknownHint(text: string, activeForm = false) {
+  const management = /^\/анкета\s+(изменить|удалить)$/iu.exec(text.trim());
+  if (management)
+    return `Отправьте /анкета ${management[1]!.toLowerCase()} в беседе, где вы заполнили анкету.`;
+  return activeForm || /^\/анкета(?:\s|$)/iu.test(text.trim())
     ? 'Неизвестная команда анкеты. Для паузы отправьте /анкета пауза, для отмены — /анкета отмена.'
     : 'Неизвестная команда. Список доступных команд — /помощь.';
 }

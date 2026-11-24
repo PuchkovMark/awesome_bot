@@ -326,6 +326,26 @@ test('копия получает публичную правку и ответ 
       expect(manage.reply(target, alice, 301, 302, '2 Казань', 150, 150)).toContain('сохранён');
       expect(manage.reply(target, alice, 301, 302, '2 Повтор', 150, 150)).toBeNull();
       expect(manage.reply(target, alice, 301, 303, '1 Шашки', 151, 151)).toContain('сохранён');
+      expect(
+        manage.remember(
+          target,
+          alice,
+          attempt,
+          {
+            messageId: '401',
+            userId: 'vk:-314',
+            authorName: 'Пенёк',
+            text: 'Часть с третьим вопросом',
+            timestamp: 152,
+          },
+          3,
+          3,
+          152,
+        ),
+      ).toBe(true);
+      expect(manage.reply(target, alice, 401, 402, '2 Неверная часть', 153, 153)).toContain(
+        'нужным вопросом',
+      );
       const stage = new Database(path);
       try {
         stage.pragma('foreign_keys=ON');
@@ -337,6 +357,13 @@ test('копия получает публичную правку и ответ 
           3,
         );
         expect(stage.pragma('foreign_key_check')).toEqual([]);
+        expect(
+          stage
+            .prepare(
+              'SELECT user_id,expires_at FROM questionnaire_management_prompts WHERE receipt=301',
+            )
+            .get(),
+        ).toEqual({ user_id: null, expires_at: 0 });
         expect(
           manage.remember(
             target,
@@ -361,7 +388,15 @@ test('копия получает публичную правку и ответ 
         const fresh = await pending(f, target, alice, '306');
         expect(fresh.store.finish(target, fresh.id, 159, { '1': 'Го' }, () => true)).toBe(true);
         reconcileStagedPersonalData(stage, live, 160);
-        expect(stage.prepare('SELECT * FROM profile_facts WHERE chat_id=?').all(group)).toEqual([]);
+        expect(
+          stage.prepare('SELECT value FROM profile_facts WHERE chat_id=?').pluck().all(group),
+        ).toEqual(['Го']);
+        expect(
+          stage
+            .prepare('SELECT attempt FROM questionnaire_progress WHERE chat_id=?')
+            .pluck()
+            .get(group),
+        ).toBe(fresh.actor.current(160)!.attempt);
         expect(
           stage.prepare('SELECT * FROM questionnaire_progress WHERE attempt=?').all(attempt),
         ).toEqual([]);
