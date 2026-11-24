@@ -103,10 +103,10 @@ export function createJobModelAttempts(
           admitted.cancelBeforeSend();
           return;
         }
-        const step = helperUsage.get(request) ?? [];
-        helperUsage.set(request, step);
-        const slot = step.push({ input: null, output: null }) - 1;
         return send(async () => {
+          const step = helperUsage.get(request) ?? [];
+          helperUsage.set(request, step);
+          const slot = step.push({ input: null, output: null }) - 1;
           let result;
           try {
             result = await client.complete(request);
@@ -119,7 +119,7 @@ export function createJobModelAttempts(
             admitted.recordUsage(result.usage);
           }
           return result;
-        });
+        }, admitted.cancelBeforeSend);
       };
       const scheduled = await scheduleLlmCall(
         admission,

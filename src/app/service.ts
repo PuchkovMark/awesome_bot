@@ -403,7 +403,11 @@ export async function runApplication(
         }
       };
       const passport = chatPassportStore(storage);
-      const llmAdmission = createLlmAdmission(config.llmAdmission);
+      const llmAdmission = createLlmAdmission(
+        config.llmAdmission,
+        undefined,
+        () => queue?.llmRecovery,
+      );
       const auxiliaryClient =
         dependencies.auxiliaryClient ??
         createLlmClient({ ...config.llm, model: config.auxiliaryModel });
@@ -482,6 +486,7 @@ export async function runApplication(
       const questionnaireAttempts = questionnaireProgressStore(storage);
       queue = createAgentLoopQueue({
         llmAdmission,
+        llmRecovery: config.llmRecovery,
         recapAnswer: summaries.answer,
         questionnaireAnswer: questionnaireAnswerHandler({
           llmAdmission,

@@ -1,4 +1,5 @@
 import type { LlmResult } from '../llm/types';
+import type { LlmAvailability, LlmRecovery } from './llm-recovery';
 
 export const llmAdmissionDefaults = Object.freeze({ parallel: 4, background: 1, waitMs: 10_000 });
 
@@ -14,8 +15,19 @@ interface CallLifetime {
   readonly current: () => boolean;
 }
 
-export type SendLlmCall = (invoke: () => Promise<LlmResult>) => Promise<LlmResult>;
+export type SendLlmCall = (
+  invoke: () => Promise<LlmResult>,
+  cancelBeforeSend?: () => void,
+) => Promise<LlmResult>;
 type Prepare<T> = (send: SendLlmCall) => T;
+type NotSent = 'cancelled' | 'llm_wait_timeout';
+export class LlmCallNotSent extends Error {
+  readonly kind: NotSent;
+  constructor(kind: NotSent) {
+    super(kind);
+    this.kind = kind;
+  }
+}
 type Admission<T> =
   | { readonly kind: 'ready'; readonly value: T }
   | { readonly kind: 'cancelled' | 'llm_wait_timeout' | 'llm_provider_paused' | 'background_busy' };
@@ -37,50 +49,103 @@ export async function scheduleLlmCall<T>(
 export function createLlmAdmission(
   settings: LlmAdmissionSettings = llmAdmissionDefaults,
   now = () => performance.now(),
+  recovery?: () => LlmRecovery | undefined,
 ) {
-  const waiting = new Set<() => void>();
+  const waiting = new Set<(availability: LlmAvailability) => void>();
   const releaseListeners = new Set<() => void>();
   let active = 0;
   let background = 0;
   let preparing = false;
   let draining = false;
   const waitUntil = (deadline = Infinity) => Math.min(now() + settings.waitMs, deadline);
+  const availability = () => recovery?.()?.availability() ?? 'available';
+  const denied = ({ signal, current }: CallLifetime, until: number): NotSent | undefined =>
+    signal.aborted || !current() ? 'cancelled' : now() >= until ? 'llm_wait_timeout' : undefined;
 
   function drain() {
     if (preparing || draining) return;
     draining = true;
     try {
-      while (active < settings.parallel && waiting.size) waiting.values().next().value!();
+      while (waiting.size) {
+        const state = availability();
+        if (state === 'probing' || (state === 'available' && active >= settings.parallel)) break;
+        waiting.values().next().value?.(state);
+      }
     } finally {
       draining = false;
     }
   }
 
-  function admit<T>(kind: 'direct' | 'background', prepare: Prepare<T>): T {
+  function admit<T>(
+    kind: 'direct' | 'background',
+    prepare: Prepare<T>,
+    lifetime: CallLifetime,
+    until: number,
+  ): Admission<T> {
     preparing = true;
     let canSend = true;
+    let dispatched = false;
+    const provider = recovery?.();
+    let permit: ReturnType<LlmRecovery['begin']> = null;
     try {
-      return prepare((invoke) => {
+      if (provider) {
+        permit = provider.begin();
+        if (!permit)
+          return {
+            kind: provider.availability() === 'stopped' ? 'cancelled' : 'llm_provider_paused',
+          };
+      }
+      const value = prepare((invoke, cancelBeforeSend) => {
         if (!canSend) throw new Error('Отправка модели уже начата.');
         canSend = false;
+        let interruption: NotSent | undefined;
+        try {
+          interruption = denied(lifetime, until);
+        } catch (error) {
+          cancelBeforeSend?.();
+          throw error;
+        }
+        if (interruption) {
+          cancelBeforeSend?.();
+          throw new LlmCallNotSent(interruption);
+        }
+        dispatched = true;
         active++;
         if (kind === 'background') background++;
-        const release = () => {
-          active--;
-          if (kind === 'background') background--;
-          drain();
-          for (const notify of releaseListeners) notify();
+        const release = (result?: LlmResult) => {
+          try {
+            if (permit) provider!.finish(permit, result);
+          } finally {
+            active--;
+            if (kind === 'background') background--;
+            drain();
+            for (const notify of releaseListeners) notify();
+          }
         };
         try {
-          return invoke().finally(release);
+          return invoke().then(
+            (result) => {
+              release(result);
+              return result;
+            },
+            (error: unknown) => {
+              release();
+              throw error;
+            },
+          );
         } catch (error) {
           release();
           throw error;
         }
       });
+      return { kind: 'ready', value };
+    } catch (error) {
+      if (error instanceof LlmCallNotSent) return { kind: error.kind };
+      throw error;
     } finally {
       canSend = false;
       preparing = false;
+      if (permit && !dispatched) provider!.finish(permit, undefined);
     }
   }
 
@@ -112,12 +177,14 @@ export function createLlmAdmission(
           if (remaining > 0) timer = setTimeout(expire, Math.ceil(remaining));
           else if (cleanup()) resolve({ kind: 'llm_wait_timeout' });
         };
-        const run = () => {
+        const run = (state: LlmAvailability) => {
           if (!cleanup()) return;
           try {
-            if (signal.aborted || !current()) resolve({ kind: 'cancelled' });
-            else if (now() >= until) resolve({ kind: 'llm_wait_timeout' });
-            else resolve({ kind: 'ready', value: admit('direct', prepare) });
+            const interruption = denied({ signal, current }, until);
+            if (interruption) resolve({ kind: interruption });
+            else if (state === 'stopped') resolve({ kind: 'cancelled' });
+            else if (state === 'paused') resolve({ kind: 'llm_provider_paused' });
+            else resolve(admit('direct', prepare, lifetime, until));
           } catch (error) {
             reject(error);
           }
@@ -130,8 +197,14 @@ export function createLlmAdmission(
       });
     },
     background<T>(lifetime: CallLifetime, prepare: Prepare<T>): Admission<T> {
-      if (lifetime.signal.aborted || !lifetime.current()) return { kind: 'cancelled' };
+      const until = lifetime.deadline ?? Infinity;
+      const interruption = denied(lifetime, until);
+      if (interruption) return { kind: interruption };
+      const state = availability();
+      if (state === 'stopped') return { kind: 'cancelled' };
+      if (state === 'paused') return { kind: 'llm_provider_paused' };
       if (
+        state === 'probing' ||
         preparing ||
         draining ||
         waiting.size ||
@@ -140,7 +213,7 @@ export function createLlmAdmission(
       )
         return { kind: 'background_busy' };
       try {
-        return { kind: 'ready', value: admit('background', prepare) };
+        return admit('background', prepare, lifetime, until);
       } finally {
         drain();
       }

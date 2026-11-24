@@ -379,6 +379,9 @@ export function createTokenBudgetStore(connection: Connection, lifecycle: Lifecy
         return true;
       });
     },
+    cancelReservation(scope: ConnectionScope, key: string) {
+      return connection.run((db) => deleteUnsentTokenReservation(db, scope, key));
+    },
     reconcile(scope: ConnectionScope, key: string, usage: LlmUsage) {
       return lifecycle.transaction(scope, (db) => reconcileTokenReservation(db, scope, key, usage));
     },

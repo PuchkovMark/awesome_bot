@@ -35,6 +35,23 @@ test('пределы отправки модели имеют общие зна�
   expect(() => load({ LLM_CONCURRENT_CALLS: '0' })).toThrow('LLM_CONCURRENT_CALLS');
   expect(() => load({ LLM_BACKGROUND_CALLS: '5' })).toThrow('LLM_BACKGROUND_CALLS');
   expect(() => load({ LLM_SLOT_WAIT_MS: '2147483648' })).toThrow('LLM_SLOT_WAIT_MS');
+  const recovery = (extra = {}) =>
+    loadApplicationConfig({ env: { ...env, ...extra }, readFile: absent }).config.llmRecovery;
+  expect(recovery()).toEqual({
+    failureThreshold: 3,
+    failureWindowMs: 30_000,
+    initialPauseMs: 30_000,
+    maxPauseMs: 300_000,
+  });
+  expect(
+    recovery({
+      LLM_SERVER_FAILURE_THRESHOLD: '2',
+      LLM_SERVER_FAILURE_WINDOW_MS: '500',
+      LLM_PROVIDER_PAUSE_MS: '24',
+      LLM_PROVIDER_MAX_PAUSE_MS: '240',
+    }),
+  ).toEqual({ failureThreshold: 2, failureWindowMs: 500, initialPauseMs: 24, maxPauseMs: 240 });
+  expect(() => recovery({ LLM_PROVIDER_MAX_PAUSE_MS: '1' })).toThrow('LLM_PROVIDER_MAX_PAUSE_MS');
 });
 
 test('валидный неизменяемый конфиг и info по умолчанию, без изменения окружения', () => {

@@ -1,3 +1,4 @@
+import { llmRecovery } from './048-llm-recovery';
 import { questionnairePresentation } from './047-questionnaire-presentation';
 import { questionnaireHistory } from './046-questionnaire-history';
 import { questionnaireProfile } from './045-questionnaire-profile';
@@ -98,4 +99,5 @@ export const migrations: readonly Migration[] = [
   questionnaireProfile,
   questionnaireHistory,
   questionnairePresentation,
+  llmRecovery,
 ];

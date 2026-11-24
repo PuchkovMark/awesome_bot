@@ -5,6 +5,7 @@ import type { Connection } from './connection';
 import type { LlmUsage } from '../llm/types';
 import {
   profileUpdateAllowance,
+  deleteUnsentTokenReservation,
   insertTokenReservation,
   reconcileTokenReservation,
 } from './token-budget-store';
@@ -122,6 +123,7 @@ function directWaiting(db: Database, scope: ConnectionScope, now: number) {
 }
 
 export function createProfileUpdateStore(connection: Connection, lifecycle: LifecycleBackend) {
+  const previous = new WeakMap<ProfileUpdateAttempt, Run | undefined>();
   return {
     schedule(now: number) {
       timestamp(now);
@@ -173,6 +175,7 @@ export function createProfileUpdateStore(connection: Connection, lifecycle: Life
           );
         });
         if (!candidate) return null;
+        const former = previousRun(db, scope);
         const { ids, input, output } = candidate;
         const key = randomUUID();
         insertTokenReservation(db, scope, { purpose: 'profile_update', key, input, output }, now);
@@ -180,11 +183,30 @@ export function createProfileUpdateStore(connection: Connection, lifecycle: Life
           `INSERT INTO profile_update_runs(chat_id,generation,started_at,attempt_key) VALUES(?,?,?,?)
           ON CONFLICT(chat_id,generation) DO UPDATE SET started_at=excluded.started_at,attempt_key=excluded.attempt_key`,
         ).run(scope.chatId, scope.generation, now, key);
-        return { scope, key, ids: [...ids] };
+        const attempt = { scope, key, ids: [...ids] };
+        previous.set(attempt, former);
+        return attempt;
       });
     },
     reconcile({ scope, key }: ProfileUpdateAttempt, usage: LlmUsage) {
       return connection.run((db) => reconcileTokenReservation(db, scope, key, usage));
+    },
+    cancelBeforeSend(attempt: ProfileUpdateAttempt) {
+      const { scope, key } = attempt;
+      const former = previous.get(attempt);
+      return lifecycle.transaction(scope, (db) => {
+        if (previousRun(db, scope)?.key !== key || !deleteUnsentTokenReservation(db, scope, key))
+          return;
+        if (former)
+          db.prepare(
+            `UPDATE profile_update_runs SET started_at=?,attempt_key=? WHERE ${inScope}`,
+          ).run(former.at, former.key, scope.chatId, scope.generation);
+        else
+          db.prepare(`DELETE FROM profile_update_runs WHERE ${inScope}`).run(
+            scope.chatId,
+            scope.generation,
+          );
+      });
     },
     finish(attempt: ProfileUpdateAttempt, now: number, consumed: boolean, apply?: () => void) {
       timestamp(now);

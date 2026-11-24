@@ -196,6 +196,7 @@ export function checkCatalogBoundary(root = process.cwd()) {
                 [
                   'profileUpdateAllowance',
                   'insertTokenReservation',
+                  'deleteUnsentTokenReservation',
                   'reconcileTokenReservation',
                 ].includes((e.propertyName ?? e.name).text),
               );

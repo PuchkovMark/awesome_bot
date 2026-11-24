@@ -138,19 +138,20 @@ export function createAgentLoop(
                   ),
                 );
                 if (!checkStopped()) {
-                  attempts++;
-                  stepAttempts++;
-                  try {
-                    pending = Promise.resolve(send(() => invoke(request))).then(
-                      (value) => {
-                        if (tools && value?.kind === 'tool_calls') calls = value.calls;
-                        return parseAttempt(value);
-                      },
-                      () => parseAttempt(undefined),
-                    );
-                  } catch {
-                    pending = Promise.resolve(parseAttempt(undefined));
-                  }
+                  let parsed: ParsedAttempt | undefined;
+                  pending = send(async () => {
+                    attempts++;
+                    stepAttempts++;
+                    const value = await invoke(request);
+                    if (tools && value?.kind === 'tool_calls') calls = value.calls;
+                    parsed = parseAttempt(value);
+                    if (parsed.usage.input !== null || parsed.usage.output !== null)
+                      reservation?.recordUsage(parsed.usage);
+                    return value;
+                  }).then(
+                    () => parsed ?? parseAttempt(undefined),
+                    () => parseAttempt(undefined),
+                  );
                 }
               }
             } finally {
@@ -160,14 +161,7 @@ export function createAgentLoop(
               }
             }
             if (!pending) return checkStopped() ?? agentError('client_failure');
-            return {
-              kind: 'started',
-              pending: pending.then((result) => {
-                if (result.usage.input !== null || result.usage.output !== null)
-                  reservation?.recordUsage(result.usage);
-                return result;
-              }),
-            };
+            return { kind: 'started', pending };
           };
           const scheduled = scheduling
             ? await scheduling.admission.direct(

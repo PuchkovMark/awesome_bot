@@ -17,6 +17,7 @@ import type {
 import type { ChatLimits } from '../chat-limits/config';
 import type { AttemptAdmission } from '../agent-loop/types';
 import type { TokenReservation } from '../../storage/token-budget-store';
+import type { LlmRecovery, LlmRecoverySettings } from '../llm-recovery';
 export type {
   QueueAdmission,
   QueueConfig,
@@ -97,12 +98,14 @@ export interface ChatQueueOptions {
   readonly limits?: Partial<ChatLimits>;
   readonly responseRate?: import('../chat-limits/response-rate-config').ResponseRateConfig;
   readonly tokenBudget?: boolean;
+  readonly llmRecovery?: LlmRecoverySettings;
   readonly autonomousReplies?: boolean;
   /** У привязанного к платформе воркера проверка непрерывности предшествует выдаче работы. */
   readonly platform?: string;
 }
 export interface ChatQueue {
   readonly autonomousReplies?: boolean;
+  readonly llmRecovery?: LlmRecovery;
   readonly signal: AbortSignal;
   isRunning(): boolean;
   readonly responseBudget?: import('../../storage/queue-types').ResponsePublicationBudget;

@@ -82,11 +82,14 @@ export function createProfileUpdates(options: {
         const { request, portion } = candidates.find(
           ({ ids }) => ids.length === attempt.ids.length,
         )!;
-        const pending = send(async () => {
-          const response = await options.client.complete(request);
-          if ('usage' in response) store.reconcile(attempt, response.usage);
-          return response;
-        });
+        const pending = send(
+          async () => {
+            const response = await options.client.complete(request);
+            if ('usage' in response) store.reconcile(attempt, response.usage);
+            return response;
+          },
+          () => store.cancelBeforeSend(attempt),
+        );
         return { attempt, portion, pending };
       },
       'background',

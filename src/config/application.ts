@@ -3,6 +3,7 @@ import { contextConfig } from '../core/context/config';
 import { responseRateConfig } from '../core/chat-limits/response-rate-config';
 import { traceConfig } from '../core/response-tracing/config';
 import { llmAdmissionDefaults } from '../core/llm-admission';
+import { llmRecoveryDefaults } from '../core/llm-recovery';
 import {
   baseConfig,
   ConfigError,
@@ -50,6 +51,31 @@ function llmAdmission(values: ConfigValues) {
   const waitMs = positiveParameter(values, 'LLM_SLOT_WAIT_MS', llmAdmissionDefaults.waitMs);
   if (waitMs > 2_147_483_647) throw new ConfigError('invalid', ['LLM_SLOT_WAIT_MS']);
   return Object.freeze({ parallel, background, waitMs });
+}
+
+function llmRecovery(values: ConfigValues) {
+  const failureThreshold = positiveParameter(
+    values,
+    'LLM_SERVER_FAILURE_THRESHOLD',
+    llmRecoveryDefaults.failureThreshold,
+  );
+  const failureWindowMs = positiveParameter(
+    values,
+    'LLM_SERVER_FAILURE_WINDOW_MS',
+    llmRecoveryDefaults.failureWindowMs,
+  );
+  const initialPauseMs = positiveParameter(
+    values,
+    'LLM_PROVIDER_PAUSE_MS',
+    llmRecoveryDefaults.initialPauseMs,
+  );
+  const maxPauseMs = positiveParameter(
+    values,
+    'LLM_PROVIDER_MAX_PAUSE_MS',
+    llmRecoveryDefaults.maxPauseMs,
+  );
+  if (maxPauseMs < initialPauseMs) throw new ConfigError('invalid', ['LLM_PROVIDER_MAX_PAUSE_MS']);
+  return Object.freeze({ failureThreshold, failureWindowMs, initialPauseMs, maxPauseMs });
 }
 
 export function loadApplicationConfig(options?: ConfigOptions) {
@@ -104,6 +130,7 @@ export function loadApplicationConfig(options?: ConfigOptions) {
       databasePath: databasePath(cwd, values),
       context: modelContext(values),
       llmAdmission: llmAdmission(values),
+      llmRecovery: llmRecovery(values),
       auxiliaryModel:
         values.LLM_AUX_MODEL === undefined
           ? 'claude-haiku-5-5'

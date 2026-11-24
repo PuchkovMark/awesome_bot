@@ -21,6 +21,7 @@ import type {
 } from './types';
 import { chatLimits } from '../chat-limits/config';
 import { responseRateConfig } from '../chat-limits/response-rate-config';
+import type { LlmRecovery } from '../llm-recovery';
 const outcomes = new Set<unknown>([
   'completed',
   'failed',
@@ -77,6 +78,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
   const traceMetrics = createTraceMetrics(options.logger);
   const backend = queueBackend(options.storage);
   let initiativeQuota: ReturnType<typeof backend.autonomousQuota> | undefined;
+  let recovery: LlmRecovery | undefined;
   const readMessage = options.storage.messages.get.bind(options.storage.messages);
   const handler = options.handler;
   const log = options.logger?.event.bind(options.logger);
@@ -524,8 +526,24 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
           },
         }
       : undefined;
+  function recoveryAction<T>(fn: (store: LlmRecovery) => T, unavailable: T): T {
+    if (!recovery || (phase !== 'running' && phase !== 'stopping')) return unavailable;
+    try {
+      return fn(recovery);
+    } catch (error) {
+      fault(error);
+      return unavailable;
+    }
+  }
+  const llmRecovery: LlmRecovery = {
+    availability: () =>
+      phase === 'running' ? recoveryAction((store) => store.availability(), 'stopped') : 'stopped',
+    begin: () => (phase === 'running' ? recoveryAction((store) => store.begin(), null) : null),
+    finish: (permit, result) => recoveryAction((store) => store.finish(permit, result), undefined),
+  };
   const service: ChatQueue = {
     ...(options.autonomousReplies ? { autonomousReplies: true } : {}),
+    ...(options.llmRecovery ? { llmRecovery: Object.freeze(llmRecovery) } : {}),
     ...(responseBudget ? { responseBudget: Object.freeze(responseBudget) } : {}),
     signal: lifetime.signal,
     wakeHistoryMaintenance() {
@@ -557,6 +575,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
         throw safeFailure(error);
       }
       phase = 'running';
+      if (options.llmRecovery) recovery = backend.llmRecovery(token, options.llmRecovery);
       if (options.autonomousReplies && limits)
         initiativeQuota = backend.autonomousQuota(token, limits, platform);
       renewAt = performance.now() + config.renewIntervalMs;

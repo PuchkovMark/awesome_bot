@@ -114,6 +114,34 @@ test('истечение таймера снимает ожидание, пок�
   }
 });
 
+test('истечение срока во время синхронного допуска отменяет оформленный резерв и освобождает пробу', async () => {
+  const permit = { epoch: 3, probe: true };
+  const finish = vi.fn();
+  let time = 0;
+  const gate = createLlmAdmission(
+    undefined,
+    () => time,
+    () => ({
+      availability: () => 'available',
+      begin: () => permit,
+      finish,
+    }),
+  );
+  const undo = vi.fn();
+  const invoke = vi.fn(async () => result);
+  const call = await gate.direct(
+    { signal: new AbortController().signal, current: () => true, deadline: 40 },
+    (send) => {
+      time = 40;
+      return send(invoke, undo);
+    },
+  );
+  expect(call).toEqual({ kind: 'llm_wait_timeout' });
+  expect(undo).toHaveBeenCalledOnce();
+  expect(invoke).not.toHaveBeenCalled();
+  expect(finish).toHaveBeenCalledExactlyOnceWith(permit, undefined);
+});
+
 test('фоновый предел общий, следующее место получает ожидающий прямой вызов', async () => {
   const f = fixture();
   const first = await f.occupy(3);

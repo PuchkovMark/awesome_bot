@@ -17,6 +17,9 @@ function pending() {
   return Promise.withResolvers<LlmResult>();
 }
 
+const rateLimit = { kind: 'error', code: 'rate_limit', message: 'Лимит' } as const;
+const serverError = { kind: 'error', code: 'server', message: 'Ошибка' } as const;
+
 function toolCalls(...ids: string[]): LlmResult {
   return {
     kind: 'tool_calls',
@@ -186,6 +189,89 @@ test.each(['источник', 'поколение'] as const)(
       ).toBe(0);
     } finally {
       first.resolve(answer);
+      await app.close();
+    }
+  },
+);
+
+test.each(['Retry-After', 'без срока'] as const)(
+  '429 %s переживает перезапуск, по выходе проходит один проверочный вызов',
+  async (mode) => {
+    const probe = pending();
+    const app = await fixture({ active: true, threshold: 30 });
+    try {
+      const secondGroup = await app.connectGroup(other);
+      for (const scope of [app.scope, secondGroup])
+        tokenBudgetStore(app.storage).update(scope, true, { total: 100_000 }, app.start);
+      const delay = mode === 'Retry-After' ? 5_000 : 30_000;
+      app.at(1_000);
+      app.complete.mockResolvedValueOnce(
+        mode === 'Retry-After' ? { ...rateLimit, retryAt: app.start + 1_000 + delay } : rateLimit,
+      );
+      const failed = app.submit(dialog('Ответ с ограничением провайдера'));
+      expect((await app.trace(failed)).payload).toMatchObject({
+        resultKind: 'rate_limit',
+        summary: { attempts: 1 },
+      });
+      await app.restart(true, [other]);
+      app.at(1_000 + delay - 1);
+      const paused = app.submit(dialog('Ответ во время паузы'));
+      expect((await app.trace(paused)).payload).toMatchObject({
+        resultKind: 'llm_provider_paused',
+        summary: { attempts: 0 },
+        model: { invoked: 'no' },
+      });
+      expect(app.complete).toHaveBeenCalledOnce();
+      app.at(1_000 + delay);
+      app.complete.mockImplementationOnce(() => probe.promise);
+      const first = app.submit(dialog('Первый после паузы'));
+      await until(() => expect(app.complete).toHaveBeenCalledTimes(2));
+      const second = app.submit(dialog('Второй после паузы'), 41, undefined, other);
+      await until(() => expect(running(app, other, second)).toBe('running'));
+      expect(app.complete).toHaveBeenCalledTimes(2);
+      probe.resolve(answer);
+      await app.published(first);
+      await app.published(second);
+      expect(app.complete).toHaveBeenCalledTimes(3);
+    } finally {
+      probe.resolve(answer);
+      await app.close();
+    }
+  },
+);
+
+test(
+  'повтор 5xx проходит до порога, а три свежих сбоя переводят приложение в общую паузу',
+  { timeout: 12_000 },
+  async () => {
+    const app = await fixture({ active: true, threshold: 30 });
+    try {
+      tokenBudgetStore(app.storage).update(app.scope, true, { total: 200_000 }, app.start);
+      app.at(1_000);
+      app.complete.mockResolvedValueOnce(serverError);
+      const recovered = app.submit(dialog('Единичная ошибка'));
+      expect((await app.trace(recovered, 3_000)).payload).toMatchObject({
+        resultKind: 'complete',
+        summary: { attempts: 2 },
+      });
+      app.complete.mockResolvedValue(serverError);
+      app.at(2_000);
+      const two = app.submit(dialog('Две ошибки подряд'));
+      expect((await app.trace(two, 3_000)).payload.resultKind).toBe('attempt_limit');
+      app.at(32_000);
+      const outside = app.submit(dialog('Новая серия после окна'));
+      expect((await app.trace(outside, 3_000)).payload.resultKind).toBe('attempt_limit');
+      app.at(32_001);
+      const threshold = app.submit(dialog('Третий ответ из серии'));
+      expect((await app.trace(threshold, 3_000)).payload).toMatchObject({
+        resultKind: 'llm_provider_paused',
+        summary: { attempts: 1 },
+      });
+      expect(app.db.prepare('SELECT paused_until FROM llm_recovery').pluck().get()).toBe(
+        app.start + 62_001,
+      );
+      expect(app.complete).toHaveBeenCalledTimes(7);
+    } finally {
       await app.close();
     }
   },

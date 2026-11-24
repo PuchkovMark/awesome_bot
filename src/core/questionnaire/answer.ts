@@ -103,19 +103,19 @@ export function questionnaireAnswerHandler(options: {
         admission.cancelBeforeSend();
         return false;
       }
-      summary.beginAttempt();
-      work.recordTrace({
-        model: { name: options.modelName, invoked: 'possible' },
-        summary: summary.snapshot(0),
-      });
       return send(async () => {
+        summary.beginAttempt();
+        work.recordTrace({
+          model: { name: options.modelName, invoked: 'possible' },
+          summary: summary.snapshot(0),
+        });
         const response = await options.client.complete(request);
         if ('usage' in response) {
           admission.recordUsage(response.usage);
           summary.recordUsage(response.usage);
         }
         return response;
-      });
+      }, admission.cancelBeforeSend);
     };
     const scheduled = await scheduleLlmCall(
       options.llmAdmission,

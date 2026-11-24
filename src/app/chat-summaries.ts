@@ -99,22 +99,28 @@ export function applicationSummaries(options: {
             if (admission === 'quota_exhausted') throw new SummaryFailure('quota');
             if (!admission || admission === 'context_stale') throw new SummaryFailure('cancelled');
             if (typeof admission === 'string') throw new SummaryFailure('limit');
-            usage.beginAttempt();
-            work?.recordTrace({
-              model: { name: options.model, invoked: 'possible' },
-              summary: usage.snapshot(0),
-            });
-            return send(async () => {
-              const response = await options.client.complete(request).catch(() => {
-                throw new SummaryFailure(abort.aborted ? 'cancelled' : 'unavailable');
-              });
-              if ('usage' in response) {
-                usage.recordUsage(response.usage);
-                if (typeof admission === 'object') admission.recordUsage(response.usage);
-                else budgets.reconcile(scope, attempt.key, response.usage);
-              }
-              return response;
-            });
+            return send(
+              async () => {
+                usage.beginAttempt();
+                work?.recordTrace({
+                  model: { name: options.model, invoked: 'possible' },
+                  summary: usage.snapshot(0),
+                });
+                const response = await options.client.complete(request).catch(() => {
+                  throw new SummaryFailure(abort.aborted ? 'cancelled' : 'unavailable');
+                });
+                if ('usage' in response) {
+                  usage.recordUsage(response.usage);
+                  if (typeof admission === 'object') admission.recordUsage(response.usage);
+                  else budgets.reconcile(scope, attempt.key, response.usage);
+                }
+                return response;
+              },
+              () => {
+                if (typeof admission === 'object') admission.cancelBeforeSend();
+                else budgets.cancelReservation(scope, attempt.key);
+              },
+            );
           };
           const deadline = firstDeadline?.() ?? work?.deadline;
           const scheduled = await scheduleLlmCall(

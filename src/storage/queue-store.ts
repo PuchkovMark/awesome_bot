@@ -1,4 +1,6 @@
 import { acceptQuestionnaireInput, answerableAttempt } from './questionnaire-input';
+import { createLlmRecoveryStore } from './llm-recovery-store';
+import type { LlmRecoverySettings } from '../core/llm-recovery';
 import { rememberProfileUpdate } from './profile-update-intake';
 import { noteParticipantMessage } from './participant-registry';
 import {
@@ -620,6 +622,9 @@ export function createQueueBackend(
     check(token: string) {
       connection.run((db) => owned(db, token));
     },
+    llmRecovery(token: string, settings: LlmRecoverySettings) {
+      return createLlmRecoveryStore((fn) => transaction(token, fn), token, settings);
+    },
     depth(token: string) {
       return transaction(token, (db) => ({
         depthQueued: (
@@ -811,7 +816,8 @@ export function createQueueBackend(
           activeMentionFlood(db, work.scope, at) !== null
         )
           return false;
-        const ids = [...new Set([...(sources.get(work) ?? [work.messageId]), ...contextIds])];
+        const priorSources = sources.get(work);
+        const ids = [...new Set([...(priorSources ?? [work.messageId]), ...contextIds])];
         if (!historySourcesVisible(db, work.scope.chatId, ids, at)) return 'context_stale' as const;
         if (
           reservation &&
@@ -832,6 +838,10 @@ export function createQueueBackend(
             ? admitRequestQuota(db, work, limits, at)
             : true;
         if (quota === false || quota === 'quota_exhausted') return quota;
+        const priorFinalBudget =
+          reservation && finalBudget !== undefined
+            ? db.prepare('SELECT final_budget FROM queue_jobs WHERE id=?').pluck().get(work.id)
+            : undefined;
         if (reservation) {
           if (finalBudget === 'consume')
             db.prepare('UPDATE queue_jobs SET final_budget=0 WHERE id=?').run(work.id);
@@ -857,12 +867,16 @@ export function createQueueBackend(
             connection.run((database) =>
               database
                 .transaction(() => {
-                  if (
-                    deleteUnsentTokenReservation(database, work.scope, key) &&
-                    quota === 'charged'
-                  ) {
-                    releaseRequestQuota(database, work);
-                  }
+                  if (!deleteUnsentTokenReservation(database, work.scope, key)) return;
+                  if (quota === 'charged') releaseRequestQuota(database, work);
+                  if (typeof priorFinalBudget === 'number')
+                    database
+                      .prepare(
+                        "UPDATE queue_jobs SET final_budget=? WHERE id=? AND owner=? AND state='running'",
+                      )
+                      .run(priorFinalBudget, work.id, token);
+                  if (priorSources) sources.set(work, priorSources);
+                  else sources.delete(work);
                 })
                 .immediate(),
             );
