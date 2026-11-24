@@ -1,6 +1,6 @@
 import { acceptQuestionnaireInput, answerableAttempt } from './questionnaire-input';
 import { createLlmRecoveryStore } from './llm-recovery-store';
-import { pruneChatMetrics } from './chat-request-metrics-store';
+import { addChatMetrics, pruneChatMetrics } from './chat-request-metrics-store';
 import type { LlmRecoverySettings } from '../core/llm-recovery';
 import { rememberProfileUpdate } from './profile-update-intake';
 import { noteParticipantMessage } from './participant-registry';
@@ -320,6 +320,8 @@ export function createQueueBackend(
                   ? { route: null, reason: 'silent' }
                   : routed;
               const route = result.route;
+              if (route)
+                addChatMetrics(db, scope, snapshot.receivedAt, 'requests', { requests: 1 });
               if (
                 routed.profileUpdate &&
                 !(
@@ -357,6 +359,7 @@ export function createQueueBackend(
                     };
                   }
                   chosen = { reason: 'mention_flood', route: null };
+                  addChatMetrics(db, scope, now, 'requests', { flood_denied: 1 });
                   return false;
                 }
               }
@@ -390,6 +393,8 @@ export function createQueueBackend(
           );
           const routed = chosen as import('./queue-types').RoutedQueueDecision | null;
           const route = routed?.route;
+          if (admission.status === 'queue_full' && route)
+            addChatMetrics(db, scope, receivedAt, 'requests', { queue_full: 1 });
           if (admission.status === 'queued' && route) {
             if (!routed?.skipQuestionnaire)
               acceptQuestionnaireInput(db, scope, message.userId, admission.messageId, receivedAt);
@@ -512,7 +517,8 @@ export function createQueueBackend(
               lifecycle.pauseActivePlatform(db, pausePlatform, 'startup');
             const running = db
               .prepare(
-                "SELECT j.id,j.chat_id AS chatId,j.generation,j.message_id AS messageId,j.received_at AS receivedAt FROM queue_jobs j WHERE j.state='running'",
+                `SELECT id,chat_id AS chatId,generation,message_id AS messageId,received_at AS receivedAt,
+                 route_kind AS routeKind FROM queue_jobs WHERE state='running'`,
               )
               .all() as {
               id: number;
@@ -520,8 +526,11 @@ export function createQueueBackend(
               generation: number;
               messageId: number;
               receivedAt: number;
+              routeKind: DirectRoute['kind'] | null;
             }[];
             for (const row of running) {
+              if (row.routeKind)
+                addChatMetrics(db, row, row.receivedAt, 'requests', { interrupted: 1 }, now);
               const exists = db
                 .prepare('SELECT payload FROM response_traces WHERE job_id=?')
                 .get(row.id) as { payload: string } | undefined;
@@ -650,9 +659,29 @@ export function createQueueBackend(
         const now = Date.now();
         const rows = db
           .prepare(
-            "UPDATE queue_jobs SET state='terminal',outcome='expired' WHERE state='queued' AND expires_at<=? RETURNING received_at AS receivedAt",
+            `UPDATE queue_jobs SET state='terminal',outcome='expired' WHERE state='queued' AND expires_at<=?
+             RETURNING chat_id AS chatId,generation,route_kind AS routeKind,
+             received_at AS receivedAt,expires_at AS expiresAt`,
           )
-          .all(now) as { receivedAt: number }[];
+          .all(now) as (import('../contracts/chat-metrics').MetricsScope & {
+          routeKind: DirectRoute['kind'] | null;
+          receivedAt: number;
+          expiresAt: number;
+        })[];
+        for (const row of rows)
+          if (row.routeKind)
+            addChatMetrics(
+              db,
+              row,
+              row.receivedAt,
+              'requests',
+              {
+                expired: 1,
+                wait_count: 1,
+                wait_ms: row.expiresAt - row.receivedAt,
+              },
+              now,
+            );
         return rows.map((row) => Math.max(0, now - row.receivedAt));
       });
     },
@@ -727,6 +756,7 @@ export function createQueueBackend(
     },
     take(token: string, excluded: readonly string[] = [], platform?: string): QueueWork | null {
       return transaction(token, (db) => {
+        const now = Date.now();
         const prefix = platform === undefined ? null : platform + ':';
         const row = db
           .prepare(
@@ -740,7 +770,7 @@ export function createQueueBackend(
           AND j.chat_id NOT IN (SELECT value FROM json_each(?))
           ORDER BY coalesce(t.served,0),j.id LIMIT 1`,
           )
-          .get(Date.now(), prefix, prefix, prefix, JSON.stringify(excluded)) as
+          .get(now, prefix, prefix, prefix, JSON.stringify(excluded)) as
           | {
               routeKind: DirectRoute['kind'] | null;
               routeMode: RouteMetadata['mode'] | null;
@@ -780,6 +810,18 @@ export function createQueueBackend(
           ...(row.disclosureVersion === null ? {} : { disclosureVersion: row.disclosureVersion }),
         });
         runningRevisions.set(work, lifecycle.assertScope(db, scope).revision);
+        if (work.route && work.route.kind !== 'initiative')
+          addChatMetrics(
+            db,
+            scope,
+            work.receivedAt,
+            'requests',
+            {
+              wait_count: 1,
+              wait_ms: Math.max(0, now - work.receivedAt),
+            },
+            now,
+          );
         startTrace(db, work, traces.config());
         return work;
       });
@@ -1066,6 +1108,7 @@ export function createQueueBackend(
       work: QueueWork,
       outcome: QueueOutcome,
       payload?: TracePayload,
+      measurement?: { readonly processingMs: number; readonly quotaDenied: boolean },
     ): QueueOutcome | null {
       const commit = (
         minimal: boolean,
@@ -1093,6 +1136,12 @@ export function createQueueBackend(
             )
             .run(final, work.id, token);
           if (result.changes !== 1) return null;
+          if (work.route && work.route.kind !== 'initiative')
+            addChatMetrics(db, work.scope, work.receivedAt, 'requests', {
+              ...(measurement ? { process_ms: measurement.processingMs, process_count: 1 } : {}),
+              ...(measurement?.quotaDenied ? { quota_denied: 1 } : {}),
+              ...(final === 'interrupted' ? { interrupted: 1 } : {}),
+            });
           const row = db
             .prepare('SELECT payload FROM response_traces WHERE job_id=?')
             .get(work.id) as { payload: string } | undefined;

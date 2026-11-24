@@ -34,6 +34,7 @@ const outcomes = new Set<unknown>([
 const HISTORY_MAINTENANCE_INTERVAL = 60_000;
 interface Task {
   trace: TracePayload;
+  startedAt: number;
   deadline: number;
   work: QueueWork;
   controller: AbortController;
@@ -213,12 +214,21 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
             initiativeDenial ?? (canPublish ? 'none' : options.onSettled ? 'guard' : 'no_port'),
         },
       };
-      const committed = backend.finish(token, task.work, actual, {
-        ...task.trace,
-        preparationFailure: completion?.preparationFailure ?? task.trace.preparationFailure,
-        resultKind: completion?.result?.kind ?? task.trace.resultKind,
-        summary: completion?.result?.summary ?? task.trace.summary,
-      });
+      const committed = backend.finish(
+        token,
+        task.work,
+        actual,
+        {
+          ...task.trace,
+          preparationFailure: completion?.preparationFailure ?? task.trace.preparationFailure,
+          resultKind: completion?.result?.kind ?? task.trace.resultKind,
+          summary: completion?.result?.summary ?? task.trace.summary,
+        },
+        {
+          processingMs: Math.max(0, Math.round(now - task.startedAt)),
+          quotaDenied: relevant?.result?.kind === 'quota_exhausted',
+        },
+      );
       if (committed === 'interrupted') counters.interrupted = add(counters.interrupted, 1);
       emit();
       if (
@@ -274,9 +284,11 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
   function launch(work: QueueWork) {
     wait(Math.max(0, Date.now() - work.receivedAt));
     const controller = new AbortController();
+    const startedAt = performance.now();
     const task: Task = {
       trace: initialTrace(work.route),
-      deadline: performance.now() + config.handlerTimeoutMs,
+      startedAt,
+      deadline: startedAt + config.handlerTimeoutMs,
       work,
       controller,
       done: false,
