@@ -14,6 +14,7 @@ export interface ConnectionVersion {
   readonly revision: number;
 }
 export interface PausedConnection extends ConnectionVersion {
+  readonly title: string | null;
   readonly reason: ConnectionPauseReason | null;
 }
 export interface LifecycleObservation {

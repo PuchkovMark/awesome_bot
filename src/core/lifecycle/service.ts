@@ -78,6 +78,36 @@ export function createLifecycleService(options: {
       requirePlatform(platform);
       return backend.pausedConnections(platform);
     },
+    requestPausedReset(selected: ConnectionVersion, user: UserId, event: number) {
+      requireOwner(user);
+      if (failedPauses.has(selected.chatId)) throw new StorageError('stale_scope');
+      return backend.resets.request(selected, user, event);
+    },
+    resetWarningDelivered(user: UserId, code: string, receipt: number) {
+      requireOwner(user);
+      return backend.resets.delivered(user, code, receipt, Date.now());
+    },
+    answerPausedReset(user: UserId, code: string, event: number, confirm: boolean) {
+      requireOwner(user);
+      const row = backend.resets.lookup(user, code);
+      if (!row || failedPauses.has(row.chatId)) throw new StorageError('stale_scope');
+      if (row.state === 'confirmed' || row.state === 'cancelled')
+        return { chatId: row.chatId, state: row.state };
+      if (!confirm) {
+        backend.resets.cancel(user, code, row, event, Date.now());
+        return { chatId: row.chatId, state: 'cancelled' as const };
+      }
+      const proof = owner(row.chatId, user);
+      consumeOwner(proof);
+      const scope = backend.ownerDecision(proof, 'new', row, {
+        owner: user,
+        code,
+        event,
+        now: Date.now(),
+      });
+      failedPauses.delete(scope.chatId);
+      return { chatId: scope.chatId, state: 'confirmed' as const };
+    },
     decidePaused(selected: ConnectionVersion, userId: UserId, decision: 'continue' | 'new') {
       const proof = owner(selected.chatId, userId);
       if (failedPauses.has(selected.chatId)) throw new StorageError('stale_scope');

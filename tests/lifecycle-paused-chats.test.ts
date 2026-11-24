@@ -1,7 +1,7 @@
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import type { ChatId, ConnectionScope, ConnectionVersion } from '../src/contracts/index';
 import { createLifecycleService } from '../src/core/index';
 import { openStorage, type Storage } from '../src/storage/index';
@@ -46,8 +46,8 @@ test('снимок доступен только владельцу и выби�
     life.decide(life.owner('vk:4', ownerId), 'new');
     const list = life.pausedConnections('vk', ownerId);
     expect(list).toEqual([
-      { chatId: first, generation: 2, revision: 0, reason: 'observation_lost' },
-      { chatId: second, generation: 1, revision: 0, reason: 'first_seen' },
+      { chatId: first, generation: 2, revision: 0, reason: 'observation_lost', title: null },
+      { chatId: second, generation: 1, revision: 0, reason: 'first_seen', title: null },
     ]);
     expect(life.pausedConnections('other', ownerId)).toHaveLength(1);
     expect(() => life.pausedConnections('vk', 'vk:1')).toThrow('forbidden');
@@ -186,6 +186,56 @@ test('два соединения SQLite применяют ровно одно 
     );
   } finally {
     await Promise.all(contenders.map(({ worker }) => worker.terminate()));
+    await storage.close();
+    file.cleanup();
+  }
+});
+
+test('сброс связан с доставленным предупреждением, его сроком и версией беседы', async () => {
+  const file = storageFixture();
+  const storage = await openStorage(file.path);
+  const clock = vi.spyOn(Date, 'now');
+  try {
+    clock.mockReturnValue(1000);
+    const life = lifecycle(storage);
+    await life.verify(first, 'first_seen');
+    const row = life.pausedConnections('vk', ownerId)[0]!;
+    const request = life.requestPausedReset(row, ownerId, 1);
+    expect(life.requestPausedReset(row, ownerId, 1).code).toBe(request.code);
+    expect(() => life.answerPausedReset(ownerId, request.code, 2, true)).toThrow('stale_scope');
+    clock.mockReturnValue(1000000);
+    expect(life.resetWarningDelivered(ownerId, request.code, 3)).toBe(true);
+    expect(() => life.answerPausedReset('vk:4', request.code, 4, true)).toThrow('forbidden');
+    clock.mockReturnValue(1900000);
+    expect(() => life.answerPausedReset(ownerId, request.code, 5, true)).toThrow('stale_scope');
+    const old = life.requestPausedReset(row, ownerId, 6);
+    expect(life.resetWarningDelivered(ownerId, old.code, 7)).toBe(true);
+    life.recordConnectionSignal(row.chatId, 'смена');
+    expect(() => life.answerPausedReset(ownerId, old.code, 8, true)).toThrow('stale_scope');
+    const current = life.pausedConnections('vk', ownerId)[0]!;
+    const last = life.requestPausedReset(current, ownerId, 9);
+    expect(life.resetWarningDelivered(ownerId, last.code, 10)).toBe(true);
+    const reopened = await openStorage(file.path);
+    try {
+      const secondLife = lifecycle(reopened);
+      const results = await Promise.all(
+        [life, secondLife].map((service, index) =>
+          Promise.resolve().then(() =>
+            service.answerPausedReset(ownerId, last.code, 11 + index, true),
+          ),
+        ),
+      );
+      expect(results).toEqual([
+        { chatId: first, state: 'confirmed' },
+        { chatId: first, state: 'confirmed' },
+      ]);
+      expect(life.current(first).generation).toBe(secondLife.current(first).generation);
+      expect(life.current(first).generation).not.toBe(row.generation);
+    } finally {
+      await reopened.close();
+    }
+  } finally {
+    clock.mockRestore();
     await storage.close();
     file.cleanup();
   }

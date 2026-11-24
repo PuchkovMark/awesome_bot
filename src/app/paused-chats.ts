@@ -23,10 +23,16 @@ const reasonText: Record<ConnectionPauseReason, string> = {
 type Command =
   | { readonly kind: 'list' }
   | { readonly kind: 'invalid' }
+  | { readonly kind: 'confirm' | 'cancel'; readonly code: string }
   | { readonly kind: 'continue' | 'new'; readonly selected: ConnectionVersion };
 
 function parseCommand(text: string): Command | undefined {
   const clean = text.trim().toLowerCase();
+  const reset = /^\/(подтвердить-сброс|отменить-сброс)(?:\s+(\S+))?$/u.exec(clean);
+  if (reset)
+    return /^[a-f0-9]{16}$/u.test(reset[2] ?? '')
+      ? { kind: reset[1] === 'подтвердить-сброс' ? 'confirm' : 'cancel', code: reset[2]! }
+      : { kind: 'invalid' };
   if (clean === listCommand) return { kind: 'list' };
   if (clean.startsWith(listCommand) && /^\s/u.test(clean.slice(listCommand.length)))
     return { kind: 'invalid' };
@@ -49,19 +55,25 @@ function parseCommand(text: string): Command | undefined {
   };
 }
 
+function chatLabel(chatId: string, title: string | null) {
+  const name = Array.from((title ?? '').replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/gu, ' ').trim())
+    .slice(0, 120)
+    .join('');
+  return name ? `Беседа ${chatId} «${name}»` : `Беседа ${chatId}`;
+}
 function formatOverview(overview: readonly PausedConnection[]): readonly string[] {
   if (overview.length === 0) return ['Приостановленных бесед нет.'];
   const header = 'Приостановленные беседы VK';
   const parts: string[] = [];
   let part = header;
-  for (const { chatId, generation, revision, reason } of overview) {
+  for (const { chatId, generation, revision, reason, title } of overview) {
     const binding = `${chatId} ${generation}/${revision}`;
     const row = [
-      `Беседа ${chatId}. ${reason ? reasonText[reason] : 'Причина прежней паузы не сохранена.'}`,
+      `${chatLabel(chatId, title)}. ${reason ? reasonText[reason] : 'Причина прежней паузы не сохранена.'}`,
       `Продолжить ${binding}`,
       'Сохраняет текущую историю и настройки. Сообщения за время паузы могут отсутствовать.',
       `Начать заново ${binding}`,
-      'Удаляет данные прежнего подключения и начинает настройку заново.',
+      'Удаляет данные прежнего подключения после отдельного подтверждения.',
     ].join('\n');
     const next = `\n\n${row}`;
     if (Buffer.byteLength(part + next) > vkMessageLength.value) {
@@ -75,17 +87,24 @@ function formatOverview(overview: readonly PausedConnection[]): readonly string[
 }
 
 export function createPausedChatCommands(options: {
-  readonly channel: Pick<ReturnType<typeof createVkChannel>, 'replyPrivateControl'>;
+  readonly channel: Pick<
+    ReturnType<typeof createVkChannel>,
+    'replyPrivateControl' | 'reminderDelivery'
+  >;
   readonly lifecycle: Pick<
     ReturnType<typeof createLifecycleService>,
-    'pausedConnections' | 'decidePaused'
+    | 'pausedConnections'
+    | 'decidePaused'
+    | 'requestPausedReset'
+    | 'resetWarningDelivered'
+    | 'answerPausedReset'
   >;
   readonly ownerId: UserId;
   readonly signal: AbortSignal;
 }) {
   const { channel, lifecycle, ownerId, signal } = options;
 
-  async function handle(command: Command, sender: UserId, current: () => boolean) {
+  async function handle(command: Command, sender: UserId, event: number, current: () => boolean) {
     const isCurrent = () => !signal.aborted && current();
     if (!isCurrent()) return;
     const guard = { signal, isCurrent, allow: async () => isCurrent() };
@@ -104,17 +123,50 @@ export function createPausedChatCommands(options: {
       );
       return;
     }
-    const { kind, selected } = command;
     let outcome: string;
     try {
-      lifecycle.decidePaused(selected, sender, kind);
-      outcome =
-        kind === 'continue'
-          ? `Беседа ${selected.chatId} продолжена. История и настройки сохранены.`
-          : `Для беседы ${selected.chatId} начато новое подключение. Данные прежнего подключения удалены.`;
+      if ('code' in command) {
+        const result = lifecycle.answerPausedReset(
+          sender,
+          command.code,
+          event,
+          command.kind === 'confirm',
+        );
+        outcome =
+          result.state === 'confirmed'
+            ? `Для беседы ${result.chatId} начато новое подключение. Данные прежнего подключения удалены.`
+            : `Сброс беседы ${result.chatId} отменён.`;
+      } else if (command.kind === 'new') {
+        const request = lifecycle.requestPausedReset(command.selected, sender, event);
+        if (request.state !== 'pending') return;
+        const text = [
+          `${chatLabel(request.chatId, request.title)}. Сброс удалит историю, профили и настройки прежнего подключения.`,
+          'Чтобы начать заново, подтвердите в течение 15 минут. При отмене беседа останется на паузе.',
+          `/подтвердить-сброс ${request.code}`,
+          `/отменить-сброс ${request.code}`,
+        ].join('\n');
+        let receipt: number | undefined;
+        const sent = await channel.reminderDelivery(sender).publish(
+          text,
+          request.sendId,
+          (id) => {
+            receipt = Number(id);
+          },
+          guard,
+        );
+        if (sent === 'delivered' && receipt !== undefined && isCurrent())
+          lifecycle.resetWarningDelivered(sender, request.code, receipt);
+        return;
+      } else {
+        lifecycle.decidePaused(command.selected, sender, 'continue');
+        outcome = `Беседа ${command.selected.chatId} продолжена. История и настройки сохранены.`;
+      }
     } catch (error) {
       if (!(error instanceof StorageError && error.code === 'stale_scope')) throw error;
-      outcome = `Состояние беседы ${selected.chatId} изменилось. Обновите список командой «Приостановленные беседы».`;
+      outcome =
+        'selected' in command
+          ? `Состояние беседы ${command.selected.chatId} изменилось. Обновите список командой «Приостановленные беседы».`
+          : 'Код недействителен или срок подтверждения истёк. Обновите список командой «Приостановленные беседы».';
     }
     await channel.replyPrivateControl(sender, outcome, guard);
   }
@@ -128,12 +180,13 @@ export function createPausedChatCommands(options: {
       message.peerId !== message.authorId ||
       message.authorId <= 0 ||
       isVkGroupChat(message.peerId) ||
+      message.attachments.length ||
       message.isMentioned ||
       message.hasReply ||
       message.reply ||
       message.hasForwarded
     )
       return Promise.resolve();
-    return handle(command, sender, isCurrent);
+    return handle(command, sender, message.cmid, isCurrent);
   };
 }

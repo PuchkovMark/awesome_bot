@@ -89,6 +89,9 @@ export function reconcileConnections(staged: Database, newer: Database): Restore
     staged.name === newer.name
   )
     throw new BackupFailure('untrusted_source');
+  staged
+    .prepare("UPDATE paused_reset_requests SET state='closed' WHERE state IN ('pending','ready')")
+    .run();
   staged.exec(`UPDATE queue_lease SET token=NULL,expires_at=0,safety_ms=0;
     CREATE TEMP TABLE IF NOT EXISTS restore_inventory AS SELECT count(*) AS total FROM chat_connections`);
   const scopes = staged.prepare('SELECT chat_id,generation FROM chat_connections').all() as Scope[];

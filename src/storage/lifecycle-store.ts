@@ -10,6 +10,7 @@ import type {
   UserId,
 } from '../contracts/index';
 import type { Connection } from './connection';
+import { claimPausedReset, pausedResetStore } from './paused-reset-store';
 import { advanceClock } from './lifecycle-clock';
 import { StorageError } from './errors';
 import { compositeId, requireInput, timestamp } from './validation';
@@ -213,13 +214,14 @@ export function createLifecycleBackend(connection: Connection) {
         return rows.map((row) => row.chatId);
       });
     },
+    resets: pausedResetStore(connection),
     pausedConnections(platform: string): readonly PausedConnection[] {
       return connection.run((db) => {
         const prefix = `${platform}:`;
         return db
           .prepare(
-            `SELECT chat_id AS chatId,generation,revision,pause_reason AS reason
-            FROM chat_connections WHERE state='uncertain' AND substr(chat_id,1,?)=?
+            `SELECT chat_id AS chatId,generation,revision,pause_reason AS reason,s.title
+            FROM chat_connections LEFT JOIN chats s USING(chat_id) WHERE state='uncertain' AND substr(chat_id,1,?)=?
             ORDER BY chat_id`,
           )
           .all(prefix.length, prefix) as PausedConnection[];
@@ -558,6 +560,7 @@ export function createLifecycleBackend(connection: Connection) {
       proof: Verification,
       decision: 'continue' | 'new',
       selected?: ConnectionVersion,
+      reset?: { owner: UserId; code: string; event: number; now: number },
     ): ConnectionScope {
       return connection.run((db) => {
         requireInput(!db.inTransaction);
@@ -582,6 +585,18 @@ export function createLifecycleBackend(connection: Connection) {
                 state.revision !== selected.revision
               )
                 throw new StorageError('stale_scope');
+            }
+            if (reset) {
+              requireInput(decision === 'new' && selected);
+              claimPausedReset(
+                db,
+                reset.owner,
+                reset.code,
+                selected,
+                reset.event,
+                reset.now,
+                'confirmed',
+              );
             }
             if (decision === 'new') {
               const invite =

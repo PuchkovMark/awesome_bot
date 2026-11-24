@@ -34,6 +34,11 @@ test('сброшенное поколение исключено, отзыв д�
         "INSERT INTO bot_admin_grants(chat_id,user_id,basis,granted_at,granted_by) VALUES('vk:b','vk:u','explicit',1,'vk:o')",
       )
       .run();
+    writer
+      .prepare(
+        "INSERT INTO paused_reset_requests(code,owner_id,event_id,chat_id,generation,revision,send_id,state,receipt,expires_at) VALUES('old','vk:o',7,?, ?,0,9,'ready',10,900010)",
+      )
+      .run(first.chatId, first.generation);
     writer.close();
     const source = openExisting(f.path);
     const saved = join(f.directory, 'saved'),
@@ -53,6 +58,9 @@ test('сброшенное поколение исключено, отзыв д�
           staged.transaction(() => reconcileConnections(staged, source))(),
         );
         expect(reconcile()).toEqual({ access: 'partial', admitted: 1, closed: 1 });
+        expect(
+          staged.prepare("SELECT state FROM paused_reset_requests WHERE code='old'").pluck().get(),
+        ).toBe('closed');
         expect(reconcile()).toEqual({ access: 'partial', admitted: 1, closed: 1 });
         expect(staged.prepare('SELECT text FROM messages').pluck().all()).toEqual(['vk:b']);
         expect(staged.prepare('SELECT count(*) FROM bot_admin_grants').pluck().get()).toBe(0);

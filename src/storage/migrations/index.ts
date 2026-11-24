@@ -52,6 +52,7 @@ export interface Migration {
   readonly name: string;
   readonly sql: string;
 }
+import { pausedResetRequests } from './053-paused-reset-requests';
 import { questionnaireRemoval } from './052-questionnaire-removal';
 import { questionnaireAnswerEdits } from './051-questionnaire-answer-edits';
 import { questionnaireCompletion } from './050-questionnaire-completion';
@@ -109,4 +110,5 @@ export const migrations: readonly Migration[] = [
   questionnaireCompletion,
   questionnaireAnswerEdits,
   questionnaireRemoval,
+  pausedResetRequests,
 ];

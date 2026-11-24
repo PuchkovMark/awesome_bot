@@ -323,12 +323,25 @@ test('ранний личный путь принимает целую кома�
     expect(f.paused()).toEqual(previous);
     f.update(f.event(reset));
     await vi.waitFor(() => expect(f.sends).toHaveLength(9));
-    expect(f.paused()).toEqual([]);
+    expect(f.paused()).toEqual(previous);
+    const cancel = f.sends[8]!.text.match(/\/отменить-сброс [a-f\d]+/u)![0];
+    f.update(f.event(cancel));
+    await vi.waitFor(() => expect(f.sends.at(-1)?.text).toContain('отменён'));
+    expect(f.paused()).toEqual(previous);
+    f.update(f.event(reset));
+    await vi.waitFor(() => expect(f.sends).toHaveLength(11));
+    const confirm = f.sends[10]!.text.match(/\/подтвердить-сброс [a-f\d]+/u)![0];
+    f.update(
+      f.event(confirm, member),
+      f.event(confirm, owner, owner, { fwd_messages: [{ text: confirm }] }),
+      f.event(confirm),
+    );
+    await vi.waitFor(() => expect(f.paused()).toEqual([]));
     expect(f.life.current(row.chatId).generation).not.toBe(row.generation);
     await f.life.verify(ownerId, 'observation_lost');
     f.update(f.event(overview));
-    await vi.waitFor(() => expect(f.sends).toHaveLength(10));
-    expect(f.sends[9]).toMatchObject({
+    await vi.waitFor(() => expect(f.sends.at(-1)?.text).toContain(`Беседа ${ownerId}`));
+    expect(f.sends.at(-1)).toMatchObject({
       peer: owner,
       text: expect.stringContaining(`Беседа ${ownerId}`),
     });
@@ -356,6 +369,10 @@ test('десять строк обзора приводят к независи�
       enabled: true,
     });
     await f.record(firstScope, '1');
+    const title = 'Книжный клуб';
+    f.connection.run((db) =>
+      db.prepare('UPDATE chats SET title=? WHERE chat_id=?').run(title, lastScope.chatId),
+    );
     await f.record(lastScope, '2');
     for (const peer of peers.slice(1, -1)) {
       const scope = f.open(peer);
@@ -415,7 +432,7 @@ test('десять строк обзора приводят к независи�
     for (const [index, lines] of blocks.entries()) {
       const { chatId, generation, revision } = pauseSnapshot[index]!;
       expect(lines).toEqual([
-        expect.stringContaining(`Беседа ${chatId}.`),
+        expect.stringContaining(`Беседа ${chatId}`),
         `Продолжить ${chatId} ${generation}/${revision}`,
         expect.stringContaining('Сохраняет текущую историю'),
         `Начать заново ${chatId} ${generation}/${revision}`,
@@ -469,6 +486,12 @@ test('десять строк обзора приводят к независи�
     f.failSend((text) => text.startsWith(`Для беседы ${lastScope.chatId} начато`));
     const resetEvent = f.event(resetCommand);
     f.update(resetEvent);
+    await vi.waitFor(() => expect(f.sends.at(-1)?.text).toContain('/подтвердить-сброс'));
+    const warning = f.sends.at(-1)!.text;
+    expect(warning).toContain(title);
+    expect(warning).toContain(lastScope.chatId);
+    expect(f.paused().some((row) => row.chatId === lastScope.chatId)).toBe(true);
+    f.update(f.event(warning.match(/\/подтвердить-сброс [a-f\d]+/u)![0]));
     await vi.waitFor(() => expect(f.failed).toHaveLength(1));
     expect(f.failed[0]).toMatchObject({ peer: owner });
     const reset = f.life.current(lastScope.chatId);

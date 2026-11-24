@@ -149,6 +149,8 @@ test('обновление переносит только проверяемы�
         DROP TABLE llm_recovery;
         DROP TABLE questionnaire_presentations;
         DROP TABLE questionnaire_answer_facts;
+        DROP TRIGGER close_paused_resets;
+        DROP TABLE paused_reset_requests;
         DROP TABLE questionnaire_removals;
         DROP TRIGGER questionnaire_invalidate_prompts;
         DROP TABLE questionnaire_management_prompts;
