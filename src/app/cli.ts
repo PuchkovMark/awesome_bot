@@ -2,6 +2,7 @@ import { writeSync } from 'node:fs';
 import type { Writable } from 'node:stream';
 import {
   loadApplicationConfig,
+  loadBackupConfig,
   loadPromptConfig,
   loadResolutionConfig,
 } from '../config/application';
@@ -10,6 +11,7 @@ import type { ConfigOptions } from '../config/index';
 import { createLogger, reportConfigError } from '../logger/index';
 import type { ApplicationFailure } from '../logger/types';
 import { runApplication } from './service';
+import { runBackup } from './database-backup';
 import {
   applicationChatId,
   applicationGroupId,
@@ -38,6 +40,14 @@ export async function runCli(args: readonly string[], options: CliOptions = {}):
   }
 
   try {
+    if (args[0] === 'backup') {
+      const action = args[1];
+      if (args.length !== 2 || (action !== 'create' && action !== 'verify' && action !== 'status'))
+        return fail('invalid_arguments');
+      const result = await runBackup(loadBackupConfig(options.config), action);
+      destination.write(JSON.stringify(result) + '\n');
+      return result.ok ? 0 : 1;
+    }
     if (args.length === 1 && args[0] === 'start') {
       const { config, redact } = loadApplicationConfig(options.config);
       const logger = createLogger({ level: config.log.level, redact, destination });

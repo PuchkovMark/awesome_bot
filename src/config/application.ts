@@ -162,3 +162,16 @@ export function loadResolutionConfig(options?: ConfigOptions) {
   const { cwd, values } = readConfigParameters(options);
   return { databasePath: databasePath(cwd, values), ownerId: vkOwner(values) };
 }
+
+export function loadBackupConfig(options?: ConfigOptions) {
+  const { cwd, values } = readConfigParameters(options);
+  return {
+    databasePath: databasePath(cwd, values),
+    messageRetentionDays: positiveParameter(
+      values,
+      'MESSAGE_RETENTION_DAYS',
+      undefined,
+      86_400_000,
+    ),
+  };
+}
