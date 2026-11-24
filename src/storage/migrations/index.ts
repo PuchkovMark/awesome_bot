@@ -52,6 +52,7 @@ export interface Migration {
   readonly name: string;
   readonly sql: string;
 }
+import { questionnaireAnswerEdits } from './051-questionnaire-answer-edits';
 import { questionnaireCompletion } from './050-questionnaire-completion';
 
 export const migrations: readonly Migration[] = [
@@ -105,4 +106,5 @@ export const migrations: readonly Migration[] = [
   llmRecovery,
   chatRequestMetrics,
   questionnaireCompletion,
+  questionnaireAnswerEdits,
 ];

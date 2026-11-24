@@ -22,6 +22,8 @@ import {
   questionnairePresentationStore,
   type QuestionnairePresentationGrant,
 } from '../storage/questionnaire-presentation-store';
+import { questionnaireManagementStore } from '../storage/questionnaire-management-store';
+import { questionnaireEditorParts } from './questionnaire-management';
 import { questionnaireViewStore } from '../storage/questionnaire-view-store';
 import type { Storage } from '../storage/types';
 import type { PublicationGuard } from '../core/message-router/publication-service';
@@ -99,6 +101,7 @@ export function createQuestionnaireCommands(options: {
   const controls = chatControlStore(options.storage);
   const legacyPrompts = legacyQuestionnairePrompts(options.storage);
   const presentations = questionnairePresentationStore(options.storage);
+  const management = questionnaireManagementStore(options.storage);
   const views = questionnaireViewStore(options.storage);
   function commandOf(scope: ConnectionScope, message: IncomingMessage) {
     if (message.isBot !== false || (!message.isGroupChat && message.chatId !== message.userId))
@@ -110,8 +113,10 @@ export function createQuestionnaireCommands(options: {
     if (view) return { view: view[1] ?? '' };
     if (/^\/анкета\s+представить$/iu.test(text)) return { present: true };
     if (!message.isGroupChat) return null;
+    if (/^\/анкета\s+изменить$/iu.test(text)) return { manage: 'edit' as const };
     const receipt = message.replyToMessageId ?? message.unverifiedReplyToMessageId;
     if (!receipt) return null;
+    if (management.hasPrompt(scope, receipt)) return { managementReply: receipt };
     if (legacyPrompts.hasPrompt(scope, receipt)) return { ignored: true };
     const presentChoice = text.toLowerCase();
     const isPresentationChoice =
@@ -175,7 +180,8 @@ export function createQuestionnaireCommands(options: {
       text = view.pairs.length
         ? questionnaireListText(view.pairs, 'Анкета')
         : 'Анкета\n\nНет публичных ответов';
-      if (ownActions && message.isGroupChat) text += '\n\nПосмотреть — /анкета показать.';
+      if (ownActions && message.isGroupChat)
+        text += '\n\nПосмотреть — /анкета показать. Исправить ответ — /анкета изменить.';
     }
     for (const part of splitVkText(text)) {
       if (!current()) return;
@@ -215,6 +221,60 @@ export function createQuestionnaireCommands(options: {
       if (!(await allowed())) return;
 
       const guard = { signal, isCurrent: current, allow: allowed };
+      if (typeof command !== 'string' && 'manage' in command) {
+        const form = management.open(
+          scope,
+          message.userId,
+          sequence,
+          message.timestamp,
+          Date.now(),
+        );
+        if (form === null) await channel.replyGroupControl(scope, 'Анкета не заполнена', guard);
+        if (!form) return;
+        const currentForm = () =>
+          current() && management.current(scope, message.userId, form.attempt, Date.now());
+        const deliveryGuard = {
+          ...guard,
+          isCurrent: currentForm,
+          allow: async () => currentForm() && (await allowed()) && currentForm(),
+        };
+        for (const part of questionnaireEditorParts(form.template.questions)) {
+          if (!currentForm()) return;
+          const sent = await channel.deliverQuestionnairePart(scope, part.text, deliveryGuard);
+          if (
+            sent.kind !== 'delivered' ||
+            !currentForm() ||
+            !management.remember(
+              scope,
+              message.userId,
+              form.attempt,
+              sent.receipt,
+              part.first,
+              part.last,
+              Date.now(),
+            )
+          )
+            return;
+        }
+        return;
+      }
+      if (typeof command !== 'string' && 'managementReply' in command) {
+        if (message.replyAddress !== 'bot' || message.replyToMessageId !== command.managementReply)
+          return;
+        const receipt = questionnaireMessageSequence(command.managementReply);
+        if (receipt === null) return;
+        const result = management.reply(
+          scope,
+          message.userId,
+          receipt,
+          sequence,
+          message.literalText ?? message.text,
+          message.timestamp,
+          Date.now(),
+        );
+        if (result) await channel.replyGroupControl(scope, result, guard);
+        return;
+      }
       if (typeof command !== 'string' && 'view' in command) {
         options.track(show(scope, message, command.view, guard));
         return;

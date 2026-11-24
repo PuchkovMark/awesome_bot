@@ -171,7 +171,7 @@ export function questionnaireAnswerHandler(options: {
       result: {
         kind: 'complete',
         text: group
-          ? 'Спасибо! Анкета заполнена. Посмотреть — /анкета показать.'
+          ? 'Спасибо! Анкета заполнена. Посмотреть — /анкета показать. Исправить ответ — /анкета изменить.'
           : 'Спасибо! Анкета заполнена.',
         summary: measured,
       },

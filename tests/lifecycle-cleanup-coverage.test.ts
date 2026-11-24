@@ -21,6 +21,7 @@ const tables = [
   'questionnaire_inputs',
   'questionnaire_answer_facts',
   'questionnaire_presentations',
+  'questionnaire_management_prompts',
   'questionnaire_revisions',
   'questionnaire_editor_prompts',
   'questionnaire_default_boundary',
@@ -102,6 +103,8 @@ const tables = [
 ];
 const others = [
   'questionnaire_legacy_receipts',
+  'questionnaire_management_subject',
+  'questionnaire_invalidate_prompts',
   'chat_metrics_bucket_expiry',
   'chat_metrics_attempt_expiry',
   'chat_metrics_publication_scope',

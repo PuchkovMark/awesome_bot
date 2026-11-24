@@ -174,6 +174,19 @@ function writePrivateFact(
   now: number,
 ): ProfileCommandEditResult {
   requireInput(event.scope.chatId === actor && db.inTransaction);
+  return writeProfileEdit(db, scope, actor, fact, change, event, now, 'profile');
+}
+
+function writeProfileEdit(
+  db: Database,
+  scope: ConnectionScope,
+  actor: UserId,
+  fact: OwnProfileFact,
+  change: ProfileCommandChange,
+  event: ProfileCommandEvent,
+  now: number,
+  source: 'profile' | 'questionnaire',
+): ProfileCommandEditResult {
   if (change.kind === 'reject') {
     if (fact.sourceKind !== 'inferred') return 'not_inferred';
     db.prepare('INSERT INTO profile_fact_rejections(fact_id,rejected_at) VALUES(?,?)').run(
@@ -201,7 +214,7 @@ function writePrivateFact(
     reliability,visibility,created_at,updated_at,generation,source_at,event_key,interest_key,change_kind
   ) VALUES (?,?,?,?,'self',?,NULL,NULL,?,?,?,?,?,?,?,?,?)`);
   const eventKey =
-    '2:profile:' +
+    `2:${source}:` +
     String(event.scope.generation).padStart(16, '0') +
     ':' +
     event.messageId.padStart(16, '0');
@@ -256,6 +269,46 @@ function writePrivateFact(
     'UPDATE participant_profiles SET updated_at=max(updated_at,?) WHERE chat_id=? AND user_id=?',
   ).run(now, scope.chatId, actor);
   return 'applied';
+}
+
+export function editQuestionnaireAnswer(
+  db: Database,
+  scope: ConnectionScope,
+  actor: UserId,
+  attempt: string,
+  template: QuestionnaireRevision,
+  position: number,
+  value: string,
+  event: ProfileCommandEvent,
+  now: number,
+) {
+  requireInput(db.inTransaction && event.scope.chatId === scope.chatId);
+  const field =
+    questionnaireFieldPrefix + JSON.stringify([template.ref.key, template.ref.revision, position]);
+  const fact = selectOwnProfile(db, scope, actor, now).find((row) => row.fieldKey === field);
+  if (fact)
+    return (
+      writeProfileEdit(
+        db,
+        scope,
+        actor,
+        fact,
+        { kind: 'correct', value },
+        event,
+        now,
+        'questionnaire',
+      ) === 'applied'
+    );
+  recordQuestionnaireFacts(
+    db,
+    scope,
+    attempt,
+    template,
+    { userId: actor, messageId: event.messageId, at: event.at, text: value },
+    { [position]: value },
+    now,
+  );
+  return true;
 }
 
 export function createProfileFactStore(lifecycle: LifecycleBackend) {

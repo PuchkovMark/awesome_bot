@@ -52,6 +52,11 @@ function reconcileSnapshot(staged: Database, newer: Database, now: number) {
       staged.prepare('DELETE FROM profile_command_lists').run();
       staged
         .prepare(
+          'UPDATE questionnaire_management_prompts SET user_id=NULL,attempt=NULL,expires_at=0',
+        )
+        .run();
+      staged
+        .prepare(
           'UPDATE questionnaire_editor_prompts SET actor_id=NULL,shown_revision=NULL WHERE actor_id IS NOT NULL',
         )
         .run();

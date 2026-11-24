@@ -29,7 +29,7 @@ export function reconcileStagedQuestionnaires(staged: Database, newer: Database)
     `SELECT fact_id FROM questionnaire_answer_facts WHERE ${subject} AND field_key=@field_key`,
   );
   const latestEdits = newer.prepare(`SELECT * FROM profile_facts WHERE ${field} AND id<>@fact_id
-    AND source_kind='self' AND source_user_id=@user_id AND event_key GLOB '2:profile:*'
+    AND source_kind='self' AND source_user_id=@user_id AND (event_key GLOB '2:profile:*' OR event_key GLOB '2:questionnaire:*')
     ORDER BY id`);
   const clearEdits = staged.prepare(`DELETE FROM profile_facts WHERE ${field} AND id<>@fact_id`);
   const clearOriginal = staged.prepare('DELETE FROM profile_facts WHERE id=?');
@@ -41,6 +41,37 @@ export function reconcileStagedQuestionnaires(staged: Database, newer: Database)
   const updateProfile =
     staged.prepare(`UPDATE participant_profiles SET updated_at=max(updated_at,@updated_at)
     WHERE chat_id=@chat_id AND user_id=@user_id`);
+  // Пропуск мог получить первый ответ уже после создания копии.
+  const additions =
+    newer.prepare(`SELECT b.*,f.value,f.source_message_id,f.visibility,f.created_at,f.updated_at,f.source_at,f.event_key
+    FROM questionnaire_answer_facts b JOIN profile_facts f ON f.id=b.fact_id
+    WHERE b.chat_id=@chat_id AND b.generation=@generation AND b.user_id=@user_id AND b.attempt=@attempt`);
+  const known = staged.prepare(
+    `SELECT 1 FROM questionnaire_answer_facts WHERE ${subject} AND field_key=@field_key`,
+  );
+  const original =
+    staged.prepare(`INSERT INTO profile_facts(chat_id,user_id,field_key,value,source_kind,
+    source_user_id,source_message_id,reliability,visibility,created_at,updated_at,generation,source_at,event_key)
+    VALUES(@chat_id,@user_id,@field_key,@value,'self',@user_id,@source_message_id,'confirmed',@visibility,
+      @created_at,@updated_at,@generation,@source_at,@event_key)`);
+  const bind =
+    staged.prepare(`INSERT INTO questionnaire_answer_facts VALUES(@chat_id,@generation,@user_id,@attempt,
+    @template_key,@template_revision,@position,@question,@field_key,@fact_id)`);
+  for (const attempt of staged
+    .prepare("SELECT * FROM questionnaire_progress WHERE state='completed'")
+    .all() as Attempt[]) {
+    for (const row of additions.iterate(attempt) as Iterable<Binding>) {
+      if (known.get(row)) continue;
+      staged
+        .prepare(
+          `INSERT INTO participant_profiles(chat_id,user_id,created_at,updated_at)
+        VALUES(@chat_id,@user_id,@created_at,@updated_at) ON CONFLICT DO NOTHING`,
+        )
+        .run(row);
+      bind.run({ ...row, fact_id: original.run(row).lastInsertRowid });
+      updateProfile.run(row);
+    }
+  }
   for (const saved of staged
     .prepare('SELECT * FROM questionnaire_answer_facts')
     .all() as Binding[]) {

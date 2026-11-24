@@ -7,7 +7,7 @@ import { profileAdmitted } from './personal-data-store';
 import { publiclyVisibleFact, selectCurrentFacts } from './profile-fact-selection';
 import type { Storage } from './types';
 
-function isMember(db: Database, scope: ConnectionScope, user: UserId) {
+export function isQuestionnaireMember(db: Database, scope: ConnectionScope, user: UserId) {
   return (
     participantProfileAvailable(readDeparture(db, scope, user)) &&
     !!db
@@ -41,7 +41,9 @@ export function questionnaireViewStore(storage: Storage) {
       if (
         !db.prepare('SELECT 1 FROM chats WHERE chat_id=? AND enabled=1').get(scope.chatId) ||
         !profileAdmitted(db, scope, author, now) ||
-        (groupSource && (!isMember(db, scope, author) || !isMember(db, scope, requester)))
+        (groupSource &&
+          (!isQuestionnaireMember(db, scope, author) ||
+            !isQuestionnaireMember(db, scope, requester)))
       )
         return null;
       const questionnaire = db

@@ -8,6 +8,7 @@ import { departureGraceMs } from '../src/storage/participant-departures';
 import { participantRegistryStore } from '../src/storage/participant-registry';
 import { profileCommandStore } from '../src/storage/profile-command-store';
 import { selectOwnProfile } from '../src/storage/profile-fact-selection';
+import { questionnaireManagementStore } from '../src/storage/questionnaire-management-store';
 import { questionnairePresentationStore } from '../src/storage/questionnaire-presentation-store';
 import { questionnaireProgressStore } from '../src/storage/questionnaire-progress-store';
 import { questionnaireStore } from '../src/storage/questionnaire-store';
@@ -148,6 +149,8 @@ test('обновление переносит только проверяемы�
         DROP TABLE llm_recovery;
         DROP TABLE questionnaire_presentations;
         DROP TABLE questionnaire_answer_facts;
+        DROP TRIGGER questionnaire_invalidate_prompts;
+        DROP TABLE questionnaire_management_prompts;
         DROP INDEX questionnaire_legacy_receipts;
         ALTER TABLE questionnaire_progress DROP COLUMN legacy_access_prompt_id;
         ALTER TABLE questionnaire_progress DROP COLUMN response_message_id;
@@ -281,6 +284,61 @@ test('личные правки анкеты и подтверждённое у�
         ).toEqual(['Шахматы', null, 'Го']);
     } finally {
       db.close();
+    }
+  } finally {
+    await f.close();
+  }
+});
+
+test('копия получает публичную правку и ответ на пропущенный при заполнении вопрос', async () => {
+  const f = await profileFixture();
+  try {
+    const target = await f.chat();
+    f.deliver(target);
+    const { store, id, actor } = await pending(f, target, alice, '200');
+    expect(store.finish(target, id, 130, answers, () => true)).toBe(true);
+    const live = new Database(f.path, { readonly: true });
+    try {
+      const path = f.path + '.before-edit';
+      await live.backup(path);
+      const manage = questionnaireManagementStore(f.storage);
+      const attempt = actor.current(131)!.attempt;
+      expect(
+        manage.remember(
+          target,
+          alice,
+          attempt,
+          {
+            messageId: '301',
+            userId: 'vk:-314',
+            authorName: 'Пенёк',
+            text: 'Список',
+            timestamp: 140,
+          },
+          1,
+          3,
+          140,
+        ),
+      ).toBe(true);
+      expect(manage.reply(target, alice, 301, 302, '2 Казань', 150, 150)).toContain('сохранён');
+      expect(manage.reply(target, alice, 301, 302, '2 Повтор', 150, 150)).toBeNull();
+      expect(manage.reply(target, alice, 301, 303, '1 Шашки', 151, 151)).toContain('сохранён');
+      const stage = new Database(path);
+      try {
+        stage.pragma('foreign_keys=ON');
+        reconcileStagedPersonalData(stage, live, 155);
+        expect(stage.prepare('SELECT value FROM profile_facts ORDER BY id').pluck().all()).toEqual(
+          expect.arrayContaining(['Казань', 'Шашки']),
+        );
+        expect(stage.prepare('SELECT count(*) FROM questionnaire_answer_facts').pluck().get()).toBe(
+          3,
+        );
+        expect(stage.pragma('foreign_key_check')).toEqual([]);
+      } finally {
+        stage.close();
+      }
+    } finally {
+      live.close();
     }
   } finally {
     await f.close();
