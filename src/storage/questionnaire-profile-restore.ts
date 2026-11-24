@@ -73,4 +73,25 @@ export function reconcileStagedQuestionnaires(staged: Database, newer: Database)
       updateProfile.run(edit);
     }
   }
+
+  if (
+    newer
+      .prepare(
+        "SELECT 1 FROM sqlite_schema WHERE type='table' AND name='questionnaire_presentations'",
+      )
+      .get()
+  ) {
+    const copy = staged.prepare(`INSERT INTO questionnaire_presentations
+      SELECT chat_id,generation,user_id,attempt,@prompt_message_id,@event_id,
+        CASE WHEN @state='sending' THEN 'unknown' ELSE @state END,@confirmed_parts
+      FROM questionnaire_access WHERE ${subject}
+      ON CONFLICT(chat_id,generation,user_id,attempt) DO UPDATE SET
+        prompt_message_id=excluded.prompt_message_id,event_id=excluded.event_id,
+        state=excluded.state,confirmed_parts=excluded.confirmed_parts
+      WHERE coalesce(excluded.event_id,0)>=coalesce(questionnaire_presentations.event_id,0)`);
+    for (const row of newer
+      .prepare('SELECT * FROM questionnaire_presentations')
+      .iterate() as Iterable<object>)
+      copy.run(row);
+  }
 }

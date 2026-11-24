@@ -19,10 +19,14 @@ import {
   type QuestionnaireAccessDecision,
 } from '../storage/questionnaire-access-store';
 import type { QuestionnaireCommand } from '../storage/questionnaire-progress-store';
+import {
+  questionnairePresentationStore,
+  type QuestionnairePresentationGrant,
+} from '../storage/questionnaire-presentation-store';
 import { questionnaireViewStore } from '../storage/questionnaire-view-store';
 import type { Storage } from '../storage/types';
 import type { PublicationGuard } from '../core/message-router/publication-service';
-import { questionnaireListText } from './questionnaire-list-text';
+import { questionnaireListText } from '../core/questionnaire/text';
 
 export const openQuestionnaire = '/анкета';
 const cancelQuestionnaire = '/анкета отмена';
@@ -62,6 +66,7 @@ const ownCommand = {
   minimumRole: 'member',
   journalLabel: 'Действие с анкетой',
 } as const;
+const controlAccess = { ...ownCommand, action: 'profile.self.manage' } as const;
 
 const prompt = {
   group:
@@ -97,11 +102,18 @@ export function createQuestionnaireCommands(options: {
     | 'questionnaireMention'
   >;
   readonly track: (work: Promise<void>) => void;
+  readonly present: (
+    scope: ConnectionScope,
+    grant: QuestionnairePresentationGrant,
+    authorName: string,
+    guard: PublicationGuard,
+  ) => Promise<void>;
   readonly signal: AbortSignal;
 }) {
   const { channel, progress, authorization, lifecycle, signal } = options;
   const controls = chatControlStore(options.storage);
   const access = questionnaireAccessStore(options.storage);
+  const presentations = questionnairePresentationStore(options.storage);
   const views = questionnaireViewStore(options.storage);
   function commandOf(scope: ConnectionScope, message: IncomingMessage) {
     if (message.isBot !== false || (!message.isGroupChat && message.chatId !== message.userId))
@@ -111,12 +123,24 @@ export function createQuestionnaireCommands(options: {
     if (progress) return progress;
     const view = parseQuestionnaireView(text);
     if (view) return { view: view[1] ?? '' };
+    if (text === '/анкета представить') return { present: true };
     if (!message.isGroupChat) return null;
     const direct = accessCommand(text);
     if (direct) return { access: direct };
-    const reply = accessReply(text);
     const receipt = message.replyToMessageId ?? message.unverifiedReplyToMessageId;
-    return reply && receipt && access.hasPrompt(scope, receipt) ? { access: reply, receipt } : null;
+    if (!receipt) return null;
+    const viewChoice = accessReply(text);
+    const presentChoice = text.toLowerCase();
+    const isPresentationChoice =
+      presentChoice === 'представить' || presentChoice === 'не представлять';
+    if (!viewChoice && !isPresentationChoice) return null;
+    if (access.hasPrompt(scope, receipt))
+      return viewChoice ? { access: viewChoice, receipt } : { ignored: true };
+    if (presentations.hasPrompt(scope, receipt))
+      return isPresentationChoice
+        ? { present: presentChoice === 'представить', receipt }
+        : { ignored: true };
+    return null;
   }
 
   async function show(
@@ -177,7 +201,12 @@ export function createQuestionnaireCommands(options: {
 
   return {
     recognize(scope: ConnectionScope, message: IncomingMessage) {
-      return commandOf(scope, message) ? ownCommand : null;
+      const command = commandOf(scope, message);
+      return command
+        ? typeof command !== 'string' && 'access' in command
+          ? controlAccess
+          : ownCommand
+        : null;
     },
     async execute(
       context: AuthorizationContext,
@@ -197,10 +226,13 @@ export function createQuestionnaireCommands(options: {
       )
         return;
       const control = controls.capture(scope);
-      const current = () => !signal.aborted && accepted() && control().ordinary;
+      const changesAccess = typeof command !== 'string' && 'access' in command;
+      const current = () =>
+        !signal.aborted && accepted() && (changesAccess ? control().journal : control().ordinary);
+      const action = changesAccess ? controlAccess.action : ownCommand.action;
       const allowed = async () =>
         current() &&
-        (await authorization.check(context, ownCommand.action, message.userId)).allowed &&
+        (await authorization.check(context, action, message.userId)).allowed &&
         current();
       if (!(await allowed())) return;
 
@@ -210,6 +242,7 @@ export function createQuestionnaireCommands(options: {
         return;
       }
       if (typeof command !== 'string') {
+        if ('ignored' in command) return;
         const receipt = command.receipt ? questionnaireMessageSequence(command.receipt) : null;
         if (
           command.receipt &&
@@ -218,11 +251,32 @@ export function createQuestionnaireCommands(options: {
             message.replyToMessageId !== command.receipt)
         )
           return;
-        const result = access.decide(scope, message.userId, command.access, {
-          sequence,
-          at: message.timestamp,
-          receipt,
-        });
+        const event = { sequence, at: message.timestamp, receipt };
+        if ('present' in command) {
+          if (!message.isGroupChat) {
+            await channel.replyPrivateControl(
+              message.userId,
+              'Отправьте /анкета представить в беседе с заполненной анкетой.',
+              guard,
+            );
+            return;
+          }
+          const decision = presentations.decide(scope, message.userId, command.present, event);
+          if (decision.kind === 'approved') {
+            options.track(options.present(scope, decision.grant, message.authorName, guard));
+            return;
+          }
+          if (decision.kind === 'declined')
+            await channel.replyGroupControl(scope, 'Представление по анкете отменено.', guard);
+          if (decision.kind === 'unavailable')
+            await channel.replyGroupControl(
+              scope,
+              'У вас пока нет заполненной анкеты в этой беседе.',
+              guard,
+            );
+          return;
+        }
+        const result = access.decide(scope, message.userId, command.access, event);
         if (result === 'ignored') return;
         const text =
           result === 'unavailable'
@@ -230,7 +284,13 @@ export function createQuestionnaireCommands(options: {
             : command.access === 'open'
               ? 'Просмотр вашей анкеты открыт для участников этой беседы.'
               : 'Просмотр вашей анкеты закрыт.';
-        await channel.replyGroupControl(scope, text, guard);
+        const replying = () => current() && control().ordinary;
+        if (replying())
+          await channel.replyGroupControl(scope, text, {
+            ...guard,
+            isCurrent: replying,
+            allow: async () => replying() && (await allowed()) && replying(),
+          });
         return;
       }
 

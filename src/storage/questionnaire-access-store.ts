@@ -64,9 +64,8 @@ export function questionnaireAccessStore(storage: Storage) {
     ): 'applied' | 'unavailable' | 'ignored' {
       timestamp(event.at);
       return lifecycle.transaction(scope, (db) => {
-        const { enabled, mode } = readChatControl(db, scope.chatId);
-        if (!enabled || mode === 'silent' || !profileAdmitted(db, scope, user, event.at, 'write'))
-          return 'ignored';
+        const { enabled } = readChatControl(db, scope.chatId);
+        if (!enabled || !profileAdmitted(db, scope, user, event.at, 'write')) return 'ignored';
         const key = { chat: scope.chatId, generation: scope.generation, user };
         if (
           db

@@ -1,5 +1,6 @@
 import { expect, test } from 'vitest';
 import { questionnaireAccessQuestion } from '../src/core/questionnaire/answer';
+import { questionnairePresentationQuestion } from '../src/core/questionnaire/text';
 import {
   answer,
   chat,
@@ -58,6 +59,9 @@ async function fill(app: App, { large = false, held = false } = {}) {
   if (held) {
     await until(() => expect(app.holds).toHaveLength(2));
     app.holds[1]!.release();
+    await until(() => expect(app.holds).toHaveLength(3));
+    app.holds[2]!.release();
+    await presentationPrompt(app);
   }
   return input;
 }
@@ -82,6 +86,29 @@ function values(app: App) {
   return app.storage.profileFacts.read(app.scope, 'vk:41').facts.map(({ value }) => value);
 }
 
+function presentation(app: App) {
+  return app.db
+    .prepare(
+      `SELECT prompt_message_id AS receipt,event_id AS event,state,confirmed_parts AS parts
+    FROM questionnaire_presentations WHERE chat_id=? AND user_id='vk:41'`,
+    )
+    .get(chat) as
+    { receipt: number | null; event: number | null; state: string; parts: number } | undefined;
+}
+
+async function presentationPrompt(app: App) {
+  await until(() => expect(presentation(app)?.receipt).toBeGreaterThan(0));
+  const question = app.sends.find(({ text }) => text === questionnairePresentationQuestion)!;
+  expect(presentation(app)?.receipt).toBe(question.conversation_message_id);
+  return question;
+}
+
+function introductions(app: App) {
+  return app.sends.filter(
+    ({ text }) => text.startsWith('Знакомьтесь,') || text.startsWith('Представление участника'),
+  );
+}
+
 async function prompt(app: App) {
   await until(() => expect(state(app)?.receipt).toBeGreaterThan(0));
   const question = app.sends.find(({ text }) => text.includes(questionnaireAccessQuestion))!;
@@ -94,6 +121,7 @@ test('молчание открывает просмотр ровно через
   try {
     await fill(app);
     await prompt(app);
+    await presentationPrompt(app);
     expect(state(app)).toMatchObject({ deliveredAt: app.start + 2_000, decision: null });
     expect(values(app)).toEqual([]);
     await app.restart(true);
@@ -103,6 +131,7 @@ test('молчание открывает просмотр ровно через
     app.at(902_000);
     expect(values(app)).toEqual(['Шахматы', 'Личный факт']);
     expect(app.sends).toHaveLength(sent);
+    expect(introductions(app)).toEqual([]);
     app.at(903_000);
     const close = app.submit('/анкета закрыть');
     await until(() => expect(state(app)).toMatchObject({ decision: 'closed', event: close }));
@@ -183,6 +212,26 @@ test('запоздавшая квитанция не меняет явное з�
     expect(state(app)).toMatchObject({ decision: 'closed', event: close });
   } finally {
     hold.release();
+    await app.close();
+  }
+});
+
+test('автор может отозвать доступ к анкете в беседе с включённым тихим режимом', async () => {
+  const app = await setup();
+  try {
+    await fill(app);
+    await presentationPrompt(app);
+    app.at(3_000);
+    const open = app.submit('/анкета открыть');
+    await until(() => expect(state(app)).toMatchObject({ decision: 'open', event: open }));
+    await until(() => expect(app.sends.some(({ text }) => text === explicitOpen)).toBe(true));
+    await app.storage.chats.update(app.scope, { responseMode: 'silent' });
+    const before = app.sends.length;
+    const close = app.submit('/анкета закрыть');
+    await until(() => expect(state(app)).toMatchObject({ decision: 'closed', event: close }));
+    expect(values(app)).toEqual([]);
+    expect(app.sends).toHaveLength(before);
+  } finally {
     await app.close();
   }
 });
@@ -308,16 +357,16 @@ test('закрытие анкеты на лимитере блокирует в�
     const open = app.submit('Разрешить', 41, question);
     await until(() => expect(state(app)).toMatchObject({ decision: 'open', event: open }));
     app.submit('/анкета показать @id41', 42);
-    await until(() => expect(app.holds).toHaveLength(3));
-    app.holds[2]!.release();
     await until(() => expect(app.holds).toHaveLength(4));
+    app.holds[3]!.release();
+    await until(() => expect(app.holds).toHaveLength(5));
     expect(
       app.sends.some(({ text }) => text.startsWith('Анкета\n') && text.includes('Шахматы')),
     ).toBe(true);
     const close = app.submit('/анкета закрыть');
     await until(() => expect(state(app)).toMatchObject({ decision: 'closed', event: close }));
-    app.holds[3]!.release();
-    await app.holds[3]!.finished;
+    app.holds[4]!.release();
+    await app.holds[4]!.finished;
     expect(app.sends.filter(({ text }) => text.includes('Длинный ответ'))).toEqual([]);
   } finally {
     await app.close();
@@ -371,6 +420,133 @@ test('закрытые ответы скрыты от контекста и ин
     expect(app.sends.some(({ text }) => text === 'Прежняя карточка с шахматами')).toBe(false);
   } finally {
     finishing.resolve();
+    await app.close();
+  }
+});
+
+async function ownProfile(app: App) {
+  app.submit('/профиль', 41);
+  let list: App['sends'][number] | undefined;
+  await until(() => {
+    list = app.sends.find(({ peer_id, text }) => peer_id === 41 && text.startsWith('Профиль в'));
+    expect(list).toBeDefined();
+  });
+  return list!;
+}
+
+async function hideSecondFact(app: App, list: App['sends'][number]) {
+  const before = app.sends.filter(({ text }) => text === 'Профиль обновлён.').length;
+  app.submit('/скрыть 2', 41, list, 41);
+  await until(() =>
+    expect(app.sends.filter(({ text }) => text === 'Профиль обновлён.')).toHaveLength(before + 1),
+  );
+}
+
+test.each(['команда', 'ответ'] as const)(
+  'представление сохраняет отдельное согласие автора через %s и публикуется один раз',
+  async (mode) => {
+    const app = await setup();
+    try {
+      await fill(app);
+      const viewQuestion = await prompt(app);
+      const question = await presentationPrompt(app);
+      expect(viewQuestion.conversation_message_id).not.toBe(question.conversation_message_id);
+      app.at(3_000);
+      for (const event of [
+        app.submit('Представить', 42, question),
+        app.submit('Да', 41, question),
+        app.submit('Представить', 41, viewQuestion),
+      ])
+        await app.journaled(event);
+      expect(presentation(app)).toMatchObject({ state: 'waiting', event: null });
+      expect(state(app)?.decision).toBeNull();
+      const decline = app.submit('Не представлять', 41, question);
+      await until(() =>
+        expect(presentation(app)).toMatchObject({ state: 'declined', event: decline }),
+      );
+      expect(introductions(app)).toEqual([]);
+      const list = await ownProfile(app);
+      app.at(4_000);
+      await hideSecondFact(app, list);
+      const consent =
+        mode === 'команда'
+          ? app.submit('/анкета представить')
+          : app.submit('Представить', 41, question);
+      await until(() =>
+        expect(presentation(app)).toMatchObject({ state: 'delivered', event: consent, parts: 1 }),
+      );
+      expect(introductions(app)).toHaveLength(1);
+      expect(introductions(app)[0]?.text).toContain(hobby + '\nШахматы');
+      expect(introductions(app)[0]?.text).not.toMatch(/Личный факт|Что пропустить/u);
+      expect(state(app)?.decision).toBeNull();
+      expect(values(app)).toEqual([]);
+      expect(app.complete).toHaveBeenCalledTimes(1);
+      await app.restart(true);
+      app.at(5_000);
+      app.replay(consent);
+      const repeated = app.submit('/анкета представить');
+      await app.journaled(repeated);
+      expect(presentation(app)).toMatchObject({ state: 'delivered', event: consent, parts: 1 });
+      expect(introductions(app)).toHaveLength(1);
+    } finally {
+      await app.close();
+    }
+  },
+);
+
+test.each(['скрытие поля', 'выход'] as const)(
+  'перед отправкой представления учитывается %s автора',
+  async (action) => {
+    const app = await setup(true);
+    try {
+      await fill(app, { held: true });
+      const list = action === 'скрытие поля' ? await ownProfile(app) : undefined;
+      app.at(4_000);
+      app.submit('/анкета представить');
+      await until(() => expect(app.holds).toHaveLength(4));
+      if (list) await hideSecondFact(app, list);
+      else {
+        app.setMembers([42, 73]);
+        app.membership('chat_kick_user', 41, 41);
+        await until(() =>
+          expect(
+            app.db
+              .prepare(
+                `SELECT returned_at FROM participant_departures
+          WHERE chat_id=? AND user_id='vk:41'`,
+              )
+              .get(chat),
+          ).toEqual({ returned_at: null }),
+        );
+      }
+      app.holds[3]!.release();
+      await until(() => expect(presentation(app)).toMatchObject({ state: 'failed', parts: 0 }));
+      expect(introductions(app)).toEqual([]);
+    } finally {
+      await app.close();
+    }
+  },
+);
+
+test('неизвестный исход публикации представления блокирует повтор после перезапуска', async () => {
+  const app = await setup();
+  try {
+    await fill(app);
+    await presentationPrompt(app);
+    app.failSend((text) => (text.startsWith('Знакомьтесь,') ? 'unknownAfterDelivery' : undefined));
+    app.at(3_000);
+    const event = app.submit('/анкета представить');
+    await until(() =>
+      expect(presentation(app)).toMatchObject({ state: 'unknown', event, parts: 0 }),
+    );
+    expect(introductions(app)).toHaveLength(1);
+    await app.restart(true);
+    app.at(4_000);
+    const repeated = app.submit('/анкета представить');
+    await app.journaled(repeated);
+    expect(presentation(app)).toMatchObject({ state: 'unknown', event, parts: 0 });
+    expect(introductions(app)).toHaveLength(1);
+  } finally {
     await app.close();
   }
 });

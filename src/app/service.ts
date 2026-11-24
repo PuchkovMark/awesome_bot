@@ -587,6 +587,7 @@ export async function runApplication(
         channel,
         signal,
         progress: questionnaireProgress,
+        present: publication.presentQuestionnaire,
         track(work) {
           const publication = work
             .catch((error: unknown) => logger.componentError(error))

@@ -232,6 +232,13 @@ function questionnaireExport(db: Database, scope: ConnectionScope, user: UserId,
     )
     .get(scope.chatId, scope.generation, user) as
     { deliveredAt: number | null; decision: string | null } | undefined;
+  const presentation = db
+    .prepare(
+      `SELECT state,confirmed_parts AS confirmedParts
+    FROM questionnaire_presentations WHERE chat_id=? AND generation=? AND user_id=?`,
+    )
+    .get(scope.chatId, scope.generation, user) as
+    { state: string; confirmedParts: number } | undefined;
   return {
     state:
       row.state === 'active' && row.shown_at !== null && now - row.shown_at >= 3_600_000
@@ -240,6 +247,7 @@ function questionnaireExport(db: Database, scope: ConnectionScope, user: UserId,
     revision: template.ref.revision,
     shownAt: row.shown_at,
     ...(access ? { access } : {}),
+    ...(presentation ? { presentation } : {}),
     questions: template.questions.map((q) => ({
       question: q.text,
       answer: answers[q.position] ?? null,

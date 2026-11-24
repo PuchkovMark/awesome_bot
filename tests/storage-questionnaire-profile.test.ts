@@ -138,7 +138,8 @@ test('обновление переносит только проверяемы�
     const life = lifecycleBackend(f.storage);
     // Восстанавливаем схему предыдущей версии и заполняем данные, существовавшие до переноса.
     life.transaction(scope, (db) => {
-      db.exec(`DROP TABLE questionnaire_answer_facts;
+      db.exec(`DROP TABLE questionnaire_presentations;
+        DROP TABLE questionnaire_answer_facts;
         DROP TABLE questionnaire_access;
         DROP INDEX questionnaire_progress_attempt;
         DELETE FROM schema_migrations WHERE version>=45;
