@@ -16,7 +16,9 @@ const show = /^\/профиль(?:\s+(vk:[1-9]\d*))?$/iu;
 const prefix = /^\/(профиль|исправить|скрыть|отклонить)(?=\s|$)/iu;
 const edit = /^\/(исправить|скрыть|отклонить)\s+([1-9]\d*)(?:\s+([\s\S]+))?$/iu;
 const retry = 'Откройте /профиль заново и ответьте на сообщение списка.';
-const deliveryHint = 'Откройте личный диалог с сообществом и повторите /профиль.';
+function deliveryHint(chat: ChatId) {
+  return `Откройте личный диалог с сообществом и отправьте /профиль ${chat}`;
+}
 const serviceCommand = {
   action: 'profile.self.manage',
   minimumRole: 'member',
@@ -108,7 +110,8 @@ export function createProfileCommands(options: {
       const context = authorization.context({ scope: target, userId: actor });
       if (!(await authorization.check(context, 'profile.self.manage', actor)).allowed || !latest())
         return;
-      const hint = () => channel.replyGroupControl(target, deliveryHint, guard(latest));
+      const hint = () =>
+        channel.replyGroupControl(target, deliveryHint(target.chatId), guard(latest));
       const privateScope = await directScope(actor, latest);
       if (!privateScope) {
         if (groupOrigin && latest()) await hint();
@@ -166,7 +169,7 @@ export function createProfileCommands(options: {
       if (!args || args[1] !== undefined || parent) {
         await channel.replyGroupControl(
           scope,
-          deliveryHint,
+          deliveryHint(scope.chatId),
           guard(() => current() && active(scope)),
         );
         return;

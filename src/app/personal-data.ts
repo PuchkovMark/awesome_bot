@@ -179,6 +179,17 @@ export function createPersonalCommands(options: {
         return;
       }
       if (!match || !current() || signal.aborted) return;
+      if (!direct && match[2] && match[2] !== vkChatId(message.peerId)) {
+        const source = lifecycle.admissionScope(vkChatId(message.peerId));
+        const isCurrent = () =>
+          current() && !signal.aborted && lifecycle.isAdmissionCurrent(source);
+        await channel.replyGroupControl(
+          source,
+          `Для другой беседы отправьте в личку сообщества ${match[0]}`,
+          { signal, isCurrent, allow: async () => isCurrent() },
+        );
+        return;
+      }
       const target = direct ? (match[2] ?? sender) : vkChatId(message.peerId);
       if (!/^vk:[1-9]\d*$/u.test(target)) return;
       const id = Number(target.slice(3));
@@ -200,7 +211,7 @@ export function createPersonalCommands(options: {
         );
         await channel.replyPrivateControl(
           sender,
-          `Удалить ваши данные из «${request.title ?? scope.chatId}» (${scope.chatId})? В течение 15 минут отправьте здесь /подтверждаю-удаление ${request.code}`,
+          `Удалить анкету и остальные ваши данные из «${request.title ?? scope.chatId}» (${scope.chatId})? В течение 15 минут отправьте здесь /подтверждаю-удаление ${request.code}`,
           guard,
         );
         return;

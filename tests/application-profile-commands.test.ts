@@ -121,7 +121,14 @@ test('профиль выбранной беседы, пустая личка и
     app.setPrivateAllowed(false);
     app.submit('/профиль');
     await until(() =>
-      expect(app.sends.some((row) => row.peer_id === peer && row.text.startsWith(hint))).toBe(true),
+      expect(
+        app.sends.some(
+          (row) =>
+            row.peer_id === peer &&
+            row.text.startsWith(hint) &&
+            row.text.endsWith(`/профиль ${chat}`),
+        ),
+      ).toBe(true),
     );
     const publicText = app.sends
       .filter((row) => row.peer_id === peer)

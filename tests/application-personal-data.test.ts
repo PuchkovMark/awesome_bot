@@ -1,5 +1,12 @@
 import { expect, test, vi } from 'vitest';
-import { fixture, chat, until, mention, answer } from './helpers/application-response-fixture';
+import {
+  fixture,
+  chat,
+  peer,
+  until,
+  mention,
+  answer,
+} from './helpers/application-response-fixture';
 
 test('в группе файл получает только автор, подтверждение из чужой лички не удаляет историю', async () => {
   const upload = vi.fn<(peer: number, data: Buffer) => Promise<string>>();
@@ -124,6 +131,40 @@ test('владелец меняет условия, отказ сохраняе�
     expect(
       app.sends.filter((x) => x.peer_id === 41 && x.text.includes('Профиль тестовый')),
     ).toHaveLength(1);
+  } finally {
+    await app.close();
+  }
+});
+
+test('явный ID соседней беседы даёт только команду для лички', async () => {
+  const app = await fixture({ profileNotice: 'Уведомление о профиле' });
+  try {
+    const neighbor = peer + 1;
+    await app.connectGroup(neighbor);
+    await app.journaled(app.submit('Моя запись.'));
+    for (const name of [
+      'мои-данные',
+      'отключить-профиль',
+      'удалить-мои-данные',
+      'статус-удаления',
+    ]) {
+      const command = `/${name} vk:${neighbor}`;
+      app.submit(command);
+      await until(() =>
+        expect(app.sends.some((row) => row.peer_id === peer && row.text.endsWith(command))).toBe(
+          true,
+        ),
+      );
+    }
+    expect(app.filesSent).toHaveLength(0);
+    for (const table of ['personal_profile_choices', 'personal_deletions', 'personal_exports']) {
+      expect(
+        app.db
+          .prepare('SELECT count(*) FROM ' + table)
+          .pluck()
+          .get(),
+      ).toBe(0);
+    }
   } finally {
     await app.close();
   }
