@@ -131,7 +131,7 @@ export function createChatControlHandlers(options: {
         }
         const result = await authorization.controlChat(context, command, isCurrent, message.cmid);
         if (!result.allowed) return;
-        const reply = formatChatControl(scope, command, result.value, Date.now());
+        const reply = formatChatControl(scope, command, result.value, Date.now(), true);
         if (reply)
           await channel.replyPrivateControl(sender, reply, {
             signal,

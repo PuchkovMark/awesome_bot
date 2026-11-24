@@ -692,7 +692,19 @@ export async function runApplication(
           const input = parseTimezoneCommand(message.text);
           if (input === null) return chatControl.execute(context, message, isCurrent);
           const timezone = canonicalTimezone(input);
-          if (timezone) await commandAuthorization.setTimezone(context, timezone, isCurrent);
+          const decision = timezone
+            ? await commandAuthorization.setTimezone(context, timezone, isCurrent)
+            : await commandAuthorization.check(context, 'chat.configure');
+          if (!decision.allowed || !isCurrent()) return;
+          const text = timezone
+            ? `Часовой пояс сохранён: ${timezone}.`
+            : 'Укажите часовой пояс, например /часовой-пояс Europe/Moscow.';
+          await channel.replyGroupControl(context.scope, text, {
+            signal,
+            isCurrent,
+            allow: async () =>
+              isCurrent() && (await commandAuthorization.check(context, 'chat.configure')).allowed,
+          });
         },
       });
       readyTimer = setTimeout(() => stop('ready_timeout'), dependencies.readyTimeoutMs ?? 45_000);

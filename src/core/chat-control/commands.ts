@@ -4,7 +4,17 @@ import type { ServiceCommand } from '../message-router/types';
 import type { QuietHours } from '../../storage/chat-control-store';
 
 export type ChatControlCommand =
-  | { readonly kind: 'settings' | 'on' | 'off' | 'pause' | 'disableAutonomous' | 'questionnaire' }
+  | {
+      readonly kind:
+        | 'settings'
+        | 'modeHelp'
+        | 'quietHelp'
+        | 'on'
+        | 'off'
+        | 'pause'
+        | 'disableAutonomous'
+        | 'questionnaire';
+    }
   | { readonly kind: 'mode'; readonly mode: ResponseMode }
   | { readonly kind: 'greeting' | 'invitation'; readonly enabled: boolean }
   | { readonly kind: 'quietHours'; readonly hours: QuietHours | null }
@@ -50,13 +60,14 @@ export function parseChatBinding(value: string | undefined): ChatControlRequest[
 
 function quietHours(args: readonly string[]): ChatControlRequest['command'] {
   if (args.length === 0) return { kind: 'settings' };
-  if (args.length !== 1) return 'invalid';
-  if (args[0] === 'выкл') return { kind: 'quietHours', hours: null };
-  const interval = /^([01]\d|2[0-3]):([0-5]\d)[–-]([01]\d|2[0-3]):([0-5]\d)$/u.exec(args[0]!);
-  if (!interval) return 'invalid';
+  if (args.length === 1 && args[0] === 'выкл') return { kind: 'quietHours', hours: null };
+  const interval = /^([01]\d|2[0-3]):([0-5]\d)\s*[–—-]\s*([01]\d|2[0-3]):([0-5]\d)$/u.exec(
+    args.join(' '),
+  );
+  if (!interval) return { kind: 'quietHelp' };
   const start = Number(interval[1]) * 60 + Number(interval[2]);
   const end = Number(interval[3]) * 60 + Number(interval[4]);
-  return start === end ? 'invalid' : { kind: 'quietHours', hours: { start, end } };
+  return start === end ? { kind: 'quietHelp' } : { kind: 'quietHours', hours: { start, end } };
 }
 
 export function parseChatControl(
@@ -96,9 +107,9 @@ export function parseChatControl(
       kind: name === '/приветствие' ? 'greeting' : 'invitation',
       enabled: args[0] === 'вкл',
     };
-  else if (name === '/режим' && args.length === 1) {
-    const mode = modes.get(args[0]!);
-    if (mode) command = { kind: 'mode', mode };
+  else if (name === '/режим') {
+    const mode = args.length === 1 ? modes.get(args[0]!) : undefined;
+    command = mode ? { kind: 'mode', mode } : { kind: 'modeHelp' };
   } else if (name === '/продлить-паузу' && args.length === 1 && /^[1-9]\d*$/u.test(args[0]!)) {
     const minutes = Number(args[0]);
     if (Number.isSafeInteger(minutes)) command = { kind: 'extend', minutes };

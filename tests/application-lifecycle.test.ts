@@ -273,6 +273,12 @@ test('граница публикации закрывает ранний вхо
       expect(entries.find((row) => row.replyToMessageId === '53')).toMatchObject({ text: 'Ответ' });
       expect(entries.some((row) => row.messageId === '52')).toBe(false);
       expect((await inspector.storage.chats.get(scope))?.timezone).toBe('UTC');
+      expect(
+        vk.attempt.mock.calls.some(
+          ([method, args]) =>
+            method === 'messages.send' && args.message === 'Часовой пояс сохранён: UTC.',
+        ),
+      ).toBe(true);
     });
     expect(model).toHaveBeenCalledTimes(1);
     expect((await inspector.storage.traces.last(scope))?.payload.disclosure).toEqual({
@@ -283,7 +289,7 @@ test('граница публикации закрывает ранний вхо
       vk.attempt.mock.calls
         .filter(([method]) => method === 'messages.send')
         .map(([, args]) => Number(args.peer_ids)),
-    ).toEqual([testPeer, testPeer]);
+    ).toEqual([testPeer, testPeer, testPeer]);
   } finally {
     publish.resolve();
     stop.abort();

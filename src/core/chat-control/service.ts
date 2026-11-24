@@ -20,6 +20,8 @@ export function applyChatControl(
   const state = tx.controlState();
   switch (command.kind) {
     case 'questionnaire':
+    case 'modeHelp':
+    case 'quietHelp':
     case 'settings':
       return { status: 'applied', state };
     case 'greeting':
@@ -71,6 +73,7 @@ export function formatChatControl(
   command: ChatControlCommand,
   result: ChatControlResult,
   now: number,
+  privateControl = false,
 ): string | undefined {
   const { state } = result;
   if (
@@ -79,6 +82,14 @@ export function formatChatControl(
     result.status === 'waiting'
   )
     return undefined;
+  const binding = privateControl ? ` ${scope.chatId}@${scope.generation}` : '';
+  if (command.kind === 'modeHelp')
+    return [
+      `Текущий режим — ${modeLabel[state.mode]}.`,
+      ...Object.values(modeLabel).map((value) => `/режим${binding} ${value}`),
+    ].join('\n');
+  if (command.kind === 'quietHelp')
+    return `Укажите интервал, например /тихие-часы${binding} 23:00–07:00. Отключить — /тихие-часы${binding} выкл.`;
   if (command.kind === 'greeting')
     return state.greetingEnabledAt === null ? 'Приветствия выключены.' : 'Приветствия включены.';
   if (command.kind === 'invitation')
@@ -106,6 +117,11 @@ export function formatChatControl(
   const lines = [
     `${scope.chatId}@${scope.generation}`,
     state.enabled ? 'Бот включён.' : 'Бот выключен.',
+    `Часовой пояс: ${state.timezone}.`,
+    state.greetingEnabledAt === null ? 'Приветствия выключены.' : 'Приветствия включены.',
+    state.invitationEnabledAt === null
+      ? 'Приглашения к анкете выключены.'
+      : 'Приглашения к анкете включены.',
     `Режим: ${modeLabel[state.mode]}.`,
     `Самостоятельные реплики: ${pause}.`,
   ];

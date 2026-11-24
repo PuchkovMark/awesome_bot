@@ -287,7 +287,49 @@ test('команды VK сохраняют паузу, выключение от
     await vi.waitFor(() =>
       expect(sent().some((args) => String(args.message).includes('полным списком'))).toBe(true),
     );
-    event(202, '/тихие-часы 23:00–07:00', administrator);
+    event(270, '/режим', administrator);
+    await vi.waitFor(() =>
+      expect(
+        sent().some(
+          (row) =>
+            String(row.message).includes('/режим молчаливый') &&
+            String(row.message).includes('/режим нормальный') &&
+            String(row.message).includes('/режим активный'),
+        ),
+      ).toBe(true),
+    );
+    event(271, '/часовой-пояс Ошибка', administrator);
+    await vi.waitFor(() =>
+      expect(
+        sent().some((row) => String(row.message).includes('/часовой-пояс Europe/Moscow')),
+      ).toBe(true),
+    );
+    event(272, '/часовой-пояс UTC', administrator);
+    await vi.waitFor(() =>
+      expect(sent().some((row) => String(row.message).includes('Часовой пояс сохранён: UTC'))).toBe(
+        true,
+      ),
+    );
+    event(273, '/тихие-часы 27:00 – 07:00', administrator);
+    await vi.waitFor(() =>
+      expect(sent().some((row) => String(row.message).includes('/тихие-часы 23:00–07:00'))).toBe(
+        true,
+      ),
+    );
+    expect(controls.read(scope).quietHours).toBeNull();
+    event(274, '/настройки', administrator);
+    await vi.waitFor(() =>
+      expect(
+        sent().some(
+          (row) =>
+            String(row.message).includes('Часовой пояс: UTC') &&
+            String(row.message).includes('Тихие часы выключены') &&
+            String(row.message).includes('Приветствия') &&
+            String(row.message).includes('Приглашения к анкете'),
+        ),
+      ).toBe(true),
+    );
+    event(202, '/тихие-часы 23:00 – 07:00', administrator);
     await vi.waitFor(() =>
       expect(controls.read(scope).quietHours).toEqual({ start: 1380, end: 420 }),
     );
