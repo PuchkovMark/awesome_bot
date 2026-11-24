@@ -69,3 +69,9 @@ export { traceConfig } from './response-tracing/config';
 export type { TraceConfig } from './response-tracing/config';
 
 export { createTokenBudgetAdministration } from './chat-limits/token-budget-administration';
+export { createChatRequestMetrics } from './chat-request-metrics';
+export type {
+  ChatMetricsPeriod,
+  ChatMetricsReader,
+  ChatMetricsReport,
+} from './chat-request-metrics';
