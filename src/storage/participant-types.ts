@@ -75,7 +75,6 @@ export type ProfileFactWriteResult = 'recorded' | 'duplicate' | 'blocked';
 export interface OwnProfileFact extends PublicProfileFact {
   readonly evidenceAt?: number;
   readonly question?: string;
-  readonly questionnaireOpen?: boolean;
   readonly interest: string;
   readonly factId: number;
   readonly restrictionId: number | null;

@@ -72,7 +72,6 @@ export function createProfileFactReader(lifecycle: LifecycleBackend) {
       readonly subject: UserId;
       readonly fact: number;
       readonly restriction: number | null;
-      readonly questionnaireDecision: number | null;
       readonly source: number | null;
       readonly stale: boolean;
     }
@@ -88,7 +87,7 @@ export function createProfileFactReader(lifecycle: LifecycleBackend) {
           version = readDeparture(db, scope, row.userId)?.revision ?? 0;
           participation.set(row.userId, version);
         }
-        return [row.id, restrictionId, row.questionnaireDecision, version, stale];
+        return [row.id, restrictionId, version, stale];
       });
       const signature = JSON.stringify([
         facts.length === 0 ? null : readDisclosureGate(db, scope).version,
@@ -144,7 +143,6 @@ export function createProfileFactReader(lifecycle: LifecycleBackend) {
             subject: subjectId,
             fact: row.id,
             restriction: restrictionId,
-            questionnaireDecision: row.questionnaireDecision,
             source,
             stale,
           });
@@ -189,7 +187,6 @@ export function createProfileFactReader(lifecycle: LifecycleBackend) {
             return (
               fact !== undefined &&
               fact.restrictionId === saved.restriction &&
-              fact.row.questionnaireDecision === saved.questionnaireDecision &&
               fact.stale === saved.stale &&
               sourceFor(db, scope, fact.row, now) === saved.source
             );

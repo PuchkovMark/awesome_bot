@@ -116,7 +116,6 @@ export function createProfileCommandStore(
         (item, index) =>
           item.position === index + 1 &&
           samePosition(item, facts[index]!) &&
-          facts[index]!.questionnaireOpen === list.facts[index]?.questionnaireOpen &&
           facts[index]!.stale === list.facts[index]?.stale,
       )
     );

@@ -43,10 +43,7 @@ export function profileListText(list: ProfileCommandList) {
       ? ' · свидетельство от ' + evidenceDate.toISOString().slice(0, 10) + ' UTC'
       : '';
     const age = fact.stale ? ' · устарело' : '';
-    const visibility =
-      fact.visibility === 'chat' && fact.questionnaireOpen === false
-        ? 'анкета закрыта для беседы'
-        : visibilityLabels[fact.visibility];
+    const visibility = visibilityLabels[fact.visibility];
     const line = `\n${position}. ${escapeProfileText(field)} · ${sourceLabels[fact.sourceKind]} · ${visibility}${evidence}${age}\n   ${escapeProfileText(fact.value)}`;
     if (Buffer.byteLength(text + line, 'utf8') <= vkMessageLength.value) {
       text += line;

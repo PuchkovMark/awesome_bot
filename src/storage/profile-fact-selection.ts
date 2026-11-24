@@ -8,11 +8,7 @@ import type {
 } from './participant-types';
 import { historyBounds } from './history-retention-store';
 import { profileAdmitted } from './personal-data-store';
-import {
-  questionnaireAccessOpenSql,
-  questionnaireFieldPrefix,
-  questionnaireReviewDelayMs,
-} from './questionnaire-types';
+import { questionnaireFieldPrefix } from './questionnaire-types';
 import { requireInput } from './validation';
 
 function normalizedInterest(value: string): string {
@@ -49,8 +45,7 @@ interface FactRow {
   readonly question: string | null;
   readonly questionPosition: number | null;
   readonly questionnaireAttempt: string | null;
-  readonly questionnaireOpen: number;
-  readonly questionnaireDecision: number | null;
+  readonly authorPresent: number;
 }
 export const inferenceFreshnessMs = 90 * 86_400_000;
 export const sourcePriority = { self: 3, admin: 2, inferred: 1 } as const;
@@ -77,8 +72,7 @@ function selectSlots(db: Database, scope: ConnectionScope, query: ProfileQuery, 
       f.source_message_id AS sourceMessageId,f.source_at AS sourceAt,f.event_key AS eventKey,
       f.generation IS NULL AS legacy, r.fact_id IS NOT NULL AS rejected,
       q.question, q.position AS questionPosition, q.attempt AS questionnaireAttempt,
-      a.decision_message_id AS questionnaireDecision,
-      (p.status='present' AND ${questionnaireAccessOpenSql}) AS questionnaireOpen,
+      (p.status='present') AS authorPresent,
       CASE WHEN f.source_kind<>'self' OR q.fact_id IS NOT NULL THEN (SELECT m.id FROM personal_visible_messages m
         WHERE m.chat_id=f.chat_id AND m.platform_message_id=f.source_message_id
         AND m.id>@clearedThrough AND m.timestamp>@expiredThrough) END AS messageRowId
@@ -86,8 +80,6 @@ function selectSlots(db: Database, scope: ConnectionScope, query: ProfileQuery, 
     LEFT JOIN profile_fact_rejections r ON r.fact_id=f.id
     LEFT JOIN questionnaire_answer_facts q
       ON (q.chat_id,q.generation,q.user_id,q.field_key)=(f.chat_id,f.generation,f.user_id,f.field_key)
-    LEFT JOIN questionnaire_access a
-      ON (a.chat_id,a.generation,a.user_id,a.attempt)=(q.chat_id,q.generation,q.user_id,q.attempt)
     WHERE f.chat_id=@chat AND (f.generation=@generation OR (f.generation IS NULL AND f.visibility<>'chat'))
       AND ${profile ? "p.status IN ('present','unknown')" : "p.status='present'"} AND ${condition}
       AND (f.field_key NOT GLOB '${questionnaireFieldPrefix}*' OR (q.fact_id IS NOT NULL AND f.source_kind='self'))
@@ -103,7 +95,6 @@ function selectSlots(db: Database, scope: ConnectionScope, query: ProfileQuery, 
       generation: scope.generation,
       subject: profile ? query.subjectId : query.interest,
       ...bounds,
-      autoOpenThrough: now - questionnaireReviewDelayMs,
     }) as FactRow[];
 
   const byUser = new Map<UserId, Map<string, Slot>>();
@@ -192,9 +183,7 @@ export function publiclyVisibleFact({
   row,
   visibility,
 }: ReturnType<typeof selectCurrentFacts>[number]) {
-  return (
-    visibility === 'chat' && (row.questionnaireAttempt === null || row.questionnaireOpen === 1)
-  );
+  return visibility === 'chat' && (row.questionnaireAttempt === null || row.authorPresent === 1);
 }
 
 export function selectOwnProfile(
@@ -205,17 +194,7 @@ export function selectOwnProfile(
 ): readonly OwnProfileFact[] {
   return selectCurrentFacts(db, scope, { kind: 'profile', subjectId: actor }, now).map(
     ({
-      row: {
-        id,
-        fieldKey,
-        value,
-        sourceKind,
-        reliability,
-        interest,
-        sourceAt,
-        question,
-        questionnaireOpen,
-      },
+      row: { id, fieldKey, value, sourceKind, reliability, interest, sourceAt, question },
       stale,
       restrictionId,
       visibility,
@@ -226,7 +205,7 @@ export function selectOwnProfile(
       reliability,
       ...(sourceKind === 'inferred' && sourceAt !== null ? { evidenceAt: sourceAt } : {}),
       ...(stale ? { stale: true as const } : {}),
-      ...(question !== null ? { question, questionnaireOpen: questionnaireOpen === 1 } : {}),
+      ...(question !== null ? { question } : {}),
       interest,
       factId: id,
       restrictionId,

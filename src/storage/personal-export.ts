@@ -224,14 +224,6 @@ function questionnaireExport(db: Database, scope: ConnectionScope, user: UserId,
     )
     .all(scope.chatId, scope.generation, user) as { position: number; value: string }[];
   for (const { position, value } of linked) answers[position] = value;
-  const access = db
-    .prepare(
-      `SELECT a.prompt_delivered_at AS deliveredAt,a.decision
-      FROM questionnaire_access a JOIN questionnaire_progress q USING(chat_id,generation,user_id,attempt)
-      WHERE a.chat_id=? AND a.generation=? AND a.user_id=?`,
-    )
-    .get(scope.chatId, scope.generation, user) as
-    { deliveredAt: number | null; decision: string | null } | undefined;
   const presentation = db
     .prepare(
       `SELECT state,confirmed_parts AS confirmedParts
@@ -246,7 +238,6 @@ function questionnaireExport(db: Database, scope: ConnectionScope, user: UserId,
         : row.state,
     revision: template.ref.revision,
     shownAt: row.shown_at,
-    ...(access ? { access } : {}),
     ...(presentation ? { presentation } : {}),
     questions: template.questions.map((q) => ({
       question: q.text,

@@ -364,11 +364,17 @@ export function questionnaireProgressStore(storage: Storage) {
         const { user, attempt, template, platformMessageId, timestamp: sourceAt, text } = input;
         const completed = db
           .prepare(
-            "UPDATE questionnaire_progress SET state='completed',answers=NULL WHERE " +
+            "UPDATE questionnaire_progress SET state='completed',answers=NULL,response_message_id=? WHERE " +
               subject +
               " AND state='processing' AND source_id=?",
           )
-          .run(scope.chatId, scope.generation, user, id);
+          .run(
+            questionnaireMessageSequence(platformMessageId),
+            scope.chatId,
+            scope.generation,
+            user,
+            id,
+          );
         if (completed.changes !== 1) return false;
         recordQuestionnaireFacts(
           db,
@@ -379,17 +385,6 @@ export function questionnaireProgressStore(storage: Storage) {
           answers,
           now,
         );
-        if (scope.chatId !== user) {
-          db.prepare(
-            'INSERT INTO questionnaire_access(chat_id,generation,user_id,attempt,response_message_id) VALUES(?,?,?,?,?)',
-          ).run(
-            scope.chatId,
-            scope.generation,
-            user,
-            attempt,
-            questionnaireMessageSequence(platformMessageId),
-          );
-        }
         return true;
       });
     },

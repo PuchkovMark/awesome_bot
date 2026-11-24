@@ -5,7 +5,6 @@ import { expect, test, vi } from 'vitest';
 import { createQuestionnaireProgress } from '../src/core/questionnaire/progress';
 import {
   parseQuestionnaireAnswers,
-  questionnaireAccessQuestion,
   questionnaireAnswerHandler,
 } from '../src/core/questionnaire/answer';
 import { questionnaireProgressStore } from '../src/storage/questionnaire-progress-store';
@@ -267,7 +266,7 @@ test('разбор на границе очереди, отказ квоты, п
     expect(await run(work)).toMatchObject({ outcome: 'failed' });
     expect(await run(work)).toMatchObject({
       outcome: 'completed',
-      result: { text: expect.stringContaining(questionnaireAccessQuestion) },
+      result: { text: expect.stringContaining('/анкета показать') },
     });
     expect(recordUsage).toHaveBeenCalledTimes(1);
     expect(await run(work)).toMatchObject({ outcome: 'interrupted' });

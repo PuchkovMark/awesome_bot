@@ -76,16 +76,15 @@ test('позиции одинаковых вопросов, источник и 
         value: 'Шахматы',
         sourceKind: 'self',
         visibility: 'chat',
-        questionnaireOpen: false,
       },
-      { question, value: 'Го', sourceKind: 'self', visibility: 'chat', questionnaireOpen: false },
+      { question, value: 'Го', sourceKind: 'self', visibility: 'chat' },
     ]);
     expect(facts[0]?.fieldKey).not.toBe(facts[1]?.fieldKey);
     expect(own(f, scopeFor(f.storage, alice))).toMatchObject([
       { question, value: 'Го', sourceKind: 'self', visibility: 'bot' },
     ]);
-    expect(f.storage.profileFacts.read(restored, alice).facts).toEqual([]);
-    expect(f.storage.profileFacts.cardFacts(restored, alice)).toEqual([]);
+    expect(f.storage.profileFacts.read(restored, alice).facts).toHaveLength(2);
+    expect(f.storage.profileFacts.cardFacts(restored, alice)).toHaveLength(2);
     const origins = lifecycleBackend(f.storage).transaction(restored, (db) =>
       db
         .prepare(
@@ -118,7 +117,9 @@ test('ошибка записи позиции откатывает всё за�
     expect(actor.current(131)?.state).toBe('processing');
     expect(own(f, scope)).toEqual([]);
     expect(
-      life.transaction(scope, (db) => db.prepare('SELECT * FROM questionnaire_access').all()),
+      life.transaction(scope, (db) =>
+        db.prepare("SELECT attempt FROM questionnaire_progress WHERE state='completed'").all(),
+      ),
     ).toEqual([]);
     life.transaction(scope, (db) => db.exec('DROP TRIGGER fail_answer'));
     expect(store.finish(scope, id, 132, {}, () => true)).toBe(true);
@@ -129,7 +130,7 @@ test('ошибка записи позиции откатывает всё за�
   }
 });
 
-test('обновление переносит только проверяемые цитаты действующего профиля и оставляет доступ закрытым', async () => {
+test('обновление переносит только проверяемые цитаты действующего профиля и открывает публичные поля завершённых анкет', async () => {
   const f = await profileFixture();
   try {
     const scope = await f.chat();
@@ -147,7 +148,9 @@ test('обновление переносит только проверяемы�
         DROP TABLE llm_recovery;
         DROP TABLE questionnaire_presentations;
         DROP TABLE questionnaire_answer_facts;
-        DROP TABLE questionnaire_access;
+        DROP INDEX questionnaire_legacy_receipts;
+        ALTER TABLE questionnaire_progress DROP COLUMN legacy_access_prompt_id;
+        ALTER TABLE questionnaire_progress DROP COLUMN response_message_id;
         DROP INDEX questionnaire_progress_attempt;
         DELETE FROM schema_migrations WHERE version>=45;
         UPDATE messages SET purpose='conversation' WHERE id IN (SELECT message_id FROM questionnaire_inputs);`);
@@ -163,19 +166,16 @@ test('обновление переносит только проверяемы�
     const restored = scopeFor(f.storage, group);
     expect(own(f, restored).map(({ value }) => value)).toEqual(['Шахматы', 'Го']);
     expect(own(f, restored, twin)).toEqual([]);
-    expect(f.storage.profileFacts.read(restored, alice).facts).toEqual([]);
+    expect(f.storage.profileFacts.read(restored, alice).facts).toHaveLength(2);
     expect(
       personalDataStore(f.storage).export(restored, alice, Date.now()).questionnaire,
     ).toMatchObject({ questions: [{ answer: 'Шахматы' }, {}, { answer: 'Го' }] });
     const access = lifecycleBackend(f.storage).transaction(restored, (db) =>
       db
-        .prepare('SELECT prompt_delivered_at,decision FROM questionnaire_access ORDER BY user_id')
+        .prepare('SELECT legacy_access_prompt_id FROM questionnaire_progress ORDER BY user_id')
         .all(),
     );
-    expect(access).toEqual([
-      { prompt_delivered_at: null, decision: null },
-      { prompt_delivered_at: null, decision: null },
-    ]);
+    expect(access).toEqual([{ legacy_access_prompt_id: null }, { legacy_access_prompt_id: null }]);
   } finally {
     await f.close();
   }
@@ -265,7 +265,7 @@ test('личные правки анкеты и подтверждённое у�
           stage.prepare('SELECT * FROM questionnaire_answer_facts WHERE chat_id=?').all(group),
         ).toEqual([]);
         expect(
-          stage.prepare('SELECT * FROM questionnaire_access WHERE chat_id=?').all(group),
+          stage.prepare('SELECT * FROM questionnaire_progress WHERE chat_id=?').all(group),
         ).toEqual([]);
         expect(
           stage.prepare('SELECT * FROM questionnaire_presentations WHERE chat_id=?').all(group),
@@ -319,7 +319,7 @@ test('уход закрывает анкету, ранний возврат со
     expect(privacy.export(scope, alice, leftAt + 3 + departureGraceMs).questionnaire).toBeNull();
     expect(
       lifecycleBackend(f.storage).transaction(scope, (db) =>
-        db.prepare('SELECT * FROM questionnaire_access').all(),
+        db.prepare("SELECT attempt FROM questionnaire_progress WHERE state='completed'").all(),
       ),
     ).toEqual([]);
   } finally {

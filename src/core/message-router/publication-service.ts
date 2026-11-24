@@ -26,8 +26,6 @@ import {
 import { noticeInterval } from './notice-config';
 import { publicationDecision, publicationRow, noticeTemplate } from './publication';
 import { disclosesAuthorLabel } from './author-label-disclosure';
-import { questionnaireAccessQuestion } from '../questionnaire/answer';
-import { questionnaireAccessStore } from '../../storage/questionnaire-access-store';
 import {
   questionnairePresentationStore,
   type QuestionnairePresentationGrant,
@@ -99,7 +97,6 @@ export function createPublicationService(options: {
     traces = traceBackend(options.storage);
   const lifecycle = lifecycleBackend(options.storage);
   const measurements = chatRequestMetricsStore(options.storage);
-  const questionnaireAccess = questionnaireAccessStore(options.storage);
   const questionnairePresentations = questionnairePresentationStore(options.storage);
   const questionnaireViews = questionnaireViewStore(options.storage);
   const counters = {
@@ -130,7 +127,6 @@ export function createPublicationService(options: {
       readonly passportCurrent?: QueueCompletion['passportCurrent'];
       readonly toolSourceIds?: readonly number[];
       readonly toolResultsCurrent?: QueueCompletion['toolResultsCurrent'];
-      readonly questionnaireAccess?: QueueCompletion['questionnaireAccess'];
     } = {},
   ): Promise<string> {
     const {
@@ -410,14 +406,6 @@ export function createPublicationService(options: {
               budget.confirmInitiative(meter, receipt, part.text, part.replyToMessageId, isCurrent);
             } else {
               notices.recordAnswer(scope, receipt, part.text, part.replyToMessageId, isCurrent);
-              if (details.questionnaireAccess && part.text.includes(questionnaireAccessQuestion))
-                questionnaireAccess.confirmPrompt(
-                  scope,
-                  details.questionnaireAccess.user,
-                  details.questionnaireAccess.attempt,
-                  messageId,
-                  Date.now(),
-                );
             }
             if (!permit) {
               const ids =
@@ -710,9 +698,6 @@ export function createPublicationService(options: {
         {
           toolSourceIds: completion.toolSourceIds ?? [],
           subjectIds: completion.subjectIds ?? [],
-          ...(completion.questionnaireAccess
-            ? { questionnaireAccess: completion.questionnaireAccess }
-            : {}),
           ...(completion.participantCards ? { participantCards: completion.participantCards } : {}),
           ...(completion.passportCurrent ? { passportCurrent: completion.passportCurrent } : {}),
           ...(completion.toolResultsCurrent
@@ -724,9 +709,9 @@ export function createPublicationService(options: {
             : {}),
         },
       );
-      if (outcome === 'delivered' && completion.questionnaireAccess) {
+      if (outcome === 'delivered' && completion.questionnaireCompletion) {
         try {
-          await askForPresentation(work, completion.questionnaireAccess);
+          await askForPresentation(work, completion.questionnaireCompletion);
         } catch {
           report('publication_failed');
         }

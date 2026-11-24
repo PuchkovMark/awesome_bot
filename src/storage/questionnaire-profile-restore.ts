@@ -17,32 +17,14 @@ interface Binding extends Attempt {
 }
 
 export function reconcileStagedQuestionnaires(staged: Database, newer: Database) {
-  const known = newer
-    .prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='questionnaire_access'")
-    .get();
-  if (!known) {
-    staged.exec(`UPDATE questionnaire_access SET prompt_message_id=NULL,prompt_delivered_at=NULL,
-      decision=NULL,decision_message_id=NULL`);
+  if (
+    !newer
+      .prepare(
+        "SELECT 1 FROM sqlite_schema WHERE type='table' AND name='questionnaire_answer_facts'",
+      )
+      .get()
+  )
     return;
-  }
-
-  const latestAccess = newer.prepare(`SELECT * FROM questionnaire_access WHERE ${subject}`);
-  const restoreAccess = staged.prepare(`UPDATE questionnaire_access SET
-    prompt_message_id=@prompt_message_id,prompt_delivered_at=@prompt_delivered_at,
-    decision=@decision,decision_message_id=@decision_message_id WHERE ${subject}`);
-  for (const saved of staged.prepare('SELECT * FROM questionnaire_access').all() as Attempt[]) {
-    const current = latestAccess.get(saved) as Attempt | undefined;
-    restoreAccess.run(
-      current ?? {
-        ...saved,
-        prompt_message_id: null,
-        prompt_delivered_at: null,
-        decision: null,
-        decision_message_id: null,
-      },
-    );
-  }
-
   const latestBinding = newer.prepare(
     `SELECT fact_id FROM questionnaire_answer_facts WHERE ${subject} AND field_key=@field_key`,
   );
@@ -84,7 +66,7 @@ export function reconcileStagedQuestionnaires(staged: Database, newer: Database)
     const copy = staged.prepare(`INSERT INTO questionnaire_presentations
       SELECT chat_id,generation,user_id,attempt,@prompt_message_id,@event_id,
         CASE WHEN @state='sending' THEN 'unknown' ELSE @state END,@confirmed_parts
-      FROM questionnaire_access WHERE ${subject}
+      FROM questionnaire_progress WHERE state='completed' AND ${subject}
       ON CONFLICT(chat_id,generation,user_id,attempt) DO UPDATE SET
         prompt_message_id=excluded.prompt_message_id,event_id=excluded.event_id,
         state=excluded.state,confirmed_parts=excluded.confirmed_parts

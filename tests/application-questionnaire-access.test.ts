@@ -1,5 +1,4 @@
 import { expect, test } from 'vitest';
-import { questionnaireAccessQuestion } from '../src/core/questionnaire/answer';
 import { questionnairePresentationQuestion } from '../src/core/questionnaire/text';
 import {
   answer,
@@ -15,8 +14,6 @@ const profileNotice = 'Тестовое уведомление об анкете
 const hobby = 'Чем увлекаетесь?';
 const hidden = 'Какой факт скрыть?';
 const skipped = 'Что пропустить?';
-const explicitOpen = 'Просмотр вашей анкеты открыт для участников этой беседы.';
-const explicitClose = 'Просмотр вашей анкеты закрыт.';
 
 function setup(hold = false) {
   return fixture({ profileNotice, active: true, hold, greetings: { members: [41, 42, 73] } });
@@ -66,22 +63,6 @@ async function fill(app: App, { large = false, held = false } = {}) {
   return input;
 }
 
-function state(app: App) {
-  return app.db
-    .prepare(
-      `SELECT prompt_message_id AS receipt,prompt_delivered_at AS deliveredAt,decision,
-      decision_message_id AS event FROM questionnaire_access WHERE chat_id=? AND user_id='vk:41'`,
-    )
-    .get(chat) as
-    | {
-        receipt: number | null;
-        deliveredAt: number | null;
-        decision: string | null;
-        event: number | null;
-      }
-    | undefined;
-}
-
 function values(app: App) {
   return app.storage.profileFacts.read(app.scope, 'vk:41').facts.map(({ value }) => value);
 }
@@ -109,128 +90,40 @@ function introductions(app: App) {
   );
 }
 
-async function prompt(app: App) {
-  await until(() => expect(state(app)?.receipt).toBeGreaterThan(0));
-  const question = app.sends.find(({ text }) => text.includes(questionnaireAccessQuestion))!;
-  expect(state(app)?.receipt).toBe(question.conversation_message_id);
-  return question;
+async function completion(app: App) {
+  await until(() =>
+    expect(app.sends.some((row) => row.text.startsWith('Спасибо! Анкета заполнена.'))).toBe(true),
+  );
+  return app.sends.find((row) => row.text.startsWith('Спасибо! Анкета заполнена.'))!;
 }
 
-test('молчание открывает просмотр ровно через 15 минут от подтверждения доставки, в том числе после перезапуска', async () => {
+test('публичные ответы доступны сразу и после перезапуска, прежние команды доступа ничего не меняют', async () => {
   const app = await setup();
   try {
-    await fill(app);
-    await prompt(app);
-    await presentationPrompt(app);
-    expect(state(app)).toMatchObject({ deliveredAt: app.start + 2_000, decision: null });
-    expect(values(app)).toEqual([]);
-    await app.restart(true);
-    app.at(901_999);
-    expect(values(app)).toEqual([]);
-    const sent = app.sends.length;
-    app.at(902_000);
-    expect(values(app)).toEqual(['Шахматы', 'Личный факт']);
-    expect(app.sends).toHaveLength(sent);
-    expect(introductions(app)).toEqual([]);
-    app.at(903_000);
-    const close = app.submit('/анкета закрыть');
-    await until(() => expect(state(app)).toMatchObject({ decision: 'closed', event: close }));
-    expect(values(app)).toEqual([]);
-  } finally {
-    await app.close();
-  }
-});
-
-test('ответ автора и команды меняют одну запись доступа, чужой ответ и старое событие пропускаются', async () => {
-  const app = await setup();
-  try {
-    await fill(app);
-    const question = await prompt(app);
-    app.at(3_000);
-    const stranger = app.submit('Разрешить', 42, question);
-    await app.journaled(stranger);
-    expect(state(app)?.decision).toBeNull();
-    expect(values(app)).toEqual([]);
-    const open = app.submit('Да', 41, question);
-    await until(() => expect(state(app)).toMatchObject({ decision: 'open', event: open }));
-    await until(() => expect(app.sends.some(({ text }) => text === explicitOpen)).toBe(true));
-    expect(values(app)).toEqual(['Шахматы', 'Личный факт']);
-    const close = app.submit('Закрыть', 41, question);
-    await until(() => expect(state(app)).toMatchObject({ decision: 'closed', event: close }));
-    await until(() => expect(app.sends.some(({ text }) => text === explicitClose)).toBe(true));
-    await app.restart(true);
-    app.at(902_001);
-    app.db
-      .prepare('DELETE FROM messages WHERE chat_id=? AND platform_message_id=?')
-      .run(chat, String(open));
-    app.replay(open);
-    await app.journaled(open);
-    expect(state(app)).toMatchObject({ decision: 'closed', event: close });
-    expect(values(app)).toEqual([]);
-    app.at(904_000);
-    const reopen = app.submit('/анкета открыть');
-    await until(() => expect(state(app)).toMatchObject({ decision: 'open', event: reopen }));
-    expect(values(app)).toContain('Шахматы');
-    expect(app.complete).toHaveBeenCalledTimes(1);
-  } finally {
-    await app.close();
-  }
-});
-
-test('неизвестная доставка не открывает доступ даже после 15 минут', async () => {
-  const app = await setup();
-  try {
-    app.failSend((text) =>
-      text.includes(questionnaireAccessQuestion) ? 'unknownAfterDelivery' : undefined,
-    );
-    const input = await fill(app);
-    await app.trace(input);
-    expect(state(app)).toEqual({ receipt: null, deliveredAt: null, decision: null, event: null });
-    app.at(903_000);
-    expect(values(app)).toEqual([]);
-  } finally {
-    await app.close();
-  }
-});
-
-test('запоздавшая квитанция не меняет явное закрытие автора', async () => {
-  const app = await setup();
-  const hold = app.holdReceipt((text) => text.includes(questionnaireAccessQuestion));
-  try {
-    await fill(app);
-    await hold.entered;
-    expect(values(app)).toEqual([]);
-    app.at(3_000);
-    const close = app.submit('/анкета закрыть');
     await until(() =>
-      expect(state(app)).toMatchObject({ receipt: null, decision: 'closed', event: close }),
+      expect(
+        app.db.prepare("SELECT status FROM chat_participants WHERE user_id='vk:41'").pluck().get(),
+      ).toBe('present'),
     );
-    hold.release();
-    await prompt(app);
-    app.at(904_000);
-    expect(values(app)).toEqual([]);
-    expect(state(app)).toMatchObject({ decision: 'closed', event: close });
-  } finally {
-    hold.release();
-    await app.close();
-  }
-});
-
-test('автор может отозвать доступ к анкете в беседе с включённым тихим режимом', async () => {
-  const app = await setup();
-  try {
+    app.at(500);
+    expect(await requestView(app, '/анкета показать @id41', 42)).toBe('Анкета не заполнена');
     await fill(app);
+    await completion(app);
+    expect(values(app)).toEqual(['Шахматы', 'Личный факт']);
+    expect(app.sends.some((row) => row.text.includes('Разрешить участникам этой беседы'))).toBe(
+      false,
+    );
     await presentationPrompt(app);
-    app.at(3_000);
-    const open = app.submit('/анкета открыть');
-    await until(() => expect(state(app)).toMatchObject({ decision: 'open', event: open }));
-    await until(() => expect(app.sends.some(({ text }) => text === explicitOpen)).toBe(true));
-    await app.storage.chats.update(app.scope, { responseMode: 'silent' });
-    const before = app.sends.length;
-    const close = app.submit('/анкета закрыть');
-    await until(() => expect(state(app)).toMatchObject({ decision: 'closed', event: close }));
-    expect(values(app)).toEqual([]);
-    expect(app.sends).toHaveLength(before);
+    const previous = await completion(app);
+    app.db
+      .prepare('UPDATE questionnaire_progress SET legacy_access_prompt_id=? WHERE chat_id=?')
+      .run(previous.conversation_message_id, chat);
+    await app.journaled(app.submit('Закрыть', 41, previous));
+    await app.journaled(app.submit('/анкета закрыть'));
+    expect(await requestView(app, '/анкета показать @id41', 42)).toContain('Шахматы');
+    await app.restart(true);
+    expect(values(app)).toEqual(['Шахматы', 'Личный факт']);
+    expect(introductions(app)).toEqual([]);
   } finally {
     await app.close();
   }
@@ -258,8 +151,8 @@ test('беседа и проверенная личка показывают т�
   const expected = `Анкета\n\n${hobby}\nШахматы`;
   try {
     const original = await fill(app);
-    const question = await prompt(app);
-    expect(await requestView(app, stranger, 42)).toBe('Анкета недоступна.');
+    await completion(app);
+    expect(await requestView(app, stranger, 42)).toContain('Шахматы');
     app.at(3_000);
     const spoke = app.submit('Ещё я люблю велосипед.');
     await app.journaled(spoke);
@@ -298,8 +191,6 @@ test('беседа и проверенная личка показывают т�
       expect(app.sends.some(({ text }) => text === 'Профиль обновлён.')).toBe(true),
     );
     expect(await requestView(app, `/анкета показать ${chat}`, 41, 41)).toContain('Личный факт');
-    const open = app.submit('Разрешить', 41, question);
-    await until(() => expect(state(app)).toMatchObject({ decision: 'open', event: open }));
     expect(await requestView(app, stranger, 42)).toBe(expected);
     expect(await requestView(app, stranger, 73)).toBe(expected);
     expect(await requestView(app, '/анкета показать', 41)).toBe(expected);
@@ -348,14 +239,12 @@ test('беседа и проверенная личка показывают т�
   }
 });
 
-test('закрытие анкеты на лимитере блокирует вторую часть ответа в той же беседе', async () => {
+test('выход автора во время выдачи блокирует вторую часть ответа в той же беседе', async () => {
   const app = await setup(true);
   try {
     await fill(app, { large: true, held: true });
-    const question = await prompt(app);
+    await completion(app);
     app.at(3_000);
-    const open = app.submit('Разрешить', 41, question);
-    await until(() => expect(state(app)).toMatchObject({ decision: 'open', event: open }));
     app.submit('/анкета показать @id41', 42);
     await until(() => expect(app.holds).toHaveLength(4));
     app.holds[3]!.release();
@@ -363,8 +252,9 @@ test('закрытие анкеты на лимитере блокирует в�
     expect(
       app.sends.some(({ text }) => text.startsWith('Анкета\n') && text.includes('Шахматы')),
     ).toBe(true);
-    const close = app.submit('/анкета закрыть');
-    await until(() => expect(state(app)).toMatchObject({ decision: 'closed', event: close }));
+    app.setMembers([42, 73]);
+    app.membership('chat_kick_user', 41, 41);
+    await until(() => expect(values(app)).toEqual([]));
     app.holds[4]!.release();
     await app.holds[4]!.finished;
     expect(app.sends.filter(({ text }) => text.includes('Длинный ответ'))).toEqual([]);
@@ -373,7 +263,7 @@ test('закрытие анкеты на лимитере блокирует в�
   }
 });
 
-test('закрытые ответы скрыты от контекста и инструментов, отзыв доступа защищает готовящийся ответ', async () => {
+test('скрытие одного из публичных полей защищает готовящийся ответ с карточкой', async () => {
   const app = await setup();
   const finishing = Promise.withResolvers<void>();
   const useCard = {
@@ -390,20 +280,9 @@ test('закрытые ответы скрыты от контекста и ин
   };
   try {
     await fill(app);
-    await prompt(app);
-    app.at(3_000);
-    app.complete.mockResolvedValueOnce(useCard).mockResolvedValueOnce(answer);
-    await app.published(app.submit(mention));
-    const inputs = app.complete.mock.calls
-      .slice(1)
-      .map(([request]) => JSON.stringify(request.messages));
-    expect(inputs).toHaveLength(2);
-    expect(inputs.every((text) => !text.includes('Шахматы') && !text.includes('Личный факт'))).toBe(
-      true,
-    );
+    await completion(app);
+    const privateList = await ownProfile(app);
     app.at(4_000);
-    const opened = app.submit('/анкета открыть');
-    await until(() => expect(state(app)).toMatchObject({ event: opened, decision: 'open' }));
     app.complete.mockResolvedValueOnce(useCard).mockImplementationOnce(async (request) => {
       expect(request.messages.find((message) => message.role === 'tool')?.text).toContain(
         'Шахматы',
@@ -412,9 +291,8 @@ test('закрытые ответы скрыты от контекста и ин
       return { ...answer, text: 'Прежняя карточка с шахматами' };
     });
     const event = app.submit(mention);
-    await until(() => expect(app.complete).toHaveBeenCalledTimes(5));
-    const closed = app.submit('/анкета закрыть');
-    await until(() => expect(state(app)).toMatchObject({ event: closed, decision: 'closed' }));
+    await until(() => expect(app.complete).toHaveBeenCalledTimes(3));
+    await hideSecondFact(app, privateList);
     finishing.resolve();
     await app.trace(event);
     expect(app.sends.some(({ text }) => text === 'Прежняя карточка с шахматами')).toBe(false);
@@ -448,7 +326,7 @@ test.each(['команда', 'ответ'] as const)(
     const app = await setup();
     try {
       await fill(app);
-      const viewQuestion = await prompt(app);
+      const viewQuestion = await completion(app);
       const question = await presentationPrompt(app);
       expect(viewQuestion.conversation_message_id).not.toBe(question.conversation_message_id);
       app.at(3_000);
@@ -459,7 +337,6 @@ test.each(['команда', 'ответ'] as const)(
       ])
         await app.journaled(event);
       expect(presentation(app)).toMatchObject({ state: 'waiting', event: null });
-      expect(state(app)?.decision).toBeNull();
       const decline = app.submit('Не представлять', 41, question);
       await until(() =>
         expect(presentation(app)).toMatchObject({ state: 'declined', event: decline }),
@@ -478,8 +355,7 @@ test.each(['команда', 'ответ'] as const)(
       expect(introductions(app)).toHaveLength(1);
       expect(introductions(app)[0]?.text).toContain(hobby + '\nШахматы');
       expect(introductions(app)[0]?.text).not.toMatch(/Личный факт|Что пропустить/u);
-      expect(state(app)?.decision).toBeNull();
-      expect(values(app)).toEqual([]);
+      expect(values(app)).toEqual(['Шахматы']);
       expect(app.complete).toHaveBeenCalledTimes(1);
       await app.restart(true);
       app.at(5_000);

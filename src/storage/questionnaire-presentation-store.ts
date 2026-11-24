@@ -59,7 +59,7 @@ export function questionnairePresentationStore(storage: Storage) {
         (db) =>
           !!db
             .prepare(
-              `SELECT 1 FROM questionnaire_access WHERE ${keys}
+              `SELECT 1 FROM questionnaire_progress WHERE state='completed' AND ${keys}
           AND NOT EXISTS(SELECT 1 FROM questionnaire_presentations WHERE ${keys})`,
             )
             .get(parameters(scope, target)),
@@ -76,8 +76,8 @@ export function questionnairePresentationStore(storage: Storage) {
         const row = db
           .prepare(
             `INSERT INTO questionnaire_presentations(chat_id,generation,user_id,attempt,prompt_message_id)
-          SELECT chat_id,generation,user_id,attempt,@receipt FROM questionnaire_access
-          WHERE ${keys} AND @receipt>coalesce(response_message_id,0)
+          SELECT chat_id,generation,user_id,attempt,@receipt FROM questionnaire_progress
+          WHERE state='completed' AND ${keys} AND @receipt>coalesce(response_message_id,0)
           ON CONFLICT(chat_id,generation,user_id,attempt) DO NOTHING`,
           )
           .run({ ...parameters(scope, target), receipt });
@@ -101,8 +101,8 @@ export function questionnairePresentationStore(storage: Storage) {
         const row = db
           .prepare(
             `SELECT a.attempt,a.response_message_id AS response,p.prompt_message_id AS prompt
-          FROM questionnaire_access a LEFT JOIN questionnaire_presentations p USING(chat_id,generation,user_id,attempt)
-          WHERE (a.chat_id,a.generation,a.user_id)=(?,?,?)`,
+          FROM questionnaire_progress a LEFT JOIN questionnaire_presentations p USING(chat_id,generation,user_id,attempt)
+          WHERE a.state='completed' AND (a.chat_id,a.generation,a.user_id)=(?,?,?)`,
           )
           .get(scope.chatId, scope.generation, user) as
           { attempt: string; response: number | null; prompt: number | null } | undefined;

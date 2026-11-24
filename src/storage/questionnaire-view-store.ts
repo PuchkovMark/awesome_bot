@@ -5,7 +5,6 @@ import { lifecycleBackend } from './lifecycle-store';
 import { participantProfileAvailable, readDeparture } from './participant-departures';
 import { profileAdmitted } from './personal-data-store';
 import { publiclyVisibleFact, selectCurrentFacts } from './profile-fact-selection';
-import { questionnaireAccessOpenSql, questionnaireReviewDelayMs } from './questionnaire-types';
 import type { Storage } from './types';
 
 function isMember(db: Database, scope: ConnectionScope, user: UserId) {
@@ -47,18 +46,10 @@ export function questionnaireViewStore(storage: Storage) {
         return null;
       const questionnaire = db
         .prepare(
-          `SELECT q.attempt,${questionnaireAccessOpenSql} AS open,a.decision_message_id AS decision
-          FROM questionnaire_progress q LEFT JOIN questionnaire_access a USING(chat_id,generation,user_id,attempt)
-          WHERE (q.chat_id,q.generation,q.user_id)=(@chat,@generation,@author) AND q.state='completed'`,
+          "SELECT attempt FROM questionnaire_progress WHERE (chat_id,generation,user_id)=(?,?,?) AND state='completed'",
         )
-        .get({
-          chat: scope.chatId,
-          generation: scope.generation,
-          author,
-          autoOpenThrough: now - questionnaireReviewDelayMs,
-        }) as { attempt: string; open: number; decision: number | null } | undefined;
-      if (!questionnaire || (purpose === 'view' && !ownPrivateDelivery && !questionnaire.open))
-        return null;
+        .get(scope.chatId, scope.generation, author) as { attempt: string } | undefined;
+      if (!questionnaire) return { attempt: null, pairs: [], signature: 'unfilled' };
 
       const facts = selectCurrentFacts(db, scope, { kind: 'profile', subjectId: author }, now);
       const selected = facts
@@ -87,7 +78,6 @@ export function questionnaireViewStore(storage: Storage) {
         pairs: selected.map(({ question, answer }) => ({ question, answer })),
         signature: JSON.stringify([
           questionnaire.attempt,
-          ownPrivateDelivery || purpose === 'presentation' ? null : questionnaire.decision,
           readDisclosureGate(db, scope).version,
           readDeparture(db, scope, author)?.revision ?? 0,
           readDeparture(db, scope, requester)?.revision ?? 0,

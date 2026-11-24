@@ -20,7 +20,6 @@ const tables = [
   'questionnaire_progress',
   'questionnaire_inputs',
   'questionnaire_answer_facts',
-  'questionnaire_access',
   'questionnaire_presentations',
   'questionnaire_revisions',
   'questionnaire_editor_prompts',
@@ -102,6 +101,7 @@ const tables = [
   'sqlite_sequence',
 ];
 const others = [
+  'questionnaire_legacy_receipts',
   'chat_metrics_bucket_expiry',
   'chat_metrics_attempt_expiry',
   'chat_metrics_publication_scope',

@@ -1,7 +1,6 @@
 import { expect, test } from 'vitest';
 import type { LlmRequest } from '../src/llm/types';
 import { fixture, peer, until } from './helpers/application-response-fixture';
-import { questionnaireAccessQuestion } from '../src/core/questionnaire/answer';
 
 type App = Awaited<ReturnType<typeof fixture>>;
 const profileNotice = 'Тестовое уведомление об анкете и личном профиле.';
@@ -71,9 +70,7 @@ test.each(['Пенёк', 'Пенек', 'упоминание', 'ответ'] as 
           : app.submit((address === 'упоминание' ? '[club314|Пенёк] ' : address + ', ') + body);
       await app.published(input);
       expect(
-        app.sends.some(
-          ({ text }) => text.startsWith(saved) && text.includes(questionnaireAccessQuestion),
-        ),
+        app.sends.some(({ text }) => text.startsWith(saved) && text.includes('/анкета показать')),
       ).toBe(true);
       expect(attempt(app)).toMatchObject({
         state: 'completed',
@@ -131,7 +128,7 @@ test('обычная реплика, цитата, пересылка и неп�
 });
 
 test('тёзки заполняют свои анкеты, а команды и ответы разделены между двумя беседами и личкой', async () => {
-  const app = await fixture({ profileNotice, active: true });
+  const app = await fixture({ profileNotice, active: true, greetings: { members: [41, 42, 73] } });
   const model = Promise.withResolvers<void>();
   const neighbor = peer + 1;
   try {
@@ -193,7 +190,9 @@ test('тёзки заполняют свои анкеты, а команды и 
     expect(attempt(app, 41)).toEqual(direct);
     app.submit('/анкета', 42);
     await until(() =>
-      expect(app.sends.some(({ text }) => text === 'Вы уже заполнили анкету.')).toBe(true),
+      expect(app.sends.some(({ text }) => text.startsWith('Анкета') && text.includes('Саша'))).toBe(
+        true,
+      ),
     );
 
     app.at(5000);
