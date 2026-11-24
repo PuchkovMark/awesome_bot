@@ -22,15 +22,29 @@ type Admission<T> =
 
 export type LlmAdmission = ReturnType<typeof createLlmAdmission>;
 
+export async function scheduleLlmCall<T>(
+  admission: LlmAdmission | undefined,
+  lifetime: CallLifetime,
+  prepare: Prepare<T>,
+  kind: 'direct' | 'background' = 'direct',
+): Promise<Admission<T>> {
+  if (admission) return admission[kind](lifetime, prepare);
+  return lifetime.signal.aborted || !lifetime.current()
+    ? { kind: 'cancelled' }
+    : { kind: 'ready', value: prepare((invoke) => invoke()) };
+}
+
 export function createLlmAdmission(
   settings: LlmAdmissionSettings = llmAdmissionDefaults,
   now = () => performance.now(),
 ) {
   const waiting = new Set<() => void>();
+  const releaseListeners = new Set<() => void>();
   let active = 0;
   let background = 0;
   let preparing = false;
   let draining = false;
+  const waitUntil = (deadline = Infinity) => Math.min(now() + settings.waitMs, deadline);
 
   function drain() {
     if (preparing || draining) return;
@@ -55,6 +69,7 @@ export function createLlmAdmission(
           active--;
           if (kind === 'background') background--;
           drain();
+          for (const notify of releaseListeners) notify();
         };
         try {
           return invoke().finally(release);
@@ -71,9 +86,16 @@ export function createLlmAdmission(
 
   return {
     stats: () => ({ active, background, waiting: waiting.size }),
+    onRelease(notify: () => void) {
+      releaseListeners.add(notify);
+      return () => {
+        releaseListeners.delete(notify);
+      };
+    },
+    waitUntil,
     direct<T>(lifetime: CallLifetime, prepare: Prepare<T>): Promise<Admission<T>> {
       const { signal, current } = lifetime;
-      const until = Math.min(now() + settings.waitMs, lifetime.deadline ?? Infinity);
+      const until = waitUntil(lifetime.deadline);
       return new Promise((resolve, reject) => {
         let timer: ReturnType<typeof setTimeout> | undefined;
         const cleanup = () => {

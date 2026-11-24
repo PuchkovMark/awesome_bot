@@ -17,10 +17,12 @@ import { SummaryFailure } from '../core/chat-summaries/compress';
 import { localDay } from '../core/chat-summaries/calendar';
 import { recap, recapPeriod } from '../core/chat-summaries/recap';
 import type { PreparedSummaries } from '../core/context/summaries';
+import { scheduleLlmCall, type LlmAdmission, type SendLlmCall } from '../core/llm-admission';
 
 export function applicationSummaries(options: {
   storage: Storage;
   client: LlmClient;
+  llmAdmission?: LlmAdmission;
   model: string;
   sessionSecret: string;
   intervalMs: number;
@@ -52,6 +54,7 @@ export function applicationSummaries(options: {
     cutoff: number,
     work?: QueueHandlerInput,
     usage = createAttemptSummary(),
+    firstDeadline?: () => number | undefined,
   ): SummaryRun {
     const abort = work?.signal ?? signal;
     const version = work?.disclosureVersion ?? options.disclosure(scope);
@@ -78,34 +81,54 @@ export function applicationSummaries(options: {
         signal: abort,
         outputLimit: 512,
         inputLimit: Math.min(8000, options.modelContext - 512),
-        async invoke(request) {
-          if (!current()) throw new SummaryFailure('cancelled');
-          const attempt = {
-            key: 'summary:' + randomUUID(),
-            purpose: work ? ('direct' as const) : ('summary' as const),
-            input: estimateRequestInput(request),
-            output: request.maxOutputTokens,
+        async invoke(request, sourceCurrent) {
+          const allowed = () =>
+            current() &&
+            (sourceCurrent?.() ?? true) &&
+            (work !== undefined || options.backgroundReady());
+          const perform = (send: SendLlmCall) => {
+            const attempt = {
+              key: 'summary:' + randomUUID(),
+              purpose: work ? ('direct' as const) : ('summary' as const),
+              input: estimateRequestInput(request),
+              output: request.maxOutputTokens,
+            };
+            const admission = work
+              ? work.admitModelAttempt?.(allowed, [], attempt)
+              : budgets.reserve(scope, options.group(scope.chatId), attempt, Date.now());
+            if (admission === 'quota_exhausted') throw new SummaryFailure('quota');
+            if (!admission || admission === 'context_stale') throw new SummaryFailure('cancelled');
+            if (typeof admission === 'string') throw new SummaryFailure('limit');
+            usage.beginAttempt();
+            work?.recordTrace({
+              model: { name: options.model, invoked: 'possible' },
+              summary: usage.snapshot(0),
+            });
+            return send(async () => {
+              const response = await options.client.complete(request).catch(() => {
+                throw new SummaryFailure(abort.aborted ? 'cancelled' : 'unavailable');
+              });
+              if ('usage' in response) {
+                usage.recordUsage(response.usage);
+                if (typeof admission === 'object') admission.recordUsage(response.usage);
+                else budgets.reconcile(scope, attempt.key, response.usage);
+              }
+              return response;
+            });
           };
-          const admission = work
-            ? work.admitModelAttempt?.(current, [], attempt)
-            : budgets.reserve(scope, options.group(scope.chatId), attempt, Date.now());
-          if (admission === 'quota_exhausted') throw new SummaryFailure('quota');
-          if (!admission || admission === 'context_stale') throw new SummaryFailure('cancelled');
-          if (typeof admission === 'string') throw new SummaryFailure('limit');
-          usage.beginAttempt();
-          work?.recordTrace({
-            model: { name: options.model, invoked: 'possible' },
-            summary: usage.snapshot(0),
-          });
-          const response = await options.client.complete(request).catch(() => {
-            throw new SummaryFailure(abort.aborted ? 'cancelled' : 'unavailable');
-          });
-          if ('usage' in response) {
-            usage.recordUsage(response.usage);
-            if (typeof admission === 'object') admission.recordUsage(response.usage);
-            else budgets.reconcile(scope, attempt.key, response.usage);
-          }
-          return response;
+          const deadline = firstDeadline?.() ?? work?.deadline;
+          const scheduled = await scheduleLlmCall(
+            options.llmAdmission,
+            {
+              signal: abort,
+              current: allowed,
+              ...(deadline === undefined ? {} : { deadline }),
+            },
+            perform,
+            work ? 'direct' : 'background',
+          );
+          if (scheduled.kind === 'ready') return scheduled.value;
+          throw new SummaryFailure(scheduled.kind === 'background_busy' ? 'busy' : scheduled.kind);
         },
       },
     };
@@ -219,17 +242,26 @@ export function applicationSummaries(options: {
       if (!period) return null;
       const usage = createAttemptSummary(),
         started = Date.now();
-      const run = buildRun(work.scope, work.messageId - 1, work, usage);
+      let firstDeadline: number | undefined;
+      const run = buildRun(work.scope, work.messageId - 1, work, usage, () => {
+        const deadline = firstDeadline;
+        firstDeadline = undefined;
+        return deadline;
+      });
       const current = () =>
         run.current() && noticeBackend(storage).sourceVisible(work.scope, work.messageId);
-      const admission = work.admitModelAttempt?.(current, [work.messageId]);
       let text = '',
         entries: readonly number[] = [],
         sources: readonly number[] = [];
-      let failure: 'quota_exhausted' | 'token_budget_exhausted' | 'unavailable' | undefined;
-      if (admission === 'quota_exhausted') failure = admission;
-      else if (!admission || admission === 'context_stale') return { outcome: 'interrupted' };
-      else if (period === 'clarify')
+      let failure:
+        | 'quota_exhausted'
+        | 'token_budget_exhausted'
+        | 'unavailable'
+        | 'rate_limit'
+        | 'llm_wait_timeout'
+        | 'llm_provider_paused'
+        | undefined;
+      if (period === 'clarify')
         text = 'За какой период собрать пересказ? Укажи даты начала и конца.';
       else
         try {
@@ -240,7 +272,21 @@ export function applicationSummaries(options: {
             {
               ...run,
               current,
-              beforeRaw: () => (notification ??= notify(work, source.messageId, current)),
+              beforeRaw: () =>
+                (notification ??= (async () => {
+                  if (options.llmAdmission) {
+                    firstDeadline = options.llmAdmission.waitUntil(work.deadline);
+                    const ready = await options.llmAdmission.direct(
+                      { signal: work.signal, deadline: firstDeadline, current },
+                      () => true,
+                    );
+                    if (ready.kind !== 'ready')
+                      throw new SummaryFailure(
+                        ready.kind === 'background_busy' ? 'busy' : ready.kind,
+                      );
+                  }
+                  await notify(work, source.messageId, current);
+                })()),
             },
             period,
           );
@@ -255,8 +301,17 @@ export function applicationSummaries(options: {
               ? 'token_budget_exhausted'
               : error.reason === 'quota'
                 ? 'quota_exhausted'
-                : 'unavailable';
+                : error.reason === 'rate_limit' ||
+                    error.reason === 'llm_wait_timeout' ||
+                    error.reason === 'llm_provider_paused'
+                  ? error.reason
+                  : 'unavailable';
         }
+      if (!failure && !usage.snapshot(0).attempts) {
+        const admission = work.admitModelAttempt?.(current, [work.messageId]);
+        if (admission === 'quota_exhausted') failure = admission;
+        else if (!admission || admission === 'context_stale') return { outcome: 'interrupted' };
+      }
       const summary = usage.snapshot(Date.now() - started);
       const result =
         failure === 'unavailable'
@@ -279,7 +334,7 @@ export function applicationSummaries(options: {
       });
       return {
         result,
-        outcome: failure ? 'failed' : 'completed',
+        outcome: failure === 'rate_limit' ? 'rate_limit' : failure ? 'failed' : 'completed',
         toolResultsCurrent: () => store.current(work.scope, entries),
         toolSourceIds: sources,
       };

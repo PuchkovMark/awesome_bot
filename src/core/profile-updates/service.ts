@@ -1,13 +1,15 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import type { ChatId, ConnectionScope } from '../../contracts/index';
-import type { LlmClient, LlmRequest } from '../../llm/types';
+import type { LlmClient, LlmRequest, LlmResult } from '../../llm/types';
 import type { SafeLogger } from '../../logger/types';
 import { StorageError } from '../../storage/errors';
 import { profileInference } from '../../storage/profile-fact-store';
 import { profileUpdateStore } from '../../storage/profile-update-store';
+import type { ProfileUpdateSource } from '../../storage/profile-update-intake';
 import type { Storage } from '../../storage/types';
 import { estimateRequestInput } from '../context/budget';
 import { parseProfileUpdates, profileUpdateRequest } from './request';
+import { scheduleLlmCall, type LlmAdmission } from '../llm-admission';
 
 function connectionChanged(error: unknown) {
   return (
@@ -16,13 +18,13 @@ function connectionChanged(error: unknown) {
   );
 }
 
-async function invoke(client: LlmClient, request: LlmRequest, signal: AbortSignal) {
+async function waitForResponse(pending: Promise<LlmResult>, signal: AbortSignal) {
   const stopped = Promise.withResolvers<null>();
   const abort = () => stopped.resolve(null);
   signal.addEventListener('abort', abort, { once: true });
   try {
-    if (signal.aborted) return null;
-    return await Promise.race([client.complete(request), stopped.promise]);
+    if (signal.aborted) abort();
+    return await Promise.race([pending, stopped.promise]);
   } catch {
     return null;
   } finally {
@@ -34,6 +36,7 @@ export function createProfileUpdates(options: {
   storage: Storage;
   logger: SafeLogger;
   client: LlmClient;
+  llmAdmission?: LlmAdmission;
   sessionId: (scope: ConnectionScope) => string;
   scope: (chatId: ChatId) => ConnectionScope;
   group: (chatId: ChatId) => boolean;
@@ -53,7 +56,13 @@ export function createProfileUpdates(options: {
     if (!sources) return;
     const callSignal = AbortSignal.any([signal, AbortSignal.timeout(60_000)]);
     const session = options.sessionId(scope);
-    const candidates = [];
+    const candidates: {
+      ids: number[];
+      input: number;
+      output: number;
+      request: LlmRequest;
+      portion: readonly ProfileUpdateSource[];
+    }[] = [];
     for (let size = sources.length; size > 0; size--) {
       const portion = sources.slice(0, size);
       const request = profileUpdateRequest(portion, session, options.maxOutputTokens, callSignal);
@@ -64,11 +73,27 @@ export function createProfileUpdates(options: {
       }
     }
     if (!candidates.length || signal.aborted) return;
-    const attempt = store.begin(scope, Date.now(), options.group(scope.chatId), candidates);
-    if (!attempt) return;
-    const { request, portion } = candidates.find(({ ids }) => ids.length === attempt.ids.length)!;
-    const response = await invoke(options.client, request, callSignal);
-    if (response && 'usage' in response) store.reconcile(attempt, response.usage);
+    const scheduled = await scheduleLlmCall(
+      options.llmAdmission,
+      { signal: callSignal, current: () => !signal.aborted },
+      (send) => {
+        const attempt = store.begin(scope, Date.now(), options.group(scope.chatId), candidates);
+        if (!attempt) return;
+        const { request, portion } = candidates.find(
+          ({ ids }) => ids.length === attempt.ids.length,
+        )!;
+        const pending = send(async () => {
+          const response = await options.client.complete(request);
+          if ('usage' in response) store.reconcile(attempt, response.usage);
+          return response;
+        });
+        return { attempt, portion, pending };
+      },
+      'background',
+    );
+    if (scheduled.kind !== 'ready' || !scheduled.value) return;
+    const { attempt, portion, pending } = scheduled.value;
+    const response = await waitForResponse(pending, callSignal);
     const conclusions =
       !callSignal.aborted && response?.kind === 'complete'
         ? parseProfileUpdates(portion, response.text)
@@ -101,6 +126,7 @@ export function createProfileUpdates(options: {
     wake,
     async run() {
       let failure: unknown;
+      const unsubscribe = options.llmAdmission?.onRelease(wake);
       try {
         while (!signal.aborted) {
           if (failure) throw failure;
@@ -136,6 +162,7 @@ export function createProfileUpdates(options: {
           }
         }
       } finally {
+        unsubscribe?.();
         await Promise.all(work.values());
       }
     },

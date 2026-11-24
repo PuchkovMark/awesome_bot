@@ -74,7 +74,7 @@ export function summaryEngine(store: ChatSummaryStore, fragmentSize: number) {
         ...run.compression,
         invoke(request) {
           if (!current()) throw new SummaryFailure('cancelled');
-          return run.compression.invoke(request);
+          return run.compression.invoke(request, current);
         },
       });
       if (!current()) throw new SummaryFailure('cancelled');

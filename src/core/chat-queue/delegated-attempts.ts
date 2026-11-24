@@ -9,6 +9,7 @@ import type { ToolContext } from '../../contracts/tool';
 import type { QueueHandlerInput } from './types';
 import type { AgentLoopOptions } from '../agent-loop/types';
 import { estimateRequestInput, messageInputCost } from '../context/budget';
+import { scheduleLlmCall, type LlmAdmission, type SendLlmCall } from '../llm-admission';
 
 const resultEnvelopeBytes = 4096;
 
@@ -49,8 +50,13 @@ export function finalRequestReserve(request: LlmRequest, pending: readonly strin
 }
 
 /** Создаётся один раз для задания. Родитель и помощники делят ordinal, допуск и срок. */
-export function createJobModelAttempts(work: QueueHandlerInput, allow: () => boolean) {
+export function createJobModelAttempts(
+  work: QueueHandlerInput,
+  allow: () => boolean,
+  admission?: LlmAdmission,
+) {
   let ordinal = 0;
+  let helperFailure: 'rate_limit' | 'llm_wait_timeout' | 'llm_provider_paused' | undefined;
   // Повтор сохраняет объект запроса. Продолжение после чтения получает новый.
   const helperUsage = new Map<LlmRequest, LlmUsage[]>();
   function reserve(
@@ -81,6 +87,7 @@ export function createJobModelAttempts(work: QueueHandlerInput, allow: () => boo
   return {
     reserve,
     helperSummary: () => [...helperUsage.values()],
+    helperFailure: () => helperFailure,
     async helper(
       client: LlmClient,
       request: LlmRequest,
@@ -88,27 +95,45 @@ export function createJobModelAttempts(work: QueueHandlerInput, allow: () => boo
       protectedTokens: number,
       current: () => boolean,
     ) {
-      if (!current()) return;
-      const admitted = reserve(request, ids, { protect: protectedTokens });
-      if (typeof admitted !== 'object') return;
-      if (!allow() || !current()) {
-        admitted.cancelBeforeSend();
-        return;
+      const proceed = () => current() && helperFailure === undefined;
+      const perform = (send: SendLlmCall) => {
+        const admitted = reserve(request, ids, { protect: protectedTokens });
+        if (typeof admitted !== 'object') return;
+        if (!allow() || !proceed()) {
+          admitted.cancelBeforeSend();
+          return;
+        }
+        const step = helperUsage.get(request) ?? [];
+        helperUsage.set(request, step);
+        const slot = step.push({ input: null, output: null }) - 1;
+        return send(async () => {
+          let result;
+          try {
+            result = await client.complete(request);
+          } catch {
+            result = { kind: 'error', code: 'network', message: 'Сбой модели помощника.' } as const;
+          }
+          if (result.kind === 'error' && result.code === 'rate_limit') helperFailure = 'rate_limit';
+          if ('usage' in result) {
+            step[slot] = result.usage;
+            admitted.recordUsage(result.usage);
+          }
+          return result;
+        });
+      };
+      const scheduled = await scheduleLlmCall(
+        admission,
+        {
+          signal: request.signal ?? work.signal,
+          current: proceed,
+          ...(work.deadline === undefined ? {} : { deadline: work.deadline }),
+        },
+        perform,
+      );
+      if (scheduled.kind === 'ready') return scheduled.value;
+      if (scheduled.kind === 'llm_wait_timeout' || scheduled.kind === 'llm_provider_paused') {
+        helperFailure ??= scheduled.kind;
       }
-      const step = helperUsage.get(request) ?? [];
-      helperUsage.set(request, step);
-      const slot = step.push({ input: null, output: null }) - 1;
-      let result;
-      try {
-        result = await client.complete(request);
-      } catch {
-        return { kind: 'error', code: 'network', message: 'Сбой модели помощника.' } as const;
-      }
-      if ('usage' in result) {
-        step[slot] = result.usage;
-        admitted.recordUsage(result.usage);
-      }
-      return result;
     },
   };
 }

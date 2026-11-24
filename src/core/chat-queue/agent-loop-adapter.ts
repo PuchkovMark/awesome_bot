@@ -229,7 +229,7 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
           if (checked) work.recordTrace({ disclosure: checked });
           return checked?.allowed ?? true;
         };
-        const jobAttempts = createJobModelAttempts(work, allowed);
+        const jobAttempts = createJobModelAttempts(work, allowed, options.llmAdmission);
         const session: LoopTools | undefined = await options.tools?.({
           work,
           prepared,

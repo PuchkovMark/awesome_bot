@@ -196,6 +196,7 @@ export function applicationTools(
       budgetExhausted: () => budgetExhausted,
       helperSteps: () => helper?.helperSteps() ?? 0,
       helperSummary: attempts.helperSummary,
+      modelFailure: attempts.helperFailure,
       beginBatch(request, remaining, steps, isLoopCurrent) {
         frame = request;
         pending = remaining;

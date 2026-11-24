@@ -47,6 +47,7 @@ export async function fixture(
     model?: string;
     systemPrompt?: string;
     auxiliaryModel?: string;
+    llmEnv?: Partial<Record<`LLM_${string}`, string>>;
     modelClients?: { client?: LlmClient; auxiliaryClient?: LlmClient };
     upload?: (peer: number, data: Buffer) => Promise<string>;
     threshold?: number;
@@ -96,6 +97,7 @@ export async function fixture(
       CHAT_RESPONSES_PER_MINUTE: String(options.limit ?? 6),
       CHAT_MENTION_FLOOD_THRESHOLD: String(options.threshold ?? 5),
       CHAT_MENTION_FLOOD_WINDOW_MS: String(options.window ?? 10000),
+      ...options.llmEnv,
     },
     readFile: () => '',
   });

@@ -76,6 +76,7 @@ export interface LoopTools {
   ): Promise<readonly import('../../llm/types').LlmToolDescription[]>;
   current(): boolean;
   budgetExhausted?(): boolean;
+  modelFailure?(): 'rate_limit' | 'llm_wait_timeout' | 'llm_provider_paused' | undefined;
   helperSteps(): number;
   beginBatch(
     request: import('../../llm/types').LlmRequest,

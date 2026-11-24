@@ -403,11 +403,13 @@ export async function runApplication(
         }
       };
       const passport = chatPassportStore(storage);
+      const llmAdmission = createLlmAdmission(config.llmAdmission);
       const auxiliaryClient =
         dependencies.auxiliaryClient ??
         createLlmClient({ ...config.llm, model: config.auxiliaryModel });
       const summaries = applicationSummaries({
         storage,
+        llmAdmission,
         client: auxiliaryClient,
         model: config.auxiliaryModel,
         sessionSecret: config.sessionSecret,
@@ -465,9 +467,9 @@ export async function runApplication(
             : (checkDisclosure(work)?.allowed ?? true),
       });
       const modelClient = dependencies.client ?? createLlmClient(config.llm);
-      const llmAdmission = createLlmAdmission(config.llmAdmission);
       const profileUpdates = createProfileUpdates({
         storage,
+        llmAdmission,
         logger,
         client: modelClient,
         sessionId: createLlmSessionId('profile-update:' + config.sessionSecret),
@@ -482,6 +484,7 @@ export async function runApplication(
         llmAdmission,
         recapAnswer: summaries.answer,
         questionnaireAnswer: questionnaireAnswerHandler({
+          llmAdmission,
           store: questionnaireAttempts,
           client: modelClient,
           sessionId: createLlmSessionId(config.sessionSecret),
