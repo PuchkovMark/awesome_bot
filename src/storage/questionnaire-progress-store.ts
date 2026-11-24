@@ -302,14 +302,19 @@ export function questionnaireProgressStore(storage: Storage) {
       msg && { ...msg, attempt: row.attempt, template: view(row, now).template, user: row.user_id }
     );
   }
-  function completionRevision(scope: ConnectionScope, user: UserId) {
+  function completionRevision(scope: ConnectionScope, user: UserId, expectedAttempt?: string) {
     return lifecycle.transaction(scope, (db) => {
       const state = readDeparture(db, scope, user);
       if (!participantProfileAvailable(state)) return null;
       const completed = db
-        .prepare('SELECT 1 FROM questionnaire_progress WHERE ' + subject + " AND state='completed'")
+        .prepare(
+          'SELECT attempt FROM questionnaire_progress WHERE ' + subject + " AND state='completed'",
+        )
+        .pluck()
         .get(scope.chatId, scope.generation, user);
-      return completed ? (state?.revision ?? 0) : null;
+      return completed && (expectedAttempt === undefined || completed === expectedAttempt)
+        ? (state?.revision ?? 0)
+        : null;
     });
   }
 

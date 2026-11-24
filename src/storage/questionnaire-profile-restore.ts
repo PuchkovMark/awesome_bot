@@ -1,4 +1,5 @@
 import type { Database } from 'better-sqlite3';
+import { eraseQuestionnaireAttempt } from './questionnaire-management-store';
 
 const subject =
   'chat_id=@chat_id AND generation=@generation AND user_id=@user_id AND attempt=@attempt';
@@ -25,6 +26,16 @@ export function reconcileStagedQuestionnaires(staged: Database, newer: Database)
       .get()
   )
     return;
+  if (newer.prepare("SELECT 1 FROM sqlite_schema WHERE name='questionnaire_removals'").get()) {
+    const copy = staged.prepare(`INSERT OR IGNORE INTO questionnaire_removals
+      SELECT chat_id,generation,@user_id,@attempt,@removed_at,@event_id FROM chat_connections WHERE chat_id=@chat_id AND generation=@generation`);
+    for (const row of newer
+      .prepare('SELECT * FROM questionnaire_removals')
+      .iterate() as Iterable<Attempt>) {
+      copy.run(row);
+      eraseQuestionnaireAttempt(staged, row.chat_id, row.generation, row.user_id, row.attempt);
+    }
+  }
   const latestBinding = newer.prepare(
     `SELECT fact_id FROM questionnaire_answer_facts WHERE ${subject} AND field_key=@field_key`,
   );

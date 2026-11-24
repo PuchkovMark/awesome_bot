@@ -22,6 +22,7 @@ const tables = [
   'questionnaire_answer_facts',
   'questionnaire_presentations',
   'questionnaire_management_prompts',
+  'questionnaire_removals',
   'questionnaire_revisions',
   'questionnaire_editor_prompts',
   'questionnaire_default_boundary',

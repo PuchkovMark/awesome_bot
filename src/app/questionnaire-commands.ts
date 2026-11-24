@@ -114,6 +114,7 @@ export function createQuestionnaireCommands(options: {
     if (/^\/анкета\s+представить$/iu.test(text)) return { present: true };
     if (!message.isGroupChat) return null;
     if (/^\/анкета\s+изменить$/iu.test(text)) return { manage: 'edit' as const };
+    if (/^\/анкета\s+удалить$/iu.test(text)) return { manage: 'delete' as const };
     const receipt = message.replyToMessageId ?? message.unverifiedReplyToMessageId;
     if (!receipt) return null;
     if (management.hasPrompt(scope, receipt)) return { managementReply: receipt };
@@ -181,7 +182,8 @@ export function createQuestionnaireCommands(options: {
         ? questionnaireListText(view.pairs, 'Анкета')
         : 'Анкета\n\nНет публичных ответов';
       if (ownActions && message.isGroupChat)
-        text += '\n\nПосмотреть — /анкета показать. Исправить ответ — /анкета изменить.';
+        text +=
+          '\n\nПосмотреть — /анкета показать. Исправить ответ — /анкета изменить. Удалить анкету — /анкета удалить.';
     }
     for (const part of splitVkText(text)) {
       if (!current()) return;
@@ -238,7 +240,17 @@ export function createQuestionnaireCommands(options: {
           isCurrent: currentForm,
           allow: async () => currentForm() && (await allowed()) && currentForm(),
         };
-        for (const part of questionnaireEditorParts(form.template.questions)) {
+        const parts =
+          command.manage === 'edit'
+            ? questionnaireEditorParts(form.template.questions)
+            : [
+                {
+                  text: 'Удалить вашу анкету и её ответы из профиля этой беседы? Остальные данные профиля и сообщения в VK сохранятся. В течение 15 минут ответьте на это сообщение «Удалить» или «Оставить».',
+                  first: 0,
+                  last: 0,
+                },
+              ];
+        for (const part of parts) {
           if (!currentForm()) return;
           const sent = await channel.deliverQuestionnairePart(scope, part.text, deliveryGuard);
           if (
@@ -252,6 +264,7 @@ export function createQuestionnaireCommands(options: {
               part.first,
               part.last,
               Date.now(),
+              command.manage,
             )
           )
             return;

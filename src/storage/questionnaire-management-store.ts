@@ -35,6 +35,27 @@ function completed(db: Database, scope: ConnectionScope, actor: UserId) {
     ? { attempt: row.attempt, template: JSON.parse(row.template) as QuestionnaireRevision }
     : null;
 }
+export function eraseQuestionnaireAttempt(
+  db: Database,
+  chat: string,
+  generation: number,
+  user: string,
+  attempt: string,
+) {
+  requireInput(db.inTransaction);
+  const args = [chat, generation, user, attempt] as const;
+  const key = subject + ' AND attempt=?';
+  db.prepare(
+    `DELETE FROM profile_facts WHERE ${subject} AND field_key IN
+    (SELECT field_key FROM questionnaire_answer_facts WHERE ${key})`,
+  ).run(chat, generation, user, ...args);
+  db.prepare('DELETE FROM questionnaire_inputs WHERE chat_id=? AND generation=? AND attempt=?').run(
+    chat,
+    generation,
+    attempt,
+  );
+  db.prepare('DELETE FROM questionnaire_progress WHERE ' + key).run(...args);
+}
 export function questionnaireManagementStore(storage: Storage) {
   const lifecycle = lifecycleBackend(storage);
   return {
@@ -64,6 +85,7 @@ export function questionnaireManagementStore(storage: Storage) {
       first: number,
       last: number,
       now: number,
+      action: 'edit' | 'delete' = 'edit',
     ) {
       const receipt = questionnaireMessageSequence(part.messageId);
       requireInput(receipt !== null);
@@ -73,8 +95,8 @@ export function questionnaireManagementStore(storage: Storage) {
         const inserted = db
           .prepare(
             `INSERT INTO questionnaire_management_prompts
-          (chat_id,generation,receipt,user_id,attempt,first_position,last_position,expires_at)
-          VALUES(?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING`,
+          (chat_id,generation,receipt,user_id,attempt,first_position,last_position,expires_at,action)
+          VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING`,
           )
           .run(
             scope.chatId,
@@ -84,7 +106,8 @@ export function questionnaireManagementStore(storage: Storage) {
             attempt,
             first,
             last,
-            now + 86400000,
+            now + (action === 'edit' ? 86400000 : 900000),
+            action,
           );
         if (!inserted.changes) return false;
         const saved = appendMessage(db, {
@@ -130,6 +153,7 @@ export function questionnaireManagementStore(storage: Storage) {
               first_position: number;
               last_position: number;
               expires_at: number;
+              action: 'edit' | 'delete';
             }
           | undefined;
         if (
@@ -143,7 +167,30 @@ export function questionnaireManagementStore(storage: Storage) {
           return null;
         const form = completed(db, scope, actor);
         if (!form || form.attempt !== row.attempt || now >= row.expires_at || at >= row.expires_at)
-          return 'Срок списка истёк. Отправьте /анкета изменить ещё раз.';
+          return row.action === 'edit'
+            ? 'Срок списка истёк. Отправьте /анкета изменить ещё раз.'
+            : 'Срок подтверждения истёк. Анкета сохранена.';
+        if (row.action === 'delete') {
+          const choice = text.trim().toLowerCase();
+          if (choice === 'оставить') {
+            db.prepare(
+              'UPDATE questionnaire_management_prompts SET user_id=NULL,attempt=NULL,expires_at=0 WHERE ' +
+                promptKey,
+            ).run(scope.chatId, scope.generation, receipt);
+            return 'Анкета сохранена.';
+          }
+          if (choice !== 'удалить') return 'Ответьте на запрос словом «Удалить» или «Оставить».';
+          db.prepare('INSERT INTO questionnaire_removals VALUES(?,?,?,?,?,?)').run(
+            scope.chatId,
+            scope.generation,
+            actor,
+            form.attempt,
+            now,
+            sequence,
+          );
+          eraseQuestionnaireAttempt(db, scope.chatId, scope.generation, actor, form.attempt);
+          return 'Анкета удалена. Заполнить её заново — /анкета.';
+        }
         const match = /^([1-9]\d*)\s+([\s\S]+)$/u.exec(text.trim());
         const position = Number(match?.[1]);
         const value = match?.[2]?.trim();

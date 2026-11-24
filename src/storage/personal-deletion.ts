@@ -83,6 +83,9 @@ export function confirmDeletion(
     'DELETE FROM questionnaire_inputs WHERE chat_id=? AND generation=? AND message_id IN (SELECT id FROM messages WHERE chat_id=? AND user_id=?)',
   ).run(chat, scope.generation, chat, user);
   db.prepare(
+    'DELETE FROM questionnaire_removals WHERE chat_id=? AND generation=? AND user_id=?',
+  ).run(chat, scope.generation, user);
+  db.prepare(
     'DELETE FROM questionnaire_progress WHERE chat_id=? AND generation=? AND user_id=?',
   ).run(chat, scope.generation, user);
   db.prepare(
@@ -253,6 +256,8 @@ export function confirmDeletion(
     UNION ALL SELECT 1 FROM profile_command_lists WHERE user_id=@user AND (chat_id=@chat OR user_id=@chat)
     UNION ALL SELECT 1 FROM profile_command_events WHERE chat_id=@chat AND user_id=@user
     UNION ALL SELECT 1 FROM chat_passport_prompts WHERE chat_id=@chat AND actor_id=@user
+    UNION ALL SELECT 1 FROM questionnaire_removals WHERE chat_id=@chat AND user_id=@user
+    UNION ALL SELECT 1 FROM questionnaire_management_prompts WHERE chat_id=@chat AND user_id=@user
     UNION ALL SELECT 1 FROM questionnaire_progress WHERE chat_id=@chat AND user_id=@user
     UNION ALL SELECT 1 FROM questionnaire_editor_prompts WHERE chat_id=@chat AND actor_id=@user
     UNION ALL SELECT 1 FROM greeting_candidates WHERE chat_id=@chat AND user_id=@user

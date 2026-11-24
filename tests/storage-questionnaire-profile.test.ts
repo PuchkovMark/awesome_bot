@@ -149,6 +149,7 @@ test('обновление переносит только проверяемы�
         DROP TABLE llm_recovery;
         DROP TABLE questionnaire_presentations;
         DROP TABLE questionnaire_answer_facts;
+        DROP TABLE questionnaire_removals;
         DROP TRIGGER questionnaire_invalidate_prompts;
         DROP TABLE questionnaire_management_prompts;
         DROP INDEX questionnaire_legacy_receipts;
@@ -334,6 +335,41 @@ test('копия получает публичную правку и ответ 
           3,
         );
         expect(stage.pragma('foreign_key_check')).toEqual([]);
+        expect(
+          manage.remember(
+            target,
+            alice,
+            attempt,
+            {
+              messageId: '304',
+              userId: 'vk:-314',
+              authorName: 'Пенёк',
+              text: 'Удалить?',
+              timestamp: 156,
+            },
+            0,
+            0,
+            156,
+            'delete',
+          ),
+        ).toBe(true);
+        expect(manage.reply(target, alice, 304, 305, 'Удалить', 157, 157)).toContain(
+          'Анкета удалена',
+        );
+        const fresh = await pending(f, target, alice, '306');
+        expect(fresh.store.finish(target, fresh.id, 159, { '1': 'Го' }, () => true)).toBe(true);
+        reconcileStagedPersonalData(stage, live, 160);
+        expect(stage.prepare('SELECT * FROM profile_facts WHERE chat_id=?').all(group)).toEqual([]);
+        expect(
+          stage.prepare('SELECT * FROM questionnaire_progress WHERE attempt=?').all(attempt),
+        ).toEqual([]);
+        expect(
+          stage
+            .prepare('SELECT count(*) FROM questionnaire_removals WHERE attempt=?')
+            .pluck()
+            .get(attempt),
+        ).toBe(1);
+        expect(own(f, target)).toMatchObject([{ value: 'Го' }]);
       } finally {
         stage.close();
       }

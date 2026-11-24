@@ -103,3 +103,44 @@ test('публичная правка сохраняет нужную позиц
     await app.close();
   }
 });
+
+test('удаление подтверждает только автор в беседе, повтор прежнего ответа оставляет новую анкету', async () => {
+  const app = await setup();
+  try {
+    await fill(app);
+    const cancel = await send(app, '/анкета удалить', 'В течение 15 минут');
+    await app.journaled(app.submit('Удалить', 42, cancel));
+    await send(app, 'Оставить', 'Анкета сохранена', cancel);
+    await app.journaled(app.submit('Удалить', 41, cancel));
+    const expires = await send(app, '/анкета удалить', 'В течение 15 минут');
+    app.at(903000);
+    await send(app, 'Удалить', 'Срок подтверждения истёк', expires);
+    const list = await send(app, '/анкета изменить', '2. Город?');
+    await send(app, '2 Казань', '№ 2 сохранён', list);
+    const confirm = await send(app, '/анкета удалить', 'В течение 15 минут');
+    await app.journaled(app.submit('Удалить', 41, confirm, peer, true));
+    await app.restart(true);
+    await send(app, 'Удалить', 'Анкета удалена', confirm);
+    for (const table of [
+      'questionnaire_presentations',
+      'questionnaire_progress',
+      'questionnaire_answer_facts',
+      'profile_facts',
+    ])
+      expect(
+        app.db
+          .prepare('SELECT count(*) FROM ' + table + ' WHERE chat_id=?')
+          .pluck()
+          .get(chat),
+      ).toBe(0);
+    await send(app, '/анкета показать @id41', 'Анкета не заполнена', undefined, 42);
+    await send(app, '/анкета удалить', 'Анкета не заполнена');
+    await fill(app, 906000);
+    await app.journaled(app.submit('Удалить', 41, confirm));
+    await app.journaled(app.submit('2 Старая правка', 41, list));
+    expect((await send(app, '/анкета', 'Анкета')).text).toContain('Тула');
+    expect(app.sends.every((row) => row.peer_id === peer)).toBe(true);
+  } finally {
+    await app.close();
+  }
+});

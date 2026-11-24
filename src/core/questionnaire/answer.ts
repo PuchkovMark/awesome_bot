@@ -158,7 +158,7 @@ export function questionnaireAnswerHandler(options: {
       )
     )
       return { outcome: 'failed' };
-    const completionRevision = store.completionRevision(scope, input.user);
+    const completionRevision = store.completionRevision(scope, input.user, input.attempt);
     if (completionRevision === null) return { outcome: 'interrupted' };
     const group = work.route?.isGroupChat === true;
     return {
@@ -167,11 +167,11 @@ export function questionnaireAnswerHandler(options: {
       ...(group ? { questionnaireCompletion: { user: input.user, attempt: input.attempt } } : {}),
       toolResultsCurrent: () =>
         options.disclosed(work) &&
-        store.completionRevision(scope, input.user) === completionRevision,
+        store.completionRevision(scope, input.user, input.attempt) === completionRevision,
       result: {
         kind: 'complete',
         text: group
-          ? 'Спасибо! Анкета заполнена. Посмотреть — /анкета показать. Исправить ответ — /анкета изменить.'
+          ? 'Спасибо! Анкета заполнена. Посмотреть — /анкета показать. Исправить ответ — /анкета изменить. Удалить анкету — /анкета удалить.'
           : 'Спасибо! Анкета заполнена.',
         summary: measured,
       },
