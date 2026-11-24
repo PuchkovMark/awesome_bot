@@ -11,7 +11,7 @@ export function checkTraceBoundary(root = process.cwd()) {
   const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, root);
   if (parsed.errors.length) throw Error('trace_boundary: invalid_config');
   const roots = parsed.fileNames.filter((f) =>
-    /^src\/(core|metrics)\/.*metrics\.[cm]?ts$|^src\/metrics\//.test(
+    /^src\/(core|metrics)\/.*metrics\.[cm]?ts$|^src\/metrics\/|^src\/storage\/chat-request-metrics-store\.ts$/.test(
       relative(root, f).split(sep).join('/'),
     ),
   );

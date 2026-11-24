@@ -13,6 +13,10 @@ import {
 } from './address-preference-store';
 import { createPersonalDataStore, registerPersonalData } from './personal-data-store';
 import { createTokenBudgetStore, registerTokenBudgets } from './token-budget-store';
+import {
+  createChatRequestMetricsStore,
+  registerChatRequestMetrics,
+} from './chat-request-metrics-store';
 import { createHistoryClearStore, registerHistoryClear } from './history-retention-store';
 import { requireInput } from './validation';
 import { createTraceBackend, registerTraces } from './trace-store';
@@ -112,6 +116,7 @@ export async function openStorage(
     registerChatControl(storage, createChatControlStore(connection, backend));
     registerTraces(storage, traces);
     registerTokenBudgets(storage, createTokenBudgetStore(connection, backend));
+    registerChatRequestMetrics(storage, createChatRequestMetricsStore(backend.transaction));
     registerNotices(storage, createNoticeBackend(connection, backend));
     registerQueue(storage, queue);
     registerLifecycle(storage, backend);

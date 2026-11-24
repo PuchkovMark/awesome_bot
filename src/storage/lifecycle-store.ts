@@ -104,6 +104,11 @@ export function createLifecycleBackend(connection: Connection) {
     db.prepare(
       'INSERT INTO chat_connections(chat_id,generation,revision,state,pause_reason) VALUES (?,?,0,?,?)',
     ).run(chatId, generation, state, reason);
+    db.prepare('INSERT INTO chat_metrics_collection VALUES (?,?,?)').run(
+      chatId,
+      generation,
+      Date.now(),
+    );
   }
   function markUncertain(
     db: Database,

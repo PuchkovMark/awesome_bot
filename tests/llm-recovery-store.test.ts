@@ -22,7 +22,7 @@ const limited = (retryAt?: number) => ({
 async function setup(settings: LlmRecoverySettings = llmRecoveryDefaults) {
   const files = storageFixture();
   const preMigration = new Database(files.path);
-  migrate(preMigration, migrations.slice(0, -1));
+  migrate(preMigration, migrations.slice(0, 47));
   preMigration.close();
   const clock = vi.spyOn(Date, 'now').mockReturnValue(date);
   let storage = await openStorage(files.path);

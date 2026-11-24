@@ -1,3 +1,4 @@
+import { chatRequestMetrics } from './049-chat-request-metrics';
 import { llmRecovery } from './048-llm-recovery';
 import { questionnairePresentation } from './047-questionnaire-presentation';
 import { questionnaireHistory } from './046-questionnaire-history';
@@ -100,4 +101,5 @@ export const migrations: readonly Migration[] = [
   questionnaireHistory,
   questionnairePresentation,
   llmRecovery,
+  chatRequestMetrics,
 ];

@@ -1,5 +1,6 @@
 import { acceptQuestionnaireInput, answerableAttempt } from './questionnaire-input';
 import { createLlmRecoveryStore } from './llm-recovery-store';
+import { pruneChatMetrics } from './chat-request-metrics-store';
 import type { LlmRecoverySettings } from '../core/llm-recovery';
 import { rememberProfileUpdate } from './profile-update-intake';
 import { noteParticipantMessage } from './participant-registry';
@@ -898,6 +899,9 @@ export function createQueueBackend(
     },
     pruneTokenBudget(token: string, now = Date.now()) {
       return transaction(token, (db) => pruneTokenBudget(db, now));
+    },
+    pruneMetrics(token: string, now = Date.now()) {
+      return transaction(token, (db) => pruneChatMetrics(db, now));
     },
     currentPublicationFlood(token: string, input: ResponsePublication, now = Date.now()): boolean {
       return transaction(token, () =>

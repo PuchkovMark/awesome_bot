@@ -401,6 +401,7 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
         if (limits) backend.pruneQuotas(token, limits, platform);
         if (responseRate) backend.pruneResponseRate(token, responseRate);
         if (options.tokenBudget) backend.pruneTokenBudget(token);
+        backend.pruneMetrics(token);
         renewAt = performance.now() + config.renewIntervalMs;
       }
       for (const task of [...tasks.values()])

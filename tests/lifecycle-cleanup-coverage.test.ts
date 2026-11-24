@@ -2,6 +2,11 @@ import Database from 'better-sqlite3';
 import { expect, test } from 'vitest';
 import { migrate } from '../src/storage/migrate';
 const tables = [
+  'chat_metrics_collection',
+  'chat_metrics_buckets',
+  'chat_metrics_job_events',
+  'chat_metrics_attempts',
+  'chat_metrics_publications',
   'llm_recovery',
   'chat_summaries',
   'chat_summary_sources',
@@ -97,6 +102,11 @@ const tables = [
   'sqlite_sequence',
 ];
 const others = [
+  'chat_metrics_bucket_expiry',
+  'chat_metrics_attempt_expiry',
+  'chat_metrics_publication_scope',
+  'chat_metrics_publication_expiry',
+  'chat_metrics_unfinished_publications',
   'chat_summary_by_summary',
   'chat_summary_delete_source',
   'chat_summary_hide_source',
