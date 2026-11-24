@@ -8,6 +8,7 @@ import { departureGraceMs } from '../src/storage/participant-departures';
 import { participantRegistryStore } from '../src/storage/participant-registry';
 import { profileCommandStore } from '../src/storage/profile-command-store';
 import { selectOwnProfile } from '../src/storage/profile-fact-selection';
+import { questionnairePresentationStore } from '../src/storage/questionnaire-presentation-store';
 import { questionnaireProgressStore } from '../src/storage/questionnaire-progress-store';
 import { questionnaireStore } from '../src/storage/questionnaire-store';
 import { questionnaireQuestions } from '../src/core/questionnaires/legacy-template';
@@ -206,8 +207,27 @@ test('личные правки анкеты и подтверждённое у�
       ) => lists.edit(direct, alice, { messageId, position, change, at: 150, replyId: '301' }, 150);
       expect(edit('302', 2, { kind: 'hide' })).toBe('applied');
       expect(edit('303', 1, { kind: 'correct', value: 'Шашки' })).toBe('applied');
+      const presentations = questionnairePresentationStore(f.storage);
+      const decision = presentations.decide(target, alice, true, {
+        sequence: 201,
+        at: 151,
+        receipt: null,
+      });
+      if (decision.kind !== 'approved') throw new Error('Согласие не сохранилось');
+      presentations.confirmPart(target, decision.grant, {
+        messageId: '202',
+        userId: 'vk:-314',
+        authorName: 'Пенёк',
+        text: 'Шашки',
+        timestamp: 151,
+      });
+      presentations.finish(target, decision.grant, 'delivered');
       const privacy = personalDataStore(f.storage);
       const current = privacy.export(target, alice, 151);
+      expect(current.questionnaire?.presentation).toEqual({
+        state: 'delivered',
+        confirmedParts: 1,
+      });
       expect(current.questionnaire?.questions.map(({ answer }) => answer)).toEqual([
         'Шашки',
         null,
@@ -240,6 +260,9 @@ test('личные правки анкеты и подтверждённое у�
         ).toEqual([]);
         expect(
           stage.prepare('SELECT * FROM questionnaire_access WHERE chat_id=?').all(group),
+        ).toEqual([]);
+        expect(
+          stage.prepare('SELECT * FROM questionnaire_presentations WHERE chat_id=?').all(group),
         ).toEqual([]);
         expect(stage.prepare('SELECT * FROM profile_facts WHERE chat_id=?').all(group)).toEqual([]);
         expect(stage.pragma('foreign_key_check')).toEqual([]);
