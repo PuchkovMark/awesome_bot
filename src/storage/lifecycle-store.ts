@@ -55,6 +55,39 @@ export function installAuthorities(db: Database, chatId: ChatId, grantedAt = Dat
     ).run(chatId, chatId);
   }
 }
+export function removeStoredChat(db: Database, chatId: ChatId): void {
+  const lease = db
+    .prepare(
+      'SELECT token,expires_at AS expires,safety_ms AS safety FROM queue_lease WHERE singleton=1',
+    )
+    .get() as { token: string | null; expires: number; safety: number };
+  const guarded = lease.token !== null && lease.expires > Date.now();
+  if (guarded && lease.expires - Date.now() <= lease.safety)
+    throw new StorageError('queue_lost_ownership');
+  for (const table of [
+    'response_traces',
+    'notice_periods',
+    'queue_jobs',
+    'queue_turns',
+    'chat_content_selections',
+    'local_content_versions',
+    'profile_facts',
+    'participant_profiles',
+    'chat_participants',
+    'bot_admin_revocation_audit',
+    'bot_admin_revocations',
+    'bot_admin_grants',
+    'bot_admin_controls',
+    'messages',
+    'chats',
+    'chat_connections',
+  ]) {
+    db.prepare(`DELETE FROM ${table} WHERE chat_id=?`).run(chatId);
+  }
+  if (guarded && lease.expires <= Date.now()) throw new StorageError('queue_lost_ownership');
+  advanceClock(db);
+}
+
 export function createLifecycleBackend(connection: Connection) {
   const scopes = new WeakMap<object, number | null>();
   const checks = new WeakSet<object>();
@@ -142,38 +175,6 @@ export function createLifecycleBackend(connection: Connection) {
     const revision = scopes.get(scope);
     if (revision !== null && revision !== state.revision) throw new StorageError('stale_scope');
     return state;
-  }
-  function remove(db: Database, chatId: ChatId): void {
-    const lease = db
-      .prepare(
-        'SELECT token,expires_at AS expires,safety_ms AS safety FROM queue_lease WHERE singleton=1',
-      )
-      .get() as { token: string | null; expires: number; safety: number };
-    const guarded = lease.token !== null && lease.expires > Date.now();
-    if (guarded && lease.expires - Date.now() <= lease.safety)
-      throw new StorageError('queue_lost_ownership');
-    for (const table of [
-      'response_traces',
-      'notice_periods',
-      'queue_jobs',
-      'queue_turns',
-      'chat_content_selections',
-      'local_content_versions',
-      'profile_facts',
-      'participant_profiles',
-      'chat_participants',
-      'bot_admin_revocation_audit',
-      'bot_admin_revocations',
-      'bot_admin_grants',
-      'bot_admin_controls',
-      'messages',
-      'chats',
-      'chat_connections',
-    ]) {
-      db.prepare(`DELETE FROM ${table} WHERE chat_id=?`).run(chatId);
-    }
-    if (guarded && lease.expires <= Date.now()) throw new StorageError('queue_lost_ownership');
-    advanceClock(db);
   }
   return {
     assertScope,
@@ -510,7 +511,7 @@ export function createLifecycleBackend(connection: Connection) {
             }
             if (state?.state === 'uncertain') return { status: 'uncertain' as const };
             if (observation.bot === 'absent') {
-              if (state) remove(db, chatId);
+              if (state) removeStoredChat(db, chatId);
               return { status: 'applied' as const };
             }
             if (!state) create(db, chatId, 'active');
@@ -592,7 +593,7 @@ export function createLifecycleBackend(connection: Connection) {
                   )
                   .get(chatId, state.generation, state.revision) as
                   AdministrationInvite | null | undefined);
-              if (state) remove(db, chatId);
+              if (state) removeStoredChat(db, chatId);
               create(db, chatId, 'active');
               db.prepare(
                 `INSERT INTO admin_observations(chat_id,generation,opened_at,last_membership_id,invite_id,invite_actor,invite_at,invite_selected)
@@ -642,7 +643,7 @@ export function createLifecycleBackend(connection: Connection) {
             checks.delete(proof);
             if (proof.expected.generation !== generation || !matches(db, proof.expected))
               throw new StorageError('stale_scope');
-            remove(db, proof.expected.chatId);
+            removeStoredChat(db, proof.expected.chatId);
           })
           .immediate(),
       );
