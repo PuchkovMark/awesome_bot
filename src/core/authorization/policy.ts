@@ -9,6 +9,7 @@ import type {
 import { platformOf, validId } from './validation';
 
 const minimum: Record<AuthorizationAction, BotRole> = {
+  'commands.read': 'member',
   'chat.configure': 'admin',
   'chat.history.clear': 'admin',
   'chat.passport.read': 'member',

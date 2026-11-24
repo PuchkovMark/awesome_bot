@@ -53,6 +53,7 @@ export interface RouterOptions {
     message: IncomingMessage,
     isCurrent: () => boolean,
     replayOnly?: boolean,
+    command?: ServiceCommand,
   ) => Promise<void>;
   readonly onDecision?: (decision: RoutingDecision) => void;
   readonly onFlood?: (
@@ -214,6 +215,7 @@ export function createMessageRouter(options: RouterOptions) {
           message,
           () => (!isCurrent || isCurrent()) && (!disclosure || disclosure().respond),
           replayOnly || undefined,
+          command ?? undefined,
         );
       }
       return { decision, admission: result.admission };

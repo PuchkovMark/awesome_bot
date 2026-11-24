@@ -1,3 +1,4 @@
+import { addressedSlash, helpAction, unknownHint } from './command-help';
 import { createQuestionnaireProgress } from '../core/questionnaire/progress';
 import { createLlmAdmission } from '../core/llm-admission';
 import { createPersonaCommands, isPersonaCommand } from './persona-commands';
@@ -642,10 +643,23 @@ export async function runApplication(
           message.isBot === false &&
           parseTimezoneCommand(message.text) !== null
             ? { action: 'chat.configure', minimumRole: 'admin' }
-            : null),
+            : null) ??
+          (addressedSlash(message) ? helpAction : null),
         identity: (scope, message) =>
           commandAuthorization.context({ scope, userId: message.userId }),
-        async executeCommand(context, message, isCurrent, replayOnly) {
+        async executeCommand(context, message, isCurrent, replayOnly, command) {
+          if (command?.action === 'commands.read') {
+            const guard = {
+              signal,
+              isCurrent,
+              allow: async () =>
+                isCurrent() && (await commandAuthorization.check(context, 'commands.read')).allowed,
+            };
+            const text = unknownHint(message.text);
+            return message.isGroupChat
+              ? channel.replyGroupControl(context.scope, text, guard)
+              : channel.replyPrivateControl(message.userId, text, guard);
+          }
           if (questionnaires.recognize(context.scope, message))
             return questionnaires.execute(context, message, isCurrent);
           if (passports.recognize(context.scope, message))

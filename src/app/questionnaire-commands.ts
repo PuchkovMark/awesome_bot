@@ -31,7 +31,7 @@ import { questionnaireListText } from '../core/questionnaire/text';
 export const openQuestionnaire = '/анкета';
 const cancelQuestionnaire = '/анкета отмена';
 export function parseQuestionnaireCommand(text: string): QuestionnaireCommand | null {
-  switch (text.trim()) {
+  switch (text.trim().toLowerCase().replace(/\s+/gu, ' ')) {
     case openQuestionnaire:
       return 'open';
     case '/анкета пауза':
@@ -123,7 +123,7 @@ export function createQuestionnaireCommands(options: {
     if (progress) return progress;
     const view = parseQuestionnaireView(text);
     if (view) return { view: view[1] ?? '' };
-    if (text === '/анкета представить') return { present: true };
+    if (/^\/анкета\s+представить$/iu.test(text)) return { present: true };
     if (!message.isGroupChat) return null;
     const direct = accessCommand(text);
     if (direct) return { access: direct };

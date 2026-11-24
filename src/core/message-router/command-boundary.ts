@@ -16,6 +16,7 @@ export async function commandAccess(
   const participantCommand =
     command.minimumRole === 'member' &&
     [
+      'commands.read',
       'chat.pause',
       'chat.passport.read',
       'chat.persona.read',

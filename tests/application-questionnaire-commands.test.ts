@@ -75,7 +75,7 @@ test('команды работают без приглашения и моде�
     expect(app.sends.filter(({ text }) => text.startsWith(groupHint))).toHaveLength(1);
 
     app.at(3000);
-    app.submit('/анкета пауза');
+    app.submit('/Анкета   пауза');
     await until(() => expect(attempt(app)?.state).toBe('paused'));
     app.at(4000);
     app.submit('/анкета');
@@ -285,6 +285,35 @@ test('после смены состава подтверждённый отка
     app.holds[1]!.release();
     await until(() => expect(attempt(app)?.state).toBe('active'));
     expect(app.sends.filter(({ text }) => text.startsWith(groupHint))).toHaveLength(1);
+  } finally {
+    await app.close();
+  }
+});
+
+test.each([peer, 41])('опечатка при заполнении на %d не передаётся модели', async (destination) => {
+  const app = await fixture({ profileNotice });
+  try {
+    const send = (text: string) => app.submit(text, 41, undefined, destination);
+    app.at(1000);
+    send('/АНКЕТА');
+    if (destination === 41) {
+      await until(() =>
+        expect(app.sends.some((s) => s.text.includes('повторите /АНКЕТА'))).toBe(true),
+      );
+      app.at(2000);
+      send('/анкета');
+    }
+    await until(() => expect(attempt(app, destination)?.state).toBe('active'));
+    send('/анкета паузза');
+    await until(() =>
+      expect(
+        app.sends.some((s) => s.peer_id === destination && s.text.includes('/анкета пауза')),
+      ).toBe(true),
+    );
+    expect(attempt(app, destination)?.state).toBe('active');
+    send('/Анкета  пауза');
+    await until(() => expect(attempt(app, destination)?.state).toBe('paused'));
+    expect(app.complete).not.toHaveBeenCalled();
   } finally {
     await app.close();
   }

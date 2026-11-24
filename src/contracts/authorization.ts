@@ -4,6 +4,7 @@ import type { ChatId, PlatformId, UserId } from './identifiers';
 export type BotRole = 'member' | 'admin' | 'owner';
 export type GrantBasis = 'creator' | 'inviter' | 'explicit';
 export type AuthorizationAction =
+  | 'commands.read'
   | 'chat.configure'
   | 'chat.history.clear'
   | 'chat.passport.read'

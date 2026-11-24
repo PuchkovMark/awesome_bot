@@ -42,11 +42,15 @@ export function routeMessage(input: RoutingInput): RoutingDecision {
       service.command.minimumRole === 'member' &&
       (service.command.action === 'chat.pause' ||
         service.command.action === 'profile.self.manage' ||
+        action === 'commands.read' ||
         action === 'chat.passport.read' ||
         action === 'chat.persona.read' ||
         privatePreference);
     if (
       !service.allowed ||
+      (action === 'commands.read' &&
+        settings.responseMode === 'silent' &&
+        service.role === 'member') ||
       (service.command.journalLabel !== undefined && message.isBot !== false) ||
       (privatePreference &&
         (!settings.enabled || settings.responseMode === 'silent' || message.isBot !== false)) ||
