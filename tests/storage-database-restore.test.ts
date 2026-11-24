@@ -6,6 +6,8 @@ import { openStorage } from '../src/storage/index';
 import { lifecycleBackend } from '../src/storage/lifecycle-store';
 import { createSnapshot, openExisting, openCandidate } from '../src/storage/database-backup';
 import { reconcileConnections } from '../src/storage/database-restore';
+import { reconcileRestore } from '../src/storage/backup-history';
+import { personalDataStore } from '../src/storage/personal-data-store';
 
 test('сброшенное поколение исключено, отзыв действует, вторая беседа сохраняет историю', async () => {
   const f = storageFixture(),
@@ -79,6 +81,77 @@ test('сброшенное поколение исключено, отзыв д�
     }
   } finally {
     await storage.close();
+    f.cleanup();
+  }
+});
+
+test('очистка без личного удаления, свежий срок и личное удаление применяются до поиска и выгрузки', async () => {
+  const f = storageFixture(),
+    app = await openStorage(f.path),
+    now = Date.now(),
+    day = 86_400_000;
+  try {
+    const a = scopeFor(app, 'vk:a'),
+      b = scopeFor(app, 'vk:b');
+    for (const scope of [a, b])
+      await app.chats.create(scope, { createdAt: now, enabled: true, responseMode: 'normal' });
+    const input = (
+      chatId: typeof a.chatId,
+      messageId: string,
+      text: string,
+      timestamp = now,
+      userId: 'vk:1' | 'vk:2' = 'vk:1',
+    ) => ({ chatId, messageId, userId, authorName: '', text, role: 'user' as const, timestamp });
+    await app.messages.append(a, input(a.chatId, '1', 'очищено'));
+    await app.messages.append(b, input(b.chatId, '2', 'удалено'));
+    await app.messages.append(b, input(b.chatId, '3', 'доступно', now, 'vk:2'));
+    await app.messages.append(b, input(b.chatId, '4', 'просрочено', now - 12 * day, 'vk:2'));
+    const latest = openExisting(f.path);
+    const snapshot = join(f.directory, 'saved'),
+      candidate = join(f.directory, 'candidate');
+    try {
+      await createSnapshot(latest, snapshot, 'local', now);
+      const after = await app.messages.append(a, input(a.chatId, '5', 'после снимка'));
+      const control = openExisting(f.path, false);
+      control
+        .prepare(
+          'INSERT INTO history_retention_boundaries(chat_id,generation,cleared_through) VALUES (?,?,?)',
+        )
+        .run(a.chatId, a.generation, after.id);
+      control.prepare('INSERT OR REPLACE INTO history_retention_policy VALUES (1,?)').run(10 * day);
+      control.close();
+      const pd = personalDataStore(app);
+      const request = pd.requestDeletion(b, 'vk:1', 'operation', now);
+      expect(pd.confirmDeletion(b, 'vk:1', request.code, now + 1)).toBe(true);
+      await openCandidate(snapshot, candidate, 'local', now + 2);
+      const staged = openExisting(candidate, false);
+      try {
+        for (let attempt = 0; attempt < 2; attempt++)
+          expect(reconcileRestore(staged, latest, now + 2, 30 * day).access).toBe('full');
+      } finally {
+        staged.close();
+      }
+      const restored = await openStorage(candidate);
+      try {
+        const ca = scopeFor(restored, 'vk:a'),
+          cb = scopeFor(restored, 'vk:b');
+        expect(await restored.contextMessages.search(ca, 'очищено', 4, 256)).toEqual([]);
+        expect(await restored.contextMessages.search(cb, 'удалено', 4, 256)).toEqual([]);
+        expect(await restored.messages.list(cb, { limit: 10 })).toMatchObject([
+          { text: 'доступно' },
+        ]);
+        expect(personalDataStore(restored).export(cb, 'vk:1', now + 2).messages).toEqual([]);
+        const fresh = await restored.messages.append(ca, input(ca.chatId, '6', 'новое', now + 3));
+        expect(fresh.id).toBeGreaterThan(after.id);
+        expect(await restored.contextMessages.search(ca, 'новое', 4, 256)).toHaveLength(1);
+      } finally {
+        await restored.close();
+      }
+    } finally {
+      latest.close();
+    }
+  } finally {
+    await app.close();
     f.cleanup();
   }
 });
