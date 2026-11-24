@@ -2,6 +2,7 @@
 import type { ChatSummaryStore, SummaryPeriod } from '../../storage/chat-summary-store';
 import { localDay } from './calendar';
 import type { SummaryEngine, SummaryPiece, SummaryRun } from './worker';
+import { isRecapRequest } from './recap-intent';
 import { SummaryFailure } from './compress';
 
 export function recapPeriod(
@@ -9,12 +10,8 @@ export function recapPeriod(
   now: number,
   timezone: string,
 ): SummaryPeriod | 'clarify' | null {
+  if (!isRecapRequest(text)) return null;
   const request = text.toLocaleLowerCase('ru').replace(/ё/g, 'е');
-  const recapIntent =
-    /(?:что (?:у нас |здесь |в чате )?(?:было(?! бы)|обсуждали|произошло)|перескажи|(?:сделай|дай) сводку|подведи итоги)(?!\p{L})/u;
-  if (!recapIntent.test(request)) return null;
-  if (/перескажи\s+(?:шутку|книгу|фильм|рассказ|сюжет|анекдот)(?!\p{L})/u.test(request))
-    return null;
   const dates = [
     ...request.matchAll(/\d{4}-\d\d-\d\d(?:[t ]\d\d:\d\d(?::\d\d)?(?:z|[+-]\d\d:\d\d)?)?/gu),
   ].map((match) => match[0]!);

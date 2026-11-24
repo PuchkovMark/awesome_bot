@@ -1,6 +1,6 @@
 import type { IncomingMessage } from '../../contracts/index';
 import type { RoutingInput, RoutingDecision } from './types';
-import { directlyAddressesName } from './name-address';
+import { directlyAddressesName, addressesRecapByName } from './name-address';
 import { validIncoming } from './validation';
 import { autonomousCause } from './autonomous-rules';
 export function ordinaryGroupRoute(message: IncomingMessage, questionnaireName = false) {
@@ -12,7 +12,11 @@ export function ordinaryGroupRoute(message: IncomingMessage, questionnaireName =
     return 'reply_other';
   if (message.isMentioned) return 'mention';
   if (message.isReplyToBot) return 'reply';
-  return questionnaireName || directlyAddressesName(message.text) ? 'name' : null;
+  return questionnaireName ||
+    (!message.hasForwarded && addressesRecapByName(message.text)) ||
+    directlyAddressesName(message.text)
+    ? 'name'
+    : null;
 }
 
 export function routeMessage(input: RoutingInput): RoutingDecision {

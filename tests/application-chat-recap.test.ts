@@ -19,7 +19,11 @@ test('сначала служебный reply, затем сводка Haiku; п
       expect(f.sends.some((row) => row.text === 'собираю, минутку')).toBe(true);
       return { ...answer, text: 'Встречаемся у дуба.' };
     });
-    const first = f.submit(question);
+    for (const text of ['«Пенёк, что было вчера?»', 'Он спросил: Пенёк, что было вчера?'])
+      await f.journaled(f.submit(text));
+    await f.journaled(f.submit('Пенёк, что было вчера?', 41, undefined, undefined, true));
+    expect(f.sends.filter((row) => row.text === 'собираю, минутку')).toEqual([]);
+    const first = f.submit('Пенёк, что было вчера?');
     await until(() =>
       expect(
         f.sends.some(

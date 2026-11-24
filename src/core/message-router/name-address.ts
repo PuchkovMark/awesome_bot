@@ -1,3 +1,5 @@
+import { isRecapRequest } from '../chat-summaries/recap-intent';
+
 const name = 'пенек';
 const requests = new Set([
   'помоги',
@@ -18,6 +20,13 @@ export function addressesQuestionnaireByName(text: string): boolean {
   const normalized = text.normalize('NFC');
   const address = /^\s*пен[её]к\s*,\s*/iu.exec(normalized);
   return !!address && /[\p{L}\p{N}]/u.test(ownNameText(normalized.slice(address[0].length)));
+}
+
+export function addressesRecapByName(text: string) {
+  const match = /^\s*пен[её]к\s*,\s*([\s\S]+)$/iu.exec(text.normalize('NFC'));
+  if (!match) return false;
+  const request = ownNameText(match[1]!);
+  return /^(?:что|перескажи|сделай|дай|подведи)(?!\p{L})/u.test(request) && isRecapRequest(request);
 }
 
 export function directlyAddressesName(text: string): boolean {
