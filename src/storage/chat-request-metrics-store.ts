@@ -7,6 +7,7 @@ import type {
   MetricsScope,
   MetricsSeries,
   MetricTotals,
+  ModelStep,
 } from '../contracts/chat-metrics';
 import type { ConnectionScope } from '../contracts/index';
 import { requireInput, timestamp } from './validation';
@@ -88,6 +89,63 @@ export function recordChatMetric(
     )
     .run(key, jobId, scope.chatId, scope.generation).changes;
   return inserted === 1 && addChatMetrics(db, scope, at, series, delta, now);
+}
+
+type ModelSeries = Exclude<MetricsSeries, 'requests'>;
+type AttemptFact = { readonly at: number; readonly series: ModelSeries };
+
+export function recordSentModelAttempt(
+  db: Database,
+  scope: MetricsScope,
+  key: string,
+  job?: { readonly id: number; readonly step: ModelStep | undefined },
+  now = Date.now(),
+): void {
+  requireInput(db.inTransaction);
+  const reservation = db
+    .prepare(
+      'SELECT admitted_at AS at,purpose FROM token_budget_attempts WHERE chat_id=? AND generation=? AND attempt_key=?',
+    )
+    .get(scope.chatId, scope.generation, key) as
+    { at: number; purpose: 'direct' | 'initiative' | 'summary' | 'profile_update' } | undefined;
+  if (!reservation || !collected(db, scope, reservation.at, now)) return;
+  const { at, purpose } = reservation;
+  const step = job?.step;
+  const executor = step?.executor ?? 'main';
+  const series: ModelSeries =
+    purpose === 'direct' ? executor : purpose === 'initiative' ? `initiative_${executor}` : purpose;
+  const inserted = db
+    .prepare(
+      `INSERT INTO chat_metrics_attempts(chat_id,generation,attempt_key,admitted_at,series)
+     VALUES(?,?,?,?,?) ON CONFLICT DO NOTHING`,
+    )
+    .run(scope.chatId, scope.generation, key, at, series).changes;
+  if (!inserted) return;
+  addChatMetrics(db, scope, at, series, { attempts: 1 }, now);
+  if (job && step) {
+    const branch = step.executor === 'subagent' ? step.branch : 0;
+    recordChatMetric(
+      db,
+      scope,
+      job.id,
+      `${executor}:${branch}:step:${step.step}`,
+      at,
+      series,
+      { steps: 1 },
+      now,
+    );
+  }
+}
+
+export function recordFailedModelAttempt(db: Database, scope: MetricsScope, key: string) {
+  requireInput(db.inTransaction);
+  const attempt = db
+    .prepare(
+      `UPDATE chat_metrics_attempts SET failed=1 WHERE chat_id=? AND generation=? AND attempt_key=? AND failed=0
+     RETURNING admitted_at AS at,series`,
+    )
+    .get(scope.chatId, scope.generation, key) as AttemptFact | undefined;
+  if (attempt) addChatMetrics(db, scope, attempt.at, attempt.series, { errors: 1 });
 }
 
 export function pruneChatMetrics(db: Database, now: number): void {

@@ -18,6 +18,7 @@ import type { ChatLimits } from '../chat-limits/config';
 import type { AttemptAdmission } from '../agent-loop/types';
 import type { TokenReservation } from '../../storage/token-budget-store';
 import type { LlmRecovery, LlmRecoverySettings } from '../llm-recovery';
+import type { JobMetricEvent } from '../../contracts/chat-metrics';
 export type {
   QueueAdmission,
   QueueConfig,
@@ -52,6 +53,7 @@ export interface QueueHandlerInput {
   readonly disclosureVersion?: number;
   readonly initiativeEvidenceId?: number;
   readonly checkRequestQuota?: () => boolean | 'quota_exhausted';
+  readonly recordMetric?: (event: JobMetricEvent, ordinal: number) => void;
   readonly admitModelAttempt?: (
     allow: () => boolean,
     contextIds?: readonly number[],
@@ -82,7 +84,7 @@ export interface QueueCompletion {
 }
 export interface QueueSettlement extends Omit<
   QueueHandlerInput,
-  'recordTrace' | 'jobId' | 'admitModelAttempt' | 'checkRequestQuota'
+  'recordTrace' | 'jobId' | 'admitModelAttempt' | 'checkRequestQuota' | 'recordMetric'
 > {
   readonly jobId?: number;
   readonly route: import('../../storage/queue-types').RouteMetadata | null;

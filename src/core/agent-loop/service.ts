@@ -4,6 +4,7 @@ import { createAttemptSummary } from './summary';
 import { loopOptions, parseAttempt, prepareLoopInput } from './validation';
 import type { ParsedAttempt } from './validation';
 import type { LlmAdmission, SendLlmCall } from '../llm-admission';
+import { measureModelCall } from '../model-measurement';
 import type {
   AgentLoop,
   LoopTools,
@@ -141,11 +142,19 @@ export function createAgentLoop(
                 if (!checkStopped()) {
                   let parsed: ParsedAttempt | undefined;
                   pending = send(async () => {
-                    attempts++;
-                    stepAttempts++;
-                    const value = await invoke(request);
+                    const value = await measureModelCall(
+                      reservation,
+                      () => {
+                        attempts++;
+                        stepAttempts++;
+                        return invoke(request);
+                      },
+                      { executor: 'main', step: parentStep },
+                    );
                     if (tools && value?.kind === 'tool_calls') calls = value.calls;
                     parsed = parseAttempt(value);
+                    if (parsed.outcome.kind === 'error' && parsed.outcome.code === 'client_failure')
+                      reservation?.failed?.();
                     if (parsed.usage.input !== null || parsed.usage.output !== null)
                       reservation?.recordUsage(parsed.usage);
                     return value;

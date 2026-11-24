@@ -11,6 +11,18 @@ export type MetricsSeries =
   | 'summary'
   | 'profile_update';
 
+export type ModelStep =
+  | { readonly executor: 'main'; readonly step: number }
+  | { readonly executor: 'subagent'; readonly branch: number; readonly step: number };
+
+export type JobMetricEvent = 'main_tool' | 'subagent_tool' | 'branch_started' | 'branch_finished';
+
+export interface ModelAttemptMeter {
+  readonly cancelBeforeSend: () => void;
+  readonly sent?: (step?: ModelStep) => void;
+  readonly failed?: () => void;
+}
+
 export const metricCounters = [
   'requests',
   'quota_denied',

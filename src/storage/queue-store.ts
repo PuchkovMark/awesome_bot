@@ -1,6 +1,13 @@
 import { acceptQuestionnaireInput, answerableAttempt } from './questionnaire-input';
 import { createLlmRecoveryStore } from './llm-recovery-store';
-import { addChatMetrics, pruneChatMetrics } from './chat-request-metrics-store';
+import {
+  addChatMetrics,
+  pruneChatMetrics,
+  recordChatMetric,
+  recordFailedModelAttempt,
+  recordSentModelAttempt,
+} from './chat-request-metrics-store';
+import type { JobMetricEvent, MetricsSeries, ModelStep } from '../contracts/chat-metrics';
 import type { LlmRecoverySettings } from '../core/llm-recovery';
 import { rememberProfileUpdate } from './profile-update-intake';
 import { noteParticipantMessage } from './participant-registry';
@@ -586,6 +593,9 @@ export function createQueueBackend(
               db.prepare(
                 'DELETE FROM response_traces WHERE job_id IN (SELECT job_id FROM response_traces WHERE expires_at<=? AND finished_at IS NOT NULL LIMIT 100)',
               ).run(now);
+            db.prepare(
+              "DELETE FROM chat_metrics_job_events WHERE job_id IN (SELECT id FROM queue_jobs WHERE state='running')",
+            ).run();
             const recovered = db
               .prepare(
                 "UPDATE queue_jobs SET state='terminal',outcome='interrupted',owner=NULL WHERE state='running'",
@@ -849,6 +859,30 @@ export function createQueueBackend(
         return typeof quota === 'object' ? true : quota;
       });
     },
+    recordMetric(token: string, work: QueueWork, event: JobMetricEvent, ordinal: number) {
+      const events = {
+        main_tool: { series: 'main', delta: { tools: 1 } },
+        subagent_tool: { series: 'subagent', delta: { tools: 1 } },
+        branch_started: { series: 'subagent', delta: { branches_started: 1 } },
+        branch_finished: { series: 'subagent', delta: { branches_finished: 1 } },
+      } as const;
+      const sample = events[event];
+      if (!sample || !work.route) return;
+      const { series } = sample;
+      const actual: MetricsSeries =
+        work.route.kind === 'initiative' ? `initiative_${series}` : series;
+      transaction(token, (db) =>
+        recordChatMetric(
+          db,
+          work.scope,
+          work.id,
+          `${event}:${ordinal}`,
+          Date.now(),
+          actual,
+          sample.delta,
+        ),
+      );
+    },
     admitModelAttempt(
       token: string,
       work: QueueWork,
@@ -912,6 +946,19 @@ export function createQueueBackend(
         if (!reservation) return true;
         const { key } = reservation;
         return {
+          sent(step?: ModelStep) {
+            transaction(token, (database) => {
+              if (!running(database, token, work)) throw new StorageError('stale_scope');
+              recordSentModelAttempt(database, work.scope, key, { id: work.id, step });
+            });
+          },
+          failed() {
+            connection.run((database) =>
+              database
+                .transaction(() => recordFailedModelAttempt(database, work.scope, key))
+                .immediate(),
+            );
+          },
           recordUsage(usage: LlmUsage) {
             // Результат уже допущенной попытки может прийти после остановки задания.
             connection.run((database) =>
@@ -1136,6 +1183,7 @@ export function createQueueBackend(
             )
             .run(final, work.id, token);
           if (result.changes !== 1) return null;
+          db.prepare('DELETE FROM chat_metrics_job_events WHERE job_id=?').run(work.id);
           if (work.route && work.route.kind !== 'initiative')
             addChatMetrics(db, work.scope, work.receivedAt, 'requests', {
               ...(measurement ? { process_ms: measurement.processingMs, process_count: 1 } : {}),

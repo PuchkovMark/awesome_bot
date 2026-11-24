@@ -10,6 +10,8 @@ import type { QueueHandlerInput } from './types';
 import type { AgentLoopOptions } from '../agent-loop/types';
 import { estimateRequestInput, messageInputCost } from '../context/budget';
 import { scheduleLlmCall, type LlmAdmission, type SendLlmCall } from '../llm-admission';
+import { measureModelCall } from '../model-measurement';
+import type { ModelStep } from '../../contracts/chat-metrics';
 
 const resultEnvelopeBytes = 4096;
 
@@ -94,6 +96,7 @@ export function createJobModelAttempts(
       ids: readonly number[],
       protectedTokens: number,
       current: () => boolean,
+      modelStep: ModelStep,
     ) {
       const proceed = () => current() && helperFailure === undefined;
       const perform = (send: SendLlmCall) => {
@@ -109,7 +112,7 @@ export function createJobModelAttempts(
           const slot = step.push({ input: null, output: null }) - 1;
           let result;
           try {
-            result = await client.complete(request);
+            result = await measureModelCall(admitted, () => client.complete(request), modelStep);
           } catch {
             result = { kind: 'error', code: 'network', message: 'Сбой модели помощника.' } as const;
           }
@@ -180,7 +183,10 @@ export function createJobDelegation(options: {
       helperSteps++;
       return true;
     },
-    attempt(request, ids) {
+    branch(ordinal, phase) {
+      work.recordMetric?.(phase === 'started' ? 'branch_started' : 'branch_finished', ordinal);
+    },
+    attempt(request, ids, modelStep) {
       const final = options.finalRequest();
       return options.attempts.helper(
         options.client,
@@ -188,6 +194,7 @@ export function createJobDelegation(options: {
         ids,
         finalRequestReserve(final.request, final.pending),
         () => current(ids),
+        modelStep,
       );
     },
   });

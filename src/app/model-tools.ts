@@ -176,6 +176,7 @@ export function applicationTools(
     );
     const schemas = () => registry.schemas();
     let offered: readonly LlmToolDescription[] = [];
+    let toolOrdinal = 0;
     const session: LoopTools = {
       async schemas(request) {
         // Дополнительные карточки вписываются после выбора схем для базового ввода.
@@ -252,7 +253,9 @@ export function applicationTools(
       fits: (text: string, ceiling?: number) => boolean,
     ) {
       const started = performance.now();
-      const reply = await registry.execute(call, issued, readOnly, fits);
+      const reply = await registry.execute(call, issued, readOnly, fits, () => {
+        work.recordMetric?.(readOnly ? 'subagent_tool' : 'main_tool', ++toolOrdinal);
+      });
       const result = fitsToolEnvelope(call.id, reply.text)
         ? reply
         : {

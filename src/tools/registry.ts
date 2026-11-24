@@ -149,6 +149,7 @@ export function createToolRegistry(
       issued: readonly LlmToolDescription[],
       readOnly = false,
       fits?: (text: string, ceiling?: number) => boolean,
+      onExecute?: () => void,
     ): Promise<ToolExecution> {
       try {
         if (!issued.some((t) => t.name === call.name)) return denied;
@@ -163,6 +164,7 @@ export function createToolRegistry(
         if (!object(args) || !matches(def.parameters, args)) return denied;
         if (def.access === 'write' && !(await canWrite?.(def.name))) return denied;
         if (!current() || !toolAuthorization(context).allowed) return denied;
+        onExecute?.();
         const reply = await def.execute(args, context, call, fits);
         if (!current() || (reply.current && !reply.current())) return denied;
         return { ...reply, outcome: reply.outcome ?? 'success' };

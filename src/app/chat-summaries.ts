@@ -18,6 +18,7 @@ import { localDay } from '../core/chat-summaries/calendar';
 import { recap, recapPeriod } from '../core/chat-summaries/recap';
 import type { PreparedSummaries } from '../core/context/summaries';
 import { scheduleLlmCall, type LlmAdmission, type SendLlmCall } from '../core/llm-admission';
+import { measureModelCall } from '../core/model-measurement';
 
 export function applicationSummaries(options: {
   storage: Storage;
@@ -57,6 +58,7 @@ export function applicationSummaries(options: {
     firstDeadline?: () => number | undefined,
   ): SummaryRun {
     const abort = work?.signal ?? signal;
+    let step = 0;
     const version = work?.disclosureVersion ?? options.disclosure(scope);
     const current = () => {
       try {
@@ -106,7 +108,11 @@ export function applicationSummaries(options: {
                   model: { name: options.model, invoked: 'possible' },
                   summary: usage.snapshot(0),
                 });
-                const response = await options.client.complete(request).catch(() => {
+                const response = await measureModelCall(
+                  typeof admission === 'object' ? admission : undefined,
+                  () => options.client.complete(request),
+                  { executor: 'main', step: step++ },
+                ).catch(() => {
                   throw new SummaryFailure(abort.aborted ? 'cancelled' : 'unavailable');
                 });
                 if ('usage' in response) {

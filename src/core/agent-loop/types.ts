@@ -1,4 +1,5 @@
 import type { LlmErrorCode, LlmUsage } from '../../llm/types';
+import type { ModelAttemptMeter } from '../../contracts/chat-metrics';
 
 export interface AgentLoopMessage {
   readonly role: 'user' | 'assistant';
@@ -33,8 +34,7 @@ export interface AgentLoopSummary {
 }
 export type AgentLoopErrorCode =
   Exclude<LlmErrorCode, 'rate_limit' | 'cancelled'> | 'invalid_input' | 'client_failure';
-export interface AttemptReservation {
-  readonly cancelBeforeSend: () => void;
+export interface AttemptReservation extends ModelAttemptMeter {
   readonly recordUsage: (usage: LlmUsage) => void;
 }
 export type AttemptAdmission =

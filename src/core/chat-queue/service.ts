@@ -359,6 +359,12 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
               ? {}
               : { initiativeEvidenceId: work.initiativeEvidenceId }),
             isCurrent,
+            recordMetric: (
+              event: import('../../contracts/chat-metrics').JobMetricEvent,
+              ordinal: number,
+            ) => {
+              if (!task.done) backend.recordMetric(token, work, event, ordinal);
+            },
             ...(limits && work.route && work.route.kind !== 'initiative'
               ? { checkRequestQuota: () => backend.checkRequestQuota(token, work, limits) }
               : {}),

@@ -3,6 +3,7 @@ import type { AgentLoopOptions } from './types';
 import type { LlmRequest, LlmResult, LlmToolCall, LlmToolDescription } from '../../llm/types';
 import { estimateRequestInput, toolMessageInputCost } from '../context/budget';
 import type { ToolAccess } from '../../contracts/tool';
+import type { ModelStep } from '../../contracts/chat-metrics';
 
 const inputLimit = 2560;
 const outputLimit = 640;
@@ -51,10 +52,12 @@ export interface DelegationHost {
   ) => Promise<Material | 'limit' | undefined>;
   /** Берёт общий шаг, сохраняя последний шаг для основной модели. */
   readonly takeHelperStep: () => boolean;
+  readonly branch?: (ordinal: number, phase: 'started' | 'finished') => void;
   /** До запроса проверяет итоговый резерв и учитывает попытку в F4.6. */
   readonly attempt: (
     request: LlmRequest,
     messageIds: readonly number[],
+    step: Extract<ModelStep, { executor: 'subagent' }>,
   ) => Promise<LlmResult | undefined>;
 }
 
@@ -169,7 +172,7 @@ function readResult(
 export function createDelegation(host: DelegationHost) {
   const calls = new Map<string, { raw: string; result: Promise<DelegateResult> }>();
   const previous = new Map<string, Material>();
-  async function run(id: string, task: Assignment): Promise<DelegateResult> {
+  async function run(id: string, task: Assignment, branch: number): Promise<DelegateResult> {
     const ids = new Set<number>(),
       refs = new Set<string>();
     const schemas = readerSchemas(host, task.tools);
@@ -185,6 +188,8 @@ export function createDelegation(host: DelegationHost) {
     if (!prepared) return empty('limit');
     let request = prepared.request;
     let truncated = prepared.truncated;
+    let step = 0;
+    const reads = new Map<string, { call: LlmToolCall; result: Material | 'limit' | undefined }>();
     for (const source of prepared.used) {
       refs.add(source.ref);
       for (const n of source.messageIds) ids.add(n);
@@ -198,7 +203,11 @@ export function createDelegation(host: DelegationHost) {
       let result: LlmResult;
       for (let attempt = 1; ; attempt++) {
         if (!current()) return empty('cancelled', sourceIds);
-        const received = await host.attempt(request, sourceIds);
+        const received = await host.attempt(request, sourceIds, {
+          executor: 'subagent',
+          branch,
+          step,
+        });
         if (!current()) return empty('cancelled', sourceIds);
         if (!received) return empty('limit', sourceIds);
         result = received;
@@ -243,10 +252,16 @@ export function createDelegation(host: DelegationHost) {
         )
           return empty('unavailable', [...ids]);
         const available = inputLimit - estimateRequestInput({ ...request, messages });
-        const read = await host.read(call, host.signal, (text, ceiling = Infinity) => {
-          const wrapped = JSON.stringify({ ref: 'read:' + call.id, text });
-          return toolMessageInputCost(call.id, wrapped) <= Math.min(available, ceiling);
-        });
+        const cached = reads.get(call.id);
+        if (cached && (cached.call.name !== call.name || cached.call.arguments !== call.arguments))
+          return empty('unavailable', [...ids]);
+        const read = cached
+          ? cached.result
+          : await host.read(call, host.signal, (text, ceiling = Infinity) => {
+              const wrapped = JSON.stringify({ ref: 'read:' + call.id, text });
+              return toolMessageInputCost(call.id, wrapped) <= Math.min(available, ceiling);
+            });
+        if (!cached) reads.set(call.id, { call, result: read });
         if (read === 'limit') return empty('limit', [...ids]);
         if (!read || !host.visible(read.messageIds)) return empty('unavailable', [...ids]);
         const reply = {
@@ -264,6 +279,7 @@ export function createDelegation(host: DelegationHost) {
         messages.push(reply);
       }
       request = { ...request, messages, tools: readerSchemas(host, task.tools) };
+      step++;
     }
   }
 
@@ -278,12 +294,25 @@ export function createDelegation(host: DelegationHost) {
     if (calls.size >= 2) return Promise.resolve(empty('limit'));
     const task = assignment(call.arguments);
     if (!task) return Promise.resolve(empty('unavailable'));
+    const branch = calls.size + 1;
+    host.branch?.(branch, 'started');
     const result = new Promise<DelegateResult>((resolve) => {
-      const cancel = () => resolve(empty('cancelled'));
+      let finished = false;
+      const finish = (value: DelegateResult) => {
+        if (finished) return;
+        finished = true;
+        try {
+          host.branch?.(branch, 'finished');
+          resolve(value);
+        } catch {
+          resolve(empty('unavailable'));
+        }
+      };
+      const cancel = () => finish(empty('cancelled'));
       host.signal.addEventListener('abort', cancel, { once: true });
       Promise.resolve()
-        .then(() => run(call.id, task))
-        .then(resolve, () => resolve(empty(host.signal.aborted ? 'cancelled' : 'unavailable')))
+        .then(() => run(call.id, task, branch))
+        .then(finish, () => finish(empty(host.signal.aborted ? 'cancelled' : 'unavailable')))
         .finally(() => host.signal.removeEventListener('abort', cancel));
     });
     calls.set(call.id, { raw: call.arguments, result });
