@@ -186,6 +186,79 @@ export function reconcileModelMetrics(
   return true;
 }
 
+export type DeliveryOutcome = 'delivered' | 'unknown' | 'failed';
+type DeliveryFact = MetricsScope & {
+  readonly at: number;
+  readonly series: 'requests' | 'initiative_main';
+  readonly confirmed: 0 | 1;
+};
+
+export function beginMeasuredPublication(db: Database, scope: MetricsScope, jobId: number) {
+  requireInput(db.inTransaction);
+  db.prepare(
+    `INSERT INTO chat_metrics_publications(job_id,chat_id,generation,received_at,series)
+     SELECT j.id,j.chat_id,j.generation,j.received_at,
+       CASE WHEN j.initiative_cause IS NULL THEN 'requests' ELSE 'initiative_main' END
+     FROM queue_jobs j JOIN chat_metrics_collection c USING(chat_id,generation)
+     WHERE j.id=? AND j.chat_id=? AND j.generation=? AND j.state='terminal' AND j.outcome='completed'
+       AND (j.route_kind IS NOT NULL OR j.initiative_cause IS NOT NULL)
+       AND j.received_at>=c.started_at AND j.received_at>=?
+     ON CONFLICT DO NOTHING`,
+  ).run(jobId, scope.chatId, scope.generation, metricsRetention(Date.now()).day);
+}
+
+function countDelivery(db: Database, fact: DeliveryFact, outcome: DeliveryOutcome, now: number) {
+  const counter = fact.confirmed
+    ? outcome === 'delivered'
+      ? 'delivered'
+      : 'partial'
+    : outcome === 'failed'
+      ? 'delivery_failed'
+      : 'unknown_delivery';
+  addChatMetrics(db, fact, fact.at, fact.series, { [counter]: 1 }, now);
+}
+
+export function finishMeasuredPublication(
+  db: Database,
+  scope: MetricsScope,
+  jobId: number,
+  outcome: DeliveryOutcome,
+) {
+  requireInput(db.inTransaction);
+  const fact = db
+    .prepare(
+      `UPDATE chat_metrics_publications SET finished=1
+     WHERE job_id=? AND chat_id=? AND generation=? AND finished=0
+     RETURNING chat_id AS chatId,generation,received_at AS at,series,confirmed`,
+    )
+    .get(jobId, scope.chatId, scope.generation) as DeliveryFact | undefined;
+  if (fact) countDelivery(db, fact, outcome, Date.now());
+}
+
+export function confirmMeasuredPart(
+  db: Database,
+  scope: MetricsScope,
+  jobId: number,
+  last: boolean,
+) {
+  requireInput(db.inTransaction);
+  db.prepare(
+    'UPDATE chat_metrics_publications SET confirmed=1 WHERE job_id=? AND chat_id=? AND generation=? AND finished=0 AND confirmed=0',
+  ).run(jobId, scope.chatId, scope.generation);
+  if (last) finishMeasuredPublication(db, scope, jobId, 'delivered');
+}
+
+export function recoverMeasuredPublications(db: Database, now: number) {
+  requireInput(db.inTransaction);
+  const unfinished = db
+    .prepare(
+      `UPDATE chat_metrics_publications SET finished=1 WHERE finished=0
+     RETURNING chat_id AS chatId,generation,received_at AS at,series,confirmed`,
+    )
+    .all() as DeliveryFact[];
+  for (const fact of unfinished) countDelivery(db, fact, 'unknown', now);
+}
+
 export function pruneChatMetrics(db: Database, now: number): void {
   requireInput(db.inTransaction);
   const { hour, day } = metricsRetention(now);

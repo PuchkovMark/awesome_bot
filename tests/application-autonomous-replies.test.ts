@@ -1,5 +1,6 @@
 import { expect, test } from 'vitest';
 import { tokenBudgetStore } from '../src/storage/token-budget-store';
+import { chatRequestMetricsStore } from '../src/storage/chat-request-metrics-store';
 import { answer, chat, fixture, mention, until } from './helpers/application-response-fixture';
 
 const help = 'Кто-нибудь, помогите разобраться с расписанием';
@@ -232,6 +233,18 @@ test.each(['delivered', 'unknown'] as const)(
       expect((await f.trace(f.submit(help))).payload.publication.status).toBe(outcome);
       const reservation = f.db.prepare('SELECT outcome FROM autonomous_quota_reservations').get();
       expect(reservation).toEqual({ outcome });
+      const metrics = chatRequestMetricsStore(f.storage).read(
+        f.scope,
+        'day',
+        0,
+        Date.now(),
+      ).buckets;
+      expect(metrics.find(({ series }) => series === 'initiative_main')?.totals).toMatchObject({
+        delivered: outcome === 'delivered' ? 1n : 0n,
+        unknown_delivery: outcome === 'unknown' ? 1n : 0n,
+        input_tokens: 1n,
+        output_tokens: 1n,
+      });
       f.failSend(undefined);
       f.at(30 * 60_000 - 1);
       expect((await f.trace(f.submit(free))).payload.publication.reason).toBe('initiative_quota');

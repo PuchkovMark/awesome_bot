@@ -1,9 +1,13 @@
 import { expect, test, vi } from 'vitest';
 import type { ConnectionScope } from '../src/contracts/index';
 import type { MetricsSeries } from '../src/contracts/chat-metrics';
-import { createAgentLoopQueue, createChatQueue } from '../src/core/index';
+import { createAgentLoopQueue, createChatQueue, createPublicationService } from '../src/core/index';
 import { queueConfig } from '../src/core/chat-queue/validation';
-import { chatRequestMetricsStore } from '../src/storage/chat-request-metrics-store';
+import {
+  beginMeasuredPublication,
+  chatRequestMetricsStore,
+  confirmMeasuredPart,
+} from '../src/storage/chat-request-metrics-store';
 import { openStorage } from '../src/storage/index';
 import { queueBackend } from '../src/storage/queue-registry';
 import { lifecycleBackend } from '../src/storage/lifecycle-store';
@@ -48,15 +52,23 @@ test(
     const app = await fixture({ summaryIntervalMs: 25, summaryFragmentSize: 1 });
     try {
       tokenBudgetStore(app.storage).update(app.scope, true, { total: 100_000 }, app.start);
-      app.complete
-        .mockResolvedValueOnce(tools(30, 5, delegate('закрытое-поручение', ['history_search'])))
-        .mockResolvedValueOnce(tools(10, 0, read))
-        .mockResolvedValueOnce({ kind: 'error', code: 'server', message: 'Сбой провайдера' })
-        .mockResolvedValueOnce(helperAnswer)
-        .mockResolvedValueOnce({ ...answer, usage: { input: 30, output: 5 } });
+      const foreground: LlmResult[] = [
+        tools(30, 5, delegate('закрытое-поручение', ['history_search'])),
+        tools(10, 0, read),
+        { kind: 'error', code: 'server', message: 'Сбой провайдера' },
+        helperAnswer,
+        { ...answer, usage: { input: 30, output: 5 } },
+      ];
+      let foregroundCalls = 0,
+        summaryCalls = 0;
+      app.complete.mockImplementation(async (request) => {
+        if (request.system.startsWith('Кратко перескажи'))
+          return { ...answer, usage: { input: summaryCalls++ === 0 ? 10 : 0, output: 0 } };
+        return foreground[foregroundCalls++]!;
+      });
       const input = app.submit(mention);
       await app.trace(input, 5_000);
-      expect(app.complete).toHaveBeenCalledTimes(5);
+      expect(foregroundCalls).toBe(5);
       expect(requests(app.storage, app.scope)?.requests).toBe(1n);
       expect(totals(app.storage, app.scope, 'main')).toMatchObject({
         steps: 2n,
@@ -83,9 +95,6 @@ test(
       expect(
         JSON.stringify(app.db.prepare('SELECT * FROM chat_metrics_attempts').all()),
       ).not.toMatch(/закрыт|Маяк|Сбой|Результат/u);
-      app.complete
-        .mockResolvedValue({ ...answer, usage: { input: 0, output: 0 } })
-        .mockResolvedValueOnce({ ...answer, usage: { input: 10, output: 0 } });
       await app.storage.messages.append(app.scope, {
         chatId: app.scope.chatId,
         messageId: 'old-summary',
@@ -97,7 +106,7 @@ test(
       });
       await until(() =>
         expect(totals(app.storage, app.scope, 'summary')).toMatchObject({
-          attempts: BigInt(app.complete.mock.calls.length - 5),
+          attempts: BigInt(summaryCalls),
           input_tokens: 10n,
           output_tokens: 0n,
           unknown_input: 0n,
@@ -248,6 +257,163 @@ const route = () =>
   ({ reason: 'mention', route: { kind: 'mention', mode: 'normal', isGroupChat: true } }) as const;
 const day = Date.UTC(2026, 10, 24);
 
+test('полная, частичная и неизвестная доставка различаются после удаления трассировок и перезапуска', async () => {
+  const app = await fixture();
+  const text = '🙂'.repeat(1100);
+  try {
+    tokenBudgetStore(app.storage).update(app.scope, true, { total: 100_000 }, app.start);
+    app.complete.mockResolvedValue({ ...answer, text });
+    const all = await app.trace(app.submit(mention));
+    expect(all.payload.publication.status).toBe('delivered');
+    expect(app.sends).toHaveLength(2);
+    app.failSend((part) => (Buffer.byteLength(part) < 4_000 ? 901 : undefined));
+    const part = await app.trace(app.submit(mention));
+    expect(part.payload.publication.reason).toBe('partial_delivery');
+    expect(app.sends).toHaveLength(3);
+    app.failSend(() => 'unknownAfterDelivery');
+    const unknown = await app.trace(app.submit(mention));
+    expect(unknown.payload.publication.status).toBe('unknown');
+    expect(requests(app.storage, app.scope)).toMatchObject({
+      requests: 3n,
+      delivered: 1n,
+      partial: 1n,
+      unknown_delivery: 1n,
+    });
+    app.db.prepare('DELETE FROM response_traces').run();
+    await app.restart(true);
+    expect(requests(app.storage, app.scope)).toMatchObject({
+      requests: 3n,
+      delivered: 1n,
+      partial: 1n,
+      unknown_delivery: 1n,
+    });
+  } finally {
+    await app.close();
+  }
+});
+
+test('очередь восстанавливает остановку между частями и учитывает подтверждённый последний фрагмент', async () => {
+  const files = storageFixture();
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(day);
+  let storage = await openStorage(files.path);
+  try {
+    const scope = scopeFor(storage, 'vk:chat');
+    await storage.chats.create(scope, { enabled: true, responseMode: 'normal', createdAt: day });
+    const backend = queueBackend(storage);
+    backend.acquire('old', 30_000, 1);
+    for (let n = 0; n < 3; n++) {
+      backend.admitRouted(
+        'old',
+        scope,
+        queueMessage(scope.chatId, String(n)),
+        route,
+        queueConfig(),
+      );
+      const work = backend.take('old')!;
+      expect(backend.finish('old', work, 'completed')).toBe('completed');
+      lifecycleBackend(storage).transaction(scope, (db) => {
+        beginMeasuredPublication(db, scope, work.id);
+        if (n !== 0) {
+          confirmMeasuredPart(db, scope, work.id, false);
+          confirmMeasuredPart(db, scope, work.id, n === 2);
+        }
+      });
+    }
+    expect(requests(storage, scope)).toMatchObject({
+      delivered: 1n,
+      partial: 0n,
+      unknown_delivery: 0n,
+    });
+    backend.release('old');
+    await storage.close();
+    storage = await openStorage(files.path);
+    const restored = scopeFor(storage, scope.chatId);
+    const current = queueBackend(storage);
+    for (const owner of ['new', 'next']) {
+      current.acquire(owner, 30_000, 1);
+      expect(requests(storage, restored)).toMatchObject({
+        delivered: 1n,
+        partial: 1n,
+        unknown_delivery: 1n,
+      });
+      current.release(owner);
+    }
+  } finally {
+    await storage.close();
+    files.cleanup();
+    clock.mockRestore();
+  }
+});
+
+test(
+  'два фоновых источника и реплика из двух частей дают отдельные значения при одном обращении',
+  { timeout: 12_000 },
+  async () => {
+    const app = await fixture({
+      active: true,
+      summaryIntervalMs: 25,
+      summaryFragmentSize: 1,
+      profileNotice: 'В беседе действует выбор использования профиля.',
+      greetings: { members: [41, 42, 73] },
+    });
+    let summaries = 0;
+    try {
+      tokenBudgetStore(app.storage).update(app.scope, true, { total: 100_000 }, app.start);
+      app.complete.mockImplementation(async (request) => {
+        if (request.system.startsWith('Extract stable facts'))
+          return { ...answer, text: '[]', usage: { input: 7, output: 3 } };
+        if (request.system.startsWith('Кратко перескажи'))
+          return { ...answer, usage: { input: summaries++ === 0 ? 10 : 0, output: 0 } };
+        return { ...answer, usage: { input: 60, output: 10 } };
+      });
+      app.at(1_000);
+      expect((await app.trace(app.submit(mention))).payload.publication.status).toBe('delivered');
+      app.complete.mockResolvedValueOnce({
+        ...answer,
+        text: '🙂'.repeat(1100),
+        usage: { input: 6, output: 4 },
+      });
+      app.at(2_000);
+      const replied = await app.trace(app.submit('Кто-нибудь, помогите разобраться с расписанием'));
+      expect(replied.payload.route?.kind).toBe('initiative');
+      expect(replied.payload.publication.status).toBe('delivered');
+      expect(app.sends.filter(({ text }) => text.includes('🙂'))).toHaveLength(2);
+      for (let i = 0; i < 10; i++) await app.journaled(app.submit(`Обычная реплика ${i}`));
+      await app.storage.messages.append(app.scope, {
+        chatId: app.scope.chatId,
+        messageId: 'yesterday',
+        role: 'user',
+        userId: 'vk:42',
+        authorName: 'Ира',
+        text: 'Встречаемся у дуба.',
+        timestamp: app.start - 86_400_000,
+      });
+      await until(() => {
+        expect(totals(app.storage, app.scope, 'profile_update')).toMatchObject({
+          input_tokens: 7n,
+          output_tokens: 3n,
+        });
+        expect(totals(app.storage, app.scope, 'summary')).toMatchObject({
+          input_tokens: 10n,
+          output_tokens: 0n,
+        });
+      });
+      expect(requests(app.storage, app.scope)).toMatchObject({ requests: 1n, delivered: 1n });
+      expect(totals(app.storage, app.scope, 'initiative_main')).toMatchObject({
+        delivered: 1n,
+        input_tokens: 6n,
+        output_tokens: 4n,
+      });
+      const spent = chatRequestMetricsStore(app.storage)
+        .read(app.scope, 'day', 0, Date.now())
+        .buckets.reduce((sum, row) => sum + row.totals.input_tokens + row.totals.output_tokens, 0n);
+      expect(spent).toBe(100n);
+    } finally {
+      await app.close();
+    }
+  },
+);
+
 test('переполнение сохраняет обращение, у истечения в очереди есть только замер ожидания', async () => {
   vi.useFakeTimers();
   vi.setSystemTime(day);
@@ -334,12 +500,28 @@ test.each(['до очистки F4.6', 'после очистки F4.6'] as cons
     });
     const preparation = Promise.withResolvers<void>();
     const entered = Promise.withResolvers<void>();
+    const publication = createPublicationService({
+      storage,
+      port: {
+        async canReply() {
+          return true;
+        },
+        async publish(input) {
+          if (!input.beforeSend?.()) return { kind: 'failed' };
+          return {
+            kind: 'delivered',
+            receipt: { messageId: 'out', userId: 'vk:bot', authorName: '', timestamp: Date.now() },
+          };
+        },
+      },
+    });
     const queue = createAgentLoopQueue({
       storage,
       tokenBudget: true,
       config: { leaseMs: 180_000 },
       tracing: { messageRetentionDays: 30 },
       modelName: 'synthetic',
+      onSettled: publication.onSettled,
       client: {
         async complete() {
           return { ...answer, usage: { input: 0, output: null } };
@@ -369,6 +551,7 @@ test.each(['до очистки F4.6', 'после очистки F4.6'] as cons
       await until(async () =>
         expect(await storage.queue.get(scope, 1)).toMatchObject({ outcome: 'completed' }),
       );
+      await until(() => expect(requests(storage, scope)?.delivered).toBe(1n));
       await queue.stop();
       const intent = lifecycleBackend(storage).transaction(scope, (db) =>
         db
@@ -419,6 +602,7 @@ test.each(['до очистки F4.6', 'после очистки F4.6'] as cons
         unknown_input: 0n,
         unknown_output: 0n,
       });
+      expect(snapshots[0]?.totals).toMatchObject({ requests: 1n, delivered: 1n });
       expect(metrics.read(restored, 'hour', 0, later).buckets).toEqual([]);
       expect(budget.read(restored, true, sent).total.confirmed).toBe(
         mode === 'после очистки F4.6' ? 0n : 9n,

@@ -6,6 +6,7 @@ import {
   recordChatMetric,
   recordFailedModelAttempt,
   recordSentModelAttempt,
+  recoverMeasuredPublications,
 } from './chat-request-metrics-store';
 import type { JobMetricEvent, MetricsSeries, ModelStep } from '../contracts/chat-metrics';
 import type { LlmRecoverySettings } from '../core/llm-recovery';
@@ -520,6 +521,7 @@ export function createQueueBackend(
             const prefix = pausePlatform === undefined ? null : `${pausePlatform}:`;
             restoreAutonomousQuota(db, prefix);
             recoverResponseRate(db, prefix);
+            recoverMeasuredPublications(db, now);
             if (pausePlatform !== undefined)
               lifecycle.pauseActivePlatform(db, pausePlatform, 'startup');
             const running = db

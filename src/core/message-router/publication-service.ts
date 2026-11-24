@@ -16,6 +16,12 @@ import type { TracePublication } from '../../storage/trace-types';
 import { traceBackend } from '../../storage/trace-store';
 import { noticeBackend } from '../../storage/notice-store';
 import { lifecycleBackend } from '../../storage/lifecycle-store';
+import {
+  beginMeasuredPublication,
+  confirmMeasuredPart,
+  finishMeasuredPublication,
+  type DeliveryOutcome,
+} from '../../storage/chat-request-metrics-store';
 import { noticeInterval } from './notice-config';
 import { publicationDecision, publicationRow, noticeTemplate } from './publication';
 import { disclosesAuthorLabel } from './author-label-disclosure';
@@ -39,7 +45,7 @@ export interface PublicationRequest extends PublicationGuard {
   readonly text: string;
   readonly replyToMessageId?: string;
   readonly beforeSend?: () => boolean;
-  readonly confirmPart: (part: PublishedPart) => void;
+  readonly confirmPart: (part: PublishedPart, last?: true) => void;
 }
 export type PublicationResult =
   | { readonly kind: 'delivered'; readonly receipt: NoticeReceipt }
@@ -144,6 +150,15 @@ export function createPublicationService(options: {
     let budget: ResponsePublicationBudget | undefined,
       meter: ResponsePublication | undefined,
       started = false;
+    let measuredJob: number | undefined;
+    let measurementStarted = false;
+    let deliveryOutcome: DeliveryOutcome | undefined;
+    function measureStart(db: Parameters<typeof beginMeasuredPublication>[0]) {
+      if (measuredJob === undefined || measurementStarted) return;
+      beginMeasuredPublication(db, scope, measuredJob);
+      measurementStarted = true;
+      deliveryOutcome ??= 'unknown';
+    }
     let preferenceDenied = false;
     let contextDenied = false;
     let meteredOutcome: import('../../storage/response-rate-store').ResponseRateOutcome = 'unknown';
@@ -314,6 +329,7 @@ export function createPublicationService(options: {
         if (!permit) return 'silence';
       }
       if (!(await guard.allow()) || !readyToSend()) return suppressed(guardReason());
+      if (!withoutJob && decision.kind === 'answer') measuredJob = jobId;
       const notice =
         decision.kind === 'notice' && isRateLimitedNotice(decision.template)
           ? { kind: decision.template, interval }
@@ -338,18 +354,21 @@ export function createPublicationService(options: {
           preferenceDenied = true;
           return false;
         }
-        if (!budget || !meter) return true;
-        if (started) {
+        if (budget && meter && started) {
           if (route.kind === 'initiative') budget.repeatInitiative?.(meter);
           return !flood || budget.currentFlood(meter);
         }
-        const admission = budget.start(meter, isCurrent);
-        if (!admission.allowed) {
-          denial.reason = admission.reason;
-          return false;
+        if (budget && meter) {
+          const admission = budget.start(meter, isCurrent);
+          if (!admission.allowed) {
+            denial.reason = admission.reason;
+            return false;
+          }
+          permit = admission.permit;
+          started = true;
         }
-        permit = admission.permit;
-        started = true;
+        if (measuredJob !== undefined && !measurementStarted)
+          lifecycle.transaction(scope, measureStart);
         return true;
       };
       const text =
@@ -361,7 +380,7 @@ export function createPublicationService(options: {
       const parts = new Set<string>();
       let journalFailed = false,
         accepting = true;
-      const confirmPart = (part: PublishedPart): void => {
+      const confirmPart = (part: PublishedPart, last?: true): void => {
         if (!accepting || !isCurrent() || journalFailed)
           throw new Error('Publication: confirmation no longer current');
         try {
@@ -423,6 +442,10 @@ export function createPublicationService(options: {
                   : undefined,
               );
             }
+            if (measuredJob !== undefined) {
+              measureStart(db);
+              confirmMeasuredPart(db, scope, measuredJob, last === true && !samePart);
+            }
           });
           parts.add(messageId);
         } catch {
@@ -441,6 +464,7 @@ export function createPublicationService(options: {
             ...replyFields,
             ...guard,
             ...(meter ||
+            measuredJob !== undefined ||
             addressPreference ||
             participantCards ||
             toolResultsCurrent ||
@@ -451,7 +475,7 @@ export function createPublicationService(options: {
           }),
         );
         if (result?.kind === 'delivered' && 'receipt' in result) {
-          if (parts.size === 0) confirmPart({ ...result.receipt, text, ...replyFields });
+          if (parts.size === 0) confirmPart({ ...result.receipt, text, ...replyFields }, true);
           else result = null;
         } else if (
           result?.kind === 'delivered' &&
@@ -472,6 +496,7 @@ export function createPublicationService(options: {
         (preferenceDenied || (result?.kind === 'failed' && !addressCurrent()))
       )
         return suppressed('address_preference_changed');
+      deliveryOutcome = journalFailed ? 'unknown' : (result?.kind ?? 'unknown');
       if (journalFailed) {
         report('journal_failed');
         if (parts.size > 0) report('partial_delivery');
@@ -513,6 +538,20 @@ export function createPublicationService(options: {
       return 'failed';
     } finally {
       closed = true;
+      if (measuredJob !== undefined && deliveryOutcome !== undefined) {
+        try {
+          const job = measuredJob,
+            outcome = deliveryOutcome;
+          const current = lifecycle.current(scope.chatId);
+          if (current.generation === scope.generation)
+            lifecycle.transaction(current, (db) => {
+              measureStart(db);
+              finishMeasuredPublication(db, current, job, outcome);
+            });
+        } catch {
+          /* Сохранённые подтверждения учитываются при восстановлении очереди. */
+        }
+      }
       if (started && budget && meter) {
         try {
           budget.finish(meter, meteredOutcome);

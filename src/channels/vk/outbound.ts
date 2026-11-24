@@ -21,7 +21,7 @@ export interface VkSendRequest extends OutgoingMessage, VkRequestGuard {
   readonly sendId?: number;
   readonly replayUntil?: number;
   readonly receivedId?: (messageId: string) => void;
-  readonly confirmPart: (part: PublishedPart) => void | Promise<void>;
+  readonly confirmPart: (part: PublishedPart, last?: true) => void | Promise<void>;
 }
 
 interface VkInvitationRequest extends VkRequestGuard {
@@ -239,7 +239,7 @@ export function createVkOutbound(options: {
       if (!parent) return { kind: 'failed', confirmedParts: 0 };
     }
     const confirmedIds = new Set<number>();
-    for (const chunk of chunks) {
+    for (const [index, chunk] of chunks.entries()) {
       const confirmedParts = confirmedIds.size;
       const expectedParent = confirmedParts === 0 ? parent : undefined;
       let sent: Awaited<ReturnType<typeof sendPart>>;
@@ -265,14 +265,22 @@ export function createVkOutbound(options: {
       if (invitation && (!text || observed.text !== text || !expectedLink))
         return { kind: 'unknown', confirmedParts };
       if (input.kind === 'notice' && !linked) return { kind: 'unknown', confirmedParts };
-      await input.confirmPart({
+      const part: PublishedPart = {
         messageId: String(cmid),
         userId: `vk:${observed.author}`,
         authorName: '',
         text: observed.text,
         timestamp: observed.date * 1000,
         ...(linked ? { replyToMessageId: String(expectedParent.cmid) } : {}),
-      });
+      };
+      if (
+        input.kind === 'answer' &&
+        index === chunks.length - 1 &&
+        observed.text === text &&
+        expectedLink
+      )
+        await input.confirmPart(part, true);
+      else await input.confirmPart(part);
       confirmedIds.add(cmid);
       if (observed.text !== text || !expectedLink)
         return { kind: 'unknown', confirmedParts: confirmedIds.size };
