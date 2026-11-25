@@ -39,6 +39,8 @@ export function until(check: () => void | Promise<void>) {
 export async function fixture(
   options: {
     startAt?: number;
+    files?: ReturnType<typeof storageFixture>;
+    resume?: boolean;
     limit?: number;
     profileNotice?: string;
     retentionDays?: number;
@@ -69,11 +71,11 @@ export async function fixture(
     quotas?: Partial<ChatLimits>;
   } = {},
 ) {
-  const files = storageFixture();
+  const files = options.files ?? storageFixture();
   try {
     options.existingChat?.(files.path);
   } catch (error) {
-    files.cleanup();
+    if (!options.files) files.cleanup();
     throw error;
   }
   const clock = vi.spyOn(Date, 'now');
@@ -150,13 +152,22 @@ export async function fixture(
     fwd_messages?: readonly unknown[];
     action?: { type: string; member_id?: number };
   };
-  const messages = new Map<number, Message>();
+  const messages = new Map<string, Message>();
+  const messageKey = (destination: number, cmid: number) => destination + '/' + cmid;
+  function remember(message: Message) {
+    messages.set(messageKey(message.peer_id, message.conversation_message_id), message);
+  }
   const names = new Map<number, { first_name: string; last_name: string }>();
   const sends: (Message & { readonly disableMentions: number; readonly sendId: number })[] = [];
   let members: readonly number[] | null = options.greetings?.members ?? null;
   const filesSent: { peer: number; attachment: string }[] = [];
   let privateAllowed = true;
-  let serial = 0;
+  let serial = options.resume
+    ? (db
+        .prepare('SELECT coalesce(max(CAST(platform_message_id AS INTEGER)),0) FROM messages')
+        .pluck()
+        .get() as number)
+    : 0;
   let tick = 0;
   let sendFault:
     ((text: string) => number | 'unknown' | 'unknownAfterDelivery' | undefined) | undefined;
@@ -210,7 +221,7 @@ export async function fixture(
         if (method === 'messages.getByConversationMessageId') {
           const items = String(args.conversation_message_ids)
             .split(',')
-            .map((id) => messages.get(Number(id)))
+            .map((id) => messages.get(messageKey(Number(args.peer_id), Number(id))))
             .filter((item) => item !== undefined);
           const hold = receiptHold;
           if (hold && items.some((item) => item.from_id === -group && hold.match(item.text))) {
@@ -236,7 +247,9 @@ export async function fixture(
           args.forward === undefined
             ? undefined
             : (JSON.parse(String(args.forward)) as { conversation_message_ids: number[] });
-        const parent = forward && messages.get(forward.conversation_message_ids[0]!);
+        const parent =
+          forward &&
+          messages.get(messageKey(Number(args.peer_ids), forward.conversation_message_ids[0]!));
         const row: Message = {
           peer_id: Number(args.peer_ids),
           conversation_message_id: ++serial,
@@ -245,7 +258,7 @@ export async function fixture(
           text: String(args.message),
           ...(parent ? { reply_message: parent } : {}),
         };
-        messages.set(row.conversation_message_id, row);
+        remember(row);
         sends.push({
           ...row,
           disableMentions: Number(args.disable_mentions),
@@ -311,7 +324,7 @@ export async function fixture(
     } finally {
       db.close();
       await storage.close();
-      files.cleanup();
+      if (!options.files) files.cleanup();
       clock.mockRestore();
       monotonic.mockRestore();
     }
@@ -321,7 +334,7 @@ export async function fixture(
     await resolveApplicationChat(
       { databasePath: files.path, ownerId },
       chat,
-      options.existingChat ? 'continue' : 'new',
+      options.resume || options.existingChat ? 'continue' : 'new',
     );
     const scope = lifecycleBackend(storage).current(chat);
     await until(() => expect(disclosure.gate(scope).version).toBe(version));
@@ -354,7 +367,7 @@ export async function fixture(
           text: '',
           action: { type, ...(member === undefined ? {} : { member_id: member }) },
         };
-        messages.set(row.conversation_message_id, row);
+        remember(row);
         listener.onUpdates([{ type: 'message_new', group_id: group, object: { message: row } }]);
         return row.conversation_message_id;
       },
@@ -429,25 +442,36 @@ export async function fixture(
       name(from: number, first: string, last = '') {
         names.set(from, { first_name: first, last_name: last });
       },
-      hideVkMessage(id: number) {
-        messages.delete(id);
+      hideVkMessage(id: number, destination = peer) {
+        messages.delete(messageKey(destination, id));
       },
-      replay(id: number) {
-        const message = messages.get(id);
+      replay(id: number, destination?: number) {
+        const message =
+          destination === undefined
+            ? [...messages.values()].find((row) => row.conversation_message_id === id)
+            : messages.get(messageKey(destination, id));
         if (message)
           listener.onUpdates([{ type: 'message_new', group_id: group, object: { message } }]);
       },
-      submit(text: string, from = 41, parent?: Message, destination = peer, forwarded = false) {
+      submit(
+        text: string,
+        from = 41,
+        parent?: Message,
+        destination = peer,
+        forwarded = false,
+        cmid = serial + 1,
+      ) {
+        serial = Math.max(serial, cmid);
         const row: Message = {
           peer_id: destination,
-          conversation_message_id: ++serial,
+          conversation_message_id: cmid,
           from_id: from,
           date: Math.floor(Date.now() / 1000),
           text,
           ...(parent ? { reply_message: parent } : {}),
           ...(forwarded ? { fwd_messages: [{}] } : {}),
         };
-        messages.set(row.conversation_message_id, row);
+        remember(row);
         listener.onUpdates([{ type: 'message_new', group_id: group, object: { message: row } }]);
         return row.conversation_message_id;
       },
