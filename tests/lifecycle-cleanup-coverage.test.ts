@@ -47,6 +47,8 @@ const tables = [
   'personal_reminder_parts',
   'personal_profile_choices',
   'personal_deletions',
+  'personal_dispute_cases',
+  'personal_dispute_reports',
   'personal_exports',
   'personal_retained_denials',
   'personal_hidden_messages',
@@ -105,6 +107,8 @@ const tables = [
   'sqlite_sequence',
 ];
 const others = [
+  'personal_dispute_reports_by_code',
+  'personal_dispute_keep',
   'control_commands_by_origin',
   'control_commands_by_target',
   'legacy_control_commands',

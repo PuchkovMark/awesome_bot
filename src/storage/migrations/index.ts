@@ -54,6 +54,7 @@ export interface Migration {
 }
 import { recapClarifications } from './055-recap-clarifications';
 import { explicitPassportEditors } from './056-explicit-passport-editors';
+import { personalDisputes } from './058-personal-disputes';
 import { controlCommandOrigin } from './057-control-command-origin';
 import { questionnaireReplacement } from './054-questionnaire-replacement';
 import { pausedResetRequests } from './053-paused-reset-requests';
@@ -119,4 +120,5 @@ export const migrations: readonly Migration[] = [
   recapClarifications,
   explicitPassportEditors,
   controlCommandOrigin,
+  personalDisputes,
 ];
