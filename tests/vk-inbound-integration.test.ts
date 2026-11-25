@@ -306,6 +306,42 @@ describe('приём VK через штатный роутер', () => {
     }
   });
 
+  it('два сообщения, полученные до решения владельца, не переходят в открытое им поколение', async () => {
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const f = await fixture({
+      async observe() {
+        entered.resolve();
+        await release.promise;
+        return { confidence: 'confirmed', bot: 'present' };
+      },
+    });
+    const run = start(f, { privateEntry: { verifyFirstPrivate: () => true } });
+    try {
+      await f.ready;
+      f.update(
+        event(1, { peer_id: 73, text: 'Привет' }),
+        event(2, { peer_id: 73, text: 'Начать' }),
+      );
+      await entered.promise;
+      const selected = f.decide('vk:73', 'new');
+      release.resolve();
+      await vi.waitFor(() =>
+        expect(run.inbound.stats().paused + run.inbound.stats().dispatched).toBe(2),
+      );
+      expect(run.inbound.stats().dispatched).toBe(0);
+      expect(await f.storage.messages.list(selected, { limit: 10 })).toEqual([]);
+      f.update(event(3, { peer_id: 73, text: 'Привет' }));
+      await vi.waitFor(() => expect(f.handled).toHaveBeenCalledOnce());
+      expect(await f.storage.messages.list(selected, { limit: 10 })).toMatchObject([
+        { messageId: '3' },
+      ]);
+    } finally {
+      release.resolve();
+      await close(f, run.done);
+    }
+  });
+
   it('журналирует до обработки, разрешает reply из этой беседы и дедуплицирует в пределах peer', async () => {
     const f = await fixture();
     const old = (await f.lifecycle.verify(firstChat)).scope!;

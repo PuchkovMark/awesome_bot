@@ -181,7 +181,7 @@ export function createVkInbound(
     if (started) throw new Error('VK inbound: already started');
     started = true;
     let subscription = Symbol();
-    const tails = new Map<ChatId, Promise<void>>();
+    const tails = new Map<ChatId, { tail: Promise<void>; openingScope?: ConnectionScope }>();
     const pending = new Set<Promise<void>>();
     let observing = true;
 
@@ -336,19 +336,20 @@ export function createVkInbound(
           counters.paused++;
           continue;
         }
-        const task = (tails.get(chatId) ?? Promise.resolve())
+        const batch = tails.get(chatId) ?? { tail: Promise.resolve() };
+        const task = batch.tail
           .then(async () => {
-            const prior = receivedScope ?? admission(chatId);
+            const prior = receivedScope ?? batch.openingScope;
             const opened =
-              prior === undefined && observingEvent()
+              prior === undefined && observingEvent() && admission(chatId) === undefined
                 ? await openPrivate(message, chatId, observingEvent)
                 : undefined;
-            const scope = prior ?? opened?.scope;
-            if (!scope || scope === 'paused') {
+            if (opened) batch.openingScope = opened.scope;
+            const admittedScope = prior ?? opened?.scope;
+            if (!admittedScope) {
               counters.paused++;
               return;
             }
-            const admittedScope = scope;
             const isCurrent = () => observingEvent() && lifecycle.isAdmissionCurrent(admittedScope);
             if (!isCurrent()) {
               counters.paused++;
@@ -390,9 +391,10 @@ export function createVkInbound(
           })
           .finally(() => {
             pending.delete(task);
-            if (tails.get(chatId) === task) tails.delete(chatId);
+            if (tails.get(chatId)?.tail === task) tails.delete(chatId);
           });
-        tails.set(chatId, task);
+        batch.tail = task;
+        tails.set(chatId, batch);
         pending.add(task);
       }
     }
