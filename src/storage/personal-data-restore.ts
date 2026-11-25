@@ -112,6 +112,14 @@ function reconcileSnapshot(staged: Database, newer: Database, now: number) {
         );
       }
       for (const operation of admitted) {
+        // Поздняя жалоба не меняет границу, с которой подтверждение удаления скрывало старые ответы.
+        staged
+          .prepare(
+            `INSERT OR IGNORE INTO personal_hidden_messages(message_id,code,disputed)
+          SELECT m.id,c.code,1 FROM personal_dispute_cases c JOIN messages m ON m.platform_message_id=c.platform_message_id
+          WHERE c.code=? AND c.state IN ('open','legacy_open') AND m.chat_id=?`,
+          )
+          .run(operation.code, operation.chatId);
         const rows = newer
           .prepare(
             `SELECT m.platform_message_id AS id,h.disputed FROM personal_hidden_messages h JOIN messages m ON m.id=h.message_id WHERE h.code=?`,

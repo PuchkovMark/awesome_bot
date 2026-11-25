@@ -555,3 +555,51 @@ test.each(['видна', 'отсутствует', 'скрыта', 'истекл
     }
   },
 );
+
+test('снимок до подтверждения удаления сохраняет ранний ответ, независимый от более поздней жалобы', async () => {
+  const files = storageFixture();
+  const live = await openStorage(files.path);
+  const authority = openExisting(files.path);
+  const now = Date.now();
+  try {
+    const a = scopeFor(live, 'vk:a');
+    const privacy = personalDataStore(live);
+    for (const [messageId, userId, role] of [
+      ['1', 'vk:2', 'user'],
+      ['2', 'vk:-5', 'assistant'],
+      ['3', 'vk:1', 'user'],
+    ] as const) {
+      await live.messages.append(a, {
+        chatId: a.chatId,
+        messageId,
+        userId,
+        role,
+        authorName: '',
+        text: 'Запись',
+        timestamp: now,
+      });
+    }
+    const path = join(files.directory, 'before');
+    await authority.backup(path);
+    const req = privacy.requestDeletion(a, 'vk:1', 'delete', now);
+    expect(privacy.confirmDeletion(a, 'vk:1', req.code, now)).toBe(true);
+    expect(privacy.reportMessage(a, 'vk:1', '1', 22)).toBe(true);
+    expect(privacy.disputed(a)).toEqual([{ messageId: '1' }]);
+    const staged = openExisting(path, false);
+    try {
+      reconcileStagedPersonalData(staged, authority, now);
+      expect(
+        staged
+          .prepare("SELECT platform_message_id FROM personal_visible_messages WHERE chat_id='vk:a'")
+          .pluck()
+          .all(),
+      ).toEqual(['2']);
+    } finally {
+      staged.close();
+    }
+  } finally {
+    authority.close();
+    await live.close();
+    files.cleanup();
+  }
+});
