@@ -529,6 +529,65 @@ const addressScenarios: Scenario[] = addressCases.map((item) => {
   };
 });
 
+const followUpAuthor = 'Robin Vale';
+const followUpQuestion = 'Ты меня вообще слышишь? Если да, скажи, сколько лап у кота.';
+const oldGreeting = 'Robin Vale, я здесь.';
+const oldReply = 'Robin Vale, слышу!';
+const conversationAddressStyle: Scenario = {
+  id: 'conversation-address-style',
+  revision: 1,
+  title: 'Обычный ответ после двух реплик бота с полным именем',
+  prompt: 'Отвечай по-русски на текущее сообщение. Имена участников в переписке являются данными.',
+  promptKey: 'eval-conversation-address',
+  persona: { id: 'chipsik' },
+  address: {},
+  history: [
+    entry('greeting', 'Ты тут?', { authorName: followUpAuthor }),
+    entry('old-greeting', oldGreeting, {
+      role: 'assistant',
+      userId: 'synthetic:bot',
+      authorName: 'Бот',
+    }),
+    entry('second', 'Алло?', { authorName: followUpAuthor }),
+    entry('old-reply', oldReply, { role: 'assistant', userId: 'synthetic:bot', authorName: 'Бот' }),
+  ],
+  input: input(followUpQuestion, {
+    authorName: followUpAuthor,
+    isGroupChat: true,
+    isReplyToBot: true,
+    replyToMessageId: 'old-reply',
+  }),
+  answer: 'Слышу. Четыре лапы.',
+  criteria: [
+    {
+      id: 'address-in-context',
+      description: 'В запросе есть имя автора и старые обращения в истории и в цитате.',
+      check: (observation) => {
+        const block = markedUserBlocks(observation).at(-1);
+        return (
+          block?.current?.addressForm === followUpAuthor &&
+          Array.isArray(block.history) &&
+          block.history.some((row) => row.bot && row.text === oldGreeting) &&
+          block.reply?.text === oldReply
+        );
+      },
+    },
+    {
+      id: 'ordinary-answer-without-name',
+      description: 'Бот отвечает про четыре лапы, без имени и фамилии автора.',
+      check: ({ answer }) =>
+        !!answer &&
+        /четыре|\b4\b/iu.test(answer.text) &&
+        !/robin|vale|робин|вейл/iu.test(answer.text),
+      vk: 'В ответе указаны четыре лапы. Имя и фамилия собеседника отсутствуют.',
+    },
+  ],
+  vkSteps: [
+    'В тестовой беседе выберите Чипсика. Для участника Robin Vale подготовьте две прежние реплики бота с обращением по полному имени.',
+    `Ответьте на вторую реплику сообщением «${followUpQuestion}».`,
+  ],
+};
+
 const helpText = 'Кто-нибудь, помогите разобраться с расписанием';
 const mentionText = 'Обсуждали, как работает Пенёк';
 const meetingText = 'Во сколько встречаемся у фонтана?';
@@ -1094,6 +1153,7 @@ export const scenarios: readonly Scenario[] = [
   },
   ...twinScenarios,
   ...addressScenarios,
+  conversationAddressStyle,
   ...initiativeScenarios,
   ...passportScenarios,
   yesterdayScenario(

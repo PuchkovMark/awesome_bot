@@ -31,6 +31,7 @@ test('сценарии имеют уникальные ключи сравнен
     'address-neutral',
     'address-hidden',
     'address-literal',
+    'conversation-address-style',
     'initiative-help',
     'initiative-mention',
     'initiative-question',
@@ -166,7 +167,27 @@ test('оценки обращений передают выбор только �
   expect(hidden.answer).not.toContain(hidden.address?.preference?.form);
   expect(
     new Set(scenarios.filter(({ address }) => address).map(({ promptKey }) => promptKey)),
-  ).toEqual(new Set(['f52-address-preferences']));
+  ).toEqual(new Set(['f52-address-preferences', 'eval-conversation-address']));
+});
+
+test('обычный ответ с повтором имени не проходит даже при верном ответе на вопрос', async () => {
+  const scenario = scenarios.find(({ id }) => id === 'conversation-address-style')!;
+  const result = await runScenario(scenario, {
+    async complete() {
+      return {
+        kind: 'complete',
+        text: `${scenario.input.authorName}, ${scenario.answer}`,
+        usage: { input: null, output: null },
+      };
+    },
+  });
+  expect(result).toMatchObject({
+    outcome: 'failed',
+    criteria: [
+      { id: 'address-in-context', outcome: 'passed' },
+      { id: 'ordinary-answer-without-name', outcome: 'failed' },
+    ],
+  });
 });
 
 test.each([
