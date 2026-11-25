@@ -80,6 +80,9 @@ test('составная длительность и взаимоисключа�
   });
   for (const input of [
     '1 час и ещё немного',
+    '1 час и ещё несколько минут',
+    '1 час, несколько минут',
+    '1 час и ещё пару минут',
     '1 час с половиной',
     '1 час 2 секунды',
     '1 час или полчаса',
@@ -101,5 +104,31 @@ test('составная длительность и взаимоисключа�
     schedule: undefined,
     ambiguous: true,
     content: 'забрать посылку',
+  });
+});
+
+test('отдельная числовая дата и перечисление через запятую сохраняют поручение', () => {
+  for (const input of [
+    '27.11.2026 забрать 2 посылки в 18:00 по Москве',
+    '27.11.2026 в 18:00 по Москве забрать 2 посылки',
+    'в 18:00 забрать 2 посылки 27.11.2026 по Москве',
+  ]) {
+    expect(extractReminderTime(input).content).toBe('забрать 2 посылки');
+    expect(resolve(input, '2026-11-25T12:00:00Z')).toMatchObject({
+      kind: 'scheduled',
+      dueAt: Date.UTC(2026, 10, 27, 15),
+    });
+  }
+  expect(extractReminderTime('через 1 час, 30 минут забрать 2 посылки')).toMatchObject({
+    schedule: { kind: 'relative', minutes: 90 },
+    content: 'забрать 2 посылки',
+  });
+  expect(extractReminderTime('через 1 час, ещё 30 минут обновить версию 3.14')).toMatchObject({
+    schedule: { kind: 'relative', minutes: 90 },
+    content: 'обновить версию 3.14',
+  });
+  expect(extractReminderTime('27.11.2026 проверить версию 2.10 в 18:00')).toMatchObject({
+    schedule: { kind: 'local', date: '27.11.2026', hour: 18, minute: 0 },
+    content: 'проверить версию 2.10',
   });
 });

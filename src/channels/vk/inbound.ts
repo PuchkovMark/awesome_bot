@@ -68,7 +68,7 @@ export interface VkInboundOptions {
     membershipMessageId?: string,
   ) => Promise<void>;
   readonly captureDisclosure?: (scope: ConnectionScope) => RoutedAdmissionGuard;
-  readonly verifyFirstPrivate?: (message: VkIncoming) => boolean;
+  readonly verifyFirstPrivate?: (message: VkIncoming) => boolean | { readonly commandText: string };
 }
 
 interface VkInboundDependencies {
@@ -274,17 +274,20 @@ export function createVkInbound(
           continue;
         }
         let scope: ConnectionScope | undefined;
+        let firstCommand: string | undefined;
         try {
           scope = lifecycle.admissionScope(chatId);
         } catch (error) {
           if (error instanceof StorageError && error.code === 'stale_scope') {
-            if (!options.verifyFirstPrivate?.(message)) {
+            const admission = options.verifyFirstPrivate?.(message);
+            if (!admission) {
               counters.paused++;
               void pause(chatId, 'first_seen').catch(() => {
                 counters.failed++;
               });
               continue;
             }
+            if (typeof admission === 'object') firstCommand = admission.commandText;
           } else {
             if (error instanceof StorageError && error.code === 'uncertain_connection')
               counters.paused++;
@@ -304,6 +307,8 @@ export function createVkInbound(
             if (!scope && observingEvent()) {
               try {
                 scope = lifecycle.admissionScope(chatId);
+                // Предыдущее сообщение в очереди уже открыло эту личку.
+                firstCommand = undefined;
               } catch (error) {
                 if (error instanceof StorageError && error.code === 'stale_scope') {
                   const verified = await lifecycle.verify(chatId);
@@ -336,7 +341,13 @@ export function createVkInbound(
             counters.dispatched++;
             const normalized = normalizeVkIncoming(message, groupId, enrichment);
             await dispatch(
-              normalized,
+              firstCommand && normalized.isBot === false
+                ? {
+                    ...normalized,
+                    text: firstCommand,
+                    literalText: message.literalText ?? message.text,
+                  }
+                : normalized,
               admittedScope,
               isCurrent,
               disclosure ??

@@ -112,7 +112,10 @@ function prompt(item: Reminder, proposedZone: string | undefined) {
       return lead + `укажите, о чём напомнить. Например, ${command} взять документы».`;
     case 'time':
       if (item.draft.timeExample)
-        return lead + `выберите один срок. Например, ${command} ${item.draft.timeExample}».`;
+        return (
+          lead +
+          `выберите один срок и укажите его полностью. Например, ${command} ${item.draft.timeExample}».`
+        );
       return lead + `укажите точное время в будущем. Например, ${command} завтра в 18:00».`;
     default:
       return missing;

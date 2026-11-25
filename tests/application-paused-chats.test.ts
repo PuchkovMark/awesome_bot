@@ -343,6 +343,9 @@ test('ранний личный путь принимает целую кома�
     await vi.waitFor(() => expect(f.paused()).toEqual([]));
     expect(f.life.current(row.chatId).generation).not.toBe(row.generation);
     await f.life.verify(ownerId, 'observation_lost');
+    f.update(f.event('/команды'));
+    await vi.waitFor(() => expect(f.sends.at(-1)?.text).toContain('Приостановленные беседы'));
+    expect(f.sends.at(-1)?.text).not.toContain('/помощь напоминания');
     f.update(f.event(overview));
     await vi.waitFor(() => expect(f.sends.at(-1)?.text).toContain(`Беседа ${ownerId}`));
     expect(f.sends.at(-1)).toMatchObject({

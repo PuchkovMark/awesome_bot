@@ -52,6 +52,7 @@ export async function fixture(
     modelClients?: { client?: LlmClient; auxiliaryClient?: LlmClient };
     logger?: SafeLogger;
     upload?: (peer: number, data: Buffer) => Promise<string>;
+    loseFileReceipt?: () => boolean;
     threshold?: number;
     window?: number;
     hold?: boolean;
@@ -222,6 +223,8 @@ export async function fixture(
           return { response: { is_allowed: Number(privateAllowed) } };
         if (method === 'messages.send' && args.attachment) {
           filesSent.push({ peer: Number(args.peer_id), attachment: String(args.attachment) });
+          if (options.loseFileReceipt?.())
+            throw Error('Синтетическая потеря ответа после отправки файла');
           return { response: ++serial };
         }
         if (method === 'messages.setActivity') return { response: 1 };

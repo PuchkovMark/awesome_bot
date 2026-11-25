@@ -16,5 +16,6 @@ export function introductionText(
     ...(version.profileNotice ? [version.profileNotice] : []),
     rights,
     `Часовой пояс: ${timezone}. Изменение администратором бота или владельцем: ${timezoneCommand} <пояс>.`,
+    ...(update ? [] : ['Список команд — /помощь']),
   ].join('\n');
 }

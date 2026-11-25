@@ -46,19 +46,25 @@ test('личный выбор отмены показывает реальные
 test.each([
   ['завтра забрать посылку в 18:00 по Москве', Date.UTC(2026, 10, 26, 15)],
   ['завтра в 18:00 по Москве забрать посылку', Date.UTC(2026, 10, 26, 15)],
+  ['27.11.2026 забрать посылку в 18:00 по Москве', Date.UTC(2026, 10, 27, 15)],
+  ['27.11.2026 в 18:00 по Москве забрать посылку', Date.UTC(2026, 10, 27, 15)],
   ['через 1 час 30 минут забрать посылку', Date.UTC(2026, 10, 25, 13, 30)],
+  ['через 1 час, 30 минут забрать посылку', Date.UTC(2026, 10, 25, 13, 30)],
+  ['через 1 час и ещё несколько минут забрать посылку', Date.UTC(2026, 10, 25, 13, 30)],
   ['через 1 час или через 2 часа забрать посылку', Date.UTC(2026, 10, 25, 14)],
 ] as const)('подтверждение и доставка для «%s»', async (input, dueAt) => {
   const f = await remindersFixture(Date.UTC(2026, 10, 25, 12));
   try {
     f.send('Напомни мне ' + input);
-    if (input.includes(' или ')) {
+    if (input.includes(' или ') || input.includes('несколько')) {
       await until(() => expect(f.sends.at(-1)?.text).toContain('выберите один срок'));
       const draft = f.pending()[0]!;
       expect(draft).toMatchObject({ state: 'draft', text: 'забрать посылку', dueAt: null });
-      expect(f.sends.at(-1)?.text).toContain(`уточни напоминание #${draft.id} через 2 часа`);
-      f.at(f.origin + minute);
-      f.send(`Уточни напоминание #${draft.id} через 2 часа`);
+      const interval = input.includes('несколько') ? 'через 1 час 30 минут' : 'через 2 часа';
+      const clarify = `уточни напоминание #${draft.id} ${interval}`;
+      expect(f.sends.at(-1)?.text).toContain(clarify);
+      f.at(f.origin + 5 * minute);
+      f.send(clarify);
     }
     await until(() => expect(f.sends.at(-1)?.text).toContain('Напомню вам'));
     expect(f.pending()).toEqual([
@@ -67,9 +73,11 @@ test.each([
     const confirmed = f.sends.at(-1)!.text;
     if (input.includes('завтра'))
       expect(confirmed).toContain('26 ноября 2026 г. в 18:00 (Europe/Moscow)');
+    else if (input.startsWith('27.11'))
+      expect(confirmed).toContain('27 ноября 2026 г. в 18:00 (Europe/Moscow)');
     else expect(confirmed).toContain(input.includes(' или ') ? '14:00 (UTC)' : '13:30 (UTC)');
-    if (input.includes('30 минут')) {
-      f.at(f.origin + 60 * minute);
+    if (input.includes('30 минут') || input.startsWith('27.11')) {
+      f.at(input.startsWith('27.11') ? Date.UTC(2026, 10, 25, 15) : f.origin + 60 * minute);
       f.send('Мои напоминания');
       await until(() => expect(f.sends.at(-1)?.text).toContain('#' + f.pending()[0]!.id));
       expect(f.pending()[0]!.state).toBe('pending');
@@ -86,6 +94,31 @@ test.each([
     await f.close();
   }
 });
+
+test.each(['Пенёк,', '[club314|Пенёк],', '[club314|Пенёк]'])(
+  'обращение «%s» создаёт одно личное напоминание на событие',
+  async (prefix) => {
+    const f = await remindersFixture();
+    try {
+      const event = f.send(prefix + ' напомни мне через 20 минут взять билет', 41, peer);
+      await until(() => expect(f.sends.at(-1)?.text).toContain('Напомню вам'));
+      f.repeat(event);
+      f.send('Мои напоминания');
+      await until(() => expect(f.sends.at(-1)?.text).toContain('#' + f.pending()[0]!.id));
+      expect(f.pending()).toHaveLength(1);
+      expect(f.sends.at(-1)?.text).toContain('взять билет');
+      expect(await f.storage.contextMessages.search(f.scope, 'билет', 10, 100)).toEqual([]);
+      f.at(f.origin + 20 * minute);
+      await until(() => expect(f.pending()[0]?.state).toBe('delivered'));
+      expect(f.sends.filter((s) => s.text.startsWith('Напомню вам'))).toHaveLength(1);
+      expect(f.sends.filter((s) => s.text === 'Напоминание.\nвзять билет')).toHaveLength(1);
+      expect(f.sends.every((s) => s.peer_id === 41)).toBe(true);
+      expect(f.complete).not.toHaveBeenCalled();
+    } finally {
+      await f.close();
+    }
+  },
+);
 
 test('групповая просьба подтверждается только автору, а UTC-срок переживает указание другого пояса и перезапуск', async () => {
   const f = await remindersFixture();
@@ -146,6 +179,8 @@ test('закрытая личка и чужие просьбы не создаю
     expect(f.sends[0]?.text).not.toContain('прочитать письмо');
     expect(f.pending()).toEqual([]);
     f.privateAccess(41, true);
+    f.send('[club315|Другое сообщество], напомни мне через 20 минут взять билет', 41, peer);
+    f.send('[club314|Пенёк], напомни мне через 20 минут позвать [id42|Иру]', 41, peer);
     f.send(direct + '«Напомни мне взять паспорт завтра в 18:00»', 41, peer);
     f.send(direct + 'Напомни нам завтра в 18:00', 41, peer);
     f.send('Напомни мне проверить билеты завтра в 18:00');

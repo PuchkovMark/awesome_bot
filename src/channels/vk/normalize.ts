@@ -227,13 +227,16 @@ export function parseVkIncoming(update: unknown, groupId: number): ParseResult {
     return { kind: 'invalid' };
 
   const recipients = new Set<number>();
+  const firstText = row.text.search(/\S/u);
+  // Для slash-команды адресацию отдельно проверяет vkMentionCommand по исходному тексту.
   const withoutMention = row.text.replace(
-    /\[(id|club|public)([0-9]+)\|[^[\]\r\n]+\]/gu,
-    (match: string, type: string, id: string) => {
+    /\[(id|club|public)([0-9]+)\|[^[\]\r\n]+\]([^\S\r\n]*,(?!\s*\/))?/gu,
+    (match: string, type: string, id: string, comma: string | undefined, offset: number) => {
       const recipient = vkId(Number(id) * (type === 'id' ? 1 : -1));
       if (recipient === undefined) return match;
       recipients.add(recipient);
-      return recipient === -groupId ? '' : match;
+      if (recipient !== -groupId) return match;
+      return offset === firstText ? '' : (comma ?? '');
     },
   );
   const isMentioned = recipients.has(-groupId);

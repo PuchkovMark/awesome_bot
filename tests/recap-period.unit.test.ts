@@ -83,6 +83,32 @@ test('при известном дне уточняются только час�
   }
 });
 
+test('короткий интервал и ответ о конце используют две границы исходного дня', () => {
+  const result = parseRecapPeriod('вчера с 18:00 до 20:00', at, zone);
+  for (const day of ['вчера', '24.11.2026', '2026-11-24']) {
+    expect(parseRecapPeriod(day + ' 18:00–20:00? ', at, zone)).toEqual(result);
+  }
+  const pending = parseRecapPeriod('вчера 18:00–?', at, zone);
+  expect(pending).toEqual({
+    kind: 'clarify',
+    known: {
+      from: Date.UTC(2026, 10, 24, 15),
+      calendar: { direction: 'конец', day: '2026-11-24', timezone: zone },
+    },
+  });
+  if (pending.kind !== 'clarify') throw Error('Ожидался вопрос о конце');
+  expect(recapClarification(pending.known, at)).toContain('До какого времени');
+  for (const invalid of ['18:00', '16:00', '27:61']) {
+    expect(parseRecapPeriod(invalid, at, zone, pending.known)).toEqual(pending);
+  }
+  expect(parseRecapPeriod('20:00', at + 86400000, 'UTC', pending.known)).toEqual(result);
+  const replacement = '24.11.2026 с 08:00 до 09:00';
+  expect(parseRecapPeriod(replacement, at, zone, pending.known)).toEqual(
+    parseRecapPeriod(replacement, at, zone),
+  );
+  expect(parseRecapPeriod('вчера 18:00–20:99', at, zone).kind).toBe('clarify');
+});
+
 test('обе односторонние границы строги и ограничены выбранным местным днём', () => {
   const day = Date.UTC(2026, 10, 23, 21);
   const end = Date.UTC(2026, 10, 24, 21);

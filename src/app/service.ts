@@ -51,7 +51,7 @@ import type { SafeLogger } from '../logger/index';
 import type { ApplicationFailure } from '../logger/types';
 import { catalogAdministration, installStarterPersonas } from '../storage/catalog-admin';
 import { openApplicationStorage } from './database-access';
-import type { Storage } from '../storage/index';
+import { StorageError, type Storage } from '../storage/index';
 import { createChatOnboarding } from '../core/chat-onboarding/service';
 import { canonicalTimezone, parseTimezoneCommand } from '../core/chat-onboarding/timezone';
 import { vkLocalId } from '../channels/vk/outbound';
@@ -232,16 +232,25 @@ export async function runApplication(
             }
           },
           verifyFirstPrivate(message) {
+            if (
+              message.peerId <= 0 ||
+              isVkGroupChat(message.peerId) ||
+              message.authorId !== message.peerId ||
+              message.hasReply ||
+              message.hasForwarded
+            )
+              return false;
+            if (
+              !message.isMentioned &&
+              !message.attachments.length &&
+              /^начать$/iu.test(message.text.trim())
+            )
+              return { commandText: '/помощь' };
             return (
-              message.peerId > 0 &&
-              !isVkGroupChat(message.peerId) &&
-              message.authorId === message.peerId &&
-              !message.hasReply &&
-              !message.hasForwarded &&
-              (onboarding.configuredForProfiles() ||
-                !!parseReminderCommand(message.text, false) ||
-                (!message.attachments.length &&
-                  (isPersonaCommand(message.text) || isCommandHelp(message.text))))
+              onboarding.configuredForProfiles() ||
+              !!parseReminderCommand(message.text, false) ||
+              (!message.attachments.length &&
+                (isPersonaCommand(message.text) || isCommandHelp(message.text)))
             );
           },
           onReady() {
@@ -619,6 +628,15 @@ export async function runApplication(
       const address = createAddressPreferenceHandlers({ storage, channel, signal });
       const personas = createPersonaCommands({ storage, authorization, channel, signal });
       const pausedChats = createPausedChatCommands({ channel, lifecycle, ownerId, signal });
+      function ownerServiceHelpOnly() {
+        try {
+          return !controls.read(lifecycle.admissionScope(ownerId)).enabled;
+        } catch (error) {
+          if (error instanceof StorageError && error.code === 'stale_scope') return false;
+          if (error instanceof StorageError && error.code === 'uncertain_connection') return true;
+          throw error;
+        }
+      }
       const router = createMessageRouter({
         storage,
         queue,
@@ -783,15 +801,14 @@ export async function runApplication(
               !message.isMentioned &&
               !message.hasReply &&
               !message.hasForwarded &&
-              !message.attachments.length
+              !message.attachments.length &&
+              ownerServiceHelpOnly()
             ) {
-              const active = lifecycle.activeChatIds('vk').includes(ownerId);
-              if (!active || !controls.read(lifecycle.admissionScope(ownerId)).enabled)
-                return channel.replyPrivateControl(
-                  ownerId,
-                  commandHelp('owner', false, false, 'silent', ownerId, message.text),
-                  { signal, isCurrent, allow: async () => isCurrent() },
-                );
+              return channel.replyPrivateControl(
+                ownerId,
+                commandHelp('owner', false, false, 'silent', ownerId, message.text),
+                { signal, isCurrent, allow: async () => isCurrent() && ownerServiceHelpOnly() },
+              );
             }
             if (
               passports.beforePersonalCommands(message) ||

@@ -63,6 +63,24 @@ describe('нормализация входящего сообщения VK', ()
     expect(parse({ text: '  Бот, [club314|\nТекст]  ' }).text).toBe('  Бот, [club314|\nТекст]  ');
   });
 
+  it('относит запятую к начальному обращению и сохраняет остальных адресатов', () => {
+    const request = 'напомни мне через 20 минут взять билет';
+    for (const prefix of ['  [club314|Пенёк], ', '[public314|Пенёк] ']) {
+      const literalText = prefix + request;
+      expect(parse({ text: literalText })).toMatchObject({
+        text: request,
+        literalText,
+        soleBotMention: true,
+      });
+    }
+    expect(parse({ text: '[club315|Другой], ' + request })).toMatchObject({ isMentioned: false });
+    expect(parse({ text: '[club314|Пенёк], [id41|Ира], ' + request })).toMatchObject({
+      text: '[id41|Ира], ' + request,
+      hasOtherAddress: true,
+    });
+    expect(parse({ text: 'Спасибо [club314|Пенёк], до завтра' }).text).toBe('Спасибо , до завтра');
+  });
+
   it('извлекает только тип вложения и допускает пустой текст', () => {
     const parsed = parse({
       text: '',

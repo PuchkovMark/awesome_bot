@@ -58,6 +58,15 @@ test('помощь и команды совпадают и учитывают п
     const quiet = await request('/помощь', 42, 'Доступные команды');
     expect(quiet).toContain('/помощь анкета — вопросы беседы.');
     expect(quiet).not.toMatch(/заполнени|\/помощь профиль/u);
+    for (const actor of [42, 73]) {
+      for (const alias of ['/помощь', '/команды']) {
+        const help = await request(alias, actor, 'Доступные команды');
+        const persona = help.match(/^\/персонаж(?=\s)/mu)?.[0];
+        expect(persona).toBe('/персонаж');
+        const reply = await request(persona!, actor, 'Доступные персонажи');
+        expect(reply).toContain('Текущий персонаж');
+      }
+    }
     const settings = await request('/помощь анкета', 42, '/вопросы изменить');
     expect(settings).not.toMatch(/\/анкета|заполнени/u);
     expect(await request('/команды профль', 42, 'Доступные темы')).toBe(
@@ -67,7 +76,9 @@ test('помощь и команды совпадают и учитывают п
     await request('/вопросы изменить', 42, 'ответьте на это сообщение');
     const start = app.sends.length;
     await app.journaled(app.submit('/помощь', 41));
+    await app.journaled(app.submit('/персонаж', 41));
     await request('/настройки', 42, 'молчаливый');
+    expect(app.sends.slice(start).some((x) => x.text.includes('Доступные персонажи'))).toBe(false);
     expect(app.sends.slice(start).filter((x) => x.text.startsWith('Доступные команды'))).toEqual(
       [],
     );
@@ -75,6 +86,25 @@ test('помощь и команды совпадают и учитывают п
     expect(await request('/команды', 73, 'Приостановленные беседы', 73)).toBe(owner);
     await request('Приостановленные беседы', 73, 'бесед', 73);
     expect(app.complete).not.toHaveBeenCalled();
+  } finally {
+    await app.close();
+  }
+});
+
+test('участник открывает справку по команде из вступления в новую беседу', async () => {
+  const app = await fixture();
+  try {
+    const destination = peer + 1;
+    await app.connectGroup(destination);
+    const intro = app.sends.find(
+      (s) => s.peer_id === destination && s.text.includes('Пенёк подключён'),
+    );
+    const command = intro?.text.match(/Список команд — (\/помощь)/u)?.[1];
+    expect(command).toBe('/помощь');
+    app.submit(command!, 41, undefined, destination);
+    await until(() => expect(app.sends.at(-1)?.text).toContain('/помощь напоминания'));
+    expect(app.sends.at(-1)?.peer_id).toBe(destination);
+    expect(app.sends.at(-1)?.text).not.toContain('/режим');
   } finally {
     await app.close();
   }
@@ -88,6 +118,7 @@ test.each([undefined, 'Уведомление о профиле'])(
       for (const [command, actor] of [
         ['/помощь', 41],
         ['/команды', 42],
+        ['Начать', 43],
       ] as const) {
         app.submit(command, actor, undefined, actor);
         await until(() =>
@@ -105,6 +136,11 @@ test.each([undefined, 'Уведомление о профиле'])(
             .pluck()
             .get('vk:' + actor),
         ).toBe('active');
+        if (command === 'Начать') {
+          const count = app.sends.length;
+          app.submit('/помощь', actor, undefined, actor);
+          await until(() => expect(app.sends[count]?.text).toBe(texts.at(-1)));
+        }
         app.submit('/помощь напоминания', actor, undefined, actor);
         await until(() =>
           expect(
@@ -119,6 +155,46 @@ test.each([undefined, 'Уведомление о профиле'])(
     }
   },
 );
+
+test.each(['/помощь', '/команды', '/помощь напоминания', '/команды напоминания'])(
+  'первое сообщение владельца «%s» открывает личную справку',
+  async (command) => {
+    const app = await fixture();
+    try {
+      app.submit(command, 73, undefined, 73);
+      await until(() => expect(app.sends.at(-1)?.peer_id).toBe(73));
+      const text = app.sends.at(-1)!.text;
+      if (command.includes('напоминания')) {
+        for (const example of ['Напомни мне', 'Мои напоминания', 'Отмени напоминание'])
+          expect(text).toContain(example);
+      } else {
+        expect(text).toContain('/помощь напоминания');
+        expect(text).toContain('Приостановленные беседы');
+      }
+      expect(app.complete).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  },
+);
+
+test('пересылка и последующее «Начать» в приостановленной личке сохраняют паузу', async () => {
+  const app = await fixture();
+  try {
+    const state = () =>
+      app.db.prepare("SELECT state FROM chat_connections WHERE chat_id='vk:41'").pluck().get();
+    app.submit('Начать', 41, undefined, 41, true);
+    await until(() => expect(state()).toBe('uncertain'));
+    app.submit('Начать', 41, undefined, 41);
+    app.submit('/помощь', 42, undefined, 42);
+    await until(() => expect(app.sends.some((row) => row.peer_id === 42)).toBe(true));
+    expect(state()).toBe('uncertain');
+    expect(app.sends.filter((row) => row.peer_id === 41)).toEqual([]);
+  } finally {
+    await app.close();
+  }
+});
+
 test('обращение по имени сохраняет команду и настройки дают рабочие примеры', async () => {
   const app = await fixture();
   try {

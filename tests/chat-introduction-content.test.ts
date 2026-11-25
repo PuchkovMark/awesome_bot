@@ -31,6 +31,7 @@ test('вступление описывает доступные возможн�
   expect(intro).toContain(url);
   expect(intro).toContain('Тестовый контакт');
   expect(intro).toContain(timezoneCommand);
+  expect(intro).toContain('Список команд — /помощь');
   expect(intro).not.toMatch(/\/выгрузить|\/удалить|город/iu);
   expect(splitVkText(intro)).toEqual([intro]);
   expect(parseTimezoneCommand(`${timezoneCommand} US/Eastern`)).toBe('US/Eastern');

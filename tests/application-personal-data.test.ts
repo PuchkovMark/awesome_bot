@@ -1,4 +1,5 @@
 import { expect, test, vi } from 'vitest';
+import { personalDataStore } from '../src/storage/personal-data-store';
 import {
   fixture,
   chat,
@@ -90,7 +91,12 @@ test('удаление во время загрузки JSON отменяет о
       expect(app.sends.some((x) => x.text.startsWith('Удаление принято'))).toBe(true),
     );
     uploaded.resolve('doc1_2');
-    await until(() => expect(app.sends.some((x) => x.text.includes('не подтверждена'))).toBe(true));
+    await until(() =>
+      expect(app.sends.at(-1)).toMatchObject({
+        peer_id: peer,
+        text: 'Разрешите сообщения сообщества и отправьте в личку /мои-данные ' + chat,
+      }),
+    );
     expect(app.filesSent).toEqual([]);
   } finally {
     uploaded.resolve('doc1_2');
@@ -169,6 +175,92 @@ test('явный ID соседней беседы даёт только кома
     await app.close();
   }
 });
+
+test.each(['закрыта', 'потеряна квитанция'])(
+  'статус и файл исходной беседы доступны по подсказке, если личка %s',
+  async (fault) => {
+    let loseReceipt = fault === 'потеряна квитанция';
+    let exported = '';
+    const app = await fixture({
+      loseFileReceipt: () => loseReceipt,
+      upload: async (_, data) => {
+        exported = data.toString();
+        return 'doc1_2';
+      },
+    });
+    try {
+      const author = 'vk:41';
+      const privacy = personalDataStore(app.storage);
+      const neighbor = await app.connectGroup(peer + 1);
+      await app.storage.messages.append(neighbor, {
+        chatId: neighbor.chatId,
+        messageId: 'other',
+        userId: author,
+        authorName: 'Участник',
+        role: 'user',
+        text: 'Запись из соседней беседы',
+        timestamp: app.start,
+      });
+      await app.journaled(app.submit('Прошлая запись автора'));
+      const deletion = privacy.requestDeletion(app.scope, author, 'past-deletion', app.start);
+      expect(privacy.confirmDeletion(app.scope, author, deletion.code, app.start)).toBe(true);
+      privacy.cleanup(app.start);
+      app.at(1000);
+      await app.journaled(app.submit('Новая запись в исходной беседе'));
+      const status = privacy.status(app.scope, author, app.start);
+      expect(status).toContain('Очистка рабочей базы проверена.');
+      expect(status).not.toBe(privacy.status(neighbor, author, app.start));
+
+      if (loseReceipt)
+        app.failSend((text) => (text === status ? 'unknownAfterDelivery' : undefined));
+      else app.setPrivateAllowed(false);
+      const before = app.sends.length;
+      const groupReplies = () =>
+        app.sends
+          .slice(before)
+          .filter((row) => row.peer_id === peer)
+          .map((row) => row.text);
+      const guide = 'Разрешите сообщения сообщества и отправьте в личку ';
+      const copied: string[] = [];
+      for (const name of ['/статус-удаления', '/мои-данные']) {
+        const event = app.submit(name);
+        await until(() => expect(groupReplies().at(-1)).toBe(guide + name + ' ' + chat));
+        copied.push(groupReplies().at(-1)!.slice(guide.length));
+        if (name === '/мои-данные') app.replay(event);
+      }
+      const filesBefore = loseReceipt ? 1 : 0;
+      expect(app.filesSent).toHaveLength(filesBefore);
+      loseReceipt = false;
+      app.failSend(undefined);
+      app.setPrivateAllowed(true);
+      const next = app.sends.length;
+      for (const command of copied) app.submit(command, 41, undefined, 41);
+      await until(() => {
+        expect(app.sends.slice(next).some((row) => row.peer_id === 41 && row.text === status)).toBe(
+          true,
+        );
+        expect(app.filesSent).toHaveLength(filesBefore + 1);
+      });
+      expect(JSON.parse(exported)).toMatchObject({ chat, user: author });
+      expect(exported).toContain('Новая запись в исходной беседе');
+      expect(exported).not.toContain('Запись из соседней беседы');
+
+      const success = app.sends.length;
+      app.submit('/статус-удаления');
+      app.submit('/мои-данные');
+      await until(() => {
+        expect(
+          app.sends.slice(success).some((row) => row.peer_id === 41 && row.text === status),
+        ).toBe(true);
+        expect(app.filesSent).toHaveLength(filesBefore + 2);
+      });
+      expect(groupReplies()).toEqual(copied.map((command) => guide + command));
+      expect(app.filesSent.every((file) => file.peer === 41)).toBe(true);
+    } finally {
+      await app.close();
+    }
+  },
+);
 
 test.each(['закрыта', 'потеряна квитанция'])(
   'из беседы можно продолжить в личке, когда она %s',

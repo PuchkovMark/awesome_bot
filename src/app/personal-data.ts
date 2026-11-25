@@ -203,9 +203,8 @@ export function createPersonalCommands(options: {
       };
       if (!(await guard.allow())) return;
       const commandName = match[1]!.toLowerCase();
-      async function replyOrGuide(text: string) {
-        const result = await channel.privateControlDelivery(sender, text, guard);
-        if (result !== 'delivered' && !direct && isCurrent()) {
+      async function guideInGroup() {
+        if (!direct && isCurrent()) {
           await channel.replyGroupControl(
             scope,
             `Разрешите сообщения сообщества и отправьте в личку /${commandName} ${scope.chatId}`,
@@ -213,7 +212,11 @@ export function createPersonalCommands(options: {
           );
         }
       }
-      if (match[1]?.toLowerCase() === 'удалить-мои-данные') {
+      async function replyOrGuide(text: string) {
+        if ((await channel.privateControlDelivery(sender, text, guard)) !== 'delivered')
+          await guideInGroup();
+      }
+      if (commandName === 'удалить-мои-данные') {
         const request = privacy.requestDeletion(
           scope,
           sender,
@@ -225,12 +228,12 @@ export function createPersonalCommands(options: {
         );
         return;
       }
-      if (match[1]?.toLowerCase() === 'статус-удаления') {
+      if (commandName === 'статус-удаления') {
         const status = privacy.status(scope, sender, Date.now());
-        await channel.replyPrivateControl(sender, status, guard);
+        await replyOrGuide(status);
         return;
       }
-      if (match[1]?.toLowerCase() === 'отключить-профиль') {
+      if (commandName === 'отключить-профиль') {
         const until = privacy.disable(scope, sender, Date.now());
         await replyOrGuide(
           `Профилирование в ${scope.chatId} отключено. Личная выгрузка профиля доступна до ${new Date(until).toISOString()}.`,
@@ -269,7 +272,7 @@ export function createPersonalCommands(options: {
           'Доставка личной выгрузки не подтверждена.',
           guard,
         );
-      else await channel.replyGroupControl(scope, 'Доставка файла в личку не подтверждена.', guard);
+      else await guideInGroup();
     })();
   };
 }

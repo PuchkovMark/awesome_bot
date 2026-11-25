@@ -5,9 +5,9 @@ const day = 24 * 60 * minute;
 const maxDate = 8_640_000_000_000_000;
 const amount = /(\d+)\s+(минут[ауые]?|час(?:а|ов)?|день|дня|дней)(?![\p{L}\p{N}])/giu;
 const impreciseAmount =
-  /(?:полчаса|полтора(?:\s+часа)?|с\s+половиной|ещ[её]\s+немного|час|день|минуту|\d+\s*(?:ч\.|мин\.)|(?:\d+\s+)?(?:секунд[ауые]?|недел[юяиеь]?|месяц(?:а|ев)?|года?|лет))(?![\p{L}\p{N}])/iu;
+  /(?:полчаса|полтора(?:\s+часа)?|с\s+половиной|ещ[её]\s+немного|(?:ещ[её]\s+)?(?:несколько|пару)\s+(?:минут|часов|дней)|час|день|минуту|\d+\s*(?:ч\.|мин\.)|(?:\d+\s+)?(?:секунд[ауые]?|недел[юяиеь]?|месяц(?:а|ев)?|года?|лет))(?![\p{L}\p{N}])/iu;
 function components(unit: string) {
-  return unit + '(?:\\s+(?:и\\s+)?' + unit + ')*';
+  return unit + '(?:(?:\\s*,\\s*|\\s+)(?:и\\s+)?(?:ещ[её]\\s+)?' + unit + ')*';
 }
 const exactDuration = new RegExp('^' + components(amount.source) + '$', 'iu');
 const duration = components('(?:' + amount.source + '|' + impreciseAmount.source + ')');
@@ -20,6 +20,7 @@ const clock =
 const relativeDay = /^(?:сегодня|завтра|послезавтра)$/u;
 const vague =
   /(?<!\p{L})(?:(сегодня|завтра|послезавтра)(?:\s+(?:утром|дн[её]м|вечером|ночью))?|утром|дн[её]м|вечером|ночью)(?!\p{L})/giu;
+const numericDate = /(?<![\p{L}\p{N}_./:])(\d{1,2}\.\d{1,2}(?:\.\d{4})?)(?![\p{L}\p{N}_/:]|\.\d)/gu;
 const zoneToken =
   /(?:по\s+Москве|(?<![\p{L}\p{N}_])(?:UTC|[A-Za-z][A-Za-z_+-]*(?:\/[A-Za-z0-9_+.-]+)+))(?![\p{L}\p{N}_/])/giu;
 
@@ -127,9 +128,13 @@ export function resolveReminderTime(input: ReminderTimeInput): ReminderTime {
 
 export function extractReminderTime(text: string) {
   const relatives = [...text.matchAll(interval)];
-  const absolute = [...text.matchAll(clock)];
+  // Номер версии принадлежит поручению. Пробелы сохраняют индексы диапазонов в исходном тексте.
+  const calendarText = text.replace(/(?<!\p{L})верси(?:я|ю|и|ей)\s+\d+(?:\.\d+)+/giu, (version) =>
+    ' '.repeat(version.length),
+  );
+  const absolute = [...calendarText.matchAll(clock)];
   const zones = [...text.matchAll(zoneToken)];
-  const separateDays = [...text.matchAll(vague)].filter(
+  const separateDays = [...text.matchAll(vague), ...calendarText.matchAll(numericDate)].filter(
     (part) => !absolute.some((local) => local.index === part.index),
   );
   const relativeChoices = relatives.flatMap((part) =>
@@ -181,15 +186,17 @@ export function extractReminderTime(text: string) {
       minute: Number(local[3]),
     };
   }
+  let timeExample: string | undefined;
+  if (relativeChoices.length > 1 && preciseChoices.length)
+    timeExample = 'через ' + preciseChoices.at(-1);
+  else if (relativeChoices.length === 1 && !preciseChoices.length)
+    timeExample = 'через 1 час 30 минут';
   const content = kept.join(' ');
   return {
     schedule,
     date,
     ambiguous,
-    timeExample:
-      relativeChoices.length > 1 && preciseChoices.length
-        ? 'через ' + preciseChoices.at(-1)
-        : undefined,
+    timeExample,
     explicitTimezone: zones.length > 1 ? 'неоднозначно' : zones[0]?.[0],
     content: content.replace(/^[\s,.:;–—-]+|[\s,;–—-]+$/gu, '').replace(/[ \t]{2,}/gu, ' '),
   };
