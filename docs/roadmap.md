@@ -38,6 +38,7 @@
 | --- | --- | --- | --- |
 | 084 | [Различение команд управления из лички и беседы VK](tasks/completed/084-vk-control-event-identity.md) · [План фичи](plans/completed/084-vk-control-event-identity.md) · [План реализации и приёмка](impl-plans/completed/084-vk-control-event-identity.md#результаты-приёмки) | P1 | выполнено |
 | 085 | [Сохранение решения владельца по спорной записи](tasks/completed/085-personal-dispute-decision-durability.md) · [План фичи](plans/completed/085-personal-dispute-decision-durability.md) · [План реализации и приёмка](impl-plans/completed/085-personal-dispute-decision-durability.md#результаты-приёмки) | P1 | выполнено |
+| 087 | [Справка после первого свободного сообщения в личке VK](tasks/087-vk-first-private-recovery.md) · [Утверждённый план фичи](plans/087-vk-first-private-recovery.md) · [Утверждённый план реализации](impl-plans/087-vk-first-private-recovery.md) | P1 | в работе |
 
 ## Веха 0. Процесс и документация
 
