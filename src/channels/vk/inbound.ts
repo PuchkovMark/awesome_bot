@@ -11,6 +11,8 @@ import type { RoutedAdmissionGuard } from '../../storage/queue-types';
 import { StorageError } from '../../storage/errors';
 import { createVkSdkApi } from './api';
 import type { VkInboundApi } from './api';
+import type { ReceivedInput } from '../../core/chat-queue/types';
+import { waitForVkRead } from './rate-limit';
 import { createVkLongPoll } from './long-poll';
 import type { VkPollGap, VkPollTransport } from './long-poll';
 import {
@@ -30,13 +32,16 @@ type Lifecycle = Pick<
   | 'verify'
   | 'recordConnectionSignal'
 >;
-type Router = Pick<ReturnType<typeof createMessageRouter>, 'receive'>;
+type Router = Pick<ReturnType<typeof createMessageRouter>, 'receive'> &
+  Partial<Pick<ReturnType<typeof createMessageRouter>, 'registerInput'>>;
 type Dispatch = (
   message: IncomingMessage,
   scope: ConnectionScope,
   isCurrent: () => boolean,
   disclosure?: RoutedAdmissionGuard,
   replyToOther?: boolean,
+
+  received?: ReceivedInput,
 ) => Promise<void>;
 type MembershipHandler = (event: MembershipEvent) => Promise<void>;
 interface AdministrationInbound {
@@ -55,6 +60,7 @@ export interface VkInboundOptions {
   readonly token: string;
   readonly lifecycle: Lifecycle;
   readonly signal?: AbortSignal;
+  readonly inputSignal?: AbortSignal;
   readonly capturePrivateDisclosure?: (scope: ConnectionScope) => RoutedAdmissionGuard | undefined;
   readonly notifyPrivate?: (
     scope: ConnectionScope,
@@ -85,7 +91,8 @@ export function createVkInbound(
     throw new TypeError('VK inbound: invalid configuration');
   }
   const signal = options.signal ?? new AbortController().signal;
-  const api = dependencies.api ?? createVkSdkApi(groupId, token, signal);
+  const inputSignal = options.inputSignal ?? signal;
+  const api = dependencies.api ?? createVkSdkApi(groupId, token, inputSignal);
   const transport = dependencies.transport ?? createVkLongPoll({ api });
   const counters = {
     ignored: 0,
@@ -166,7 +173,10 @@ export function createVkInbound(
     const verified = await lifecycle.verify(chatId, undefined, {
       isCurrent: observingEvent,
       async prepare() {
-        enrichment = await api.enrich(message, { signal, isCurrent: observingEvent });
+        enrichment = await waitForVkRead(
+          api.enrich(message, { signal: inputSignal, isCurrent: observingEvent }),
+          inputSignal,
+        );
         return enrichment.isBot === false && admission(chatId) === undefined;
       },
     });
@@ -177,6 +187,7 @@ export function createVkInbound(
     dispatch: Dispatch,
     membership?: MembershipHandler,
     administration?: AdministrationInbound,
+    registerInput?: Router['registerInput'],
   ): Promise<void> {
     if (started) throw new Error('VK inbound: already started');
     started = true;
@@ -184,6 +195,7 @@ export function createVkInbound(
     const tails = new Map<ChatId, { tail: Promise<void>; openingScope?: ConnectionScope }>();
     const pending = new Set<Promise<void>>();
     let observing = true;
+    let drainFailed = false;
 
     async function deliverMembership(event: MembershipEvent, handler: MembershipHandler) {
       counters.membershipDispatched++;
@@ -327,7 +339,7 @@ export function createVkInbound(
           });
           continue;
         }
-        const observingEvent = () => !signal.aborted && receivedIn === subscription;
+        const observingEvent = () => !inputSignal.aborted && receivedIn === subscription;
         const disclosure =
           receivedScope && isVkGroupChat(message.peerId)
             ? options.captureDisclosure?.(receivedScope)
@@ -336,13 +348,19 @@ export function createVkInbound(
           counters.paused++;
           continue;
         }
+        const received = registerInput?.(chatId, receivedScope, observingEvent);
+        if (registerInput && !received) {
+          counters.paused++;
+          continue;
+        }
+        const inputCurrent = () => observingEvent() && (received?.isCurrent() ?? true);
         const batch = tails.get(chatId) ?? { tail: Promise.resolve() };
         const task = batch.tail
           .then(async () => {
             const prior = receivedScope ?? batch.openingScope;
             const opened =
-              prior === undefined && observingEvent() && admission(chatId) === undefined
-                ? await openPrivate(message, chatId, observingEvent)
+              prior === undefined && inputCurrent() && admission(chatId) === undefined
+                ? await openPrivate(message, chatId, inputCurrent)
                 : undefined;
             if (opened) batch.openingScope = opened.scope;
             const admittedScope = prior ?? opened?.scope;
@@ -350,13 +368,17 @@ export function createVkInbound(
               counters.paused++;
               return;
             }
-            const isCurrent = () => observingEvent() && lifecycle.isAdmissionCurrent(admittedScope);
+            const isCurrent = () => inputCurrent() && lifecycle.isAdmissionCurrent(admittedScope);
             if (!isCurrent()) {
               counters.paused++;
               return;
             }
             const enrichment =
-              opened?.enrichment ?? (await api.enrich(message, { signal, isCurrent }));
+              opened?.enrichment ??
+              (await waitForVkRead(
+                api.enrich(message, { signal: inputSignal, isCurrent }),
+                inputSignal,
+              ));
             if (!isCurrent()) {
               counters.paused++;
               return;
@@ -384,14 +406,17 @@ export function createVkInbound(
                   ? options.capturePrivateDisclosure?.(admittedScope)
                   : undefined),
               normalized.replyAddress === 'other' || normalized.replyAddress === 'unknown',
+              received,
             );
           })
           .catch(() => {
             counters.failed++;
+            if (signal.aborted && !inputSignal.aborted) drainFailed = true;
           })
           .finally(() => {
             pending.delete(task);
             if (tails.get(chatId)?.tail === task) tails.delete(chatId);
+            received?.complete();
           });
         batch.tail = task;
         tails.set(chatId, batch);
@@ -399,6 +424,7 @@ export function createVkInbound(
       }
     }
 
+    let graceful = false;
     try {
       await transport.run(
         {
@@ -410,6 +436,7 @@ export function createVkInbound(
             observing = false;
             tails.clear();
             membershipObservations.clear();
+            if (signal.aborted) return;
             const cause = reason === 'startup' ? 'startup' : 'observation_lost';
             await Promise.all(lifecycle.activeChatIds('vk').map((chatId) => pause(chatId, cause)));
             if (subscription === next) observing = true;
@@ -418,12 +445,22 @@ export function createVkInbound(
         },
         signal,
       );
+      graceful = signal.aborted && !inputSignal.aborted;
+    } catch (error) {
+      if (
+        !signal.aborted ||
+        !(error === signal.reason || (error instanceof Error && error.name === 'AbortError'))
+      )
+        throw error;
+      graceful = !inputSignal.aborted;
     } finally {
       observing = false;
-      subscription = Symbol();
+      if (!graceful) subscription = Symbol();
       membershipObservations.clear();
       await Promise.all(pending);
+      subscription = Symbol();
     }
+    if (graceful && drainFailed) throw new Error('VK inbound: input drain failed');
   }
 
   return Object.freeze({
@@ -438,11 +475,20 @@ export function createVkInbound(
       administration?: AdministrationInbound,
     ) {
       return run(
-        async (message, scope, isCurrent, disclosure, replyToOther) => {
-          await router.receive(scope, message, undefined, isCurrent, disclosure, replyToOther);
+        async (message, scope, isCurrent, disclosure, replyToOther, received) => {
+          await router.receive(
+            scope,
+            message,
+            undefined,
+            isCurrent,
+            disclosure,
+            replyToOther,
+            received,
+          );
         },
         membership,
         administration,
+        router.registerInput?.bind(router),
       );
     },
     hasMembershipObservation(chatId: ChatId): boolean {

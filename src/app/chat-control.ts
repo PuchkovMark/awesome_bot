@@ -21,6 +21,7 @@ export function createChatControlHandlers(options: {
   readonly ownerId: UserId;
   readonly group: (chatId: ChatId) => boolean;
   readonly signal: AbortSignal;
+  readonly track: (work: Promise<unknown>) => void;
 }) {
   const { authorization, lifecycle, channel, ownerId, signal } = options;
   const controls = chatControlStore(options.storage);
@@ -78,15 +79,26 @@ export function createChatControlHandlers(options: {
       const result = await authorization.controlChat(context, command, isCurrent, event);
       if (!result.allowed || !result.value.state.enabled) return;
       const reply = formatChatControl(context.scope, command, result.value, Date.now());
-      if (reply)
-        await channel.replyGroupControl(context.scope, reply, {
-          signal,
-          isCurrent: () => isCurrent() && controls.read(context.scope).enabled,
-          async allow() {
-            if (!isCurrent()) return false;
-            return (await authorization.check(context, chatControlAction(command).action)).allowed;
-          },
-        });
+      if (reply) {
+        const current = () => {
+          if (!isCurrent()) return false;
+          const latest = controls.read(context.scope);
+          return latest.enabled && latest.responseRevision === result.value.state.responseRevision;
+        };
+        options.track(
+          channel.replyGroupControl(context.scope, reply, {
+            signal,
+            isCurrent: current,
+            async allow() {
+              return (
+                current() &&
+                (await authorization.check(context, chatControlAction(command).action)).allowed &&
+                current()
+              );
+            },
+          }),
+        );
+      }
     },
     privateCommand(message: VkIncoming, current: () => boolean) {
       if (isVkGroupChat(message.peerId)) return undefined;

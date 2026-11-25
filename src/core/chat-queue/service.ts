@@ -22,6 +22,8 @@ import type {
 import { chatLimits } from '../chat-limits/config';
 import { responseRateConfig } from '../chat-limits/response-rate-config';
 import type { LlmRecovery } from '../llm-recovery';
+import type { ChatId, ConnectionScope } from '../../contracts/index';
+import type { ReceivedInput } from './types';
 const outcomes = new Set<unknown>([
   'completed',
   'failed',
@@ -98,6 +100,15 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
   let failure: QueueError | undefined;
   const lifetime = new AbortController();
   const tasks = new Map<number, Task>();
+  const receivedInputs = new Map<
+    ReceivedInput,
+    {
+      chatId: ChatId;
+      scope: ConnectionScope | undefined;
+      current: () => boolean;
+    }
+  >();
+  let clearInputListener: (() => void) | undefined;
   const counters = {
     depthQueued: 0,
     depthRunning: 0,
@@ -123,6 +134,8 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
     }
   }
   function clearTimers() {
+    clearInputListener?.();
+    clearInputListener = undefined;
     clearImmediate(historyWake);
     historyWake = undefined;
     clearTimeout(tick);
@@ -142,10 +155,11 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
       task.controller.abort();
     }
     tasks.clear();
+    receivedInputs.clear();
     rejectStop?.(failure);
   }
   function completeStop() {
-    if (phase !== 'stopping' || tasks.size) return;
+    if (phase !== 'stopping' || tasks.size || receivedInputs.size) return;
     try {
       emit();
       backend.release(token);
@@ -605,8 +619,39 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
       armTick();
       if (failure) throw failure;
     },
-    async admitRouted(scope, message, decision, guard, serviceInput) {
-      if (phase !== 'running') return { admission: { status: 'stopped' }, decision: null };
+    registerInput(chatId, scope, current) {
+      if (
+        phase !== 'running' ||
+        (scope && scope.chatId !== chatId) ||
+        (platform !== undefined && !chatId.startsWith(platform + ':'))
+      )
+        return undefined;
+      const input = Object.freeze({
+        isCurrent() {
+          if ((phase !== 'running' && phase !== 'stopping') || !current()) return false;
+          try {
+            backend.check(token);
+            return true;
+          } catch {
+            return false;
+          }
+        },
+        complete() {
+          if (receivedInputs.delete(input)) completeStop();
+        },
+      });
+      receivedInputs.set(input, { chatId, scope, current });
+      return input;
+    },
+    async admitRouted(scope, message, decision, guard, serviceInput, received) {
+      const input = received && receivedInputs.get(received);
+      if (phase !== 'running' && (phase !== 'stopping' || !input))
+        return { admission: { status: 'stopped' }, decision: null };
+      if (
+        received &&
+        (!input || input.chatId !== scope.chatId || (input.scope && input.scope !== scope))
+      )
+        return { admission: { status: 'paused' }, decision: null };
       if (platform !== undefined && !scope.chatId.startsWith(platform + ':'))
         throw new QueueError('invalid_input');
       try {
@@ -616,7 +661,12 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
           message,
           decision,
           config,
-          guard,
+          input
+            ? () =>
+                input.current()
+                  ? (guard?.() ?? { journal: true, respond: true, version: null })
+                  : { journal: false, respond: false, version: null }
+            : guard,
           responseRate,
           options.autonomousReplies,
           serviceInput,
@@ -657,12 +707,12 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
         throw safeFailure(error);
       }
     },
-    stop() {
-      lifetime.abort();
+    stop(inputSignal) {
       if (stopPromise) return stopPromise;
       if (phase === 'failed') return Promise.reject(failure);
       if (phase === 'idle' || phase === 'stopped') {
         phase = 'stopped';
+        lifetime.abort();
         return Promise.resolve();
       }
       stopPromise = new Promise<void>((resolve, reject) => {
@@ -670,11 +720,24 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
         rejectStop = reject;
       });
       phase = 'stopping';
+      if (inputSignal) {
+        const abandon = () => {
+          receivedInputs.clear();
+          completeStop();
+        };
+        if (inputSignal.aborted) receivedInputs.clear();
+        else {
+          inputSignal.addEventListener('abort', abandon, { once: true });
+          clearInputListener = () => inputSignal.removeEventListener('abort', abandon);
+        }
+      }
       stopDeadline = performance.now() + config.stopTimeoutMs;
       stopTimer = setTimeout(() => {
         for (const task of [...tasks.values()]) finish(task, 'interrupted');
+        if (!inputSignal) receivedInputs.clear();
         completeStop();
       }, config.stopTimeoutMs);
+      lifetime.abort();
       for (const task of [...tasks.values()]) if (task.publishing) releaseTask(task);
       completeStop();
       return stopPromise;

@@ -10,6 +10,7 @@ import { StorageError } from '../storage/errors';
 import { questionnaireStore } from '../storage/questionnaire-store';
 import type { QuestionnaireReplyResult } from '../storage/questionnaire-types';
 import type { Storage } from '../storage/types';
+import { pendingControlPrompts, type TrackPublication } from './control-publications';
 
 const heading = 'Вопросы анкеты';
 const sample = 'Стартовый образец анкеты\nСписок этой беседы пока не сохранён.';
@@ -18,6 +19,7 @@ const instruction =
   '\n\nЧтобы изменить анкету, ответьте на это сообщение полным списком, по одному вопросу на строку.';
 const continuation = '\n\nДля правки дождитесь сообщения редактора.';
 const reopen = 'Откройте /вопросы изменить и ответьте на сообщение редактора полным списком.';
+const confirmation = 'Ответьте на это сообщение «Заменить» или «Оставить».';
 const edit = {
   action: 'chat.onboarding.configure',
   minimumRole: 'admin',
@@ -27,10 +29,11 @@ const edit = {
 function looksLikeEditor(text: string | undefined) {
   return (
     !!text &&
-    (text.startsWith(heading + '\n') ||
+    (((text.startsWith(heading + '\n') ||
       text.startsWith(sample) ||
       text.startsWith(editorHeading + '\n')) &&
-    (text.endsWith(instruction) || text.endsWith(continuation))
+      (text.endsWith(instruction) || text.endsWith(continuation))) ||
+      (text.startsWith('В списке ') && text.endsWith(confirmation)))
   );
 }
 
@@ -79,14 +82,15 @@ export function createQuestionnaireEditor(options: {
     'replyGroupControl' | 'deliverGroupControl'
   >;
   readonly signal: AbortSignal;
+  readonly track: TrackPublication;
 }) {
   const { storage, authorization, channel, lifecycle, signal } = options;
   const questionnaires = questionnaireStore(storage);
   const controls = chatControlStore(storage);
+  const prompts = pendingControlPrompts();
 
   function guardFor(context: AuthorizationContext, accepted: () => boolean) {
     const current = () =>
-      !signal.aborted &&
       accepted() &&
       lifecycle.isAdmissionCurrent(context.scope) &&
       controls.read(context.scope).enabled;
@@ -94,7 +98,12 @@ export function createQuestionnaireEditor(options: {
       signal,
       isCurrent: current,
       async allow() {
-        return current() && (await authorization.check(context, edit.action)).allowed && current();
+        return (
+          !signal.aborted &&
+          current() &&
+          (await authorization.check(context, edit.action)).allowed &&
+          current()
+        );
       },
     };
   }
@@ -118,14 +127,17 @@ export function createQuestionnaireEditor(options: {
         message.replyAddress === 'bot' &&
         !message.hasForwarded &&
         !!message.replyToMessageId &&
-        questionnaires.ownsPrompt(scope, message.replyToMessageId, message.userId)
+        (prompts.owns(scope, message) ||
+          questionnaires.ownsPrompt(scope, message.replyToMessageId, message.userId))
       );
     },
     recognizeReply(scope: ConnectionScope, message: IncomingMessage) {
       if (!message.isGroupChat) return null;
       const receipt = message.replyToMessageId ?? message.unverifiedReplyToMessageId;
       return receipt !== undefined &&
-        (looksLikeEditor(message.botReplyText) || questionnaires.hasPrompt(scope, receipt))
+        (looksLikeEditor(message.botReplyText) ||
+          prompts.has(scope, message) ||
+          questionnaires.hasPrompt(scope, receipt))
         ? edit
         : null;
     },
@@ -155,8 +167,12 @@ export function createQuestionnaireEditor(options: {
           title + '\n\n' + list.join('\n') + '\n\nДля правки отправьте /вопросы изменить.',
           vkMessageLength.value,
         );
-        for (const part of parts)
-          if (!(await channel.deliverGroupControl(scope, part, guard))) break;
+        options.track(
+          (async () => {
+            for (const part of parts)
+              if (!(await channel.deliverGroupControl(scope, part, guard))) break;
+          })(),
+        );
         return;
       }
       const { display, editor } = preview(title, list);
@@ -165,11 +181,18 @@ export function createQuestionnaireEditor(options: {
         isCurrent: () =>
           guard.isCurrent() && (questionnaires.current(scope)?.ref.revision ?? 0) === revision,
       };
-      for (const chunk of display)
-        if (!(await channel.deliverGroupControl(scope, chunk, stillShown))) return;
-      const receipt = await channel.deliverGroupControl(scope, editor, stillShown);
-      if (receipt && stillShown.isCurrent() && (await guard.allow()))
-        questionnaires.recordPrompt(scope, context.userId, revision, receipt);
+      options.track(
+        prompts.send(scope, context.userId, editor, async (receivedId) => {
+          for (const chunk of display)
+            if (!(await channel.deliverGroupControl(scope, chunk, stillShown))) return;
+          const receipt = await channel.deliverGroupControl(scope, editor, {
+            ...stillShown,
+            receivedId,
+          });
+          if (receipt && stillShown.isCurrent() && (await guard.allow()))
+            questionnaires.recordPrompt(scope, context.userId, revision, receipt);
+        }),
+      );
     },
     async reply(context: AuthorizationContext, message: IncomingMessage, accepted: () => boolean) {
       if (
@@ -183,33 +206,47 @@ export function createQuestionnaireEditor(options: {
       if (!guard.isCurrent()) return;
       const raw = message.literalText ?? message.text;
       if (message.attachments.length || looksLikeEditor(raw)) {
-        await channel.replyGroupControl(context.scope, reopen, guard);
+        options.track(channel.replyGroupControl(context.scope, reopen, guard));
         return;
       }
       const id = Number(message.messageId);
       if (!Number.isSafeInteger(id) || id < 1 || String(id) !== message.messageId) return;
-      const result = await authorization.applyQuestionnaireReply(
-        context,
-        { receipt: message.replyToMessageId, eventId: id, eventAt: message.timestamp, text: raw },
-        guard.isCurrent,
-      );
-      if (result.allowed && result.value.status === 'confirm') {
-        const { before, shown, question } = result.value;
-        const form = new Intl.PluralRules('ru').select(before);
-        const noun = form === 'few' ? 'вопроса' : form === 'one' ? 'вопрос' : 'вопросов';
-        const text = `В списке ${before} ${noun}, останется 1. Ответьте на это сообщение «Заменить» или «Оставить».`;
-        const receipt = await channel.deliverGroupControl(context.scope, text, guard);
-        if (receipt && (await guard.allow()))
-          questionnaires.recordPrompt(context.scope, context.userId, shown, receipt, {
-            editor: message.replyToMessageId,
-            eventId: message.messageId,
-            question,
-          });
-        return;
-      }
-      const response = result.allowed ? replyText(result.value) : null;
-      if (response && guard.isCurrent())
-        await channel.replyGroupControl(context.scope, response, guard);
+      const editor = message.replyToMessageId;
+      const apply = async () => {
+        if (!guard.isCurrent()) return;
+        const result = await authorization.applyQuestionnaireReply(
+          context,
+          { receipt: editor, eventId: id, eventAt: message.timestamp, text: raw },
+          guard.isCurrent,
+        );
+        if (result.allowed && result.value.status === 'confirm') {
+          const { before, shown, question } = result.value;
+          const form = new Intl.PluralRules('ru').select(before);
+          const noun = form === 'few' ? 'вопроса' : form === 'one' ? 'вопрос' : 'вопросов';
+          const text = `В списке ${before} ${noun}, останется 1. ${confirmation}`;
+          options.track(
+            prompts.send(context.scope, context.userId, text, async (receivedId) => {
+              const receipt = await channel.deliverGroupControl(context.scope, text, {
+                ...guard,
+                receivedId,
+              });
+              if (receipt && (await guard.allow()))
+                questionnaires.recordPrompt(context.scope, context.userId, shown, receipt, {
+                  editor,
+                  eventId: message.messageId,
+                  question,
+                });
+            }),
+          );
+          return;
+        }
+        const response = result.allowed ? replyText(result.value) : null;
+        if (response && guard.isCurrent())
+          options.track(channel.replyGroupControl(context.scope, response, guard));
+      };
+      const waiting = prompts.defer(context.scope, message, apply);
+      if (waiting) options.track(waiting);
+      else await apply();
     },
   };
 }

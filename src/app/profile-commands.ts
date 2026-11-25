@@ -56,6 +56,7 @@ export function createProfileCommands(options: {
   lifecycle: ReturnType<typeof createLifecycleService>;
   onboarding: ReturnType<typeof createChatOnboarding>;
   signal: AbortSignal;
+  track: import('./control-publications').TrackPublication;
 }) {
   const { storage, authorization, privacy, channel, lifecycle, onboarding, signal } = options;
   const lists = profileCommandStore(storage);
@@ -106,6 +107,15 @@ export function createProfileCommands(options: {
     const opening = Symbol();
     views.set(actor, opening);
     const latest = () => views.get(actor) === opening && inTarget();
+    const finish = () => {
+      pending.delete(eventKey);
+      if (views.get(actor) === opening) views.delete(actor);
+    };
+    let publishing = false;
+    const publish = (work: Promise<void>) => {
+      publishing = true;
+      options.track(work.finally(finish));
+    };
     try {
       const context = authorization.context({ scope: target, userId: actor });
       if (!(await authorization.check(context, 'profile.self.manage', actor)).allowed || !latest())
@@ -114,7 +124,7 @@ export function createProfileCommands(options: {
         channel.replyGroupControl(target, deliveryHint(target.chatId), guard(latest));
       const privateScope = await directScope(actor, latest);
       if (!privateScope) {
-        if (groupOrigin && latest()) await hint();
+        if (groupOrigin && latest()) publish(hint());
         return;
       }
       const list = lists.open(actor, privateScope, target, event, Date.now());
@@ -130,31 +140,34 @@ export function createProfileCommands(options: {
         }
       };
       const endpoint = channel.reminderDelivery(actor);
-      for (const [index, part] of parts.entries()) {
-        if (!selected()) return;
-        let receipt: string | undefined;
-        const result = await endpoint.publish(
-          prepared[index]!.text,
-          part.sendId,
-          (id) => {
-            receipt = id;
-          },
-          guard(selected),
-        );
-        if (result !== 'delivered' || receipt === undefined) {
-          if (result === 'failed' && index === 0 && groupOrigin && selected()) await hint();
-          return;
-        }
-        if (
-          !latest() ||
-          !active(privateScope) ||
-          !lists.confirm(list, part.number, part.sendId, receipt, Date.now())
-        )
-          return;
-      }
+      publish(
+        (async () => {
+          for (const [index, part] of parts.entries()) {
+            if (!selected()) return;
+            let receipt: string | undefined;
+            const result = await endpoint.publish(
+              prepared[index]!.text,
+              part.sendId,
+              (id) => {
+                receipt = id;
+              },
+              guard(selected),
+            );
+            if (result !== 'delivered' || receipt === undefined) {
+              if (result === 'failed' && index === 0 && groupOrigin && selected()) await hint();
+              return;
+            }
+            if (
+              !latest() ||
+              !active(privateScope) ||
+              !lists.confirm(list, part.number, part.sendId, receipt, Date.now())
+            )
+              return;
+          }
+        })(),
+      );
     } finally {
-      pending.delete(eventKey);
-      if (views.get(actor) === opening) views.delete(actor);
+      if (!publishing) finish();
     }
   }
 
@@ -167,10 +180,12 @@ export function createProfileCommands(options: {
       if (message.isBot !== false || message.hasForwarded) return;
       const args = show.exec(message.text.trim());
       if (!args || args[1] !== undefined || parent) {
-        await channel.replyGroupControl(
-          scope,
-          deliveryHint(args?.[1] ?? scope.chatId),
-          guard(() => current() && active(scope)),
+        options.track(
+          channel.replyGroupControl(
+            scope,
+            deliveryHint(args?.[1] ?? scope.chatId),
+            guard(() => current() && active(scope)),
+          ),
         );
         return;
       }

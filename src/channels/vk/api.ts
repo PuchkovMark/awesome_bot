@@ -2,7 +2,12 @@ import { API, APIRequest, Upload } from 'vk-io';
 import type { HumanMember, HumanMembership, KnownBoolean } from '../../contracts/index';
 import { isVkGroupChat, vkId, vkRecord } from './normalize';
 import type { VkEnrichment, VkIncoming } from './normalize';
-import { createVkRateLimiter, VkRequestCancelled, waitForVkRetry } from './rate-limit';
+import {
+  createVkRateLimiter,
+  VkRequestCancelled,
+  waitForVkRead,
+  waitForVkRetry,
+} from './rate-limit';
 import type { VkRequestGuard } from './rate-limit';
 
 type ApiMethod =
@@ -295,7 +300,9 @@ export function createVkApi(groupId: number, call: VkApiCall, signal?: AbortSign
       requestSignal ? { ...guard, signal: requestSignal } : guard,
     );
   };
-  const nameFor = personalProfiles(read);
+  const nameFor = personalProfiles((method, parameters) =>
+    waitForVkRead(read(method, parameters), signal),
+  );
   return Object.freeze({
     request: (async (method, parameters, guard) => {
       if (method === 'messages.send' && guard?.beforeSend && !limitedCalls.has(call)) {
@@ -308,7 +315,8 @@ export function createVkApi(groupId: number, call: VkApiCall, signal?: AbortSign
           throw new VkRequestCancelled();
         }
       }
-      return call(method, parameters, guard);
+      const result = call(method, parameters, guard);
+      return method === 'messages.send' ? result : waitForVkRead(result, guard?.signal);
     }) satisfies VkApiCall,
     async getUserName(id: number): Promise<string | null> {
       return (await nameFor(id)) ?? null;

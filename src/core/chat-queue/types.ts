@@ -4,7 +4,7 @@ import type {
   RoutedAdmission,
   RoutedAdmissionGuard,
 } from '../../storage/queue-types';
-import type { ConnectionScope } from '../../contracts/index';
+import type { ChatId, ConnectionScope } from '../../contracts/index';
 import type { SafeLogger } from '../../logger/types';
 import type { Storage, MessageInput } from '../../storage/index';
 import type {
@@ -107,6 +107,11 @@ export interface ChatQueueOptions {
   /** У привязанного к платформе воркера проверка непрерывности предшествует выдаче работы. */
   readonly platform?: string;
 }
+export interface ReceivedInput {
+  isCurrent(): boolean;
+  complete(): void;
+}
+
 export interface ChatQueue {
   readonly autonomousReplies?: boolean;
   readonly llmRecovery?: LlmRecovery;
@@ -115,6 +120,11 @@ export interface ChatQueue {
   readonly responseBudget?: import('../../storage/queue-types').ResponsePublicationBudget;
   wakeHistoryMaintenance?(): void;
   start(): Promise<void>;
+  registerInput(
+    chatId: ChatId,
+    scope: ConnectionScope | undefined,
+    current: () => boolean,
+  ): ReceivedInput | undefined;
   admit(
     scope: ConnectionScope,
     message: MessageInput,
@@ -126,8 +136,9 @@ export interface ChatQueue {
     decision: RoutedQueueCallback,
     guard?: RoutedAdmissionGuard,
     serviceInput?: true,
+    received?: ReceivedInput,
   ): Promise<RoutedAdmission>;
-  stop(): Promise<void>;
+  stop(inputSignal?: AbortSignal): Promise<void>;
   traceStats(): Readonly<Record<import('../response-tracing/metrics').TraceEvent, number>>;
   stats(): QueueStats;
 }

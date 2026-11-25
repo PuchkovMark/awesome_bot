@@ -5,6 +5,7 @@ import { vkMessageLength } from '../channels/vk/outbound-text';
 import type { createAuthorizationService } from '../core/authorization/service';
 import type { createLifecycleService } from '../core/lifecycle/service';
 import { ordinaryGroupRoute } from '../core/message-router/routing';
+import { pendingControlPrompts, type TrackPublication } from './control-publications';
 import { chatControlStore } from '../storage/chat-control-store';
 import { chatPassportStore } from '../storage/chat-passport-store';
 import {
@@ -138,10 +139,12 @@ export function createChatPassport(options: {
     'replyGroupControl' | 'deliverGroupControl'
   >;
   readonly signal: AbortSignal;
+  readonly track: TrackPublication;
 }) {
   const { storage, authorization, lifecycle, channel, signal } = options;
   const passport = chatPassportStore(storage);
   const controls = chatControlStore(storage);
+  const prompts = pendingControlPrompts();
 
   function sectionForReply(scope: ConnectionScope, message: IncomingMessage) {
     const receipt = message.replyToMessageId ?? message.unverifiedReplyToMessageId;
@@ -177,7 +180,8 @@ export function createChatPassport(options: {
         message.replyAddress === 'bot' &&
         !message.hasForwarded &&
         !!message.replyToMessageId &&
-        passport.ownsPrompt(scope, message.replyToMessageId, message.userId)
+        (prompts.owns(scope, message) ||
+          passport.ownsPrompt(scope, message.replyToMessageId, message.userId))
       );
     },
     recognize(scope: ConnectionScope, message: IncomingMessage) {
@@ -194,7 +198,7 @@ export function createChatPassport(options: {
     ) {
       const scope = context.scope;
       const current = () => {
-        if (signal.aborted || !accepted() || !lifecycle.isAdmissionCurrent(scope)) return false;
+        if (!accepted() || !lifecycle.isAdmissionCurrent(scope)) return false;
         return controls.read(scope).enabled;
       };
       if (!current() || !message.isGroupChat || message.isBot !== false || message.hasForwarded)
@@ -203,86 +207,111 @@ export function createChatPassport(options: {
         signal,
         isCurrent: current,
         async allow() {
-          if (!current() || !(await authorization.check(context, action)).allowed || !current())
+          if (
+            signal.aborted ||
+            !current() ||
+            !(await authorization.check(context, action)).allowed ||
+            !current()
+          )
             return false;
           if (controls.read(scope).mode !== 'silent') return true;
           const role = await authorization.role(context);
           return current() && role.allowed && role.value !== 'member';
         },
       });
-      const reply = (text: string) => channel.replyGroupControl(scope, text, guard(read.action));
+      const reply = (text: string) =>
+        options.track(channel.replyGroupControl(scope, text, guard(read.action)));
       const referenced = sectionForReply(scope, message);
       if (referenced) {
         if (message.replyAddress !== 'bot' || !message.replyToMessageId) return;
         const eventId = Number(message.messageId);
         if (!Number.isSafeInteger(eventId) || eventId < 1 || String(eventId) !== message.messageId)
           return;
-        const result = await authorization.applyPassportReply(
-          context,
-          {
-            receipt: message.replyToMessageId,
-            eventId,
-            eventAt: message.timestamp,
-            text: message.literalText ?? message.text,
-          },
-          current,
-        );
-        const text = result.allowed ? resultText(result.value, referenced) : null;
-        if (text && current()) await reply(text);
+        const receipt = message.replyToMessageId;
+        const apply = async () => {
+          if (!current()) return;
+          const result = await authorization.applyPassportReply(
+            context,
+            {
+              receipt,
+              eventId,
+              eventAt: message.timestamp,
+              text: message.literalText ?? message.text,
+            },
+            current,
+          );
+          const text = result.allowed ? resultText(result.value, referenced) : null;
+          if (text && current()) reply(text);
+        };
+        const waiting = prompts.defer(scope, message, apply);
+        if (waiting) options.track(waiting);
+        else await apply();
         return;
       }
 
       const selected = requestedSection(message);
       if (selected) {
         const entry = passport.read(scope).find(({ section }) => section === selected)!;
-        await reply(view(entry));
+        reply(view(entry));
         return;
       }
       const request = parse(message.text);
       if (!request || message.replyAddress || message.replyToMessageId) return;
       if (request.kind === 'invalid') {
-        await reply('Откройте паспорт командой /паспорт или выберите раздел его командой.');
+        reply('Откройте паспорт командой /паспорт или выберите раздел его командой.');
         return;
       }
       const entries = passport.read(scope);
       if (request.kind === 'all') {
-        for (const part of fullPassport(entries)) {
-          if (!current()) break;
-          await reply(part);
-        }
+        const parts = fullPassport(entries);
+        options.track(
+          (async () => {
+            for (const part of parts) {
+              if (!current()) break;
+              await channel.replyGroupControl(scope, part, guard(read.action));
+            }
+          })(),
+        );
         return;
       }
       const entry = entries.find(({ section }) => section === request.section)!;
       const canEdit = await authorization.check(context, edit.action);
       if (!current()) return;
       if (!canEdit.allowed) {
-        if (request.kind === 'section') await reply(view(entry));
+        if (request.kind === 'section') reply(view(entry));
         return;
       }
       if (request.kind === 'section') {
-        await reply(
+        reply(
           view(entry) + `\n\nДля правки отправьте ${sections[entry.section].command} изменить.`,
         );
         return;
       }
       if (request.kind === 'clear' && entry.text === null) {
-        await reply(view(entry));
+        reply(view(entry));
         return;
       }
       const text =
         request.kind === 'clear'
           ? sections[entry.section].title + clearInstruction
           : view(entry) + editInstruction;
-      const part = await channel.deliverGroupControl(scope, text, guard(edit.action));
-      if (part && current())
-        passport.recordPrompt(
-          scope,
-          context.userId,
-          entry,
-          request.kind === 'clear' ? 'clear' : 'edit',
-          part,
-          Date.now(),
-        );
+      options.track(
+        prompts.send(scope, context.userId, text, async (receivedId) => {
+          const part = await channel.deliverGroupControl(scope, text, {
+            ...guard(edit.action),
+            receivedId,
+          });
+          if (part && current() && (await guard(edit.action).allow()))
+            passport.recordPrompt(
+              scope,
+              context.userId,
+              entry,
+              request.kind === 'clear' ? 'clear' : 'edit',
+              part,
+              Date.now(),
+            );
+        }),
+      );
     },
     prune: passport.prune,
   };

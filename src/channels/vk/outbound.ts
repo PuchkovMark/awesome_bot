@@ -5,7 +5,7 @@ import { VkApiError, vkErrorCode, vkReadRetryable } from './api';
 import type { VkApi } from './api';
 import { isVkGroupChat, vkCmid, vkId, vkRecord } from './normalize';
 import { splitVkText } from './outbound-text';
-import { VkRequestCancelled, waitForVkRetry } from './rate-limit';
+import { VkRequestCancelled, waitForVkRead, waitForVkRetry } from './rate-limit';
 import type { VkRequestGuard } from './rate-limit';
 import { formatQuestionnaireInvitation } from './questionnaire-invitation';
 
@@ -79,14 +79,18 @@ export function createVkOutbound(options: {
     cmid: number,
     guard: VkRequestGuard,
   ): Promise<VkMessage | undefined> {
+    if (guard.signal?.aborted) throw new VkRequestCancelled();
     const response = vkRecord(
-      await request(
-        'messages.getByConversationMessageId',
-        {
-          peer_id: peer,
-          conversation_message_ids: String(cmid),
-        },
-        guard,
+      await waitForVkRead(
+        request(
+          'messages.getByConversationMessageId',
+          {
+            peer_id: peer,
+            conversation_message_ids: String(cmid),
+          },
+          guard,
+        ),
+        guard.signal,
       ),
     );
     if (!Array.isArray(response?.items)) return undefined;

@@ -5,6 +5,7 @@ import { expect, vi } from 'vitest';
 import { runApplication } from '../../src/app/service';
 import { initializePrompt, resolveApplicationChat } from '../../src/app/setup';
 import { createVkApi, createVkApiCall } from '../../src/channels/vk/api';
+import type { VkApiCall } from '../../src/channels/vk/api';
 import type { VkPollTransport } from '../../src/channels/vk/long-poll';
 import { createVkRateLimiter } from '../../src/channels/vk/rate-limit';
 import { loadApplicationConfig } from '../../src/config/application';
@@ -63,6 +64,7 @@ export async function fixture(
     active?: boolean;
     vkAdmins?: readonly number[];
     administrationIntervalMs?: number;
+    stopTimeoutMs?: number;
     greetings?: {
       readonly members?: readonly number[];
       readonly rules?: string;
@@ -180,6 +182,15 @@ export async function fixture(
       }
     | undefined;
   const holds: { release: () => void; finished: Promise<void> }[] = [];
+  type VkRequestMatch = (
+    method: Parameters<VkApiCall>[0],
+    args: Parameters<VkApiCall>[1],
+  ) => boolean;
+  const requestHolds = new Set<{
+    match: VkRequestMatch;
+    wait: () => Promise<void>;
+    release: () => void;
+  }>();
   const limit = createVkRateLimiter({
     now: () => tick,
     wait: async (ms) => {
@@ -190,6 +201,7 @@ export async function fixture(
     group,
     createVkApiCall(
       async (method, args) => {
+        for (const hold of requestHolds) if (hold.match(method, args)) await hold.wait();
         if (method === 'users.get')
           return {
             response: String(args.user_ids)
@@ -224,7 +236,11 @@ export async function fixture(
             .map((id) => messages.get(messageKey(Number(args.peer_id), Number(id))))
             .filter((item) => item !== undefined);
           const hold = receiptHold;
-          if (hold && items.some((item) => item.from_id === -group && hold.match(item.text))) {
+          if (
+            hold &&
+            !String(args.conversation_message_ids).includes(',') &&
+            items.some((item) => item.from_id === -group && hold.match(item.text))
+          ) {
             hold.enter();
             await hold.wait;
           }
@@ -292,6 +308,7 @@ export async function fixture(
       },
       ...(options.modelClients ?? { client: { complete }, auxiliaryClient: { complete } }),
       onboardingIntervalMs: 5,
+      ...(options.stopTimeoutMs === undefined ? {} : { stopTimeoutMs: options.stopTimeoutMs }),
       ...(options.administrationIntervalMs === undefined
         ? {}
         : {
@@ -315,12 +332,13 @@ export async function fixture(
       },
     });
   let running = launch();
-  async function close() {
+  async function close(expected: Awaited<ReturnType<typeof runApplication>> = null) {
     stop.abort();
     receiptHold?.release();
     for (const hold of holds) hold.release();
+    for (const hold of requestHolds) hold.release();
     try {
-      expect(await running).toBeNull();
+      expect(await running).toBe(expected);
     } finally {
       db.close();
       await storage.close();
@@ -358,6 +376,9 @@ export async function fixture(
       setMembers(value: readonly number[] | null) {
         members = value;
       },
+      loseObservation() {
+        return listener.onGap('lost_position');
+      },
       membership(type: string, actor: number, member?: number, destination = peer) {
         const row: Message = {
           peer_id: destination,
@@ -371,9 +392,17 @@ export async function fixture(
         listener.onUpdates([{ type: 'message_new', group_id: group, object: { message: row } }]);
         return row.conversation_message_id;
       },
-      async restart(resume = false, neighbors: readonly number[] = []) {
+      stop() {
         stop.abort();
-        receiptHold?.release();
+        return running;
+      },
+      async restart(
+        resume = false,
+        neighbors: readonly number[] = [],
+        options: { retainReceipt?: boolean } = {},
+      ) {
+        stop.abort();
+        if (!options.retainReceipt) receiptHold?.release();
         for (const hold of holds) hold.release();
         expect(await running).toBeNull();
         ready = Promise.withResolvers<void>();
@@ -411,6 +440,23 @@ export async function fixture(
         };
         receiptHold = { match, enter: entered.resolve, wait: gate.promise, release };
         return { entered: entered.promise, release };
+      },
+      holdRequest(match: VkRequestMatch) {
+        const entered = Promise.withResolvers<void>();
+        const gate = Promise.withResolvers<void>();
+        const hold = {
+          match,
+          wait() {
+            entered.resolve();
+            return gate.promise;
+          },
+          release() {
+            requestHolds.delete(hold);
+            gate.resolve();
+          },
+        };
+        requestHolds.add(hold);
+        return { entered: entered.promise, release: hold.release };
       },
       failSend(fault: typeof sendFault) {
         sendFault = fault;

@@ -23,7 +23,12 @@ import {
   type QuestionnairePresentationGrant,
 } from '../storage/questionnaire-presentation-store';
 import { questionnaireManagementStore } from '../storage/questionnaire-management-store';
-import { questionnaireEditorParts } from './questionnaire-management';
+import {
+  isQuestionnaireManagementPrompt,
+  questionnaireDeletionPrompt,
+  questionnaireEditorParts,
+} from './questionnaire-management';
+import { pendingControlPrompts, type TrackPublication } from './control-publications';
 import { questionnaireViewStore } from '../storage/questionnaire-view-store';
 import type { Storage } from '../storage/types';
 import type { PublicationGuard } from '../core/message-router/publication-service';
@@ -61,6 +66,7 @@ const prompt = {
   private:
     'Пришлите ответы следующим сообщением. Любые вопросы можно пропустить. Для отмены отправьте /анкета отмена.',
 };
+const showingAnswer = { showingAnswer: true } as const;
 const status = {
   active: 'Анкета открыта. Пришлите ответы одним сообщением.',
   paused: 'Анкета на паузе. Чтобы продолжить, отправьте /анкета.',
@@ -88,7 +94,7 @@ export function createQuestionnaireCommands(options: {
     | 'replyPrivateControl'
     | 'questionnaireMention'
   >;
-  readonly track: (work: Promise<void>) => void;
+  readonly track: TrackPublication;
   readonly present: (
     scope: ConnectionScope,
     grant: QuestionnairePresentationGrant,
@@ -102,10 +108,15 @@ export function createQuestionnaireCommands(options: {
   const legacyPrompts = legacyQuestionnairePrompts(options.storage);
   const presentations = questionnairePresentationStore(options.storage);
   const management = questionnaireManagementStore(options.storage);
+  const prompts = pendingControlPrompts();
+  const questionLists = pendingControlPrompts();
   const views = questionnaireViewStore(options.storage);
   function commandOf(scope: ConnectionScope, message: IncomingMessage) {
     if (message.isBot !== false || (!message.isGroupChat && message.chatId !== message.userId))
       return null;
+    const receipt = message.replyToMessageId ?? message.unverifiedReplyToMessageId;
+    if (message.isGroupChat && receipt && prompts.has(scope, message))
+      return { managementReply: receipt };
     const raw = message.text.trim();
     const text =
       raw.startsWith('/') &&
@@ -117,12 +128,16 @@ export function createQuestionnaireCommands(options: {
     const view = parseQuestionnaireView(text);
     if (view) return { view: view[1] ?? '' };
     if (/^\/анкета\s+представить$/iu.test(text)) return { present: true };
+    if (receipt && questionLists.owns(scope, message)) return showingAnswer;
     if (!message.isGroupChat) return null;
     if (/^\/анкета\s+изменить$/iu.test(text)) return { manage: 'edit' as const };
     if (/^\/анкета\s+удалить$/iu.test(text)) return { manage: 'delete' as const };
-    const receipt = message.replyToMessageId ?? message.unverifiedReplyToMessageId;
     if (!receipt) return null;
-    if (management.hasPrompt(scope, receipt)) return { managementReply: receipt };
+    if (
+      management.hasPrompt(scope, receipt) ||
+      isQuestionnaireManagementPrompt(message.botReplyText)
+    )
+      return { managementReply: receipt };
     if (legacyPrompts.hasPrompt(scope, receipt)) return { ignored: true };
     const presentChoice = text.toLowerCase();
     const isPresentationChoice =
@@ -218,7 +233,7 @@ export function createQuestionnaireCommands(options: {
       )
         return;
       const control = controls.capture(scope);
-      const current = () => !signal.aborted && accepted() && control().ordinary;
+      const current = () => accepted() && control().ordinary;
       const allowed = async () =>
         current() &&
         (await authorization.check(context, ownCommand.action, message.userId)).allowed &&
@@ -226,6 +241,14 @@ export function createQuestionnaireCommands(options: {
       if (!(await allowed())) return;
 
       const guard = { signal, isCurrent: current, allow: allowed };
+      if (typeof command !== 'string' && 'showingAnswer' in command) {
+        options.track(
+          message.isGroupChat
+            ? channel.replyGroupControl(scope, status.dispatching, guard)
+            : channel.replyPrivateControl(message.userId, status.dispatching, guard),
+        );
+        return;
+      }
       if (typeof command !== 'string' && 'manage' in command) {
         const form = management.open(
           scope,
@@ -234,7 +257,8 @@ export function createQuestionnaireCommands(options: {
           message.timestamp,
           Date.now(),
         );
-        if (form === null) await channel.replyGroupControl(scope, 'Анкета не заполнена', guard);
+        if (form === null)
+          options.track(channel.replyGroupControl(scope, 'Анкета не заполнена', guard));
         if (!form) return;
         const currentForm = () =>
           current() && management.current(scope, message.userId, form.attempt, Date.now());
@@ -248,30 +272,44 @@ export function createQuestionnaireCommands(options: {
             ? questionnaireEditorParts(form.template.questions)
             : [
                 {
-                  text: 'Удалить вашу анкету и её ответы из профиля этой беседы? Остальные данные профиля и сообщения в VK сохранятся. В течение 15 минут ответьте на это сообщение «Удалить» или «Оставить».',
+                  text: questionnaireDeletionPrompt,
                   first: 0,
                   last: 0,
                 },
               ];
-        for (const part of parts) {
-          if (!currentForm()) return;
-          const sent = await channel.deliverQuestionnairePart(scope, part.text, deliveryGuard);
-          if (
-            sent.kind !== 'delivered' ||
-            !currentForm() ||
-            !management.remember(
-              scope,
-              message.userId,
-              form.attempt,
-              sent.receipt,
-              part.first,
-              part.last,
-              Date.now(),
-              command.manage,
-            )
-          )
-            return;
-        }
+        options.track(
+          (async () => {
+            for (const part of parts) {
+              if (!currentForm()) return;
+              const remembered = await prompts.send(
+                scope,
+                message.userId,
+                part.text,
+                async (receivedId) => {
+                  const sent = await channel.deliverQuestionnairePart(scope, part.text, {
+                    ...deliveryGuard,
+                    receivedId,
+                  });
+                  return (
+                    sent.kind === 'delivered' &&
+                    currentForm() &&
+                    management.remember(
+                      scope,
+                      message.userId,
+                      form.attempt,
+                      sent.receipt,
+                      part.first,
+                      part.last,
+                      Date.now(),
+                      command.manage,
+                    )
+                  );
+                },
+              );
+              if (!remembered) return;
+            }
+          })(),
+        );
         return;
       }
       if (typeof command !== 'string' && 'managementReply' in command) {
@@ -279,16 +317,22 @@ export function createQuestionnaireCommands(options: {
           return;
         const receipt = questionnaireMessageSequence(command.managementReply);
         if (receipt === null) return;
-        const result = management.reply(
-          scope,
-          message.userId,
-          receipt,
-          sequence,
-          message.literalText ?? message.text,
-          message.timestamp,
-          Date.now(),
-        );
-        if (result) await channel.replyGroupControl(scope, result, guard);
+        const apply = async () => {
+          if (!(await allowed())) return;
+          const result = management.reply(
+            scope,
+            message.userId,
+            receipt,
+            sequence,
+            message.literalText ?? message.text,
+            message.timestamp,
+            Date.now(),
+          );
+          if (result) options.track(channel.replyGroupControl(scope, result, guard));
+        };
+        const waiting = prompts.defer(scope, message, apply);
+        if (waiting) options.track(waiting);
+        else await apply();
         return;
       }
       if (typeof command !== 'string' && 'view' in command) {
@@ -308,10 +352,12 @@ export function createQuestionnaireCommands(options: {
         const event = { sequence, at: message.timestamp, receipt };
         if ('present' in command) {
           if (!message.isGroupChat) {
-            await channel.replyPrivateControl(
-              message.userId,
-              'Отправьте /анкета представить в беседе с заполненной анкетой.',
-              guard,
+            options.track(
+              channel.replyPrivateControl(
+                message.userId,
+                'Отправьте /анкета представить в беседе с заполненной анкетой.',
+                guard,
+              ),
             );
             return;
           }
@@ -321,12 +367,16 @@ export function createQuestionnaireCommands(options: {
             return;
           }
           if (decision.kind === 'declined')
-            await channel.replyGroupControl(scope, 'Представление по анкете отменено.', guard);
+            options.track(
+              channel.replyGroupControl(scope, 'Представление по анкете отменено.', guard),
+            );
           if (decision.kind === 'unavailable')
-            await channel.replyGroupControl(
-              scope,
-              'У вас пока нет заполненной анкеты в этой беседе.',
-              guard,
+            options.track(
+              channel.replyGroupControl(
+                scope,
+                'У вас пока нет заполненной анкеты в этой беседе.',
+                guard,
+              ),
             );
           return;
         }
@@ -344,28 +394,46 @@ export function createQuestionnaireCommands(options: {
             ? 'Анкета открыта. Пришлите ответы одним сообщением, адресованным боту.'
             : status[result.kind];
         if (text) {
-          if (message.isGroupChat) await channel.replyGroupControl(scope, text, guard);
-          else await channel.replyPrivateControl(message.userId, text, guard);
+          options.track(
+            message.isGroupChat
+              ? channel.replyGroupControl(scope, text, guard)
+              : channel.replyPrivateControl(message.userId, text, guard),
+          );
         }
         return;
       }
 
+      if (signal.aborted) return;
       const presentation = result.presentation;
-      let work = actor.takePresentation(Date.now(), presentation);
+      const work = actor.takePresentation(Date.now(), presentation);
       if (!work) return;
       const instructions = message.isGroupChat ? prompt.group : prompt.private;
       const together = instructions + '\n\n' + work.text;
       const separate = Buffer.byteLength(together) > vkMessageLength.value;
-      const presenting = () => current() && actor.presenting(presentation, Date.now());
+      const presenting = () =>
+        !signal.aborted && current() && actor.presenting(presentation, Date.now());
       const deliveryGuard = {
         ...guard,
         isCurrent: presenting,
         allow: async () => presenting() && (await allowed()) && presenting(),
       };
-      async function deliver(stage: 'warning' | 'questions', text: string) {
-        const sent = await channel.deliverQuestionnairePart(scope, text, deliveryGuard);
+      async function deliver(
+        stage: 'warning' | 'questions',
+        text: string,
+        receivedId?: (id: string) => void,
+      ) {
+        const sent = await channel.deliverQuestionnairePart(scope, text, {
+          ...deliveryGuard,
+          ...(receivedId ? { receivedId } : {}),
+        });
         if (sent.kind === 'delivered')
-          return actor.confirmPresentation(presentation, stage, sent.receipt, Date.now(), current);
+          return actor.confirmPresentation(
+            presentation,
+            stage,
+            sent.receipt,
+            Date.now(),
+            () => !signal.aborted && current(),
+          );
         if (sent.kind === 'failed') {
           // Возврат в показ проверяет поколение и идентификатор показа после смены ревизии.
           const attemptScope = lifecycle.current(scope.chatId);
@@ -374,12 +442,20 @@ export function createQuestionnaireCommands(options: {
         }
         return false;
       }
-      if (separate && !work.warningDelivered) {
-        if (!(await deliver('warning', instructions)) || !current()) return;
-        work = actor.takePresentation(Date.now(), presentation);
-        if (!work) return;
-      }
-      await deliver('questions', separate ? work.text : together);
+      options.track(
+        (async () => {
+          let questions = separate ? work.text : together;
+          if (separate && !work.warningDelivered) {
+            if (!(await deliver('warning', instructions)) || !current()) return;
+            const listing = actor.takePresentation(Date.now(), presentation);
+            if (!listing) return;
+            questions = listing.text;
+          }
+          await questionLists.send(scope, message.userId, questions, (receivedId) =>
+            deliver('questions', questions, receivedId),
+          );
+        })(),
+      );
     },
   };
 }

@@ -12,6 +12,7 @@ import {
 import { chatControlStore } from '../storage/chat-control-store';
 import { StorageError } from '../storage/errors';
 import type { Storage } from '../storage/index';
+import type { TrackPublication } from './control-publications';
 import {
   reminderGraceMs,
   reminderStore,
@@ -148,6 +149,7 @@ export function createReminderHandlers(options: {
   readonly channel: Channel;
   readonly lifecycle: Lifecycle;
   readonly signal: AbortSignal;
+  readonly track: TrackPublication;
 }) {
   const { storage, channel, lifecycle, signal } = options;
   const store = reminderStore(storage);
@@ -239,19 +241,23 @@ export function createReminderHandlers(options: {
       if (!isCurrent()) return;
       if (!target) {
         if (event.isGroupChat && !replayOnly)
-          await channel.replyGroupControl(scope, closed, {
-            signal,
-            isCurrent,
-            allow: async () => isCurrent(),
-          });
+          options.track(
+            channel.replyGroupControl(scope, closed, {
+              signal,
+              isCurrent,
+              allow: async () => isCurrent(),
+            }),
+          );
         return;
       }
       const reply = (text: string) =>
-        channel.replyPrivateControl(target.userId, text, {
-          signal,
-          allow: async () => isCurrent(),
-          isCurrent: () => isCurrent() && lifecycle.isAdmissionCurrent(target.scope),
-        });
+        options.track(
+          channel.replyPrivateControl(target.userId, text, {
+            signal,
+            allow: async () => isCurrent(),
+            isCurrent: () => isCurrent() && lifecycle.isAdmissionCurrent(target.scope),
+          }),
+        );
       const now = Date.now();
       if (command.kind === 'cancel-options') {
         const items = store.list(target, now, 'cancellable');
@@ -264,23 +270,23 @@ export function createReminderHandlers(options: {
             (dueLabel(item) ?? 'Черновик') + ' · ' + description + '\nОтмени напоминание ' + item.id
           );
         });
-        await reply(choices.join('\n\n') || 'Сейчас нечего отменять.');
+        reply(choices.join('\n\n') || 'Сейчас нечего отменять.');
         return;
       }
       if (command.kind === 'list') {
         const items = store.list(target, now);
-        await reply(items.length ? items.map(summary).join('\n') : 'Напоминаний пока нет.');
+        reply(items.length ? items.map(summary).join('\n') : 'Напоминаний пока нет.');
         return;
       }
       if (command.kind === 'cancel') {
         const state = store.cancel(target, command.id, now);
-        await reply(state === 'missing' ? missing : `#${command.id} · ${display[state]}`);
+        reply(state === 'missing' ? missing : `#${command.id} · ${display[state]}`);
         return;
       }
       if (command.kind === 'timezone') {
         const zone = command.input ? reminderTimezone(command.input) : store.timezone(target);
         if (zone && command.input) store.timezone(target, zone);
-        await reply(
+        reply(
           zone
             ? `Ваш часовой пояс напоминаний — ${zone}.`
             : 'Укажите часовой пояс, например /пояс-напоминаний Europe/Moscow.',
@@ -307,7 +313,7 @@ export function createReminderHandlers(options: {
               : undefined
             : drafts.find(({ id }) => id === command.id);
         if (!selected) {
-          await reply(
+          reply(
             command.id === undefined && drafts.length > 1
               ? `Укажите номер черновика: ${drafts.map(({ id }) => '#' + id).join(', ')}.`
               : missing,
@@ -325,12 +331,12 @@ export function createReminderHandlers(options: {
       if (!item || !isCurrent()) return;
       if (item.state === 'draft') {
         const proposed = event.isGroupChat ? controls.read(scope).timezone : undefined;
-        await reply(prompt(item, proposed));
+        reply(prompt(item, proposed));
         return;
       }
       if (item.state === 'pending') {
         const lease = store.claimConfirmation(target, item.id, Date.now());
-        if (lease) await deliver(lease, target.scope, isCurrent);
+        if (lease) options.track(deliver(lease, target.scope, isCurrent));
       }
     },
     async due() {
