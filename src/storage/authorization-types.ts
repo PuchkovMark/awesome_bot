@@ -1,6 +1,11 @@
 import type { ChatId, UserId, GrantBasis, Timestamp } from '../contracts/index';
 import type { RecoveryCommand, RecoveryOperation } from './admin-recovery-store';
-import type { ChatControlState, ChatPause, QuietHours } from './chat-control-store';
+import type {
+  ChatControlState,
+  ChatPause,
+  ControlMessageEvent,
+  QuietHours,
+} from './chat-control-store';
 import type { ChatPatch } from './types';
 
 export interface AdminGrant {
@@ -31,7 +36,7 @@ export interface AuthorizationTransaction {
   writeGreeting(enabled: boolean, now: Timestamp, sequence?: number): void;
   writeInvitation(enabled: boolean, now: Timestamp, sequence?: number): void;
   writeQuietHours(hours: QuietHours | null): void;
-  claimControlMessage(actorId: UserId, messageId: number): boolean;
+  claimControlMessage(actorId: UserId, event: ControlMessageEvent): boolean;
   holder(basis: GrantBasis): UserId | null;
   bases(userId: UserId): readonly GrantBasis[];
   isRevoked(userId: UserId): boolean;

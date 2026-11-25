@@ -105,6 +105,9 @@ const tables = [
   'sqlite_sequence',
 ];
 const others = [
+  'control_commands_by_origin',
+  'control_commands_by_target',
+  'legacy_control_commands',
   'questionnaire_legacy_receipts',
   'questionnaire_management_subject',
   'questionnaire_invalidate_prompts',

@@ -64,7 +64,7 @@ test('позиции одинаковых вопросов, источник и 
       templates.replace(
         scope,
         twin,
-        { receipt: '201', eventId: 202, text: 'Новый вопрос?\nВторой вопрос?' },
+        { receipt: '201', eventId: 202, eventAt: 126, text: 'Новый вопрос?\nВторой вопрос?' },
         126,
       ),
     ).toMatchObject({ status: 'applied' });

@@ -1,6 +1,9 @@
+import type { Timestamp } from '../contracts/index';
+
 export interface QuestionnaireReply {
   readonly receipt: string;
   readonly eventId: number;
+  readonly eventAt: Timestamp;
   readonly text: string;
 }
 

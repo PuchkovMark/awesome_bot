@@ -219,7 +219,12 @@ export function createChatPassport(options: {
           return;
         const result = await authorization.applyPassportReply(
           context,
-          { eventId, receipt: message.replyToMessageId, text: message.literalText ?? message.text },
+          {
+            receipt: message.replyToMessageId,
+            eventId,
+            eventAt: message.timestamp,
+            text: message.literalText ?? message.text,
+          },
           current,
         );
         const text = result.allowed ? resultText(result.value, referenced) : null;

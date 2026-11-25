@@ -1,6 +1,6 @@
 import { createQuestionnaireEditor } from './questionnaire-editor';
 import type { createVkChannel } from '../channels/vk/channel';
-import { isVkGroupChat, type VkIncoming } from '../channels/vk/normalize';
+import { isVkGroupChat, vkChatId, type VkIncoming } from '../channels/vk/normalize';
 import type { AuthorizationContext, ChatId, IncomingMessage, UserId } from '../contracts/index';
 import { chatControlAction, parseChatControl } from '../core/chat-control/commands';
 import { formatChatControl } from '../core/chat-control/service';
@@ -71,7 +71,11 @@ export function createChatControlHandlers(options: {
           String(messageId) !== message.messageId)
       )
         return;
-      const result = await authorization.controlChat(context, command, isCurrent, messageId);
+      const event =
+        messageId === undefined
+          ? undefined
+          : { sourceChatId: message.chatId, messageId, timestamp: message.timestamp };
+      const result = await authorization.controlChat(context, command, isCurrent, event);
       if (!result.allowed || !result.value.state.enabled) return;
       const reply = formatChatControl(context.scope, command, result.value, Date.now());
       if (reply)
@@ -95,7 +99,7 @@ export function createChatControlHandlers(options: {
         message.reply
       )
         return Promise.resolve();
-      const sender = `vk:${message.authorId}` as const;
+      const sender = vkChatId(message.authorId);
       const command = request.command;
       if (command !== 'explain' && sender !== ownerId) return Promise.resolve();
       return (async () => {
@@ -137,7 +141,11 @@ export function createChatControlHandlers(options: {
           );
           return;
         }
-        const result = await authorization.controlChat(context, command, isCurrent, message.cmid);
+        const result = await authorization.controlChat(context, command, isCurrent, {
+          sourceChatId: vkChatId(message.peerId),
+          messageId: message.cmid,
+          timestamp: message.timestamp,
+        });
         if (!result.allowed) return;
         const reply = formatChatControl(scope, command, result.value, Date.now(), true);
         if (reply)

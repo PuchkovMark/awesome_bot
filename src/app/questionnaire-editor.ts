@@ -190,7 +190,7 @@ export function createQuestionnaireEditor(options: {
       if (!Number.isSafeInteger(id) || id < 1 || String(id) !== message.messageId) return;
       const result = await authorization.applyQuestionnaireReply(
         context,
-        { eventId: id, receipt: message.replyToMessageId, text: raw },
+        { receipt: message.replyToMessageId, eventId: id, eventAt: message.timestamp, text: raw },
         guard.isCurrent,
       );
       if (result.allowed && result.value.status === 'confirm') {

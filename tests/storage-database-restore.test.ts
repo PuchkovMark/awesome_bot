@@ -9,6 +9,143 @@ import { reconcileConnections } from '../src/storage/database-restore';
 import { profileFixture, alice, set } from './helpers/profile-fact-fixture';
 import { reconcileRestore } from '../src/storage/backup-history';
 import { personalDataStore } from '../src/storage/personal-data-store';
+import { createAuthorizationService } from '../src/core/index';
+import { chatControlStore } from '../src/storage/chat-control-store';
+import { migrate } from '../src/storage/migrate';
+import { migrations } from '../src/storage/migrations/index';
+import Database from 'better-sqlite3';
+
+test('снимок версии 56 получает действующие отметки команд и исходную границу обновления', async () => {
+  const files = storageFixture();
+  const snapshot = join(files.directory, 'saved');
+  const candidate = join(files.directory, 'candidate');
+  const a = 'vk:a';
+  const b = 'vk:b';
+  const ownerId = 'vk:1' as const;
+  const now = Date.now();
+  const cutoff = Math.floor(now / 1000) * 1000;
+  const config = { ownerId, reasonMaxLength: 500, reasonRetentionDays: 90 };
+  const current = () => true;
+  const greet = { kind: 'greeting', enabled: true } as const;
+  const groupEvent = { sourceChatId: a, messageId: 200, timestamp: cutoff } as const;
+  const privateEvent = { ...groupEvent, sourceChatId: ownerId } as const;
+  const readCommands = (db: Database.Database) =>
+    db
+      .prepare(
+        'SELECT chat_id AS chat, message_id AS id, source_chat_id AS source, legacy_before AS cutoff FROM chat_control_commands ORDER BY chat_id, message_id, source_chat_id',
+      )
+      .all();
+  try {
+    const original = new Database(files.path);
+    try {
+      migrate(original, migrations.slice(0, 56));
+      original.exec(`
+        UPDATE lifecycle_clock SET value=2;
+        INSERT INTO chat_connections(chat_id,generation,revision,state)
+          VALUES ('${a}',1,0,'active'),('${b}',2,0,'active');
+        INSERT INTO chats(chat_id,timezone,enabled,created_at,response_mode)
+          VALUES ('${a}','UTC',1,1,'normal'),('${b}','UTC',1,1,'active');
+        INSERT INTO chat_control_commands(chat_id,generation,actor_id,message_id)
+          VALUES ('${a}',1,'${ownerId}',200),('${b}',2,'${ownerId}',200);
+      `);
+    } finally {
+      original.close();
+    }
+    const source = openExisting(files.path);
+    try {
+      await createSnapshot(source, snapshot, 'one', now);
+    } finally {
+      source.close();
+    }
+    const live = await openStorage(files.path);
+    try {
+      const writer = openExisting(files.path, false);
+      try {
+        // Моделируем разные секунды обновления рабочей БД и снимка.
+        writer.prepare('UPDATE chat_control_commands SET legacy_before=?').run(cutoff);
+      } finally {
+        writer.close();
+      }
+      const service = await createAuthorizationService({
+        config,
+        store: live.authorization,
+        now: () => now,
+      });
+      try {
+        const first = service.context({ scope: scopeFor(live, a), userId: ownerId });
+        const second = service.context({ scope: scopeFor(live, b), userId: ownerId });
+        expect(await service.controlChat(first, greet, current, groupEvent)).toMatchObject({
+          value: { status: 'applied' },
+        });
+        expect(
+          await service.controlChat(first, { ...greet, enabled: false }, current, {
+            ...groupEvent,
+            messageId: 201,
+          }),
+        ).toMatchObject({ value: { status: 'applied' } });
+        expect(
+          await service.controlChat(second, greet, current, { ...groupEvent, sourceChatId: b }),
+        ).toMatchObject({ value: { status: 'applied' } });
+      } finally {
+        service.dispose();
+      }
+    } finally {
+      await live.close();
+    }
+    await openCandidate(snapshot, candidate, 'one', now + 1);
+    const authority = openExisting(files.path);
+    const staged = openExisting(candidate, false);
+    try {
+      expect(
+        staged.prepare('SELECT min(legacy_before) FROM chat_control_commands').pluck().get(),
+      ).toBeGreaterThan(cutoff);
+      expect(reconcileRestore(staged, authority, now + 1, 30 * 86_400_000).access).toBe('full');
+      expect(readCommands(staged)).toEqual(readCommands(authority));
+      expect(staged.pragma('foreign_key_check')).toEqual([]);
+    } finally {
+      staged.close();
+      authority.close();
+    }
+    const restored = await openStorage(candidate);
+    try {
+      const service = await createAuthorizationService({
+        config,
+        store: restored.authorization,
+        now: () => now + 2,
+      });
+      try {
+        const scope = scopeFor(restored, a);
+        const other = scopeFor(restored, b);
+        const group = service.context({ scope, userId: ownerId });
+        const owner = service.context({ scope, userId: ownerId, kind: 'owner' });
+        const controls = chatControlStore(restored);
+        const otherState = controls.read(other);
+        expect(otherState).toMatchObject({ mode: 'active', greetingEnabledFrom: 200 });
+        expect(await service.controlChat(group, greet, current, groupEvent)).toMatchObject({
+          value: { status: 'duplicate' },
+        });
+        const off = { kind: 'off' } as const;
+        expect(
+          await service.controlChat(owner, off, current, {
+            ...privateEvent,
+            timestamp: cutoff - 1000,
+          }),
+        ).toMatchObject({ value: { status: 'duplicate' } });
+        expect(controls.read(scope)).toMatchObject({ enabled: true, greetingEnabledAt: null });
+        expect(await service.controlChat(owner, off, current, privateEvent)).toMatchObject({
+          value: { status: 'applied', state: { enabled: false } },
+        });
+        expect(controls.read(other)).toEqual(otherState);
+      } finally {
+        service.dispose();
+      }
+    } finally {
+      await restored.close();
+    }
+  } finally {
+    files.cleanup();
+  }
+});
 
 test('сброшенное поколение исключено, отзыв действует, вторая беседа сохраняет историю', async () => {
   const f = storageFixture(),

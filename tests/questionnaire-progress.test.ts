@@ -60,7 +60,7 @@ test('редакции двух бесед и лички одного участ
       templates.replace(
         first,
         twin,
-        { eventId: 801, receipt: '800', text: 'Новый вопрос?\nЕщё вопрос?' },
+        { eventId: 801, eventAt: 26, receipt: '800', text: 'Новый вопрос?\nЕщё вопрос?' },
         26,
       ),
     ).toMatchObject({ status: 'applied' });

@@ -22,6 +22,7 @@ import type { AppConfig } from '../../config/types';
 import type { AuthorizationTransaction, RevocationAudit } from '../../storage/index';
 import type { ProfileFactInput, ProfileFactWriteResult } from '../../storage/participant-types';
 import type { RecoveryOperation } from '../../storage/admin-recovery-store';
+import type { ControlMessageEvent } from '../../storage/chat-control-store';
 import { chatControlAction, type ChatControlCommand } from '../chat-control/commands';
 import { applyChatControl, type ChatControlResult } from '../chat-control/service';
 import { createContextAuthority } from './context';
@@ -163,11 +164,12 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
     async selectPersona(
       context: AuthorizationContext,
       personaId: string,
-      messageId: number,
+      event: ControlMessageEvent,
       current: () => boolean,
     ) {
       if (disposed || !authority.contains(context)) return deny('invalid_context');
-      if (context.kind !== 'chat') return deny('wrong_scope');
+      if (context.kind !== 'chat' || event.sourceChatId !== context.chatId)
+        return deny('wrong_scope');
       const direct = context.chatId === context.userId;
       return guarded<ReturnType<ScopedAuthorizationTransaction['selectStarterPersona']>>(
         context,
@@ -179,7 +181,7 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
           if (!current()) return deny('conflict');
           return {
             allowed: true,
-            value: tx.selectStarterPersona(context.userId, personaId, messageId),
+            value: tx.selectStarterPersona(context.userId, personaId, event),
           };
         },
       );
@@ -238,7 +240,7 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
       context: AuthorizationContext,
       command: ChatControlCommand,
       isCurrent: () => boolean,
-      messageId?: number,
+      event?: ControlMessageEvent,
     ): Promise<AuthorizationResult<ChatControlResult>> {
       return guarded<ChatControlResult>(
         context,
@@ -246,13 +248,15 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
         undefined,
         (tx) => {
           if (!isCurrent()) return deny('conflict');
+          const sourceChatId = context.kind === 'owner' ? context.userId : context.chatId;
+          if (event && event.sourceChatId !== sourceChatId) return deny('wrong_scope');
           const state = tx.controlState();
           if ((!state.enabled || command.kind === 'on') && context.kind !== 'owner')
             return deny('disabled');
           if (
             command.kind !== 'settings' &&
-            messageId !== undefined &&
-            !tx.claimControlMessage(context.userId, messageId)
+            event &&
+            !tx.claimControlMessage(context.userId, event)
           ) {
             return { allowed: true, value: { status: 'duplicate', state } };
           }
@@ -262,7 +266,7 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
               tx,
               command,
               now(),
-              context.kind === 'chat' ? messageId : undefined,
+              context.kind === 'chat' ? event?.messageId : undefined,
             ),
           };
         },

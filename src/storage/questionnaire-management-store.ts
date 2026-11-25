@@ -73,7 +73,11 @@ export function questionnaireManagementStore(storage: Storage) {
         if (
           !permitted(db, scope, actor, at) ||
           !permitted(db, scope, actor, now) ||
-          !claimControlMessage(db, scope.chatId, actor, sequence)
+          !claimControlMessage(db, scope.chatId, actor, {
+            sourceChatId: scope.chatId,
+            messageId: sequence,
+            timestamp: at,
+          })
         )
           return undefined;
         return completed(db, scope, actor);
@@ -171,7 +175,11 @@ export function questionnaireManagementStore(storage: Storage) {
           sequence <= receipt ||
           !permitted(db, scope, actor, at) ||
           !permitted(db, scope, actor, now) ||
-          !claimControlMessage(db, scope.chatId, actor, sequence)
+          !claimControlMessage(db, scope.chatId, actor, {
+            sourceChatId: scope.chatId,
+            messageId: sequence,
+            timestamp: at,
+          })
         )
           return null;
         const form = completed(db, scope, actor);

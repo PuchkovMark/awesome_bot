@@ -265,7 +265,13 @@ export function questionnaireProgressStore(storage: Storage) {
           if (!state.enabled || state.mode === 'silent') return { kind: 'forbidden' };
           if (!profileAdmitted(db, scope, user, event.at, 'write'))
             return { kind: 'profile_required' };
-          if (!claimControlMessage(db, scope.chatId, user, event.sequence))
+          if (
+            !claimControlMessage(db, scope.chatId, user, {
+              sourceChatId: scope.chatId,
+              messageId: event.sequence,
+              timestamp: event.at,
+            })
+          )
             return { kind: 'duplicate' };
 
           const existing = actor.current(now);

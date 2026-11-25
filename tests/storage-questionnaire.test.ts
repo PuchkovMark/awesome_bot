@@ -64,6 +64,7 @@ async function setup(upgrade = false) {
         {
           receipt: String(receipt),
           eventId,
+          eventAt: now,
           text,
         },
         () => true,

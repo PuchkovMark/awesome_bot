@@ -1,14 +1,15 @@
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { expect, test, vi } from 'vitest';
+import Database from 'better-sqlite3';
 import { runApplication } from '../src/app/service';
 import { initializePrompt, resolveApplicationChat } from '../src/app/setup';
-import { createVkApi, createVkApiCall } from '../src/channels/vk/api';
+import { createVkApi, createVkApiCall, type VkApiCall } from '../src/channels/vk/api';
 import type { VkPollTransport } from '../src/channels/vk/long-poll';
 import { createVkRateLimiter } from '../src/channels/vk/rate-limit';
 import { loadApplicationConfig } from '../src/config/application';
 import { createLifecycleService } from '../src/core/index';
-import type { LlmResult } from '../src/llm/types';
+import type { LlmClient, LlmResult } from '../src/llm/types';
 import type { SafeLogger } from '../src/logger/index';
 import { chatControlStore } from '../src/storage/chat-control-store';
 import { disclosureStore } from '../src/storage/chat-disclosure-store';
@@ -29,7 +30,13 @@ const answer = (text: string): LlmResult => ({
   usage: { input: 1, output: 1 },
 });
 
-test('команды VK сохраняют паузу, выключение отменяет старую работу, объяснение остаётся в личке', async () => {
+async function setupControlApplication(
+  model: LlmClient['complete'],
+  options: {
+    wrapCall?: (call: VkApiCall) => VkApiCall;
+    rejectSend?: (destination: number, text: string) => boolean;
+  } = {},
+) {
   const files = storageFixture();
   const config = loadApplicationConfig({
     env: {
@@ -73,19 +80,6 @@ test('команды VK сохраняют паузу, выключение от
   );
   const controls = chatControlStore(storage);
   const messages = new Map<string, Record<string, unknown>>();
-  const oldResponse = Promise.withResolvers<LlmResult>(),
-    entered = Promise.withResolvers<void>();
-  const beforeRevocation = Promise.withResolvers<void>(),
-    afterRevocation = Promise.withResolvers<void>();
-  const checkedAfterRevocation = Promise.withResolvers<void>();
-  let holdAdmin = false;
-  const model = vi
-    .fn<() => Promise<LlmResult>>()
-    .mockImplementationOnce(async () => {
-      entered.resolve();
-      return oldResponse.promise;
-    })
-    .mockResolvedValue(answer('Новый синтетический ответ'));
   let at = 0,
     cmid = 1000;
   const attempt = vi.fn<Parameters<typeof createVkApiCall>[0]>(async (method, args) => {
@@ -124,6 +118,8 @@ test('команды VK сохраняют паузу, выключение от
       };
     if (method === 'messages.send') {
       const destination = Number(args.peer_ids);
+      if (options.rejectSend?.(destination, String(args.message)))
+        return { error: { error_code: 15, error_msg: 'Access denied' } };
       const forward =
         args.forward === undefined
           ? undefined
@@ -152,19 +148,7 @@ test('команды VK сохраняют паузу, выключение от
       },
     }),
   );
-  const api = createVkApi(group, async (method, args, guard) => {
-    const delayed =
-      holdAdmin && method === 'messages.send' && Number(args.peer_ids) === administrator;
-    if (delayed) {
-      beforeRevocation.resolve();
-      await afterRevocation.promise;
-    }
-    try {
-      return await apiCall(method, args, guard);
-    } finally {
-      if (delayed) checkedAfterRevocation.resolve();
-    }
-  });
+  const api = createVkApi(group, options.wrapCall?.(apiCall) ?? apiCall);
   const ready = Promise.withResolvers<void>(),
     stop = new AbortController();
   let listener: Parameters<VkPollTransport['run']>[0];
@@ -180,6 +164,9 @@ test('команды VK сохраняют паузу, выключение от
         );
     },
   };
+  function notify(message: Record<string, unknown>) {
+    listener.onUpdates([{ type: 'message_new', group_id: group, object: { message } }]);
+  }
   function event(
     id: number,
     text: string,
@@ -197,7 +184,7 @@ test('команды VK сохраняют паузу, выключение от
       ...(reply ? { reply_message: reply } : {}),
     };
     messages.set(`${destination}:${id}`, message);
-    listener.onUpdates([{ type: 'message_new', group_id: group, object: { message } }]);
+    notify(message);
     return { conversation_message_id: id, from_id: author, date: message.date };
   }
   const sent = () =>
@@ -207,8 +194,66 @@ test('команды VK сохраняют паузу, выключение от
     client: { complete: model },
     onboardingIntervalMs: 5,
   });
+  return {
+    files,
+    storage,
+    life,
+    disclosure,
+    version,
+    controls,
+    event,
+    sent,
+    ready: ready.promise,
+    delivered: () => [...messages.values()].filter((row) => row.from_id === -group),
+    replay(id: number, destination: number) {
+      const message = messages.get(`${destination}:${id}`);
+      if (!message) throw new Error('Нет исходного события VK');
+      notify(message);
+    },
+    async close() {
+      stop.abort();
+      try {
+        expect(await run).toBeNull();
+      } finally {
+        await storage.close();
+        files.cleanup();
+      }
+    },
+  };
+}
+
+test('команды VK сохраняют паузу, выключение отменяет старую работу, объяснение остаётся в личке', async () => {
+  const oldResponse = Promise.withResolvers<LlmResult>(),
+    entered = Promise.withResolvers<void>();
+  const beforeRevocation = Promise.withResolvers<void>(),
+    afterRevocation = Promise.withResolvers<void>();
+  const checkedAfterRevocation = Promise.withResolvers<void>();
+  let holdAdmin = false;
+  const model = vi
+    .fn<() => Promise<LlmResult>>()
+    .mockImplementationOnce(async () => {
+      entered.resolve();
+      return oldResponse.promise;
+    })
+    .mockResolvedValue(answer('Новый синтетический ответ'));
+  const { files, storage, life, disclosure, version, controls, event, sent, ready, close } =
+    await setupControlApplication(model, {
+      wrapCall: (apiCall) => async (method, args, guard) => {
+        const delayed =
+          holdAdmin && method === 'messages.send' && Number(args.peer_ids) === administrator;
+        if (delayed) {
+          beforeRevocation.resolve();
+          await afterRevocation.promise;
+        }
+        try {
+          return await apiCall(method, args, guard);
+        } finally {
+          if (delayed) checkedAfterRevocation.resolve();
+        }
+      },
+    });
   try {
-    await ready.promise;
+    await ready;
     await resolveApplicationChat({ databasePath: files.path, ownerId }, chat, 'new');
     const scope = life.current(chat),
       target = `${chat}@${scope.generation}`;
@@ -416,10 +461,149 @@ test('команды VK сохраняют паузу, выключение от
   } finally {
     oldResponse.resolve(answer('Старый ответ'));
     afterRevocation.resolve();
-    stop.abort();
-    expect(await run).toBeNull();
-    await storage.close();
-    files.cleanup();
+    await close();
   }
   expect(sent().filter((row) => String(row.message).includes('Повод ответа'))).toHaveLength(1);
 }, 12_000);
+
+test.each([
+  { result: 'с подтверждением в личке', rejected: false },
+  { result: 'при отказе VK отправить подтверждение', rejected: true },
+])(
+  'один локальный номер в трёх диалогах VK $result',
+  async ({ rejected }) => {
+    const model = vi.fn<() => Promise<LlmResult>>().mockResolvedValue(answer('Лишний ответ'));
+    const f = await setupControlApplication(model, {
+      rejectSend: (destination, text) =>
+        rejected && destination === owner && text.includes('\nБот выключен.\n'),
+    });
+    const diagnostic = new Database(f.files.path, { readonly: true });
+    try {
+      await f.ready;
+      const neighborPeer = peer + 1;
+      const neighborChat = `vk:${neighborPeer}` as const;
+      for (const id of [chat, neighborChat])
+        await resolveApplicationChat({ databasePath: f.files.path, ownerId }, id, 'new');
+      const a = f.life.current(chat);
+      const b = f.life.current(neighborChat);
+      const target = `${chat}@${a.generation}`;
+      await vi.waitFor(() => {
+        expect(f.disclosure.gate(a).version).toBe(f.version);
+        expect(f.disclosure.gate(b).version).toBe(f.version);
+      });
+      const commands = diagnostic.prepare(
+        'SELECT chat_id AS target, source_chat_id AS source, actor_id AS actor, message_id AS number FROM chat_control_commands ORDER BY chat_id,source_chat_id,message_id',
+      );
+      const hasDirectConnection = diagnostic.prepare(
+        'SELECT 1 FROM chat_connections WHERE chat_id=?',
+      );
+      const receipt = (peerId: number, text: string) =>
+        expect.objectContaining({ peer_id: peerId, text });
+      const offText = `${target}\nБот выключен.\n`;
+      const onText = `${target}\nБот включён.\n`;
+
+      f.event(200, '/приветствие вкл', owner, peer);
+      f.event(200, '/приветствие вкл', owner, neighborPeer);
+      await vi.waitFor(() =>
+        expect(f.delivered()).toEqual(
+          expect.arrayContaining([
+            receipt(peer, 'Приветствия включены.'),
+            receipt(neighborPeer, 'Приветствия включены.'),
+          ]),
+        ),
+      );
+      const earlier = commands.all();
+      expect(earlier).toEqual([
+        { target: chat, source: chat, actor: ownerId, number: 200 },
+        { target: neighborChat, source: neighborChat, actor: ownerId, number: 200 },
+      ]);
+      expect(hasDirectConnection.get(ownerId)).toBeUndefined();
+      const sentBeforeOff = f.sent().length;
+      const deliveredBeforeOff = f.delivered().length;
+      f.event(199, `/выключить-бота ${target}`, member, member);
+      f.event(199, `/выключить-бота ${chat}@${a.generation + 10}`, owner, owner);
+      expect(f.controls.read(a).enabled).toBe(true);
+      expect(commands.all()).toEqual(earlier);
+
+      f.event(200, `/выключить-бота ${target}`, owner, owner);
+      await vi.waitFor(() =>
+        expect(f.sent().slice(sentBeforeOff)).toEqual([
+          expect.objectContaining({
+            peer_ids: String(owner),
+            message: expect.stringContaining(offText),
+          }),
+        ]),
+      );
+      expect(f.delivered().slice(deliveredBeforeOff)).toEqual(
+        rejected
+          ? []
+          : [expect.objectContaining({ peer_id: owner, text: expect.stringContaining(offText) })],
+      );
+      expect(hasDirectConnection.get(ownerId)).toBeUndefined();
+      expect(f.controls.read(a).enabled).toBe(false);
+      expect(f.controls.read(b)).toMatchObject({ enabled: true, greetingEnabledFrom: 200 });
+      expect(commands.all()).toEqual([
+        earlier[0],
+        { target: chat, source: ownerId, actor: ownerId, number: 200 },
+        earlier[1],
+      ]);
+
+      f.event(201, `/включить-бота ${target}`, owner, owner);
+      await vi.waitFor(() =>
+        expect(f.delivered()).toContainEqual(
+          expect.objectContaining({ peer_id: owner, text: expect.stringContaining(onText) }),
+        ),
+      );
+      f.event(201, '/приветствие выкл', owner, peer);
+      f.event(201, '/приветствие выкл', owner, neighborPeer);
+      await vi.waitFor(() =>
+        expect(f.delivered()).toEqual(
+          expect.arrayContaining([
+            receipt(peer, 'Приветствия выключены.'),
+            receipt(neighborPeer, 'Приветствия выключены.'),
+          ]),
+        ),
+      );
+      const saved = commands.all();
+      const aState = f.controls.read(a);
+      const bState = f.controls.read(b);
+      expect(aState).toMatchObject({ enabled: true, greetingEnabledAt: null });
+      expect(bState).toMatchObject({ enabled: true, greetingEnabledAt: null });
+      const beforeChecks = f.delivered().length;
+      const beforeAttempts = f.sent().length;
+      f.replay(200, peer);
+      f.replay(200, neighborPeer);
+      f.replay(200, owner);
+      f.event(202, '/настройки', owner, peer);
+      f.event(202, '/настройки', owner, neighborPeer);
+      f.event(202, `/настройки ${target}`, owner, owner);
+      await vi.waitFor(() =>
+        expect(f.delivered().slice(beforeChecks)).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ peer_id: peer, text: expect.stringContaining(onText) }),
+            expect.objectContaining({
+              peer_id: neighborPeer,
+              text: expect.stringContaining(`${neighborChat}@${b.generation}\nБот включён.\n`),
+            }),
+            expect.objectContaining({ peer_id: owner, text: expect.stringContaining(onText) }),
+          ]),
+        ),
+      );
+      expect(f.sent().slice(beforeAttempts)).toHaveLength(3);
+      expect(f.controls.read(a)).toEqual(aState);
+      expect(f.controls.read(b)).toEqual(bState);
+      expect(commands.all()).toEqual(saved);
+      for (const scope of [a, b]) {
+        const journal = await f.storage.messages.list(scope, { limit: 20 });
+        expect(journal.filter((row) => row.messageId === '200')).toMatchObject([
+          { userId: ownerId, text: '/приветствие вкл' },
+        ]);
+      }
+      expect(model).not.toHaveBeenCalled();
+    } finally {
+      diagnostic.close();
+      await f.close();
+    }
+  },
+  12_000,
+);

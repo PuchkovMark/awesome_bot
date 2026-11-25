@@ -99,7 +99,7 @@ export function createPersonaCommands(options: {
         const result = await authorization.selectPersona(
           context,
           request.card.id,
-          sequence,
+          { sourceChatId: message.chatId, messageId: sequence, timestamp: message.timestamp },
           isCurrent,
         );
         if (!result.allowed || result.value.status !== 'selected') return;

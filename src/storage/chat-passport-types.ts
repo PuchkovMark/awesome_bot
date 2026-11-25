@@ -1,3 +1,5 @@
+import type { Timestamp } from '../contracts/index';
+
 export { passportSections } from '../contracts/chat-passport';
 export type { PassportEntry, PassportSection } from '../contracts/chat-passport';
 
@@ -9,6 +11,7 @@ export type PassportPromptAction = 'edit' | 'clear';
 export interface PassportReply {
   readonly receipt: string;
   readonly eventId: number;
+  readonly eventAt: Timestamp;
   readonly text: string;
 }
 
