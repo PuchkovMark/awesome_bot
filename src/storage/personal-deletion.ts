@@ -186,6 +186,7 @@ export function confirmDeletion(
       WHERE chat_id=? AND generation=?`,
   ).run(chat, scope.generation, user, chat, scope.generation);
   for (const [table, column] of [
+    ['recap_clarifications', 'user_id'],
     ['chat_author_labels', 'user_id'],
     ['request_quota_admissions', 'user_id'],
     ['chat_control_commands', 'actor_id'],

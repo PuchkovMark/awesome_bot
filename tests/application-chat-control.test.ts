@@ -283,7 +283,7 @@ test('команды VK сохраняют паузу, выключение от
       ).toBe(true),
     );
     expect(sent().some((args) => String(args.message).includes('полным списком'))).toBe(false);
-    event(214, '/вопросы', administrator);
+    event(214, '/вопросы изменить', administrator);
     await vi.waitFor(() =>
       expect(sent().some((args) => String(args.message).includes('полным списком'))).toBe(true),
     );

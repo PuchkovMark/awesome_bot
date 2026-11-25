@@ -49,6 +49,7 @@ function reconcileSnapshot(staged: Database, newer: Database, now: number) {
       migrate(staged);
       // Кеш пересобирается из журнала после сверки видимости и границ хранения.
       staged.prepare('DELETE FROM chat_summaries').run();
+      staged.prepare('DELETE FROM recap_clarifications').run();
       staged.prepare('DELETE FROM profile_command_lists').run();
       staged
         .prepare(

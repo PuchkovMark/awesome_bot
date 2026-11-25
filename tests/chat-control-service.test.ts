@@ -136,7 +136,9 @@ test('включение доступно владельцу из служебн
       target: { chatId: 'vk:2000000004', generation: 7 },
     });
     expect(parseChatControl('помолчи, пожалуйста', 'group')).toBeUndefined();
-    expect(parseChatControl('/продлить-паузу -1', 'group')).toEqual({ command: 'invalid' });
+    expect(parseChatControl('/продлить-паузу -1', 'group')).toEqual({
+      command: { kind: 'extendHelp' },
+    });
   } finally {
     await f.close();
   }

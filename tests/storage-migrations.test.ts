@@ -202,3 +202,31 @@ test('миграция готовых анкет сохраняет старые
     db.close();
   }
 });
+
+test('обновление закрывает старые редакторы вопросов и правил, сохраняя подтверждение очистки', () => {
+  const db = new Database(':memory:');
+  try {
+    db.pragma('foreign_keys=ON');
+    migrate(db, migrations.slice(0, 53));
+    db.exec(
+      "INSERT INTO chat_connections(chat_id,generation,revision,state) VALUES('vk:41',1,1,'active')",
+    );
+    const log = db.prepare(
+      "INSERT INTO messages(chat_id,platform_message_id,user_id,author_name,role,text,timestamp) VALUES('vk:41',?,'vk:-314','','assistant','Служебный ответ',1)",
+    );
+    for (const id of ['1', '2', '3', '4']) log.run(id);
+    db.exec(`INSERT INTO questionnaire_editor_prompts VALUES('vk:41',1,'1',1,'vk:73',1);
+      INSERT INTO chat_passport_prompts VALUES('vk:41',1,'2',2,'rules','vk:73','edit',1,900000),
+      ('vk:41',1,'3',3,'rules','vk:73','clear',1,900000),('vk:41',1,'4',4,'topic','vk:73','edit',1,900000)`);
+    migrate(db);
+    expect(
+      db.prepare('SELECT actor_id FROM questionnaire_editor_prompts').pluck().get(),
+    ).toBeNull();
+    expect(
+      db.prepare('SELECT action FROM chat_passport_prompts ORDER BY message_id').pluck().all(),
+    ).toEqual([null, 'clear', 'edit']);
+    expect(db.pragma('foreign_key_check')).toEqual([]);
+  } finally {
+    db.close();
+  }
+});

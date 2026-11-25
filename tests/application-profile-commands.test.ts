@@ -130,6 +130,18 @@ test('профиль выбранной беседы, пустая личка и
         ),
       ).toBe(true),
     );
+    const neighbor = await app.connectGroup(peer + 1);
+    app.at(5000);
+    await seed(app, neighbor, item('city', 'Город второй беседы'));
+    const copy = '/профиль ' + neighbor.chatId;
+    app.submit(copy);
+    await until(() =>
+      expect(app.sends.some((row) => row.peer_id === peer && row.text.endsWith(copy))).toBe(true),
+    );
+    app.setPrivateAllowed(true);
+    start = app.sends.length;
+    app.submit(copy, 41, undefined, 41);
+    expect((await receivedPart(app, start)).text).toContain('Город второй беседы');
     const publicText = app.sends
       .filter((row) => row.peer_id === peer)
       .map((row) => row.text)

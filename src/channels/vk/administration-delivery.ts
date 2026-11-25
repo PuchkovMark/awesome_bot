@@ -13,9 +13,9 @@ export function createVkAdministrationDelivery(
   const peer = vkLocalId(recipient);
   const chatId =
     peer !== undefined && peer > 0 && !isVkGroupChat(peer) ? (`vk:${peer}` as const) : undefined;
-  async function canWrite(guard: VkRequestGuard) {
+  async function permission(guard: VkRequestGuard): Promise<'allowed' | 'failed' | 'unknown'> {
     if (chatId === undefined || guard.isCurrent?.() === false || guard.signal?.aborted)
-      return false;
+      return 'failed';
     try {
       const allowed = vkRecord(
         await api.request(
@@ -24,32 +24,43 @@ export function createVkAdministrationDelivery(
           guard,
         ),
       );
-      if (allowed?.is_allowed !== 1 && allowed?.is_allowed !== true) return false;
+      if (allowed?.is_allowed === 0 || allowed?.is_allowed === false) return 'failed';
+      if (allowed?.is_allowed !== 1 && allowed?.is_allowed !== true) return 'unknown';
       const result = vkRecord(
         await api.request('messages.getConversationsById', { peer_ids: String(peer) }, guard),
       );
       const items = Array.isArray(result?.items)
         ? result.items.map(vkRecord).filter((row) => vkRecord(row?.peer)?.id === peer)
         : [];
-      return items.length === 1 && vkRecord(items[0]?.can_write)?.allowed === true;
+      const writable = items.length === 1 ? vkRecord(items[0]?.can_write)?.allowed : undefined;
+      if (writable === false) return 'failed';
+      return writable === true ? 'allowed' : 'unknown';
     } catch {
-      return false;
+      return 'unknown';
     }
+  }
+  const canWrite = async (guard: VkRequestGuard) => (await permission(guard)) === 'allowed';
+  async function deliver(text: string, guard: VkRequestGuard) {
+    if (chatId === undefined) return 'failed' as const;
+    const access = await permission(guard);
+    if (access !== 'allowed') return access;
+    return (
+      await outbound.send({
+        ...guard,
+        chatId,
+        text,
+        kind: 'answer',
+        confirmPart() {
+          /* Служебный текст вне журнала. */
+        },
+      })
+    ).kind;
   }
   return Object.freeze({
     canWrite,
+    deliver,
     async reply(text: string, guard: VkRequestGuard) {
-      if (chatId !== undefined && (await canWrite(guard))) {
-        await outbound.send({
-          ...guard,
-          chatId,
-          text,
-          kind: 'answer',
-          confirmPart() {
-            /* Служебный текст вне журнала. */
-          },
-        });
-      }
+      await deliver(text, guard);
     },
     async publish(
       text: string,

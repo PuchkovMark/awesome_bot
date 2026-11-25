@@ -297,7 +297,7 @@ test('одинаковый вопрос получает местный глос
       );
     }
     const amended = 'Объявления согласуют в начале недели.';
-    await change('/правила', 'Раздел виден всем участникам беседы.', amended);
+    await change('/правила изменить', 'Раздел виден всем участникам беседы.', amended);
     expect(readPassport(await submit(question))).toEqual({ rules: amended });
     await change('/правила очистить', 'ответьте «Подтверждаю».', 'Подтверждаю');
     const cleared = await submit(question);

@@ -271,3 +271,41 @@ test('смена поколения между захватом и запрос�
     await f.close();
   }
 });
+
+test('отменённый черновик виден семь суток вместе с назначенным напоминанием', async () => {
+  const f = await remindersFixture();
+  try {
+    f.db.prepare("INSERT INTO sqlite_sequence(name,seq) VALUES('personal_reminders',11)").run();
+    f.send('Напомни мне забрать книгу вечером');
+    await until(() => expect(f.pending()[0]?.state).toBe('draft'));
+    const id = f.pending()[0]!.id;
+    expect(id).toBe(12);
+    f.send('Напомни мне через 8 дней взять ключи');
+    await until(() => expect(f.pending()[1]?.state).toBe('pending'));
+    const due = f.pending()[1]!.dueAt!;
+    f.send('Отмени напоминание ' + id);
+    await until(() => expect(f.pending()[0]?.state).toBe('cancelled'));
+    const cancelled = f.pending()[0]!.finishedAt!;
+    async function list() {
+      const start = f.sends.length;
+      f.send('Мои напоминания');
+      await until(() =>
+        expect(f.sends.slice(start).some((row) => row.text.includes('взять ключи'))).toBe(true),
+      );
+      return f.sends.slice(start).find((row) => row.text.includes('взять ключи'))!.text;
+    }
+    expect(await list()).toContain('#' + id + ' · отменено');
+    await f.halt();
+    await f.launch();
+    await f.resolve('vk:41');
+    expect(await list()).toContain('#' + id + ' · отменено');
+    f.at(cancelled + 7 * 86400000);
+    expect(await list()).not.toContain('отменено');
+    f.at(due);
+    await until(() =>
+      expect(f.sends.filter((row) => row.text === 'Напоминание.\nвзять ключи')).toHaveLength(1),
+    );
+  } finally {
+    await f.close();
+  }
+});

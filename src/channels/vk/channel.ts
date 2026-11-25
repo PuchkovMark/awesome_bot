@@ -269,8 +269,14 @@ export function createVkChannel(
     reminderDelivery(recipient: UserId) {
       return createVkAdministrationDelivery(api, outbound, recipient, options.groupId);
     },
-    replyPrivateControl(sender: UserId, text: string, guard: PublicationGuard) {
-      return createVkAdministrationDelivery(api, outbound, sender, options.groupId).reply(
+    privateControlDelivery(sender: UserId, text: string, guard: PublicationGuard) {
+      return createVkAdministrationDelivery(api, outbound, sender, options.groupId).deliver(
+        text,
+        guard,
+      );
+    },
+    async replyPrivateControl(sender: UserId, text: string, guard: PublicationGuard) {
+      await createVkAdministrationDelivery(api, outbound, sender, options.groupId).reply(
         text,
         guard,
       );

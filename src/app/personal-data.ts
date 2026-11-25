@@ -26,7 +26,7 @@ export function createPersonalCommands(options: {
   privacy: ReturnType<typeof personalDataStore>;
   channel: Pick<
     ReturnType<typeof createVkChannel>,
-    'replyPrivateControl' | 'replyGroupControl' | 'sendPersonalFile'
+    'replyPrivateControl' | 'privateControlDelivery' | 'replyGroupControl' | 'sendPersonalFile'
   >;
   lifecycle: ReturnType<typeof createLifecycleService>;
   onboarding: ReturnType<typeof createChatOnboarding>;
@@ -202,6 +202,17 @@ export function createPersonalCommands(options: {
         allow: async () => isCurrent() && privacy.hasData(scope, sender),
       };
       if (!(await guard.allow())) return;
+      const commandName = match[1]!.toLowerCase();
+      async function replyOrGuide(text: string) {
+        const result = await channel.privateControlDelivery(sender, text, guard);
+        if (result !== 'delivered' && !direct && isCurrent()) {
+          await channel.replyGroupControl(
+            scope,
+            `Разрешите сообщения сообщества и отправьте в личку /${commandName} ${scope.chatId}`,
+            guard,
+          );
+        }
+      }
       if (match[1]?.toLowerCase() === 'удалить-мои-данные') {
         const request = privacy.requestDeletion(
           scope,
@@ -209,10 +220,8 @@ export function createPersonalCommands(options: {
           `${message.peerId}/${message.cmid}`,
           Date.now(),
         );
-        await channel.replyPrivateControl(
-          sender,
+        await replyOrGuide(
           `Удалить анкету и остальные ваши данные из «${request.title ?? scope.chatId}» (${scope.chatId})? В течение 15 минут отправьте здесь /подтверждаю-удаление ${request.code}`,
-          guard,
         );
         return;
       }
@@ -223,10 +232,8 @@ export function createPersonalCommands(options: {
       }
       if (match[1]?.toLowerCase() === 'отключить-профиль') {
         const until = privacy.disable(scope, sender, Date.now());
-        await channel.replyPrivateControl(
-          sender,
+        await replyOrGuide(
           `Профилирование в ${scope.chatId} отключено. Личная выгрузка профиля доступна до ${new Date(until).toISOString()}.`,
-          guard,
         );
         return;
       }

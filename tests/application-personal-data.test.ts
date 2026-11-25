@@ -169,3 +169,66 @@ test('явный ID соседней беседы даёт только кома
     await app.close();
   }
 });
+
+test.each(['закрыта', 'потеряна квитанция'])(
+  'из беседы можно продолжить в личке, когда она %s',
+  async (fault) => {
+    const app = await fixture({ profileNotice: 'Уведомление' });
+    try {
+      await app.journaled(app.submit('Запись автора'));
+      if (fault === 'закрыта') app.setPrivateAllowed(false);
+      else
+        app.failSend((text) =>
+          text.startsWith('Профилирование') || text.startsWith('Удалить анкету')
+            ? 'unknownAfterDelivery'
+            : undefined,
+        );
+      for (const name of ['отключить-профиль', 'удалить-мои-данные']) {
+        app.submit('/' + name);
+        await until(() =>
+          expect(
+            app.sends.some(
+              (row) =>
+                row.peer_id === peer &&
+                row.text ===
+                  'Разрешите сообщения сообщества и отправьте в личку /' + name + ' ' + chat,
+            ),
+          ).toBe(true),
+        );
+      }
+      const selection = () =>
+        app.db
+          .prepare('SELECT disabled_at FROM personal_profile_choices WHERE chat_id=? AND user_id=?')
+          .pluck()
+          .get(chat, 'vk:41');
+      const first = selection();
+      expect(typeof first).toBe('number');
+      expect(app.db.prepare('SELECT confirmed_at FROM personal_deletions').pluck().all()).toEqual([
+        null,
+      ]);
+      expect(
+        app.sends
+          .filter((row) => row.peer_id === peer)
+          .map((row) => row.text)
+          .join('\n'),
+      ).not.toMatch(/подтверждаю-удаление|выгрузка профиля доступна|Запись автора/iu);
+      app.setPrivateAllowed(true);
+      app.failSend(undefined);
+      app.at(1000);
+      const start = app.sends.length;
+      app.submit('/отключить-профиль ' + chat, 41, undefined, 41);
+      app.submit('/удалить-мои-данные ' + chat, 41, undefined, 41);
+      await until(() => {
+        const personal = app.sends
+          .slice(start)
+          .filter((row) => row.peer_id === 41)
+          .map((row) => row.text);
+        expect(personal.some((text) => text.startsWith('Профилирование'))).toBe(true);
+        expect(personal.some((text) => text.includes('/подтверждаю-удаление'))).toBe(true);
+      });
+      expect(selection()).toBe(first);
+    } finally {
+      await app.close();
+    }
+  },
+);

@@ -37,7 +37,9 @@ export function createChatControlHandlers(options: {
         return { action: 'chat.configure', minimumRole: 'admin' } as const;
       if (request.command.kind === 'pause' && replyToOther) return null;
       if (
-        (request.command.kind === 'greeting' || request.command.kind === 'invitation') &&
+        ['greeting', 'invitation', 'greetingHelp', 'invitationHelp'].includes(
+          request.command.kind,
+        ) &&
         (replyToOther || message.hasForwarded)
       )
         return null;
@@ -51,7 +53,13 @@ export function createChatControlHandlers(options: {
       const request = parseChatControl(message.text, 'group');
       if (!request || typeof request.command === 'string') return;
       const command = request.command;
-      if (command.kind === 'questionnaire') return questionnaire.show(context, message, isCurrent);
+      if (command.kind === 'questionnaire' || command.kind === 'questionnaireEdit')
+        return questionnaire.show(
+          context,
+          message,
+          isCurrent,
+          command.kind === 'questionnaireEdit',
+        );
       const messageId =
         command.kind === 'greeting' || command.kind === 'invitation'
           ? Number(message.messageId)

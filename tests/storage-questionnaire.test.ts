@@ -108,7 +108,7 @@ test('миграция отделяет новые VK-группы от преж
     expect(f.store().current(old)).toEqual(first);
     expect(await f.replace(old, 102, 202, 'Другая редакция?')).toMatchObject({
       allowed: true,
-      value: { status: 'applied', count: 1 },
+      value: { status: 'confirm', before: 2, question: 'Другая редакция?' },
     });
     expect(
       f

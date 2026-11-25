@@ -71,6 +71,7 @@ export function startParticipantDeparture(
 export function pauseDepartedActivity(db: Database, scope: ChatGeneration, user: UserId) {
   const args = { ...scope, user };
   dropProfileUpdateInputs(db, scope, user);
+  db.prepare(`DELETE FROM recap_clarifications WHERE ${subject}`).run(args);
   db.prepare(
     `UPDATE questionnaire_management_prompts SET user_id=NULL,attempt=NULL,expires_at=0 WHERE ${subject}`,
   ).run(args);

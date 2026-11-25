@@ -1,3 +1,4 @@
+import { claimRecapInput } from './recap-clarifications';
 import { acceptQuestionnaireInput, answerableAttempt } from './questionnaire-input';
 import { createLlmRecoveryStore } from './llm-recovery-store';
 import {
@@ -404,8 +405,25 @@ export function createQueueBackend(
           if (admission.status === 'queue_full' && route)
             addChatMetrics(db, scope, receivedAt, 'requests', { queue_full: 1 });
           if (admission.status === 'queued' && route) {
-            if (!routed?.skipQuestionnaire)
-              acceptQuestionnaireInput(db, scope, message.userId, admission.messageId, receivedAt);
+            if (!routed?.skipQuestionnaire) {
+              const recap =
+                message.replyToMessageId &&
+                claimRecapInput(
+                  db,
+                  scope,
+                  message.userId,
+                  message.replyToMessageId,
+                  admission.jobId,
+                );
+              if (!recap)
+                acceptQuestionnaireInput(
+                  db,
+                  scope,
+                  message.userId,
+                  admission.messageId,
+                  receivedAt,
+                );
+            }
             const revision = readChatControl(db, scope.chatId).responseRevision;
             db.prepare(
               'UPDATE queue_jobs SET route_kind=?,route_mode=?,route_group=?,disclosure_version=?,control_revision=? WHERE id=?',

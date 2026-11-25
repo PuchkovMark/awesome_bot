@@ -2,6 +2,7 @@
 import type { ChatSummaryStore, SummaryPeriod } from '../../storage/chat-summary-store';
 import { localDay } from './calendar';
 import type { SummaryEngine, SummaryPiece, SummaryRun } from './worker';
+import { parseRecapPeriod } from './recap-period';
 import { isRecapRequest } from './recap-intent';
 import { SummaryFailure } from './compress';
 
@@ -11,67 +12,8 @@ export function recapPeriod(
   timezone: string,
 ): SummaryPeriod | 'clarify' | null {
   if (!isRecapRequest(text)) return null;
-  const request = text.toLocaleLowerCase('ru').replace(/ё/g, 'е');
-  const dates = [
-    ...request.matchAll(/\d{4}-\d\d-\d\d(?:[t ]\d\d:\d\d(?::\d\d)?(?:z|[+-]\d\d:\d\d)?)?/gu),
-  ].map((match) => match[0]!);
-  const relative = request.match(/позавчера|вчера|сегодня/gu) ?? [];
-  if (dates.length || relative.length) {
-    if (dates.length > 2 || relative.length > 2 || (dates.length && relative.length))
-      return 'clarify';
-    try {
-      const bounds = dates.length
-        ? dates.map((value) => {
-            if (value.length === 10)
-              return {
-                at: Temporal.PlainDate.from(value).toZonedDateTime(timezone).epochMilliseconds,
-                day: true,
-              };
-            const iso = value.replace(' ', 'T').toUpperCase();
-            const at = /Z|[+-]\d\d:\d\d$/u.test(iso)
-              ? Temporal.Instant.from(iso)
-              : Temporal.PlainDateTime.from(iso).toZonedDateTime(timezone, {
-                  disambiguation: 'reject',
-                });
-            return { at: at.epochMilliseconds, day: false };
-          })
-        : relative.map((value) => ({
-            at: localDay(now, timezone, value === 'позавчера' ? -2 : value === 'вчера' ? -1 : 0)
-              .from,
-            day: true,
-          }));
-      const first = bounds[0]!,
-        last = bounds.at(-1)!;
-      let from = first.at,
-        to = last.day ? localDay(last.at, timezone).to : last.at;
-      if (first.day && last.day) {
-        const times = [...request.matchAll(/(?:с|по|до)\s+(\d{1,2}:\d{2})(?!\d)/gu)].map(
-          (m) => m[1]!,
-        );
-        if (times.length === 2) {
-          const timeAt = (at: number, time: string) =>
-            Temporal.Instant.fromEpochMilliseconds(at)
-              .toZonedDateTimeISO(timezone)
-              .toPlainDate()
-              .toPlainDateTime(Temporal.PlainTime.from(time.padStart(5, '0')))
-              .toZonedDateTime(timezone, { disambiguation: 'reject' }).epochMilliseconds;
-          from = timeAt(first.at, times[0]!);
-          to = timeAt(last.at, times[1]!);
-        } else if (/вечером|утром|ночью|днем|\d{1,2}:\d{2}|(?:с|до|в) \d{1,2}(?!\d)/u.test(request))
-          return 'clarify';
-      }
-      return from < to ? { from, to, timezone } : 'clarify';
-    } catch {
-      return 'clarify';
-    }
-  }
-  const recent = request.match(/последни[ехйя]+\s+(?:(\d{1,2})\s+д|недел)/u);
-  if (recent || /за неделю/u.test(request)) {
-    const days = recent?.[1] ? Number(recent[1]) : 7;
-    if (days < 1) return 'clarify';
-    return { ...localDay(now, timezone, -days), to: localDay(now, timezone).from };
-  }
-  return 'clarify';
+  const result = parseRecapPeriod(text, now, timezone);
+  return result.kind === 'period' ? result.period : 'clarify';
 }
 
 export async function recap(

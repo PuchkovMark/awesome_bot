@@ -1,8 +1,8 @@
 import {
   addressedSlash,
   commandHelp,
+  commandInput,
   isCommandHelp,
-  slashText,
   helpAction,
   unknownHint,
 } from './command-help';
@@ -240,7 +240,8 @@ export async function runApplication(
               !message.hasForwarded &&
               (onboarding.configuredForProfiles() ||
                 !!parseReminderCommand(message.text, false) ||
-                (!message.attachments.length && isPersonaCommand(message.text)))
+                (!message.attachments.length &&
+                  (isPersonaCommand(message.text) || isCommandHelp(message.text))))
             );
           },
           onReady() {
@@ -632,7 +633,12 @@ export async function runApplication(
             .finally(() => floodPublications.delete(operation));
           floodPublications.add(operation);
         },
+        commandInput,
         recognizeCommand: (message, replyToOther, scope) =>
+          (chatControl.editor.ownsReply(scope, message)
+            ? chatControl.editor.recognizeReply(scope, message)
+            : null) ??
+          (passports.ownsReply(scope, message) ? passports.recognize(scope, message) : null) ??
           questionnaires.recognize(scope, message) ??
           passports.recognize(scope, message) ??
           chatControl.editor.recognizeReply(scope, message) ??
@@ -678,7 +684,7 @@ export async function runApplication(
                 );
               },
             };
-            const input = slashText(message);
+            const input = message.text.trim();
             const text = isCommandHelp(input)
               ? commandHelp(
                   role.value,
@@ -686,6 +692,7 @@ export async function runApplication(
                   state.enabled,
                   state.mode,
                   message.userId,
+                  input,
                 )
               : unknownHint(
                   input,
@@ -697,6 +704,16 @@ export async function runApplication(
               ? channel.replyGroupControl(context.scope, text, guard)
               : channel.replyPrivateControl(message.userId, text, guard);
           }
+          if (
+            command?.action === 'chat.onboarding.configure' &&
+            chatControl.editor.recognizeReply(context.scope, message)
+          )
+            return chatControl.editor.reply(context, message, isCurrent);
+          if (
+            command?.action === 'chat.passport.edit' &&
+            passports.recognize(context.scope, message)
+          )
+            return passports.execute(context, message, isCurrent);
           if (questionnaires.recognize(context.scope, message))
             return questionnaires.execute(context, message, isCurrent);
           if (passports.recognize(context.scope, message))
@@ -771,7 +788,7 @@ export async function runApplication(
               if (!active || !controls.read(lifecycle.admissionScope(ownerId)).enabled)
                 return channel.replyPrivateControl(
                   ownerId,
-                  commandHelp('owner', false, false, 'silent', ownerId),
+                  commandHelp('owner', false, false, 'silent', ownerId, message.text),
                   { signal, isCurrent, allow: async () => isCurrent() },
                 );
             }

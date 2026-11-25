@@ -210,3 +210,47 @@ test('личное ограничение видимости обычного п
     await f.close();
   }
 });
+
+test('восстановление закрывает ожидающие ответы о периоде и замене вопросов', async () => {
+  const f = await profileFixture();
+  const newer = openExisting(f.path),
+    now = Date.now();
+  try {
+    const scope = await f.chat();
+    const input = await f.message(scope, alice, '101', now);
+    const { id: prompt } = await f.storage.messages.append(scope, {
+      chatId: scope.chatId,
+      userId: 'vk:-314',
+      role: 'assistant',
+      authorName: 'Бот',
+      messageId: '102',
+      text: 'Подтвердите',
+      timestamp: now,
+    });
+    lifecycleBackend(f.storage).transaction(scope, (db) => {
+      db.prepare(
+        'INSERT INTO recap_clarifications(chat_id,generation,receipt,user_id,message_id,root_id,source_id) VALUES(?,?,?,?,?,?,?)',
+      ).run(scope.chatId, scope.generation, '102', alice, prompt, input, input);
+      db.prepare(
+        'INSERT INTO questionnaire_editor_prompts(chat_id,generation,receipt,message_id,actor_id,shown_revision,proposal,proposal_source_id) VALUES(?,?,?,?,?,1,?,?)',
+      ).run(scope.chatId, scope.generation, '102', prompt, alice, 'Один вопрос?', input);
+    });
+    const backup = f.path + '.backup',
+      candidate = f.path + '.stage';
+    await createSnapshot(newer, backup, 'one', now);
+    await openCandidate(backup, candidate, 'one', now + 1);
+    const staged = openExisting(candidate, false);
+    try {
+      expect(reconcileRestore(staged, newer, now + 2, 30 * 86400000).access).toBe('full');
+      expect(staged.prepare('SELECT count(*) FROM recap_clarifications').pluck().get()).toBe(0);
+      expect(
+        staged.prepare('SELECT actor_id,proposal FROM questionnaire_editor_prompts').raw().get(),
+      ).toEqual([null, null]);
+    } finally {
+      staged.close();
+    }
+  } finally {
+    newer.close();
+    await f.close();
+  }
+});

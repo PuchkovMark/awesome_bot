@@ -39,6 +39,7 @@ export interface RouterOptions {
     messageId: number,
     receivedAt: number,
   ) => boolean;
+  readonly commandInput?: (message: IncomingMessage) => IncomingMessage;
   readonly recognizeCommand?: (
     message: IncomingMessage,
     replyToOther: boolean | undefined,
@@ -96,7 +97,8 @@ export function createMessageRouter(options: RouterOptions) {
         })
       ).settings;
       if (isCurrent && !isCurrent()) return { decision: null, admission: null };
-      const command = options.recognizeCommand?.(message, replyToOther, scope) ?? null;
+      const commandMessage = options.commandInput?.(message) ?? message;
+      const command = options.recognizeCommand?.(commandMessage, replyToOther, scope) ?? null;
       if (command) context ??= options.identity?.(scope, message);
       const service = command
         ? await commandAccess(options.authorization, context, scope, message, command)
@@ -212,7 +214,7 @@ export function createMessageRouter(options: RouterOptions) {
       ) {
         await options.executeCommand?.(
           context,
-          message,
+          commandMessage,
           () => (!isCurrent || isCurrent()) && (!disclosure || disclosure().respond),
           replayOnly || undefined,
           command ?? undefined,

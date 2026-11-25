@@ -14,6 +14,7 @@ import type { QueueCompletion, QueueSettlement } from '../chat-queue/types';
 import type { NoticeReceipt, NoticePermit } from '../../storage/notice-types';
 import type { TracePublication } from '../../storage/trace-types';
 import { traceBackend } from '../../storage/trace-store';
+import { confirmRecapReply } from '../../storage/recap-clarifications';
 import { noticeBackend } from '../../storage/notice-store';
 import { lifecycleBackend } from '../../storage/lifecycle-store';
 import {
@@ -118,6 +119,7 @@ export function createPublicationService(options: {
     work: QueueSettlement,
     outcome: unknown,
     details: {
+      readonly recapReply?: QueueCompletion['recapReply'];
       readonly subjectIds?: readonly import('../../contracts/index').UserId[];
       readonly withoutJob?: boolean;
       readonly flood?: FloodNotice;
@@ -432,6 +434,15 @@ export function createPublicationService(options: {
                   : undefined,
               );
             }
+            if (
+              details.recapReply &&
+              decision.kind === 'answer' &&
+              last &&
+              !samePart &&
+              (!details.recapReply.known ||
+                (part.text === text && part.replyToMessageId === replyToMessageId))
+            )
+              confirmRecapReply(db, scope, work.messageId, messageId, details.recapReply);
             if (measuredJob !== undefined) {
               measureStart(db);
               confirmMeasuredPart(db, scope, measuredJob, last === true && !samePart);
@@ -696,6 +707,7 @@ export function createPublicationService(options: {
           ? { kind: completion.preparationFailure }
           : (completion.result ?? { kind: completion.outcome }),
         {
+          ...(completion.recapReply && { recapReply: completion.recapReply }),
           toolSourceIds: completion.toolSourceIds ?? [],
           subjectIds: completion.subjectIds ?? [],
           ...(completion.participantCards ? { participantCards: completion.participantCards } : {}),

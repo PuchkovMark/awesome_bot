@@ -41,7 +41,7 @@ const edit = {
 type Request =
   | { readonly kind: 'all' }
   | { readonly kind: 'invalid' }
-  | { readonly kind: 'section' | 'clear'; readonly section: PassportSection };
+  | { readonly kind: 'section' | 'edit' | 'clear'; readonly section: PassportSection };
 
 function parse(text: string): Request | null {
   const tokens = text.trim().toLowerCase().split(/\s+/u);
@@ -50,6 +50,8 @@ function parse(text: string): Request | null {
     const prefix = sections[section].command.split(' ');
     if (!prefix.every((token, index) => token === tokens[index])) continue;
     if (tokens.length === prefix.length) return { kind: 'section', section };
+    if (section === 'rules' && tokens.length === prefix.length + 1 && tokens.at(-1) === 'изменить')
+      return { kind: 'edit', section };
     if (tokens.length === prefix.length + 1 && tokens.at(-1) === 'очистить')
       return { kind: 'clear', section };
   }
@@ -170,11 +172,19 @@ export function createChatPassport(options: {
         return false;
       }
     },
+    ownsReply(scope: ConnectionScope, message: IncomingMessage) {
+      return (
+        message.replyAddress === 'bot' &&
+        !message.hasForwarded &&
+        !!message.replyToMessageId &&
+        passport.ownsPrompt(scope, message.replyToMessageId, message.userId)
+      );
+    },
     recognize(scope: ConnectionScope, message: IncomingMessage) {
       if (!message.isGroupChat) return null;
       if (sectionForReply(scope, message)) return edit;
       const request = parse(message.text);
-      if (request) return request.kind === 'clear' ? edit : read;
+      if (request) return request.kind === 'clear' || request.kind === 'edit' ? edit : read;
       return requestedSection(message) ? read : null;
     },
     async execute(
@@ -242,6 +252,10 @@ export function createChatPassport(options: {
       if (!current()) return;
       if (!canEdit.allowed) {
         if (request.kind === 'section') await reply(view(entry));
+        return;
+      }
+      if (request.kind === 'section' && entry.section === 'rules') {
+        await reply(view(entry) + '\n\nДля правки отправьте /правила изменить.');
         return;
       }
       if (request.kind === 'clear' && entry.text === null) {

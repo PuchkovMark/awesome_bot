@@ -77,7 +77,12 @@ test('паспорт из пяти разделов, отдельное чтен
       ['Важные события', '/события', 'П'.repeat(1499)],
     ] as const;
     for (const [title, command, value] of chapter) {
-      const prompt = await delivered(app, owner, command, editor);
+      const prompt = await delivered(
+        app,
+        owner,
+        command === '/правила' ? '/правила изменить' : command,
+        editor,
+      );
       expect(prompt.text).toContain(title + '\nРаздел пока пуст.');
       await apply(app, owner, prompt, value);
       const preview = await delivered(app, member, command, value);
@@ -110,7 +115,7 @@ test('паспорт из пяти разделов, отдельное чтен
     const silent = app.sends.length;
     const denied = app.submit('/правила', member);
     await app.journaled(denied);
-    const adminPreview = await delivered(app, owner, '/правила', editor);
+    const adminPreview = await delivered(app, owner, '/правила изменить', editor);
     expect(adminPreview.text).toContain(literal);
     expect(app.sends.slice(silent)).toEqual([adminPreview]);
     expect(app.complete).not.toHaveBeenCalled();
@@ -128,10 +133,10 @@ test('подтверждённые ответы привязаны к автор
     );
     app.name(41, 'Саша', 'Иванов');
     app.name(42, 'Саша', 'Иванов');
-    const p1 = await delivered(app, owner, '/правила', editor);
-    const p2 = await delivered(app, admin, '/правила', editor);
+    const p1 = await delivered(app, owner, '/правила изменить', editor);
+    const p2 = await delivered(app, admin, '/правила изменить', editor);
     const p3 = await delivered(app, admin, '/традиции', editor);
-    const pOther = await delivered(app, owner, '/правила', editor, peer + 1);
+    const pOther = await delivered(app, owner, '/правила изменить', editor, peer + 1);
     await apply(app, owner, pOther, 'Правила другой беседы', peer + 1);
 
     const foreign = app.submit('/выключить-бота', owner, pOther);
@@ -155,7 +160,7 @@ test('подтверждённые ответы привязаны к автор
     expect(read(app, 'traditions').text).toBe('Сохраняем традицию');
 
     const outdated = await delivered(app, owner, '/правила очистить', cleaner);
-    const fresh = await delivered(app, admin, '/правила', editor);
+    const fresh = await delivered(app, admin, '/правила изменить', editor);
     await apply(app, admin, fresh, 'Вторая редакция');
     const staleStart = app.sends.length;
     app.submit('Подтверждаю', owner, outdated);
@@ -274,7 +279,7 @@ test('показ раздела учитывает адресацию и пов�
       'Раздел пока пуст.',
     );
     expect(empty.text).toBe('Правила\nРаздел пока пуст.');
-    const prompt = await delivered(app, owner, '/правила', editor);
+    const prompt = await delivered(app, owner, '/правила изменить', editor);
     await apply(app, owner, prompt, 'Рекламу согласуют заранее.');
     const start = app.sends.length;
 

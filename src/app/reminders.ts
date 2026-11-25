@@ -118,10 +118,17 @@ function prompt(item: Reminder, proposedZone: string | undefined) {
 function summary(item: Reminder) {
   const prefix = `#${item.id}`;
   if (item.state === 'draft') return `${prefix} · ожидается уточнение`;
-  const time = `${formatReminderTime(item.dueAt!, item.timezone!)} (${item.timezone})`;
-  return item.state === 'pending'
-    ? `${prefix} · ${time} · ${item.deliveryUnknown ? display.unknown : item.text}`
-    : `${prefix} · ${time} · ${display[item.state]}`;
+  const parts = [prefix];
+  if (item.dueAt !== null && item.timezone !== null)
+    parts.push(`${formatReminderTime(item.dueAt, item.timezone)} (${item.timezone})`);
+  parts.push(
+    item.state === 'pending'
+      ? item.deliveryUnknown
+        ? display.unknown
+        : item.text!
+      : display[item.state],
+  );
+  return parts.join(' · ');
 }
 
 export function createReminderHandlers(options: {

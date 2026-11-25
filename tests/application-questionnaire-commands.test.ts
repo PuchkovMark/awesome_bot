@@ -154,7 +154,12 @@ test('в старой группе без редакции команда пре
     app.at(1000);
     app.submit('/анкета');
     await until(() =>
-      expect(app.sends.some(({ text }) => text.startsWith('Вопросы не настроены.'))).toBe(true),
+      expect(
+        app.sends.some(
+          ({ text }) =>
+            text.startsWith('Вопросы не настроены.') && text.includes('/вопросы изменить'),
+        ),
+      ).toBe(true),
     );
     expect(attempt(app)).toBeUndefined();
     expect(app.complete).not.toHaveBeenCalled();

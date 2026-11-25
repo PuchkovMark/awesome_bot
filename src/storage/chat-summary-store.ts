@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { Database } from 'better-sqlite3';
 import type { ConnectionScope } from '../contracts/index';
 import { historyBounds, historySourcesVisible } from './history-retention-store';
+import { readRecapInput } from './recap-clarifications';
 import { lifecycleBackend } from './lifecycle-store';
 
 export interface SummaryPeriod {
@@ -52,6 +53,9 @@ function valid(db: Database, scope: ConnectionScope, id: number) {
 export function chatSummaryStore(storage: object) {
   const life = lifecycleBackend(storage);
   return {
+    recapInput(scope: ConnectionScope, input: number) {
+      return life.transaction(scope, (db) => readRecapInput(db, scope, input));
+    },
     hasComposites(scope: ConnectionScope) {
       return life.transaction(
         scope,

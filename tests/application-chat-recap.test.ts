@@ -1,7 +1,7 @@
 import { applicationSummaries } from '../src/app/chat-summaries';
 import { tokenBudgetStore } from '../src/storage/token-budget-store';
 import { expect, test } from 'vitest';
-import { fixture, until, chat, answer } from './helpers/application-response-fixture';
+import { fixture, until, chat, peer, answer } from './helpers/application-response-fixture';
 const question = '[club314|Пенёк] Что было вчера?';
 test('сначала служебный reply, затем сводка Haiku; повторный вопрос использует готовый день', async () => {
   const f = await fixture();
@@ -245,3 +245,204 @@ test.each(['receipt', 'unknown'])(
     }
   },
 );
+
+test('период из прямого ответа даёт те же источники, что и период в полной просьбе', async () => {
+  const f = await fixture({
+    startAt: Date.UTC(2026, 10, 25, 12),
+    limit: 40,
+    summaryIntervalMs: 999999999,
+  });
+  try {
+    await f.storage.chats.update(f.scope, { timezone: 'Europe/Moscow' });
+    for (const [name, time] of [
+      ['РАНО', Date.UTC(2026, 10, 19, 20, 59, 59)],
+      ['НАЧАЛО', Date.UTC(2026, 10, 19, 21)],
+      ['КОНЕЦ', Date.UTC(2026, 10, 22, 20, 59, 59)],
+      ['ПОЗДНО', Date.UTC(2026, 10, 22, 21)],
+    ] as const)
+      await f.storage.messages.append(f.scope, {
+        chatId: chat,
+        userId: 'vk:42',
+        role: 'user',
+        authorName: 'Ира',
+        messageId: name,
+        text: name,
+        timestamp: time,
+      });
+    f.complete.mockResolvedValue({ ...answer, text: 'Итог выбранных дней.' });
+    const replyTo = (id: number) =>
+      f.sends.find(
+        (row) =>
+          row.reply_message?.conversation_message_id === id && row.text !== 'собираю, минутку',
+      );
+    const initial = f.submit('Пенёк, сделай сводку');
+    await until(() => expect(replyTo(initial)?.text).toContain('За какой период'));
+    const prompt = replyTo(initial)!;
+    const pending = () => f.db.prepare('SELECT count(*) FROM recap_clarifications').pluck().get();
+    await until(() => expect(pending()).toBe(1));
+    await f.restart(true);
+    const follow = f.submit('с двадцатого по двадцать второе ноября', 41, prompt);
+    await until(() => expect(replyTo(follow)?.text).toContain('Итог выбранных дней.'));
+    await until(() => expect(pending()).toBe(0));
+    const calls = f.complete.mock.calls.length;
+    const requests = JSON.stringify(f.complete.mock.calls);
+    expect(requests).toContain('НАЧАЛО');
+    expect(requests).toContain('КОНЕЦ');
+    expect(requests).not.toMatch(/РАНО|ПОЗДНО/u);
+    f.replay(follow);
+    for (const form of [
+      '20–22 ноября',
+      'с 20-го по двадцать второе ноября',
+      '20.11.2026–22.11.2026',
+      '2026-11-20 — 2026-11-22',
+    ]) {
+      const id = f.submit('Пенёк, что было ' + form + '?');
+      await until(() => expect(replyTo(id)?.text).toContain('Итог выбранных дней.'));
+      const again = f.submit('Пенёк, сделай сводку');
+      await until(() => expect(pending()).toBe(1));
+      const short = f.submit(form, 41, replyTo(again)!);
+      await until(() => expect(replyTo(short)?.text).toContain('Итог выбранных дней.'));
+      await until(() => expect(pending()).toBe(0));
+    }
+    expect(f.complete.mock.calls).toHaveLength(calls);
+  } finally {
+    await f.close();
+  }
+});
+
+test('автор может ответить на доставленное уточнение, даже если VK не смог прикрепить его к просьбе', async () => {
+  const f = await fixture();
+  try {
+    await appendSource(f, 'Вчера договорились о встрече.', 0);
+    f.complete.mockResolvedValue({ ...answer, text: 'Договорились о встрече.' });
+    const initial = f.submit('Пенёк, сделай сводку');
+    f.hideVkMessage(initial);
+    const prompt = () => f.sends.find((row) => row.text.includes('За какой период'));
+    await until(() => expect(prompt()).toBeDefined());
+    expect(prompt()!.reply_message).toBeUndefined();
+    await until(() =>
+      expect(f.db.prepare('SELECT count(*) FROM recap_clarifications').pluck().get()).toBe(1),
+    );
+    const follow = f.submit('вчера', 41, prompt()!);
+    await until(() =>
+      expect(
+        f.sends.find(
+          (row) =>
+            row.reply_message?.conversation_message_id === follow &&
+            row.text === 'Договорились о встрече.',
+        ),
+      ).toBeDefined(),
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test('уточнение привязано к сообщению и автору, недостающую границу можно прислать отдельно', async () => {
+  const f = await fixture();
+  try {
+    const count = () => f.db.prepare('SELECT count(*) FROM recap_clarifications').pluck().get();
+    const reply = (id: number) =>
+      f.sends.find((row) => row.reply_message?.conversation_message_id === id);
+    const a = f.submit('Пенёк, что было с 20 ноября?');
+    const b = f.submit('Пенёк, сделай сводку', 42);
+    await until(() => expect(count()).toBe(2));
+    expect(reply(a)?.text).toContain('По какую дату');
+    expect(reply(b)?.text).toContain('За какой период');
+    const other = f.submit('вчера', 42, reply(a)!);
+    await f.published(other);
+    expect(count()).toBe(2);
+    const first = f.submit('по 22 ноября', 41, reply(a)!);
+    await f.published(first);
+    await until(() => expect(count()).toBe(1));
+    const second = f.submit('вчера', 42, reply(b)!);
+    await f.published(second);
+    await until(() => expect(count()).toBe(0));
+  } finally {
+    await f.close();
+  }
+});
+
+test('после полуночи «вчера» относится ко дню ответа, а граница истории остаётся у исходной просьбы', async () => {
+  const f = await fixture({ startAt: Date.UTC(2026, 10, 24, 20, 59, 59) });
+  try {
+    const neighbor = await f.connectGroup(peer + 1);
+    await f.storage.chats.update(f.scope, { timezone: 'Europe/Moscow' });
+    const source = (text: string, timestamp: number) =>
+      f.storage.messages.append(f.scope, {
+        chatId: chat,
+        userId: 'vk:42',
+        role: 'user',
+        authorName: 'Ира',
+        messageId: text,
+        text,
+        timestamp,
+      });
+    await source('Сообщение за двадцать третье', f.start - 86400000);
+    await source('Решение от двадцать четвёртого', f.start - 30_000);
+    f.complete.mockResolvedValue({ ...answer, text: 'Вчера приняли решение.' });
+    const request = f.submit('Пенёк, сделай сводку');
+    const pending = () => f.db.prepare('SELECT count(*) FROM recap_clarifications').pluck().get();
+    await until(() => expect(pending()).toBe(1));
+    const prompt = f.sends.find((row) => row.reply_message?.conversation_message_id === request)!;
+    await source('Запись после первоначальной просьбы', f.start);
+    await f.journaled(f.submit('вчера'));
+    const outside = f.submit('вчера', 41, prompt, peer + 1);
+    await until(async () =>
+      expect(
+        (await f.storage.messages.list(neighbor, { limit: 10 })).some(
+          (m) => m.messageId === String(outside),
+        ),
+      ).toBe(true),
+    );
+    expect(pending()).toBe(1);
+    await f.restart(true, [peer + 1]);
+    f.at(2000);
+    const reply = f.submit('вчера', 41, prompt);
+    await until(() =>
+      expect(
+        f.sends.some(
+          (row) =>
+            row.reply_message?.conversation_message_id === reply &&
+            row.text === 'Вчера приняли решение.',
+        ),
+      ).toBe(true),
+    );
+    expect(pending()).toBe(0);
+    const calls = JSON.stringify(f.complete.mock.calls);
+    expect(calls).toContain('Решение от двадцать четвёртого');
+    expect(calls).not.toMatch(/Сообщение за двадцать третье|Запись после первоначальной просьбы/u);
+  } finally {
+    await f.close();
+  }
+});
+
+test('месяц уточняется после перезапуска, неизвестная доставка и удалённая просьба не открывают продолжение', async () => {
+  const app = await fixture();
+  try {
+    const prompts = () => app.db.prepare('SELECT count(*) FROM recap_clarifications').pluck().get();
+    const reply = (id: number) =>
+      app.sends.find((row) => row.reply_message?.conversation_message_id === id);
+    app.failSend((text) => (text.includes('В каком месяце') ? 'unknownAfterDelivery' : undefined));
+    const failed = app.submit('Пенёк, что было с 20 по 22?');
+    await app.published(failed);
+    app.failSend(undefined);
+    const valid = app.submit('Пенёк, что было с 20 по 22?');
+    await until(() => {
+      expect(reply(valid)?.text).toContain('В каком месяце');
+      expect(prompts()).toBe(1);
+    });
+    await app.restart(true);
+    const answer = app.submit('в ноябре', 41, reply(valid)!);
+    await app.published(answer);
+    await until(() => expect(prompts()).toBe(0));
+    const remove = app.submit('Пенёк, сделай сводку');
+    await until(() => expect(prompts()).toBe(1));
+    app.db
+      .prepare('DELETE FROM messages WHERE chat_id=? AND platform_message_id=?')
+      .run(chat, String(remove));
+    expect(prompts()).toBe(0);
+  } finally {
+    await app.close();
+  }
+});

@@ -38,6 +38,7 @@ export function until(check: () => void | Promise<void>) {
 
 export async function fixture(
   options: {
+    startAt?: number;
     limit?: number;
     profileNotice?: string;
     retentionDays?: number;
@@ -79,7 +80,7 @@ export async function fixture(
   const monotonic = vi.spyOn(performance, 'now');
   let elapsed = 0;
   monotonic.mockImplementation(() => realMonotonic() + elapsed);
-  const start = Date.UTC(2026, 10, 23, 12);
+  const start = options.startAt ?? Date.UTC(2026, 10, 23, 12);
   clock.mockReturnValue(start);
   const { config } = loadApplicationConfig({
     env: {
@@ -424,6 +425,9 @@ export async function fixture(
       close,
       name(from: number, first: string, last = '') {
         names.set(from, { first_name: first, last_name: last });
+      },
+      hideVkMessage(id: number) {
+        messages.delete(id);
       },
       replay(id: number) {
         const message = messages.get(id);

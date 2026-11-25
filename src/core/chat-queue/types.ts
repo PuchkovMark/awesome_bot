@@ -63,6 +63,7 @@ export interface QueueHandlerInput {
 }
 export type QueueHandler = (input: QueueHandlerInput) => Promise<QueueOutcome | QueueCompletion>;
 export interface QueueCompletion {
+  readonly recapReply?: import('../../storage/recap-clarifications').RecapReply;
   readonly subjectIds?: readonly import('../../contracts/index').UserId[];
   readonly questionnaireCompletion?: {
     readonly user: import('../../contracts/index').UserId;

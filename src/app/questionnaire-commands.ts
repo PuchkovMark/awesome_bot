@@ -23,7 +23,6 @@ import {
   type QuestionnairePresentationGrant,
 } from '../storage/questionnaire-presentation-store';
 import { questionnaireManagementStore } from '../storage/questionnaire-management-store';
-import { slashText } from './command-help';
 import { questionnaireEditorParts } from './questionnaire-management';
 import { questionnaireViewStore } from '../storage/questionnaire-view-store';
 import type { Storage } from '../storage/types';
@@ -71,7 +70,7 @@ const status = {
   completed: 'Вы уже заполнили анкету.',
   cancelled: 'Заполнение анкеты отменено.',
   idle: 'У вас нет открытой анкеты в этом чате.',
-  unconfigured: 'Вопросы не настроены. Администратор может задать их через /вопросы.',
+  unconfigured: 'Вопросы не настроены. Администратор может задать их командой /вопросы изменить.',
   profile_required: 'Для анкеты нужен доступный профиль в этом чате.',
   forbidden: null,
   duplicate: null,
@@ -107,9 +106,10 @@ export function createQuestionnaireCommands(options: {
   function commandOf(scope: ConnectionScope, message: IncomingMessage) {
     if (message.isBot !== false || (!message.isGroupChat && message.chatId !== message.userId))
       return null;
-    const raw = slashText(message);
+    const raw = message.text.trim();
     const text =
-      raw.startsWith('/') && !message.hasOtherAddress
+      raw.startsWith('/') &&
+      (!message.hasOtherAddress || /^\/анкета\s+показать(?:\s|$)/iu.test(raw))
         ? raw
         : (message.literalText ?? message.text).trim();
     const progress = parseQuestionnaireCommand(text);

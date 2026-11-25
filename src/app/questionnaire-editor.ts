@@ -17,7 +17,7 @@ const editorHeading = 'Редактор анкеты';
 const instruction =
   '\n\nЧтобы изменить анкету, ответьте на это сообщение полным списком, по одному вопросу на строку.';
 const continuation = '\n\nДля правки дождитесь сообщения редактора.';
-const reopen = 'Откройте /вопросы и ответьте на сообщение редактора полным списком.';
+const reopen = 'Откройте /вопросы изменить и ответьте на сообщение редактора полным списком.';
 const edit = {
   action: 'chat.onboarding.configure',
   minimumRole: 'admin',
@@ -50,6 +50,11 @@ function replyText(result: QuestionnaireReplyResult) {
   switch (result.status) {
     case 'applied':
       return `Анкета сохранена. Количество вопросов — ${result.count}.`;
+    case 'kept':
+      return 'Прежний список вопросов сохранён.';
+    case 'choose':
+      return 'Ответьте на запрос подтверждения «Заменить» или «Оставить».';
+    case 'confirm':
     case 'duplicate':
       return null;
     case 'stale':
@@ -108,6 +113,14 @@ export function createQuestionnaireEditor(options: {
         return false;
       }
     },
+    ownsReply(scope: ConnectionScope, message: IncomingMessage) {
+      return (
+        message.replyAddress === 'bot' &&
+        !message.hasForwarded &&
+        !!message.replyToMessageId &&
+        questionnaires.ownsPrompt(scope, message.replyToMessageId, message.userId)
+      );
+    },
     recognizeReply(scope: ConnectionScope, message: IncomingMessage) {
       if (!message.isGroupChat) return null;
       const receipt = message.replyToMessageId ?? message.unverifiedReplyToMessageId;
@@ -116,7 +129,12 @@ export function createQuestionnaireEditor(options: {
         ? edit
         : null;
     },
-    async show(context: AuthorizationContext, message: IncomingMessage, accepted: () => boolean) {
+    async show(
+      context: AuthorizationContext,
+      message: IncomingMessage,
+      accepted: () => boolean,
+      editing: boolean,
+    ) {
       if (
         !message.isGroupChat ||
         message.isBot !== false ||
@@ -131,7 +149,17 @@ export function createQuestionnaireEditor(options: {
       const chosen = questionnaires.current(scope);
       const revision = chosen?.ref.revision ?? 0;
       const list = (chosen?.questions ?? legacyQuestionnaire.questions).map(({ text }) => text);
-      const { display, editor } = preview(chosen ? heading : sample, list);
+      const title = chosen ? heading : sample;
+      if (!editing) {
+        const parts = splitVkText(
+          title + '\n\n' + list.join('\n') + '\n\nДля правки отправьте /вопросы изменить.',
+          vkMessageLength.value,
+        );
+        for (const part of parts)
+          if (!(await channel.deliverGroupControl(scope, part, guard))) break;
+        return;
+      }
+      const { display, editor } = preview(title, list);
       const stillShown = {
         ...guard,
         isCurrent: () =>
@@ -165,6 +193,20 @@ export function createQuestionnaireEditor(options: {
         { eventId: id, receipt: message.replyToMessageId, text: raw },
         guard.isCurrent,
       );
+      if (result.allowed && result.value.status === 'confirm') {
+        const { before, shown, question } = result.value;
+        const form = new Intl.PluralRules('ru').select(before);
+        const noun = form === 'few' ? 'вопроса' : form === 'one' ? 'вопрос' : 'вопросов';
+        const text = `В списке ${before} ${noun}, останется 1. Ответьте на это сообщение «Заменить» или «Оставить».`;
+        const receipt = await channel.deliverGroupControl(context.scope, text, guard);
+        if (receipt && (await guard.allow()))
+          questionnaires.recordPrompt(context.scope, context.userId, shown, receipt, {
+            editor: message.replyToMessageId,
+            eventId: message.messageId,
+            question,
+          });
+        return;
+      }
       const response = result.allowed ? replyText(result.value) : null;
       if (response && guard.isCurrent())
         await channel.replyGroupControl(context.scope, response, guard);

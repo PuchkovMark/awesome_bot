@@ -1,0 +1,68 @@
+import { expect, test } from 'vitest';
+import { parseRecapPeriod } from '../src/core/chat-summaries/recap-period';
+
+const zone = 'Europe/Moscow';
+const at = Date.UTC(2026, 10, 24, 22); // Уже 25 ноября в беседе.
+const expected = {
+  kind: 'period',
+  period: { from: Date.UTC(2026, 10, 19, 21), to: Date.UTC(2026, 10, 22, 21), timezone: zone },
+};
+test.each([
+  'с двадцатого по двадцать второе ноября',
+  '20–22 ноября',
+  'с 20-го по двадцать второе ноября',
+  '20.11.2026–22.11.2026',
+  '2026-11-20 — 2026-11-22',
+])('одни местные дни для «%s»', (phrase) => {
+  expect(parseRecapPeriod('Пенёк, что обсуждали ' + phrase + '?', at, zone)).toEqual(expected);
+  expect(parseRecapPeriod(phrase, at, zone)).toEqual(expected);
+});
+test('неполные границы сохраняются в UTC, новый интервал может заменить их', () => {
+  const start = parseRecapPeriod('с двадцатого ноября', at, zone);
+  expect(start).toEqual({ kind: 'clarify', known: { from: expected.period.from } });
+  if (start.kind !== 'clarify') throw new Error('Ожидалось уточнение');
+  expect(parseRecapPeriod('по 22-е', at, zone, start.known)).toEqual(expected);
+  expect(parseRecapPeriod('первое — второе ноября', at, zone, start.known)).toEqual({
+    kind: 'period',
+    period: { from: Date.UTC(2026, 9, 31, 21), to: Date.UTC(2026, 10, 2, 21), timezone: zone },
+  });
+  expect(parseRecapPeriod('до 22 ноября', at, zone)).toEqual({
+    kind: 'clarify',
+    known: { to: expected.period.to },
+  });
+});
+test('относительный день, точное время и переход между месяцами', () => {
+  expect(parseRecapPeriod('вчера', at, zone)).toEqual({
+    kind: 'period',
+    period: { from: Date.UTC(2026, 10, 23, 21), to: Date.UTC(2026, 10, 24, 21), timezone: zone },
+  });
+  expect(parseRecapPeriod('вчера с 10:00 до 11:00', at, zone)).toEqual({
+    kind: 'period',
+    period: { from: Date.UTC(2026, 10, 24, 7), to: Date.UTC(2026, 10, 24, 8), timezone: zone },
+  });
+  expect(parseRecapPeriod('с 30 ноября по 2 декабря 2026', at, zone)).toEqual({
+    kind: 'period',
+    period: { from: Date.UTC(2026, 10, 29, 21), to: Date.UTC(2026, 11, 2, 21), timezone: zone },
+  });
+  for (const phrase of [
+    '31 ноября',
+    '20–22',
+    'вчера или сегодня',
+    'вчера вечером',
+    '29.02.2025',
+    '22 ноября — 20 ноября',
+  ])
+    expect(parseRecapPeriod(phrase, at, zone).kind, phrase).toBe('clarify');
+});
+
+test('в ответ на уточнение достаточно месяца или года', () => {
+  const days = parseRecapPeriod('с двадцатого по двадцать второе', at, zone);
+  if (days.kind !== 'clarify') throw Error('Ожидался месяц');
+  expect(parseRecapPeriod('в ноябре', at, zone, days.known)).toEqual(expected);
+  const otherMonth = parseRecapPeriod('с 20 по 22 октября', at, zone);
+  if (otherMonth.kind !== 'clarify') throw Error('Ожидался год');
+  expect(parseRecapPeriod('2025 год', at, zone, otherMonth.known)).toEqual({
+    kind: 'period',
+    period: { from: Date.UTC(2025, 9, 19, 21), to: Date.UTC(2025, 9, 22, 21), timezone: zone },
+  });
+});

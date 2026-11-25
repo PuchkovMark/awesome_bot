@@ -16,7 +16,7 @@ const show = /^\/профиль(?:\s+(vk:[1-9]\d*))?$/iu;
 const prefix = /^\/(профиль|исправить|скрыть|отклонить)(?=\s|$)/iu;
 const edit = /^\/(исправить|скрыть|отклонить)\s+([1-9]\d*)(?:\s+([\s\S]+))?$/iu;
 const retry = 'Откройте /профиль заново и ответьте на сообщение списка.';
-function deliveryHint(chat: ChatId) {
+function deliveryHint(chat: string) {
   return `Откройте личный диалог с сообществом и отправьте /профиль ${chat}`;
 }
 const serviceCommand = {
@@ -169,7 +169,7 @@ export function createProfileCommands(options: {
       if (!args || args[1] !== undefined || parent) {
         await channel.replyGroupControl(
           scope,
-          deliveryHint(scope.chatId),
+          deliveryHint(args?.[1] ?? scope.chatId),
           guard(() => current() && active(scope)),
         );
         return;
