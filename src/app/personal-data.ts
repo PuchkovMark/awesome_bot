@@ -130,7 +130,8 @@ export function createPersonalCommands(options: {
         };
         if (!(await guard.allow())) return;
         if (report) {
-          if (privacy.hasData(scope, sender)) privacy.reportMessage(scope, sender, report[2]!);
+          if (privacy.hasData(scope, sender))
+            privacy.reportMessage(scope, sender, report[2]!, message.cmid);
           await channel.replyPrivateControl(
             sender,
             'Запрос по указанному сообщению обработан.',

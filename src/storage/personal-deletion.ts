@@ -30,10 +30,13 @@ export function deletionRequest(
 export function invalidateDependentData(db: Database, chat: string, code: string) {
   db.prepare(
     `WITH RECURSIVE affected(id) AS (
-      SELECT message_id FROM personal_hidden_messages WHERE code=?
+      SELECT message_id FROM personal_hidden_messages WHERE code=@code
       UNION SELECT a.answer_id FROM personal_answer_sources a JOIN affected ON affected.id=a.source_id
-    ) INSERT OR IGNORE INTO personal_hidden_messages SELECT id,?,1 FROM affected`,
-  ).run(code, code);
+      JOIN messages m ON m.id=a.answer_id
+      WHERE NOT EXISTS (SELECT 1 FROM personal_dispute_cases c WHERE c.code=@code
+        AND c.platform_message_id=m.platform_message_id AND c.state='keep')
+    ) INSERT OR IGNORE INTO personal_hidden_messages SELECT id,@code,1 FROM affected`,
+  ).run({ code });
   db.prepare(
     `DELETE FROM queue_jobs WHERE chat_id=? AND (message_id IN (SELECT message_id FROM personal_hidden_messages) OR id IN (SELECT job_id FROM response_traces WHERE
     EXISTS(SELECT 1 FROM json_each(payload,'$.context.messageIds') j JOIN personal_hidden_messages h ON h.message_id=j.value)))`,
@@ -89,7 +92,8 @@ export function confirmDeletion(
     'DELETE FROM questionnaire_progress WHERE chat_id=? AND generation=? AND user_id=?',
   ).run(chat, scope.generation, user);
   db.prepare(
-    `INSERT OR IGNORE INTO personal_hidden_messages SELECT id,?,0 FROM messages WHERE chat_id=? AND user_id=? AND role='user'`,
+    `INSERT OR IGNORE INTO personal_hidden_messages SELECT id,?,0 FROM messages WHERE chat_id=? AND user_id=? AND role='user'
+    ON CONFLICT(message_id,code) DO UPDATE SET disputed=0`,
   ).run(code, chat, user);
   db.prepare(
     `INSERT OR IGNORE INTO history_deleted_inputs SELECT chat_id,?,platform_message_id FROM messages WHERE chat_id=? AND user_id=? AND role='user'`,
@@ -121,12 +125,14 @@ export function confirmDeletion(
   db.prepare(
     `INSERT OR IGNORE INTO personal_hidden_messages
     SELECT w.message_id,?,0 FROM greeting_windows w JOIN greeting_members g ON g.window_id=w.id
-    WHERE w.chat_id=? AND w.generation=? AND g.user_id=? AND g.greet=1 AND w.message_id IS NOT NULL`,
+    WHERE w.chat_id=? AND w.generation=? AND g.user_id=? AND g.greet=1 AND w.message_id IS NOT NULL
+    ON CONFLICT(message_id,code) DO UPDATE SET disputed=0`,
   ).run(code, chat, scope.generation, user);
   db.prepare(
     `INSERT OR IGNORE INTO personal_hidden_messages
     SELECT w.invitation_message_id,?,0 FROM greeting_windows w JOIN greeting_members g ON g.window_id=w.id
-    WHERE w.chat_id=? AND w.generation=? AND g.user_id=? AND g.invited=1 AND w.invitation_message_id IS NOT NULL`,
+    WHERE w.chat_id=? AND w.generation=? AND g.user_id=? AND g.invited=1 AND w.invitation_message_id IS NOT NULL
+    ON CONFLICT(message_id,code) DO UPDATE SET disputed=0`,
   ).run(code, chat, scope.generation, user);
   db.prepare('DELETE FROM greeting_candidates WHERE chat_id=? AND generation=? AND user_id=?').run(
     chat,

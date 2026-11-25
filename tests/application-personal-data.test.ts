@@ -324,3 +324,61 @@ test.each(['закрыта', 'потеряна квитанция'])(
     }
   },
 );
+
+test.each(['оставить', 'удалить'])(
+  'повтор двух принятых жалоб после решения «%s» и потери квитанции',
+  async (decision) => {
+    const app = await fixture({ profileNotice: 'Уведомление' });
+    try {
+      await app.journaled(app.submit('Запись заявителя'));
+      const target = app.submit('Упоминание', 42);
+      await app.journaled(target);
+      const privacy = personalDataStore(app.storage);
+      const request = privacy.requestDeletion(app.scope, 'vk:41', 'request', app.start);
+      expect(privacy.confirmDeletion(app.scope, 'vk:41', request.code, app.start)).toBe(true);
+      const report = '/сообщить-упоминание ' + chat + ' ' + target;
+      const replies = () =>
+        app.sends.filter(
+          (row) => row.peer_id === 41 && row.text === 'Запрос по указанному сообщению обработан.',
+        ).length;
+      const first = app.submit(report, 41, undefined, 41);
+      await until(() => expect(replies()).toBe(1));
+      const second = app.submit(report, 41, undefined, 41);
+      await until(() => expect(replies()).toBe(2));
+      expect(privacy.disputed(app.scope)).toEqual([{ messageId: String(target) }]);
+      app.failSend((text) => (text === 'Решение сохранено.' ? 'unknownAfterDelivery' : undefined));
+      app.submit('/' + decision + '-запись ' + chat + ' ' + target, 73, undefined, 73);
+      await until(() =>
+        expect(
+          app.sends.some((row) => row.peer_id === 73 && row.text === 'Решение сохранено.'),
+        ).toBe(true),
+      );
+      app.failSend(undefined);
+      async function checkVisibility() {
+        const visible = decision === 'оставить';
+        expect(
+          (await app.storage.messages.list(app.scope, { limit: 100 })).some(
+            (row) => row.messageId === String(target),
+          ),
+        ).toBe(visible);
+        expect(
+          await app.storage.contextMessages.search(app.scope, 'Упоминание', 5, 128),
+        ).toHaveLength(visible ? 1 : 0);
+        expect(privacy.disputed(app.scope)).toEqual([]);
+      }
+      for (const [index, event] of [first, second].entries()) {
+        app.replay(event);
+        await until(() => expect(replies()).toBe(3 + index));
+        await checkVisibility();
+      }
+      privacy.cleanup(app.start);
+      await checkVisibility();
+      app.submit('/спорные-записи ' + chat, 73, undefined, 73);
+      await until(() =>
+        expect(app.sends.at(-1)).toMatchObject({ peer_id: 73, text: 'Спорных записей нет.' }),
+      );
+    } finally {
+      await app.close();
+    }
+  },
+);
