@@ -1,5 +1,96 @@
 import { expect, test } from 'vitest';
-import { fixture, peer, until } from './helpers/application-response-fixture';
+import { answer, fixture, peer, until } from './helpers/application-response-fixture';
+
+test.each([undefined, 'Уведомление для новой лички'])(
+  'первое приветствие записано перед обычным ответом, после него доступна справка, уведомление %s',
+  async (profileNotice) => {
+    const app = await fixture(profileNotice ? { profileNotice } : {});
+    try {
+      app.at(1000);
+      const receipt = profileNotice
+        ? app.holdReceipt((text) => text.includes(profileNotice))
+        : null;
+      const greeting = app.submit('Привет', 41, undefined, 41);
+      app.complete.mockImplementationOnce(async () => {
+        expect(
+          app.db
+            .prepare('SELECT text FROM messages WHERE chat_id=? AND platform_message_id=?')
+            .pluck()
+            .get('vk:41', String(greeting)),
+        ).toBe('Привет');
+        return answer;
+      });
+      if (receipt) {
+        await receipt.entered;
+        expect(app.complete).not.toHaveBeenCalled();
+        app.at(2000);
+        receipt.release();
+      }
+      const replies = () => app.sends.filter((s) => s.peer_id === 41).map((s) => s.text);
+      await until(() => expect(replies().at(-1)).toBe(answer.text));
+      expect(replies()).toEqual(
+        profileNotice ? [expect.stringContaining(profileNotice), answer.text] : [answer.text],
+      );
+      if (profileNotice)
+        expect(
+          app.db
+            .prepare('SELECT count(*) FROM profile_update_waiting WHERE chat_id=?')
+            .pluck()
+            .get('vk:41'),
+        ).toBe(0);
+      for (let count = 1; count <= 2; count++) {
+        app.submit('/помощь', 41, undefined, 41);
+        await until(() =>
+          expect(replies().filter((text) => text.startsWith('Доступные команды'))).toHaveLength(
+            count,
+          ),
+        );
+      }
+      expect(app.complete).toHaveBeenCalledOnce();
+    } finally {
+      await app.close();
+    }
+  },
+);
+
+test.each([901, 'unknownAfterDelivery'] as const)(
+  'при исходе уведомления %s первое приветствие и анкета ждут подтверждения',
+  async (fault) => {
+    const profileNotice = 'Уведомление для новой лички';
+    const app = await fixture({ profileNotice });
+    try {
+      app.failSend((text) => (text.includes(profileNotice) ? fault : undefined));
+      for (const [actor, text] of [
+        [41, 'Привет'],
+        [42, '/анкета'],
+      ] as const) {
+        app.submit(text, actor, undefined, actor);
+        await until(() =>
+          expect(
+            app.db
+              .prepare(
+                "SELECT state FROM disclosure_publications WHERE chat_id=? AND kind='introduction' AND reason IS NOT NULL",
+              )
+              .pluck()
+              .get('vk:' + actor),
+          ).toBe(fault === 901 ? 'pending' : 'unknown'),
+        );
+        expect(
+          app.sends.filter((row) => row.peer_id === actor && !row.text.includes(profileNotice)),
+        ).toEqual([]);
+        expect(
+          app.db
+            .prepare('SELECT count(*) FROM questionnaire_progress WHERE chat_id=?')
+            .pluck()
+            .get('vk:' + actor),
+        ).toBe(0);
+      }
+      expect(app.complete).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  },
+);
 
 test('помощь и команды совпадают и учитывают права, канал и режим', async () => {
   const app = await fixture({ greetings: { members: [41, 42, 73] } });
@@ -119,13 +210,15 @@ test.each([undefined, 'Уведомление о профиле'])(
         ['/помощь', 41],
         ['/команды', 42],
         ['Начать', 43],
+        ['/команды напоминания', 44],
       ] as const) {
         app.submit(command, actor, undefined, actor);
+        const heading = command.includes('напоминания')
+          ? 'Личные напоминания'
+          : 'Доступные команды';
         await until(() =>
           expect(
-            app.sends.some(
-              (row) => row.peer_id === actor && row.text.startsWith('Доступные команды'),
-            ),
+            app.sends.some((row) => row.peer_id === actor && row.text.startsWith(heading)),
           ).toBe(true),
         );
         const texts = app.sends.filter((row) => row.peer_id === actor).map((row) => row.text);
@@ -155,6 +248,91 @@ test.each([undefined, 'Уведомление о профиле'])(
     }
   },
 );
+
+test('приветствие и «Начать» подряд обрабатываются по одному разу при повторной доставке VK', async () => {
+  const app = await fixture();
+  try {
+    const send = (text: string) => app.submit(text, 41, undefined, 41);
+    const replies = () => app.sends.filter((s) => s.peer_id === 41).map((s) => s.text);
+    const greeting = send('Привет');
+    const start = send('Начать');
+    await until(() => {
+      expect(replies()).toContain(answer.text);
+      expect(replies()).toContainEqual(expect.stringContaining('Доступные команды'));
+    });
+    const help = replies().find((text) => text.startsWith('Доступные команды'))!;
+    const generation = app.db
+      .prepare("SELECT generation FROM chat_connections WHERE chat_id='vk:41'")
+      .pluck();
+    const initial = generation.get();
+    app.replay(greeting, 41);
+    app.replay(start, 41);
+    send('/помощь напоминания');
+    await until(() => expect(replies().at(-1)).toContain('Личные напоминания'));
+    expect(generation.all()).toEqual([initial]);
+    expect(replies()).toHaveLength(3);
+    expect(replies().filter((s) => s === help)).toHaveLength(1);
+    expect(app.complete).toHaveBeenCalledOnce();
+    send('/помощь');
+    await until(() => expect(replies().at(-1)).toBe(help));
+  } finally {
+    await app.close();
+  }
+});
+
+test('«Начать» в цитате, пересылке, упоминании или reply в действующей личке сохраняет обычную маршрутизацию', async () => {
+  const app = await fixture();
+  try {
+    app.submit('/помощь', 41, undefined, 41);
+    await until(() => expect(app.sends.at(-1)?.text).toContain('Доступные команды'));
+    const parent = app.sends.at(-1)!;
+    app.submit('«Начать»', 41, undefined, 41);
+    app.submit('Начать', 41, undefined, 41, true);
+    app.submit('[club314|Пенёк] Начать', 41, undefined, 41);
+    app.submit('Начать', 41, parent, 41);
+    app.submit('/помощь напоминания', 41, undefined, 41);
+    await until(() =>
+      expect(
+        app.sends.some((row) => row.peer_id === 41 && row.text.startsWith('Личные напоминания')),
+      ).toBe(true),
+    );
+    expect(app.sends.filter((row) => row.peer_id === 41 && row.text === parent.text)).toHaveLength(
+      1,
+    );
+  } finally {
+    await app.close();
+  }
+});
+
+test('перезапуск сохраняет для участника паузу прежней лички и ранее записанную first_seen', async () => {
+  const app = await fixture();
+  try {
+    const state = app.db.prepare('SELECT state,pause_reason FROM chat_connections WHERE chat_id=?');
+    app.submit('Начать', 41, undefined, 41);
+    await until(() => expect(app.sends.at(-1)?.peer_id).toBe(41));
+    app.submit('Начать', 42, undefined, 42, true);
+    await until(() => expect(state.get('vk:42')).toMatchObject({ pause_reason: 'first_seen' }));
+    await app.restart();
+    const journal = app.db
+      .prepare("SELECT id FROM messages WHERE chat_id IN ('vk:41','vk:42') ORDER BY id")
+      .pluck();
+    const before = journal.all();
+    const sent = app.sends.length;
+    for (const actor of [41, 42]) {
+      app.submit('Начать', actor, undefined, actor);
+      app.submit('/помощь', actor, undefined, actor);
+    }
+    app.submit('/помощь', 43, undefined, 43);
+    await until(() => expect(app.sends.some((row) => row.peer_id === 43)).toBe(true));
+    expect(state.get('vk:41')).toEqual({ state: 'uncertain', pause_reason: 'startup' });
+    expect(state.get('vk:42')).toEqual({ state: 'uncertain', pause_reason: 'first_seen' });
+    expect(journal.all()).toEqual(before);
+    expect(app.sends.slice(sent).filter((s) => [41, 42].includes(s.peer_id))).toEqual([]);
+    expect(app.complete).not.toHaveBeenCalled();
+  } finally {
+    await app.close();
+  }
+});
 
 test.each(['/помощь', '/команды', '/помощь напоминания', '/команды напоминания'])(
   'первое сообщение владельца «%s» открывает личную справку',

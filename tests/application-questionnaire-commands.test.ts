@@ -118,6 +118,30 @@ test('команды работают без приглашения и моде�
   }
 });
 
+test('первая /анкета без уведомления объясняет условие профиля и оставляет доступ к справке', async () => {
+  const app = await fixture();
+  try {
+    app.submit('/анкета', 41, undefined, 41);
+    await until(() =>
+      expect(app.sends.at(-1)).toMatchObject({
+        peer_id: 41,
+        text: 'Для анкеты нужен доступный профиль в этом чате.',
+      }),
+    );
+    app.submit('/помощь', 41, undefined, 41);
+    await until(() =>
+      expect(app.sends.at(-1)).toMatchObject({
+        peer_id: 41,
+        text: expect.stringContaining('Доступные команды'),
+      }),
+    );
+    expect(attempt(app, 41)).toBeUndefined();
+    expect(app.complete).not.toHaveBeenCalled();
+  } finally {
+    await app.close();
+  }
+});
+
 test('первое открытие в личке доставляет уведомление и предлагает повторить команду', async () => {
   const app = await fixture({ profileNotice });
   try {

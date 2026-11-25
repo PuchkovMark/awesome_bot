@@ -164,9 +164,14 @@ export function createLifecycleService(options: {
         result.communityAdmin,
       );
     },
-    async verify(chatId: ChatId, evidence?: 'observation_lost' | 'startup' | 'first_seen') {
+    async verify(
+      chatId: ChatId,
+      evidence?: 'observation_lost' | 'startup' | 'first_seen',
+      guard?: { readonly isCurrent: () => boolean; readonly prepare?: () => Promise<boolean> },
+    ): Promise<ReturnType<typeof backend.apply>> {
       if (!validId(chatId)) throw new TypeError('Lifecycle: invalid_chat');
-      const proof = backend.begin(chatId);
+      if (guard && !guard.isCurrent()) return { status: 'stale' };
+      let proof = backend.begin(chatId);
       if (evidence !== undefined) {
         const result = backend.apply(
           proof,
@@ -176,13 +181,28 @@ export function createLifecycleService(options: {
         if (result.status === 'uncertain') failedPauses.delete(chatId);
         return result;
       }
-      let observation;
-      try {
-        observation = await source.observe(Object.freeze({ chatId }));
-      } catch {
-        observation = { confidence: 'unavailable' as const, bot: 'unknown' as const };
+      if (guard?.prepare && (!(await guard.prepare()) || !guard.isCurrent())) {
+        return { status: 'stale' };
       }
-      return backend.apply(proof, observationOf(observation, chatId.split(':')[0]!));
+      for (;;) {
+        let observation;
+        try {
+          observation = await source.observe(Object.freeze({ chatId }));
+        } catch {
+          observation = { confidence: 'unavailable' as const, bot: 'unknown' as const };
+        }
+        if (guard && !guard.isCurrent()) return { status: 'stale' };
+        const result = backend.apply(
+          proof,
+          observationOf(observation, chatId.split(':')[0]!),
+          undefined,
+          !!guard,
+        );
+        if (!guard || result.status !== 'stale') return result;
+        const next = backend.retryOpening(proof);
+        if (!next) return result;
+        proof = next;
+      }
     },
     owner,
     decide(proof: OwnerProof, decision: 'continue' | 'new') {

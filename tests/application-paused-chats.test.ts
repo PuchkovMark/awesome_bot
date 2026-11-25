@@ -236,6 +236,34 @@ async function fixture() {
   };
 }
 
+test('после решения владельца участнику снова доступна справка в прежней личке', async () => {
+  const f = await fixture();
+  try {
+    const original = f.open(member);
+    await f.start();
+    const paused = f.paused().find((item) => item.chatId === chat(member))!;
+    expect(paused.generation).toBe(original.generation);
+    f.update(f.event('Начать', member), f.event('/помощь', member), f.event(overview));
+    await vi.waitFor(() => expect(f.sends.at(-1)?.peer).toBe(owner));
+    expect(f.sends.filter((row) => row.peer === member)).toEqual([]);
+    const command = 'Продолжить ' + paused.chatId + ' ' + paused.generation + '/' + paused.revision;
+    expect(f.sends.at(-1)?.text).toContain(command);
+    f.update(f.event(command));
+    await vi.waitFor(() => expect(f.sends.at(-1)?.text).toContain(paused.chatId + ' продолжена'));
+    f.update(f.event('Начать', member));
+    await vi.waitFor(() =>
+      expect(f.sends.at(-1)).toMatchObject({
+        peer: member,
+        text: expect.stringContaining('Доступные команды'),
+      }),
+    );
+    expect(f.life.current(chat(member)).generation).toBe(original.generation);
+    expect(f.model).not.toHaveBeenCalled();
+  } finally {
+    await f.close();
+  }
+});
+
 test('ранний личный путь принимает целую команду владельца и закрыт для группы, посторонних, цитат и пересылок', async () => {
   const f = await fixture();
   try {

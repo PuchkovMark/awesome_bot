@@ -13,6 +13,21 @@ export function isCommandHelp(text: string) {
   return helpRequest.test(text.trim());
 }
 
+export function isPrivateStart(message: IncomingMessage) {
+  return (
+    !message.isGroupChat &&
+    message.userId === message.chatId &&
+    message.isBot === false &&
+    !message.attachments.length &&
+    !message.isMentioned &&
+    !message.hasOtherAddress &&
+    !message.hasForwarded &&
+    !message.isReplyToBot &&
+    message.replyAddress === undefined &&
+    /^начать$/iu.test((message.literalText ?? message.text).trim())
+  );
+}
+
 export function commandHelp(
   role: BotRole,
   group: boolean,

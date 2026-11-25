@@ -252,18 +252,35 @@ export function createLifecycleBackend(connection: Connection) {
     begin(chatId: ChatId): Verification {
       return connection.run((db) => {
         compositeId(chatId);
+        const startedAt = clock(db);
         const state = read(db, chatId);
         const proof = Object.freeze({
           expected: Object.freeze({
             chatId,
             generation: state?.generation ?? null,
             revision: state?.revision ?? null,
-            clock: clock(db),
+            clock: startedAt,
           }),
         });
         checks.add(proof);
         return proof;
       });
+    },
+    retryOpening(previous: Verification): Verification | undefined {
+      const before = previous.expected;
+      if (before.generation !== null) return;
+      return connection.run((db) =>
+        db.transaction(() => {
+          const next = this.begin(before.chatId);
+          const advances = next.expected.clock - before.clock;
+          if (next.expected.generation !== null || advances <= 0) return;
+          const { count } = db
+            .prepare('SELECT count(*) AS count FROM chat_connections WHERE generation > ?')
+            .get(before.clock) as { count: number };
+          // Каждое создание занимает один номер. При удалении останется пропуск.
+          if (count === advances) return next;
+        })(),
+      );
     },
     current(chatId: ChatId, pinRevision = false): ConnectionScope {
       return connection.run((db) => {
@@ -476,6 +493,7 @@ export function createLifecycleBackend(connection: Connection) {
       proof: Verification,
       observation: LifecycleObservation,
       reason: ConnectionPauseReason = 'verification_uncertain',
+      pinRevision = false,
     ) {
       return connection.run((db) => {
         requireInput(!db.inTransaction);
@@ -551,7 +569,7 @@ export function createLifecycleBackend(connection: Connection) {
                 'UPDATE chat_connections SET inviter_id=?,inviter_applied=0 WHERE chat_id=?',
               ).run(observation.inviterId, chatId);
             installAuthorities(db, chatId);
-            return { status: 'applied' as const, scope: issue(state) };
+            return { status: 'applied' as const, scope: issue(state, pinRevision) };
           })
           .immediate();
       });

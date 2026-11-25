@@ -3,7 +3,12 @@ import { createVkInbound } from '../src/channels/index';
 import type { VkInboundApi } from '../src/channels/vk/api';
 import type { VkPollTransport } from '../src/channels/vk/long-poll';
 import { createChatQueue, createLifecycleService, createMessageRouter } from '../src/core/index';
-import type { ChatId, ConnectionScope, MembershipEvent } from '../src/contracts/index';
+import type {
+  ChatId,
+  ConnectionScope,
+  LifecycleSource,
+  MembershipEvent,
+} from '../src/contracts/index';
 import { openStorage } from '../src/storage/index';
 import type { Storage } from '../src/storage/index';
 import { flushQueue } from './helpers/chat-queue';
@@ -59,16 +64,18 @@ function transportFixture() {
   };
 }
 
-async function fixture() {
+async function fixture(
+  source: LifecycleSource = {
+    async observe() {
+      return { confidence: 'confirmed', bot: 'present' };
+    },
+  },
+) {
   const storage = await openStorage(':memory:');
   const lifecycle = createLifecycleService({
     storage,
     ownerId: owner,
-    source: {
-      async observe() {
-        return { confidence: 'confirmed', bot: 'present' };
-      },
-    },
+    source,
   });
   const { transport, update, gap, ready } = transportFixture();
   const controller = new AbortController();
@@ -126,6 +133,10 @@ function start(
     readonly storage?: Storage;
     readonly api?: VkInboundApi;
     readonly membership?: (event: MembershipEvent) => Promise<void>;
+    readonly privateEntry?: Pick<
+      Parameters<typeof createVkInbound>[0],
+      'verifyFirstPrivate' | 'notifyPrivate'
+    >;
   } = {},
 ) {
   const onDecision = vi.fn();
@@ -141,6 +152,7 @@ function start(
       token: 'synthetic-token',
       signal: f.controller.signal,
       lifecycle: { ...f.lifecycle, verify },
+      ...options.privateEntry,
     },
     { api: options.api ?? f.api, transport: f.transport },
   );
@@ -158,6 +170,142 @@ async function close(f: Awaited<ReturnType<typeof fixture>>, done: Promise<void>
 }
 
 describe('приём VK через штатный роутер', () => {
+  it('проверяет человека до права записи и сохраняет паузу лички после потери наблюдения', async () => {
+    const calls: string[] = [];
+    const f = await fixture({
+      async observe() {
+        calls.push('право записи');
+        return { confidence: 'confirmed', bot: 'present' };
+      },
+    });
+    const run = start(f, {
+      api: {
+        ...f.api,
+        async enrich(message) {
+          calls.push('автор');
+          return f.api.enrich(message);
+        },
+      },
+      privateEntry: {
+        verifyFirstPrivate: () => true,
+        async notifyPrivate() {
+          calls.push('уведомление');
+          return true;
+        },
+      },
+    });
+    try {
+      await f.ready;
+      f.update(event(1, { peer_id: 73, text: 'Привет' }));
+      await vi.waitFor(() => expect(f.handled).toHaveBeenCalledOnce());
+      expect(calls).toEqual(['автор', 'право записи', 'уведомление']);
+      const initial = f.lifecycle.current('vk:73');
+      await f.gap();
+      f.update(
+        event(2, { peer_id: 73, text: 'Начать' }),
+        event(3, { peer_id: 73, text: '/помощь' }),
+      );
+      expect(run.inbound.stats().paused).toBe(2);
+      expect(() => f.lifecycle.current('vk:73')).toThrow('uncertain_connection');
+      expect(run.onDecision).toHaveBeenCalledOnce();
+      const resumed = f.decide('vk:73');
+      expect(resumed.generation).toBe(initial.generation);
+      expect(await f.storage.messages.list(resumed, { limit: 10 })).toMatchObject([
+        { text: 'Привет' },
+      ]);
+      expect(calls).toHaveLength(3);
+    } finally {
+      await close(f, run.done);
+    }
+  });
+
+  it.each([
+    ['другой автор', { from_id: 99 }],
+    ['пересылка', { fwd_messages: [{}] }],
+    ['ответ', { reply_message: { from_id: 73, conversation_message_id: 1 } }],
+    ['неизвестный автор', {}],
+    ['запрет записи', {}],
+    ['неизвестное право записи', {}],
+  ] as const)('не открывает новую личку при условии «%s»', async (reason, fields) => {
+    const f = await fixture({
+      async observe() {
+        return reason === 'запрет записи'
+          ? { confidence: 'confirmed', bot: 'absent' }
+          : { confidence: 'unavailable', bot: 'unknown' };
+      },
+    });
+    const notifyPrivate = vi.fn(async () => true);
+    const enrich = vi.fn<VkInboundApi['enrich']>(async () => ({
+      isBot: reason === 'неизвестный автор' ? 'unknown' : false,
+    }));
+    const run = start(f, {
+      api: { ...f.api, enrich },
+      privateEntry: { verifyFirstPrivate: () => true, notifyPrivate },
+    });
+    try {
+      await f.ready;
+      f.update(event(2, { peer_id: 73, text: 'Привет', ...fields }));
+      await vi.waitFor(() => expect(run.inbound.stats().paused).toBe(1));
+      expect(enrich).toHaveBeenCalledTimes(Object.keys(fields).length ? 0 : 1);
+      expect(f.lifecycle.activeChatIds('vk')).toEqual([]);
+      expect(notifyPrivate).not.toHaveBeenCalled();
+      expect(run.onDecision).not.toHaveBeenCalled();
+    } finally {
+      await close(f, run.done);
+    }
+  });
+
+  it.each([
+    ['автор', 'разрыв'],
+    ['автор', 'удаление'],
+    ['право записи', 'разрыв'],
+    ['право записи', 'остановка'],
+  ])('теряет допуск во время проверки «%s» при событии «%s»', async (stage, change) => {
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    async function waitAt(point: string) {
+      if (point === stage) {
+        entered.resolve();
+        await release.promise;
+      }
+    }
+    const f = await fixture({
+      async observe() {
+        await waitAt('право записи');
+        return { confidence: 'confirmed', bot: 'present' };
+      },
+    });
+    const notifyPrivate = vi.fn(async () => true);
+    const run = start(f, {
+      privateEntry: { verifyFirstPrivate: () => true, notifyPrivate },
+      api: {
+        ...f.api,
+        async enrich() {
+          await waitAt('автор');
+          return { isBot: false };
+        },
+      },
+    });
+    try {
+      await f.ready;
+      f.update(event(1, { peer_id: 73, text: 'Привет' }));
+      await entered.promise;
+      if (change === 'удаление') {
+        const opened = f.decide('vk:73', 'new');
+        f.lifecycle.deleteData(f.lifecycle.owner('vk:73', owner), opened.generation);
+      } else if (change === 'разрыв') await f.gap();
+      else f.controller.abort();
+      release.resolve();
+      await vi.waitFor(() => expect(run.inbound.stats().paused).toBe(1));
+      expect(() => f.lifecycle.current('vk:73')).toThrow('stale_scope');
+      expect(notifyPrivate).not.toHaveBeenCalled();
+      expect(run.onDecision).not.toHaveBeenCalled();
+    } finally {
+      release.resolve();
+      await close(f, run.done);
+    }
+  });
+
   it('журналирует до обработки, разрешает reply из этой беседы и дедуплицирует в пределах peer', async () => {
     const f = await fixture();
     const old = (await f.lifecycle.verify(firstChat)).scope!;

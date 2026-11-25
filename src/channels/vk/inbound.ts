@@ -68,7 +68,7 @@ export interface VkInboundOptions {
     membershipMessageId?: string,
   ) => Promise<void>;
   readonly captureDisclosure?: (scope: ConnectionScope) => RoutedAdmissionGuard;
-  readonly verifyFirstPrivate?: (message: VkIncoming) => boolean | { readonly commandText: string };
+  readonly verifyFirstPrivate?: (message: VkIncoming) => boolean;
 }
 
 interface VkInboundDependencies {
@@ -138,6 +138,39 @@ export function createVkInbound(
     } catch {
       membershipObservations.delete(chatId);
     }
+  }
+
+  function admission(chatId: ChatId) {
+    try {
+      return lifecycle.admissionScope(chatId);
+    } catch (error) {
+      if (error instanceof StorageError) {
+        if (error.code === 'stale_scope') return undefined;
+        if (error.code === 'uncertain_connection') return 'paused' as const;
+      }
+      throw error;
+    }
+  }
+
+  async function openPrivate(message: VkIncoming, chatId: ChatId, observingEvent: () => boolean) {
+    const allowed =
+      message.authorId === message.peerId &&
+      !message.hasReply &&
+      !message.hasForwarded &&
+      options.verifyFirstPrivate?.(message);
+    if (!allowed) {
+      await pause(chatId, 'first_seen');
+      return;
+    }
+    let enrichment: Awaited<ReturnType<typeof api.enrich>> | undefined;
+    const verified = await lifecycle.verify(chatId, undefined, {
+      isCurrent: observingEvent,
+      async prepare() {
+        enrichment = await api.enrich(message, { signal, isCurrent: observingEvent });
+        return enrichment.isBot === false && admission(chatId) === undefined;
+      },
+    });
+    if (verified.scope && enrichment) return { scope: verified.scope, enrichment };
   }
 
   async function run(
@@ -273,50 +306,45 @@ export function createVkInbound(
           pending.add(work);
           continue;
         }
-        let scope: ConnectionScope | undefined;
-        let firstCommand: string | undefined;
+        let receivedScope: ReturnType<typeof admission>;
         try {
-          scope = lifecycle.admissionScope(chatId);
-        } catch (error) {
-          if (error instanceof StorageError && error.code === 'stale_scope') {
-            const admission = options.verifyFirstPrivate?.(message);
-            if (!admission) {
-              counters.paused++;
-              void pause(chatId, 'first_seen').catch(() => {
-                counters.failed++;
-              });
-              continue;
-            }
-            if (typeof admission === 'object') firstCommand = admission.commandText;
-          } else {
-            if (error instanceof StorageError && error.code === 'uncertain_connection')
-              counters.paused++;
-            else counters.failed++;
-            continue;
-          }
+          receivedScope = admission(chatId);
+        } catch {
+          counters.failed++;
+          continue;
+        }
+        if (receivedScope === 'paused') {
+          counters.paused++;
+          continue;
+        }
+        if (
+          !receivedScope &&
+          (!options.verifyFirstPrivate || message.peerId < 0 || isVkGroupChat(message.peerId))
+        ) {
+          counters.paused++;
+          void pause(chatId, 'first_seen').catch(() => {
+            counters.failed++;
+          });
+          continue;
         }
         const observingEvent = () => !signal.aborted && receivedIn === subscription;
         const disclosure =
-          scope && isVkGroupChat(message.peerId) ? options.captureDisclosure?.(scope) : undefined;
+          receivedScope && isVkGroupChat(message.peerId)
+            ? options.captureDisclosure?.(receivedScope)
+            : undefined;
         if (disclosure && !disclosure().journal) {
           counters.paused++;
           continue;
         }
         const task = (tails.get(chatId) ?? Promise.resolve())
           .then(async () => {
-            if (!scope && observingEvent()) {
-              try {
-                scope = lifecycle.admissionScope(chatId);
-                // Предыдущее сообщение в очереди уже открыло эту личку.
-                firstCommand = undefined;
-              } catch (error) {
-                if (error instanceof StorageError && error.code === 'stale_scope') {
-                  const verified = await lifecycle.verify(chatId);
-                  if (verified.scope && observingEvent()) scope = lifecycle.admissionScope(chatId);
-                }
-              }
-            }
-            if (!scope) {
+            const prior = receivedScope ?? admission(chatId);
+            const opened =
+              prior === undefined && observingEvent()
+                ? await openPrivate(message, chatId, observingEvent)
+                : undefined;
+            const scope = prior ?? opened?.scope;
+            if (!scope || scope === 'paused') {
               counters.paused++;
               return;
             }
@@ -326,14 +354,20 @@ export function createVkInbound(
               counters.paused++;
               return;
             }
+            const enrichment =
+              opened?.enrichment ?? (await api.enrich(message, { signal, isCurrent }));
+            if (!isCurrent()) {
+              counters.paused++;
+              return;
+            }
             if (
+              enrichment.isBot === false &&
               message.authorId === message.peerId &&
               !isVkGroupChat(message.peerId) &&
               options.notifyPrivate &&
               !(await options.notifyPrivate(admittedScope, isCurrent, message))
             )
               return;
-            const enrichment = await api.enrich(message, { signal, isCurrent });
             if (!isCurrent()) {
               counters.paused++;
               return;
@@ -341,13 +375,7 @@ export function createVkInbound(
             counters.dispatched++;
             const normalized = normalizeVkIncoming(message, groupId, enrichment);
             await dispatch(
-              firstCommand && normalized.isBot === false
-                ? {
-                    ...normalized,
-                    text: firstCommand,
-                    literalText: message.literalText ?? message.text,
-                  }
-                : normalized,
+              normalized,
               admittedScope,
               isCurrent,
               disclosure ??

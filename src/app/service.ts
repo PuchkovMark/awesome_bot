@@ -3,12 +3,13 @@ import {
   commandHelp,
   commandInput,
   isCommandHelp,
+  isPrivateStart,
   helpAction,
   unknownHint,
 } from './command-help';
 import { createQuestionnaireProgress } from '../core/questionnaire/progress';
 import { createLlmAdmission } from '../core/llm-admission';
-import { createPersonaCommands, isPersonaCommand } from './persona-commands';
+import { createPersonaCommands } from './persona-commands';
 import {
   createQuestionnaireCommands,
   openQuestionnaire,
@@ -232,25 +233,10 @@ export async function runApplication(
             }
           },
           verifyFirstPrivate(message) {
-            if (
-              message.peerId <= 0 ||
-              isVkGroupChat(message.peerId) ||
-              message.authorId !== message.peerId ||
-              message.hasReply ||
-              message.hasForwarded
-            )
-              return false;
-            if (
-              !message.isMentioned &&
-              !message.attachments.length &&
-              /^начать$/iu.test(message.text.trim())
-            )
-              return { commandText: '/помощь' };
             return (
               onboarding.configuredForProfiles() ||
               !!parseReminderCommand(message.text, false) ||
-              (!message.attachments.length &&
-                (isPersonaCommand(message.text) || isCommandHelp(message.text)))
+              (!message.attachments.length && !!message.text.trim())
             );
           },
           onReady() {
@@ -652,31 +638,40 @@ export async function runApplication(
           floodPublications.add(operation);
         },
         commandInput: (message) => commandInput(message, config.vk.groupId),
-        recognizeCommand: (message, replyToOther, scope) =>
-          (chatControl.editor.ownsReply(scope, message)
-            ? chatControl.editor.recognizeReply(scope, message)
-            : null) ??
-          (passports.ownsReply(scope, message) ? passports.recognize(scope, message) : null) ??
-          questionnaires.recognize(scope, message) ??
-          (isCommandHelp(message.text) && addressedSlash(message) ? helpAction : null) ??
-          passports.recognize(scope, message) ??
-          chatControl.editor.recognizeReply(scope, message) ??
-          (isUsageCommand(message.text)
-            ? ({ action: 'usage.read', minimumRole: 'owner' } as const)
-            : null) ??
-          profiles.recognize(message) ??
-          groupPersonalCommand(message) ??
-          personas.recognize(message) ??
-          history.recognize(message) ??
-          chatControl.recognize(message, replyToOther) ??
-          reminders.recognize(message) ??
-          address.recognize(message) ??
-          (message.isGroupChat &&
-          message.isBot === false &&
-          parseTimezoneCommand(message.text) !== null
-            ? { action: 'chat.configure', minimumRole: 'admin' }
-            : null) ??
-          (addressedSlash(message) ? helpAction : null),
+        recognizeCommand: (message, replyToOther, scope) => {
+          if (isPrivateStart(message)) {
+            const form = questionnaireProgress
+              .participant(scope, message.userId)
+              .current(Date.now());
+            return form?.state === 'active' ? null : helpAction;
+          }
+          return (
+            (chatControl.editor.ownsReply(scope, message)
+              ? chatControl.editor.recognizeReply(scope, message)
+              : null) ??
+            (passports.ownsReply(scope, message) ? passports.recognize(scope, message) : null) ??
+            questionnaires.recognize(scope, message) ??
+            (isCommandHelp(message.text) && addressedSlash(message) ? helpAction : null) ??
+            passports.recognize(scope, message) ??
+            chatControl.editor.recognizeReply(scope, message) ??
+            (isUsageCommand(message.text)
+              ? ({ action: 'usage.read', minimumRole: 'owner' } as const)
+              : null) ??
+            profiles.recognize(message) ??
+            groupPersonalCommand(message) ??
+            personas.recognize(message) ??
+            history.recognize(message) ??
+            chatControl.recognize(message, replyToOther) ??
+            reminders.recognize(message) ??
+            address.recognize(message) ??
+            (message.isGroupChat &&
+            message.isBot === false &&
+            parseTimezoneCommand(message.text) !== null
+              ? { action: 'chat.configure', minimumRole: 'admin' }
+              : null) ??
+            (addressedSlash(message) ? helpAction : null)
+          );
+        },
         identity: (scope, message) =>
           commandAuthorization.context({ scope, userId: message.userId }),
         async executeCommand(context, message, isCurrent, replayOnly, command) {
@@ -704,21 +699,22 @@ export async function runApplication(
               },
             };
             const input = message.text.trim();
-            const text = isCommandHelp(input)
-              ? commandHelp(
-                  role.value,
-                  message.isGroupChat,
-                  state.enabled,
-                  state.mode,
-                  message.userId,
-                  input,
-                )
-              : unknownHint(
-                  input,
-                  questionnaireProgress
-                    .participant(context.scope, message.userId)
-                    .current(Date.now())?.state === 'active',
-                );
+            const text =
+              isCommandHelp(input) || isPrivateStart(message)
+                ? commandHelp(
+                    role.value,
+                    message.isGroupChat,
+                    state.enabled,
+                    state.mode,
+                    message.userId,
+                    input,
+                  )
+                : unknownHint(
+                    input,
+                    questionnaireProgress
+                      .participant(context.scope, message.userId)
+                      .current(Date.now())?.state === 'active',
+                  );
             return message.isGroupChat
               ? channel.replyGroupControl(context.scope, text, guard)
               : channel.replyPrivateControl(message.userId, text, guard);
