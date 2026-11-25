@@ -218,13 +218,68 @@ test('обновление закрывает старые редакторы в
     db.exec(`INSERT INTO questionnaire_editor_prompts VALUES('vk:41',1,'1',1,'vk:73',1);
       INSERT INTO chat_passport_prompts VALUES('vk:41',1,'2',2,'rules','vk:73','edit',1,900000),
       ('vk:41',1,'3',3,'rules','vk:73','clear',1,900000),('vk:41',1,'4',4,'topic','vk:73','edit',1,900000)`);
-    migrate(db);
+    migrate(db, migrations.slice(0, 54));
     expect(
       db.prepare('SELECT actor_id FROM questionnaire_editor_prompts').pluck().get(),
     ).toBeNull();
     expect(
       db.prepare('SELECT action FROM chat_passport_prompts ORDER BY message_id').pluck().all(),
     ).toEqual([null, 'clear', 'edit']);
+    expect(db.pragma('foreign_key_check')).toEqual([]);
+  } finally {
+    db.close();
+  }
+});
+
+test('миграция 056 закрывает автоматическую правку четырёх разделов и сохраняет явные приглашения', () => {
+  const db = new Database(':memory:');
+  try {
+    db.pragma('foreign_keys=ON');
+    migrate(db, migrations.slice(0, 55));
+    db.exec(
+      "INSERT INTO chat_connections(chat_id,generation,revision,state) VALUES('vk:41',1,1,'active')",
+    );
+    const log = db.prepare(
+      "INSERT INTO messages(chat_id,platform_message_id,user_id,author_name,role,text,timestamp) VALUES('vk:41',?,'vk:-314','','assistant','Просмотр раздела',1)",
+    );
+    const prompt = db.prepare(
+      "INSERT INTO chat_passport_prompts VALUES('vk:41',1,?,?,?,'vk:73',?,1,900000)",
+    );
+    const sectionText = db.prepare(
+      "INSERT INTO chat_passport_sections VALUES('vk:41',1,?,'Текст раздела',1)",
+    );
+    for (const section of ['rules', 'traditions', 'events', 'topic', 'glossary']) {
+      sectionText.run(section);
+      for (const action of ['edit', 'clear']) {
+        const receipt = section + action;
+        prompt.run(receipt, log.run(receipt).lastInsertRowid, section, action);
+      }
+    }
+    migrate(db);
+    expect(
+      db
+        .prepare(
+          'SELECT receipt FROM chat_passport_prompts WHERE actor_id IS NULL ORDER BY receipt',
+        )
+        .pluck()
+        .all(),
+    ).toEqual(['eventsedit', 'glossaryedit', 'topicedit', 'traditionsedit']);
+    expect(
+      db
+        .prepare(
+          "SELECT count(*) FROM chat_passport_prompts WHERE actor_id='vk:73' AND revision=1 AND expires_at=900000 AND (action='clear' OR (section='rules' AND action='edit'))",
+        )
+        .pluck()
+        .get(),
+    ).toBe(6);
+    expect(
+      db
+        .prepare(
+          "SELECT count(*) FROM chat_passport_sections WHERE revision=1 AND text='Текст раздела'",
+        )
+        .pluck()
+        .get(),
+    ).toBe(5);
     expect(db.pragma('foreign_key_check')).toEqual([]);
   } finally {
     db.close();

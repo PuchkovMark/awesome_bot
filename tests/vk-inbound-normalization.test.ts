@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeVkIncoming, parseVkIncoming } from '../src/channels/vk/normalize';
+import {
+  normalizeVkIncoming,
+  parseVkIncoming,
+  vkMentionCommand,
+} from '../src/channels/vk/normalize';
 
 const groupId = 314;
 const peer = 2_000_000_004;
@@ -69,6 +73,23 @@ describe('нормализация входящего сообщения VK', ()
       { kind: 'unknown' },
       { kind: 'unknown' },
     ]);
+  });
+
+  it('выделяет команду только после начальной метки своего сообщества и сохраняет её аргументы', () => {
+    const command = '/анкета показать [id42|Второй]';
+    for (const mark of ['[club314|Пенёк], ', '[public314|Пенёк] ']) {
+      const raw = normalizeVkIncoming(parse({ text: mark + command }), groupId);
+      expect(raw.literalText).toBe(mark + command);
+      expect(vkMentionCommand(raw.literalText!, groupId)).toBe(command);
+      expect(raw.hasOtherAddress).toBe(true);
+    }
+    for (const text of [
+      '[club315|Пенёк], /режим',
+      '[id314|Пенёк], /режим',
+      'Он сказал [club314|Пенёк], /режим',
+      ', /режим [club314|Пенёк]',
+    ])
+      expect(vkMentionCommand(text, groupId)).toBeUndefined();
   });
 
   it.each([

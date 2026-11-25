@@ -50,7 +50,7 @@ function parse(text: string): Request | null {
     const prefix = sections[section].command.split(' ');
     if (!prefix.every((token, index) => token === tokens[index])) continue;
     if (tokens.length === prefix.length) return { kind: 'section', section };
-    if (section === 'rules' && tokens.length === prefix.length + 1 && tokens.at(-1) === 'изменить')
+    if (tokens.length === prefix.length + 1 && tokens.at(-1) === 'изменить')
       return { kind: 'edit', section };
     if (tokens.length === prefix.length + 1 && tokens.at(-1) === 'очистить')
       return { kind: 'clear', section };
@@ -254,8 +254,10 @@ export function createChatPassport(options: {
         if (request.kind === 'section') await reply(view(entry));
         return;
       }
-      if (request.kind === 'section' && entry.section === 'rules') {
-        await reply(view(entry) + '\n\nДля правки отправьте /правила изменить.');
+      if (request.kind === 'section') {
+        await reply(
+          view(entry) + `\n\nДля правки отправьте ${sections[entry.section].command} изменить.`,
+        );
         return;
       }
       if (request.kind === 'clear' && entry.text === null) {

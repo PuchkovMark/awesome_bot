@@ -66,6 +66,59 @@ async function appendSource(f: Awaited<ReturnType<typeof fixture>>, name: string
     timestamp: f.start - 86400000 + minutes * 60000,
   });
 }
+
+async function seedClockHistory(f: Awaited<ReturnType<typeof fixture>>) {
+  await f.storage.chats.update(f.scope, { timezone: 'Europe/Moscow' });
+  const history = [
+    ['Накануне', Date.UTC(2026, 10, 23, 20, 59)],
+    ['Утреннее решение', Date.UTC(2026, 10, 24, 6)],
+    ['Ровно в шесть', Date.UTC(2026, 10, 24, 15)],
+    ['Вечернее решение', Date.UTC(2026, 10, 24, 17)],
+    ['Следующий день', Date.UTC(2026, 10, 24, 21)],
+  ] as const;
+  for (const [label, timestamp] of history)
+    await f.storage.messages.append(f.scope, {
+      chatId: chat,
+      userId: 'vk:42',
+      role: 'user',
+      authorName: 'Ира',
+      messageId: label,
+      text: label,
+      timestamp,
+    });
+  f.complete.mockImplementation(async (request) => ({
+    ...answer,
+    text:
+      history
+        .filter(([label]) => request.messages[0]?.text?.includes(label))
+        .map(([label]) => label)
+        .join(', ') || answer.text,
+  }));
+  return (id: number, expected: string) =>
+    until(() =>
+      expect(
+        f.sends.find(
+          (row) => row.reply_message?.conversation_message_id === id && row.text === expected,
+        ),
+      ).toBeDefined(),
+    );
+}
+
+test('пересказ за часть вчерашнего дня выбирает только его источники даже при готовой дневной сводке', async () => {
+  const f = await fixture({
+    startAt: Date.UTC(2026, 10, 25, 20, 59, 59),
+    limit: 40,
+    summaryIntervalMs: 999999999,
+  });
+  try {
+    const result = await seedClockHistory(f);
+    await result(f.submit(question), 'Утреннее решение, Ровно в шесть, Вечернее решение');
+    await result(f.submit('Пенёк, что обсуждали вчера после 18:00?'), 'Вечернее решение');
+    await result(f.submit('Пенёк, что обсуждали вчера до 18:00?'), 'Утреннее решение');
+  } finally {
+    await f.close();
+  }
+});
 test('точный интервал и неизвестная доставка промежуточного reply сохраняют один полезный результат', async () => {
   const f = await fixture();
   try {
@@ -333,6 +386,47 @@ test('автор может ответить на доставленное ут�
         ),
       ).toBeDefined(),
     );
+  } finally {
+    await f.close();
+  }
+});
+
+test('ответ часами после полуночи и перезапуска использует день и пояс первоначальной просьбы', async () => {
+  const f = await fixture({
+    startAt: Date.UTC(2026, 10, 25, 20, 59, 59),
+    limit: 40,
+    summaryIntervalMs: 999999999,
+  });
+  try {
+    const result = await seedClockHistory(f);
+    const count = () => f.db.prepare('SELECT count(*) FROM recap_clarifications').pluck().get();
+    const request = f.submit('Пенёк, что обсуждали вчера после обеда?');
+    await until(() => expect(count()).toBe(1));
+    const prompt = f.sends.find((row) => row.reply_message?.conversation_message_id === request)!;
+    expect(prompt.text).toContain('После какого времени');
+    expect(f.complete).not.toHaveBeenCalled();
+    await f.published(f.submit('18:00', 42, prompt));
+    expect(count()).toBe(1);
+    await result(f.submit('Пенёк, что обсуждали вчера после 18:00?'), 'Вечернее решение');
+    await f.restart(true);
+    f.at(2000);
+    await f.storage.chats.update(f.scope, { timezone: 'UTC' });
+    const calls = f.complete.mock.calls.length;
+    const reply = f.submit('18:00', 41, prompt);
+    await result(reply, 'Вечернее решение');
+    await until(() => expect(count()).toBe(0));
+    f.replay(reply);
+    await f.journaled(f.submit('спасибо'));
+    expect(f.complete.mock.calls).toHaveLength(calls);
+    expect(
+      f.sends.filter((row) => row.reply_message?.conversation_message_id === reply),
+    ).toHaveLength(1);
+    const next = f.submit('Пенёк, что обсуждали вчера до обеда?');
+    await until(() => expect(count()).toBe(1));
+    const before = f.sends.find((row) => row.reply_message?.conversation_message_id === next)!;
+    expect(before.text).toContain('До какого времени');
+    await result(f.submit('24.11.2026 с 05:59 до 06:01', 41, before), 'Утреннее решение');
+    await until(() => expect(count()).toBe(0));
   } finally {
     await f.close();
   }

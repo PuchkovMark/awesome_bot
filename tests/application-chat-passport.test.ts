@@ -4,6 +4,7 @@ import { chatPassportStore } from '../src/storage/chat-passport-store';
 import { passportPromptLifetime, type PassportSection } from '../src/storage/chat-passport-types';
 import { passportCandidates } from '../src/core/context/passport';
 import { chatControlStore } from '../src/storage/chat-control-store';
+import { explicitPassportEditors } from '../src/storage/migrations/056-explicit-passport-editors';
 
 type App = Awaited<ReturnType<typeof fixture>>;
 const owner = 73;
@@ -62,6 +63,65 @@ const read = (app: App, section: PassportSection) =>
     .read(app.scope)
     .find((item) => item.section === section)!;
 
+test('команда в ответ на просмотр открывает справку, в явном редакторе она становится текстом', async () => {
+  const app = await fixture();
+  try {
+    async function help(prompt: App['sends'][number]) {
+      const start = app.sends.length;
+      app.submit('/помощь', owner, prompt);
+      await until(() =>
+        expect(app.sends.slice(start).some((row) => row.text.startsWith('Доступные команды'))).toBe(
+          true,
+        ),
+      );
+    }
+    for (const [section, command] of [
+      ['rules', '/правила'],
+      ['topic', '/паспорт тема'],
+      ['traditions', '/традиции'],
+      ['events', '/события'],
+      ['glossary', '/паспорт глоссарий'],
+    ] as const) {
+      await apply(
+        app,
+        owner,
+        await delivered(app, owner, command + ' изменить', editor),
+        'Первый текст',
+      );
+      const view = await delivered(
+        app,
+        owner,
+        command,
+        'Для правки отправьте ' + command + ' изменить.',
+      );
+      await help(view);
+      expect(read(app, section)).toMatchObject({ text: 'Первый текст', revision: 1 });
+      expect((await delivered(app, member, command, 'Первый текст')).text).not.toContain(
+        'изменить',
+      );
+      await apply(
+        app,
+        owner,
+        await delivered(app, owner, command + ' изменить', editor),
+        '/помощь',
+      );
+      expect(read(app, section)).toMatchObject({ text: '/помощь', revision: 2 });
+    }
+    const previous = await delivered(app, owner, '/традиции изменить', editor);
+    app.db.exec(explicitPassportEditors.sql);
+    await app.restart(true);
+    await help(previous);
+    expect(read(app, 'traditions')).toMatchObject({ text: '/помощь', revision: 2 });
+    const literal = '[club314|Пенёк], /режим активный';
+    await apply(app, owner, await delivered(app, owner, '/традиции изменить', editor), literal);
+    expect(read(app, 'traditions').text).toBe(literal);
+    expect(chatControlStore(app.storage).read(app.scope).mode).toBe('normal');
+    expect(app.complete).not.toHaveBeenCalled();
+  } finally {
+    await app.close();
+  }
+});
+
 test('паспорт из пяти разделов, отдельное чтение, буквальная командная строка и длинная выдача', async () => {
   const app = await fixture();
   try {
@@ -77,12 +137,7 @@ test('паспорт из пяти разделов, отдельное чтен
       ['Важные события', '/события', 'П'.repeat(1499)],
     ] as const;
     for (const [title, command, value] of chapter) {
-      const prompt = await delivered(
-        app,
-        owner,
-        command === '/правила' ? '/правила изменить' : command,
-        editor,
-      );
+      const prompt = await delivered(app, owner, command + ' изменить', editor);
       expect(prompt.text).toContain(title + '\nРаздел пока пуст.');
       await apply(app, owner, prompt, value);
       const preview = await delivered(app, member, command, value);
@@ -135,7 +190,7 @@ test('подтверждённые ответы привязаны к автор
     app.name(42, 'Саша', 'Иванов');
     const p1 = await delivered(app, owner, '/правила изменить', editor);
     const p2 = await delivered(app, admin, '/правила изменить', editor);
-    const p3 = await delivered(app, admin, '/традиции', editor);
+    const p3 = await delivered(app, admin, '/традиции изменить', editor);
     const pOther = await delivered(app, owner, '/правила изменить', editor, peer + 1);
     await apply(app, owner, pOther, 'Правила другой беседы', peer + 1);
 
@@ -198,7 +253,7 @@ test('смена роли, истечение срока, потеря квит�
     await app.storage.authorization.transaction(app.scope, (tx) =>
       tx.grant({ userId: 'vk:41', basis: 'explicit', grantedAt: app.start, grantedBy: 'vk:73' }),
     );
-    const toRevoke = await delivered(app, admin, '/паспорт тема', editor);
+    const toRevoke = await delivered(app, admin, '/паспорт тема изменить', editor);
     await app.storage.authorization.transaction(app.scope, (tx) => tx.remove('vk:41', false));
     const revoked = app.submit('/паспорт глоссарий', admin, toRevoke);
     await app.journaled(revoked);
@@ -206,7 +261,7 @@ test('смена роли, истечение срока, потеря квит�
 
     const receipt = app.holdReceipt((text) => text.endsWith(editor));
     const first = app.sends.length;
-    app.submit('/события', owner);
+    app.submit('/события изменить', owner);
     await until(() =>
       expect(app.sends.slice(first).some((row) => row.text.endsWith(editor))).toBe(true),
     );
@@ -232,7 +287,7 @@ test('смена роли, истечение срока, потеря квит�
     expect(read(app, 'events').revision).toBe(0);
     app.failSend((text) => (text.endsWith(editor) ? 'unknownAfterDelivery' : undefined));
     const before = app.sends.length;
-    app.submit('/паспорт глоссарий', owner);
+    app.submit('/паспорт глоссарий изменить', owner);
     await until(() =>
       expect(app.sends.slice(before).some((row) => row.text.endsWith(editor))).toBe(true),
     );
@@ -243,7 +298,7 @@ test('смена роли, истечение срока, потеря квит�
     expect(read(app, 'glossary').revision).toBe(0);
     expect(chatControlStore(app.storage).read(app.scope).enabled).toBe(true);
 
-    const previous = await delivered(app, owner, '/паспорт тема', editor);
+    const previous = await delivered(app, owner, '/паспорт тема изменить', editor);
     const replacement = await app.connectGroup(peer);
     expect(replacement.generation).not.toBe(app.scope.generation);
     expect(

@@ -291,7 +291,7 @@ export function applicationSummaries(options: {
         | 'llm_wait_timeout'
         | 'llm_provider_paused'
         | undefined;
-      if (parsed.kind === 'clarify') text = recapClarification(parsed.known);
+      if (parsed.kind === 'clarify') text = recapClarification(parsed.known, source.timestamp);
       else
         try {
           let notification: Promise<void> | undefined;

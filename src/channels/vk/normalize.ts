@@ -113,6 +113,11 @@ export function vkChatId(peerId: number): `vk:${number}` {
   return `vk:${peerId}`;
 }
 
+export function vkMentionCommand(literal: string, groupId: number): string | undefined {
+  const leading = /^\s*\[(?:club|public)(\d+)\|[^[\]\r\n]+\]\s*,?\s*(\/[\s\S]*)$/u.exec(literal);
+  return leading && Number(leading[1]) === groupId ? leading[2] : undefined;
+}
+
 function parseReply(value: unknown): VkReply | undefined {
   const row = vkRecord(value);
   const cmid = vkCmid(row?.conversation_message_id);

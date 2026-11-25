@@ -1,4 +1,5 @@
 import type { BotRole, IncomingMessage } from '../contracts/index';
+import { vkMentionCommand } from '../channels/vk/normalize';
 
 export const helpAction = {
   action: 'commands.read',
@@ -6,7 +7,7 @@ export const helpAction = {
   journalLabel: 'Подсказка по командам',
 } as const;
 
-const helpRequest = /^\/(?:помощь|команды)(?:\s+(анкета|напоминания))?$/iu;
+const helpRequest = /^\/(?:помощь|команды)(?:\s+([\s\S]+))?$/iu;
 
 export function isCommandHelp(text: string) {
   return helpRequest.test(text.trim());
@@ -23,7 +24,19 @@ export function commandHelp(
   const ordinary = enabled && mode !== 'silent';
   const manage = enabled && group && role !== 'member';
   const topic = helpRequest.exec(request.trim())?.[1]?.toLowerCase();
-  if (topic === 'анкета') {
+  const topics: string[] = [];
+  if (ordinary || manage) {
+    const actions = [ordinary && 'заполнение и просмотр', manage && 'вопросы беседы'].filter(
+      Boolean,
+    );
+    topics.push('/помощь анкета — ' + actions.join(', ') + '.');
+  }
+  if (ordinary)
+    topics.push(
+      '/помощь профиль — посмотреть и исправить свои факты.',
+      '/помощь напоминания — создать, посмотреть или отменить.',
+    );
+  if (topic === 'анкета' && (ordinary || manage)) {
     const lines = ['Анкета'];
     if (ordinary) {
       lines.push(
@@ -41,26 +54,33 @@ export function commandHelp(
     }
     if (manage)
       lines.push('/вопросы — посмотреть общие вопросы. /вопросы изменить — открыть редактор.');
-    if (lines.length === 1) lines.push('Заполнение анкеты сейчас недоступно.');
     return lines.join('\n');
   }
-  if (topic === 'напоминания') {
-    if (!ordinary) return 'В этом режиме напоминания недоступны.';
+  if (topic === 'профиль' && ordinary)
+    return [
+      'Профиль',
+      group
+        ? '/профиль — получить в личке список своих фактов из этой беседы.'
+        : '/профиль — открыть профиль этого личного диалога. Для выбора беседы укажите её ID, например /профиль vk:2000000001.',
+      'Чтобы исправить факт, ответьте на ту часть личного списка, где он указан. Подставьте номер факта и новое значение, например /исправить 2 Казань.',
+    ].join('\n');
+  if (topic === 'напоминания' && ordinary) {
     return [
       'Личные напоминания',
       (group ? 'Пенёк, напомни' : 'Напомни') +
         ' мне через 20 минут взять документы — создать напоминание. Оно придёт в личку.',
       'В личке: Мои напоминания — посмотреть список.',
-      'В личке: Отмени напоминание 12 — отменить задание по номеру.',
+      'В личке: Отмени напоминание — выбрать задание. Отмени напоминание 12 — пример отмены по номеру.',
       'В личке: /пояс-напоминаний Europe/Moscow — выбрать часовой пояс.',
     ].join('\n');
   }
-  const lines = ['Доступные команды'];
-  if (ordinary || manage)
-    lines.push('/помощь анкета — заполнение и просмотр' + (manage ? ', настройка вопросов.' : '.'));
+  if (topic)
+    return topics.length
+      ? ['Доступные темы', ...topics].join('\n')
+      : 'Открыть доступные команды — /помощь.';
+  const lines = ['Доступные команды', ...topics];
   if (ordinary) {
     lines.push(
-      '/помощь напоминания — создать, посмотреть или отменить.',
       '/профиль — свои факты. /мои-данные — выгрузка. /персонаж — персонажи.',
       '/отключить-профиль · /удалить-мои-данные · /статус-удаления',
     );
@@ -86,7 +106,7 @@ export function commandHelp(
 
 const namedSlash = /^\s*пен[её]к\s*,\s*(\/[\s\S]*)$/iu;
 
-export function commandInput(message: IncomingMessage): IncomingMessage {
+export function commandInput(message: IncomingMessage, groupId: number): IncomingMessage {
   if (
     !message.isGroupChat ||
     message.isBot !== false ||
@@ -97,9 +117,12 @@ export function commandInput(message: IncomingMessage): IncomingMessage {
   )
     return message;
   const literal = message.literalText ?? message.text;
-  const named =
-    namedSlash.exec(literal) ?? (message.isMentioned ? namedSlash.exec(message.text) : null);
-  return named ? { ...message, text: named[1]!, literalText: literal } : message;
+  const command =
+    namedSlash.exec(literal)?.[1] ??
+    (message.isMentioned
+      ? (vkMentionCommand(literal, groupId) ?? namedSlash.exec(message.text)?.[1])
+      : undefined);
+  return command ? { ...message, text: command, literalText: literal } : message;
 }
 
 export function addressedSlash(message: IncomingMessage) {

@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { parseRecapPeriod } from '../src/core/chat-summaries/recap-period';
+import { parseRecapPeriod, recapClarification } from '../src/core/chat-summaries/recap-period';
 
 const zone = 'Europe/Moscow';
 const at = Date.UTC(2026, 10, 24, 22); // Уже 25 ноября в беседе.
@@ -65,4 +65,36 @@ test('в ответ на уточнение достаточно месяца и
     kind: 'period',
     period: { from: Date.UTC(2025, 9, 19, 21), to: Date.UTC(2025, 9, 22, 21), timezone: zone },
   });
+});
+
+test('при известном дне уточняются только часы, новый полный период заменяет исходный', () => {
+  for (const direction of ['после', 'до']) {
+    const pending = parseRecapPeriod('вчера ' + direction + ' обеда', at, zone);
+    if (pending.kind !== 'clarify') throw Error('Ожидалось уточнение часов');
+    expect(recapClarification(pending.known, at)).toContain(
+      'какого времени вчера собрать пересказ?',
+    );
+    expect(pending.known.calendar).toEqual({ day: '2026-11-24', timezone: zone, direction });
+    expect(parseRecapPeriod('28:90', at, zone, pending.known)).toEqual(pending);
+    expect(parseRecapPeriod('18:00', at + 86400000, 'UTC', pending.known)).toEqual(
+      parseRecapPeriod('вчера ' + direction + ' 18:00', at, zone),
+    );
+    expect(parseRecapPeriod('20–22 ноября', at, zone, pending.known)).toEqual(expected);
+  }
+});
+
+test('обе односторонние границы строги и ограничены выбранным местным днём', () => {
+  const day = Date.UTC(2026, 10, 23, 21);
+  const end = Date.UTC(2026, 10, 24, 21);
+  const six = Date.UTC(2026, 10, 24, 15);
+  for (const [phrase, from, to] of [
+    ['вчера после 18:00', six + 1, end],
+    ['вчера до 18:00', day, six],
+    ['вчера после 00:00', day + 1, end],
+    ['вчера до 00:00', day, day],
+  ] as const)
+    expect(parseRecapPeriod(phrase, at, zone)).toEqual({
+      kind: 'period',
+      period: { from, to, timezone: zone },
+    });
 });

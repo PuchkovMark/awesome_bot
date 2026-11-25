@@ -96,6 +96,8 @@ test('черновик закрывается на точной границе �
       now,
     )!;
     expect(f.store.list(f.one, now + reminderGraceMs - 1)[0]?.id).toBe(draft.id);
+    expect(f.store.list(f.one, now + reminderGraceMs - 1, 'cancellable')[0]?.id).toBe(draft.id);
+    expect(f.store.list(f.one, now + reminderGraceMs, 'cancellable')).toEqual([]);
     expect(
       f.store.revise(f.one, { ...input, messageId: '2' }, draft.id, fields, now + reminderGraceMs),
     ).toBeNull();
@@ -122,7 +124,9 @@ test('захват конкурирующими исполнителями, от
     const lease = f.store.claimDelivery(dueAt, chunks)!;
     expect(rival.claimDelivery(dueAt, chunks)).toBeUndefined();
     const first = f.store.getPart(lease, dueAt)!;
+    expect(f.store.list(f.one, dueAt, 'cancellable').map(({ id }) => id)).toEqual([item.id]);
     expect(f.store.beginPart(lease, first, dueAt)).toBe(true);
+    expect(f.store.list(f.one, dueAt, 'cancellable')).toEqual([]);
     expect(f.store.cancel(f.one, item.id, dueAt)).toBe('sending');
     f.store.receipt(lease, first, '101');
     expect(f.store.settle(lease, first, 'delivered', dueAt)).toBe(true);
@@ -130,6 +134,8 @@ test('захват конкурирующими исполнителями, от
     expect(second.send_id).not.toBe(first.send_id);
     expect(f.store.beginPart(lease, second, dueAt)).toBe(true);
     expect(f.store.settle(lease, second, 'unknown', dueAt)).toBe(false);
+    expect(f.store.list(f.one, dueAt, 'cancellable')).toEqual([]);
+    expect(f.store.cancel(f.one, item.id, dueAt)).toBe('unknown');
     expect(rival.claimDelivery(dueAt + 30_000, chunks)).toBeUndefined();
     expect(f.store.list(f.one, dueAt + reminderGraceMs)[0]?.state).toBe('pending');
     expect(f.store.list(f.one, dueAt + reminderGraceMs + 1)[0]).toMatchObject({

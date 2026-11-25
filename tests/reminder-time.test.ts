@@ -53,3 +53,53 @@ test('весенний пропуск и осенний повтор часа т
     timezone: 'Europe/Berlin',
   });
 });
+
+test('день и часы могут стоять по разные стороны поручения', () => {
+  for (const input of [
+    'завтра забрать 2 посылки в 18:00 по Москве',
+    'завтра в 18:00 по Москве забрать 2 посылки',
+    'в 18:00 забрать 2 посылки завтра по Москве',
+  ]) {
+    expect(extractReminderTime(input).content).toBe('забрать 2 посылки');
+    expect(resolve(input, '2026-11-25T12:00:00Z')).toMatchObject({
+      kind: 'scheduled',
+      dueAt: Date.UTC(2026, 10, 26, 15),
+    });
+  }
+});
+
+test('составная длительность и взаимоисключающие варианты', () => {
+  expect(extractReminderTime('через 1 час 30 минут забрать 2 посылки')).toMatchObject({
+    schedule: { kind: 'relative', minutes: 90 },
+    content: 'забрать 2 посылки',
+  });
+  expect(extractReminderTime('через 1 час или через 2 часа забрать посылку')).toMatchObject({
+    schedule: undefined,
+    timeExample: 'через 2 часа',
+    content: 'забрать посылку',
+  });
+  for (const input of [
+    '1 час и ещё немного',
+    '1 час с половиной',
+    '1 час 2 секунды',
+    '1 час или полчаса',
+    'час или через 2 часа',
+    '1 час или через месяц',
+    '1 час 2 месяца',
+  ])
+    expect(extractReminderTime('через ' + input + ' забрать посылку')).toMatchObject({
+      schedule: undefined,
+      ambiguous: true,
+      content: 'забрать посылку',
+    });
+  expect(extractReminderTime('в 18:00 или 19:00 забрать посылку')).toMatchObject({
+    schedule: undefined,
+    ambiguous: true,
+    content: 'забрать посылку',
+  });
+  expect(extractReminderTime('в 18:00 или вечером забрать посылку')).toMatchObject({
+    schedule: undefined,
+    ambiguous: true,
+    content: 'забрать посылку',
+  });
+});

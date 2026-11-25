@@ -633,13 +633,14 @@ export async function runApplication(
             .finally(() => floodPublications.delete(operation));
           floodPublications.add(operation);
         },
-        commandInput,
+        commandInput: (message) => commandInput(message, config.vk.groupId),
         recognizeCommand: (message, replyToOther, scope) =>
           (chatControl.editor.ownsReply(scope, message)
             ? chatControl.editor.recognizeReply(scope, message)
             : null) ??
           (passports.ownsReply(scope, message) ? passports.recognize(scope, message) : null) ??
           questionnaires.recognize(scope, message) ??
+          (isCommandHelp(message.text) && addressedSlash(message) ? helpAction : null) ??
           passports.recognize(scope, message) ??
           chatControl.editor.recognizeReply(scope, message) ??
           (isUsageCommand(message.text)

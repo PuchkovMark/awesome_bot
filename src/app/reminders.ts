@@ -65,6 +65,8 @@ function fields(input: string, originAt: number, timezone?: string, edited?: Rem
   ): ReminderFields {
     return { draft: { needs, date, schedule, explicitTimezone, ...overrides }, text };
   }
+  if (parsed.ambiguous)
+    return clarify('time', { schedule: undefined, timeExample: parsed.timeExample });
   if (resolved.kind === 'overlap')
     return clarify('overlap', { choices: resolved.choices, explicitTimezone: resolved.timezone });
   if (resolved.kind !== 'scheduled') return clarify(resolved.kind);
@@ -109,18 +111,25 @@ function prompt(item: Reminder, proposedZone: string | undefined) {
     case 'text':
       return lead + `укажите, о чём напомнить. Например, ${command} взять документы».`;
     case 'time':
+      if (item.draft.timeExample)
+        return lead + `выберите один срок. Например, ${command} ${item.draft.timeExample}».`;
       return lead + `укажите точное время в будущем. Например, ${command} завтра в 18:00».`;
     default:
       return missing;
   }
 }
 
+function dueLabel(item: Reminder) {
+  if (item.dueAt !== null && item.timezone !== null)
+    return `${formatReminderTime(item.dueAt, item.timezone)} (${item.timezone})`;
+}
+
 function summary(item: Reminder) {
   const prefix = `#${item.id}`;
   if (item.state === 'draft') return `${prefix} · ожидается уточнение`;
   const parts = [prefix];
-  if (item.dueAt !== null && item.timezone !== null)
-    parts.push(`${formatReminderTime(item.dueAt, item.timezone)} (${item.timezone})`);
+  const due = dueLabel(item);
+  if (due) parts.push(due);
   parts.push(
     item.state === 'pending'
       ? item.deliveryUnknown
@@ -241,6 +250,20 @@ export function createReminderHandlers(options: {
           isCurrent: () => isCurrent() && lifecycle.isAdmissionCurrent(target.scope),
         });
       const now = Date.now();
+      if (command.kind === 'cancel-options') {
+        const items = store.list(target, now, 'cancellable');
+        const choices = items.map((item) => {
+          const text = Array.from(
+            item.text?.replace(/\s+/gu, ' ').trim() || 'поручение пока не указано',
+          );
+          const description = text.length > 120 ? text.slice(0, 120).join('') + '…' : text.join('');
+          return (
+            (dueLabel(item) ?? 'Черновик') + ' · ' + description + '\nОтмени напоминание ' + item.id
+          );
+        });
+        await reply(choices.join('\n\n') || 'Сейчас нечего отменять.');
+        return;
+      }
       if (command.kind === 'list') {
         const items = store.list(target, now);
         await reply(items.length ? items.map(summary).join('\n') : 'Напоминаний пока нет.');

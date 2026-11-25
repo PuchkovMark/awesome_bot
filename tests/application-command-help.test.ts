@@ -24,6 +24,19 @@ test('помощь и команды совпадают и учитывают п
     expect(await request('/команды', 41, 'Доступные команды')).toBe(member);
     expect(member).toContain('/помощь анкета');
     expect(member).toContain('/помощь напоминания');
+    expect(member).toContain('/помощь профиль');
+    for (const destination of [peer, 41]) {
+      for (const alias of ['/помощь', '/команды']) {
+        const profile = await request(alias + ' профиль', 41, '/исправить 2 Казань', destination);
+        expect(profile).toContain('ответьте на ту часть личного списка');
+        expect(profile).toContain(
+          destination === peer ? 'своих фактов из этой беседы' : '/профиль vk:2000000001',
+        );
+        const suggested = await request(alias + ' профль', 41, 'Доступные темы', destination);
+        for (const topic of ['профиль', 'анкета', 'напоминания'])
+          expect(suggested).toContain('/помощь ' + topic);
+      }
+    }
     expect(await request('/помощь анкета', 41, '/анкета удалить')).not.toContain(
       '/вопросы изменить',
     );
@@ -42,7 +55,16 @@ test('помощь и команды совпадают и учитывают п
     await request('/помощь анкета', 42, '/вопросы изменить');
     await request('/режим', 42, '/режим активный');
     await request('/режим молчаливый', 42, 'молчаливый');
-    expect(await request('/помощь', 42, 'Доступные команды')).not.toContain('/анкета изменить');
+    const quiet = await request('/помощь', 42, 'Доступные команды');
+    expect(quiet).toContain('/помощь анкета — вопросы беседы.');
+    expect(quiet).not.toMatch(/заполнени|\/помощь профиль/u);
+    const settings = await request('/помощь анкета', 42, '/вопросы изменить');
+    expect(settings).not.toMatch(/\/анкета|заполнени/u);
+    expect(await request('/команды профль', 42, 'Доступные темы')).toBe(
+      'Доступные темы\n/помощь анкета — вопросы беседы.',
+    );
+    await request('/вопросы', 42, 'Для правки отправьте /вопросы изменить.');
+    await request('/вопросы изменить', 42, 'ответьте на это сообщение');
     const start = app.sends.length;
     await app.journaled(app.submit('/помощь', 41));
     await request('/настройки', 42, 'молчаливый');
@@ -118,6 +140,18 @@ test('обращение по имени сохраняет команду и н
     expect(await response('Пенёк, /анкета показать [id42|Второй]', 'Анкета', 41)).toContain(
       'Анкета',
     );
+    expect(
+      await response('[club314|Пенёк], /анкета показать [id42|Второй]', 'Анкета', 41),
+    ).toContain('Анкета');
+    for (const name of ['Пенёк, ', '[club314|Пенёк], ', '[club314|Пенёк] ']) {
+      const changed = await response(name + '/режим активный', 'vk:');
+      expect(changed).toContain('активный');
+      expect(await response('/режим', 'Текущий режим')).toContain('Текущий режим — активный.');
+      await response('/режим нормальный', 'vk:');
+      await app.journaled(app.submit(name + '/режим активный', 41));
+      expect(await response('/режим', 'Текущий режим')).toContain('Текущий режим — нормальный.');
+    }
+    expect(app.complete).not.toHaveBeenCalled();
     const settings = () =>
       app.db.prepare('SELECT * FROM chat_controls WHERE chat_id=?').get('vk:' + peer);
     const original = settings();

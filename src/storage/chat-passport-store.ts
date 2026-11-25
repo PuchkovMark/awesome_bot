@@ -76,7 +76,7 @@ export function createChatPassportStore(connection: Connection, lifecycle: Lifec
         Boolean(
           db
             .prepare(
-              `SELECT 1 FROM chat_passport_prompts WHERE ${receiptScope} AND section='rules' AND action='edit' AND actor_id=? AND expires_at>?`,
+              `SELECT 1 FROM chat_passport_prompts WHERE ${receiptScope} AND action='edit' AND actor_id=? AND expires_at>?`,
             )
             .get(scope.chatId, scope.generation, receipt, actor, Date.now()),
         ),

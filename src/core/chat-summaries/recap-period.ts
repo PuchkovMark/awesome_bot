@@ -5,7 +5,7 @@ import type { CalendarPeriod } from './calendar';
 export interface RecapBounds {
   readonly from?: number;
   readonly to?: number;
-  readonly calendar?: CalendarSelection;
+  readonly calendar?: CalendarSelection | ClockSelection;
 }
 export type RecapPeriodResult =
   | { readonly kind: 'period'; readonly period: CalendarPeriod }
@@ -140,6 +140,37 @@ interface CalendarSelection {
   second?: DatePart;
   edge: 'from' | 'to' | 'whole';
   times: readonly string[];
+  direction?: 'после' | 'до';
+}
+
+interface ClockSelection {
+  readonly day: string;
+  readonly timezone: string;
+  readonly direction: 'после' | 'до';
+}
+
+function clockPeriod(selection: ClockSelection, time?: string): RecapPeriodResult {
+  if (time && /^\d{1,2}:\d{2}$/u.test(time)) {
+    try {
+      const date = Temporal.PlainDate.from(selection.day);
+      const { timezone } = selection;
+      const clock = Temporal.PlainTime.from(time.padStart(5, '0'));
+      const boundary = date
+        .toPlainDateTime(clock)
+        .toZonedDateTime(timezone, { disambiguation: 'reject' }).epochMilliseconds;
+      const day = localDay(boundary, timezone);
+      return {
+        kind: 'period',
+        period:
+          selection.direction === 'после'
+            ? { ...day, from: boundary + 1 }
+            : { ...day, to: boundary },
+      };
+    } catch {
+      // Некорректный или неоднозначный местный час можно уточнить для того же дня.
+    }
+  }
+  return { kind: 'clarify', known: { calendar: selection } };
 }
 
 function calendarAnswer(text: string): { month?: number; year?: number } | undefined {
@@ -172,9 +203,22 @@ function selectionPeriod(
     base === undefined
       ? undefined
       : Temporal.Instant.fromEpochMilliseconds(base).toZonedDateTimeISO(timezone).toPlainDate();
-  const left = bounds(first, second ?? previous, today, timezone, times[0]);
+  const left = bounds(
+    first,
+    second ?? previous,
+    today,
+    timezone,
+    selection.direction ? undefined : times[0],
+  );
   const right = bounds(second ?? first, second ? first : previous, today, timezone, times[1]);
   if (!left || !right) return { kind: 'clarify', known: { ...known, calendar: selection } };
+  if (selection.direction) {
+    const day = Temporal.Instant.fromEpochMilliseconds(left.from)
+      .toZonedDateTimeISO(timezone)
+      .toPlainDate()
+      .toString();
+    return clockPeriod({ day, timezone, direction: selection.direction }, times[0]);
+  }
   let from = left.from,
     to = right.to;
   if (!second) {
@@ -188,8 +232,19 @@ function selectionPeriod(
     : { kind: 'clarify', known: {} };
 }
 
-export function recapClarification(known: RecapBounds) {
+export function recapClarification(known: RecapBounds, at: number) {
   if (known.calendar) {
+    if ('day' in known.calendar) {
+      const when =
+        known.calendar.direction === 'после' ? 'После какого времени' : 'До какого времени';
+      const date = Temporal.PlainDate.from(known.calendar.day);
+      const yesterday = Temporal.Instant.fromEpochMilliseconds(at)
+        .toZonedDateTimeISO(known.calendar.timezone)
+        .toPlainDate()
+        .subtract({ days: 1 });
+      const day = date.equals(yesterday) ? 'вчера' : date.toLocaleString('ru-RU');
+      return when + ' ' + day + ' собрать пересказ? Ответь временем, например «18:00».';
+    }
     if (!known.calendar.first.month && !known.calendar.second?.month)
       return 'В каком месяце собрать пересказ? Ответь месяцем или полным периодом.';
     return 'За какой год собрать пересказ? Ответь годом или полным периодом.';
@@ -219,10 +274,14 @@ export function parseRecapPeriod(
     const today = Temporal.Instant.fromEpochMilliseconds(at)
       .toZonedDateTimeISO(timezone)
       .toPlainDate();
-    const supplement = known.calendar && calendarAnswer(text);
-    if (supplement && known.calendar) {
+    const prior = known.calendar;
+    if (prior && 'day' in prior) {
+      const time = /^(?:в\s+)?(\d{1,2}:\d{2})[.!]?$/u.exec(text.trim());
+      if (time) return clockPeriod(prior, time[1]);
+    }
+    const supplement = prior && 'first' in prior && calendarAnswer(text);
+    if (supplement && prior && 'first' in prior) {
       const fill = (part: DatePart) => ({ ...supplement, ...part });
-      const prior = known.calendar;
       return selectionPeriod(
         { ...prior, first: fill(prior.first), ...(prior.second && { second: fill(prior.second) }) },
         known,
@@ -239,17 +298,27 @@ export function parseRecapPeriod(
     }
     if (/(?<!\p{L})(?:утром|вечером|ночью|днем|или)(?!\p{L})/u.test(text)) return clarify();
     const times: string[] = [];
-    text = text.replace(/(?:с|по|до|в)\s+(\d{1,2}:\d{2})(?!\d)/gu, (_, time: string) => {
-      times.push(time);
-      return ' ';
-    });
-    if (times.length !== 0 && times.length !== 2) return clarify();
+    const prepositions: string[] = [];
+    text = text.replace(
+      /(?<!\p{L})(после|с|по|до|в)\s+(\d{1,2}:\d{2}|обеда|завтрака|ужина)(?![\p{L}\d:])/gu,
+      (_, preposition: string, time: string) => {
+        prepositions.push(preposition);
+        times.push(time);
+        return ' ';
+      },
+    );
+    const direction = times.length === 1 ? prepositions[0] : undefined;
+    const oneSided = direction === 'после' || direction === 'до';
+    if (/(?<!\p{L})после(?!\p{L})/u.test(text)) return clarify();
+    if (!oneSided && times.length !== 0 && times.length !== 2) return clarify();
+    if (times.length === 2 && prepositions.includes('после')) return clarify();
     const matches = [...text.matchAll(tokens)];
     if (!matches.length || matches.length > 2) return clarify();
     const first = matches[0]!,
       second = matches[1];
     const before = text.slice(0, first.index);
     const after = text.slice((second ?? first).index + (second ?? first)[0].length);
+    if (/(?:^|\s)(?:до|по|в|с)\s+\d{1,2}:/u.test(after)) return clarify();
     if (
       second &&
       !/^\s*(?:года?\s*)?(?:[—–-]|по|до)\s*$/u.test(
@@ -262,13 +331,14 @@ export function parseRecapPeriod(
       return clarify();
     const a = readDate(first[0], today, timezone),
       b = second ? readDate(second[0], today, timezone) : undefined;
+    if (oneSided && (b || a.instant !== undefined)) return clarify();
     const edge = /(?:^|\s)(?:до|по)\s*$/u.test(before)
       ? 'to'
       : /(?:^|\s)(?:с|от)\s*$/u.test(before)
         ? 'from'
         : 'whole';
     return selectionPeriod(
-      { first: a, ...(b && { second: b }), edge, times },
+      { first: a, ...(b && { second: b }), edge, times, ...(oneSided && { direction }) },
       known,
       today,
       timezone,
