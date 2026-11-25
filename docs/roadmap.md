@@ -37,7 +37,7 @@
 | № | Задача | Приоритет | Статус |
 | --- | --- | --- | --- |
 | 084 | [Различение команд управления из лички и беседы VK](tasks/completed/084-vk-control-event-identity.md) · [План фичи](plans/completed/084-vk-control-event-identity.md) · [План реализации и приёмка](impl-plans/completed/084-vk-control-event-identity.md#результаты-приёмки) | P1 | выполнено |
-| 085 | [Сохранение решения владельца по спорной записи](tasks/085-personal-dispute-decision-durability.md) · [Утверждённый план фичи](plans/085-personal-dispute-decision-durability.md) · [Утверждённый план реализации](impl-plans/085-personal-dispute-decision-durability.md) | P1 | в работе |
+| 085 | [Сохранение решения владельца по спорной записи](tasks/completed/085-personal-dispute-decision-durability.md) · [План фичи](plans/completed/085-personal-dispute-decision-durability.md) · [План реализации и приёмка](impl-plans/completed/085-personal-dispute-decision-durability.md#результаты-приёмки) | P1 | выполнено |
 
 ## Веха 0. Процесс и документация
 
