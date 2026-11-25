@@ -146,7 +146,10 @@ test('обновление переносит только проверяемы�
     const life = lifecycleBackend(f.storage);
     // Восстанавливаем схему предыдущей версии и заполняем данные, существовавшие до переноса.
     life.transaction(scope, (db) => {
-      db.exec(`DROP TABLE chat_metrics_publications;
+      db.exec(`DROP TRIGGER personal_dispute_keep;
+        DROP TABLE personal_dispute_reports;
+        DROP TABLE personal_dispute_cases;
+        DROP TABLE chat_metrics_publications;
         DROP TABLE chat_metrics_attempts;
         DROP TABLE chat_metrics_job_events;
         DROP TABLE chat_metrics_buckets;
