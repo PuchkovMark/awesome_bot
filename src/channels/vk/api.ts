@@ -315,8 +315,7 @@ export function createVkApi(groupId: number, call: VkApiCall, signal?: AbortSign
           throw new VkRequestCancelled();
         }
       }
-      const result = call(method, parameters, guard);
-      return method === 'messages.send' ? result : waitForVkRead(result, guard?.signal);
+      return call(method, parameters, guard);
     }) satisfies VkApiCall,
     async getUserName(id: number): Promise<string | null> {
       return (await nameFor(id)) ?? null;
