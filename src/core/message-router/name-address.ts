@@ -1,6 +1,7 @@
 import { isRecapRequest } from '../chat-summaries/recap-intent';
 
 const name = 'пенек';
+const wordsIn = (text: string): string[] => text.match(/[\p{L}\p{N}_]+/gu) ?? [];
 const requests = new Set([
   'помоги',
   'подскажи',
@@ -10,6 +11,75 @@ const requests = new Set([
   'скажи',
   'ответь',
 ]);
+const questionWords = new Set(['где', 'куда', 'откуда', 'когда', 'как', 'почему', 'зачем', 'что']);
+const questionModifiers = new Set([
+  'мы',
+  'все',
+  'же',
+  'сегодня',
+  'завтра',
+  'тогда',
+  'теперь',
+  'сейчас',
+  'обычно',
+  'лучше',
+  'не',
+]);
+const jointMotion = new Set([
+  'выходим',
+  'выйдем',
+  'идем',
+  'пойдем',
+  'едем',
+  'поедем',
+  'приходим',
+  'придем',
+  'приезжаем',
+  'приедем',
+  'уходим',
+  'уйдем',
+  'уезжаем',
+  'уедем',
+  'стартуем',
+]);
+const clauseConnectives = new Set(['если', 'пока', 'хотя', 'чтобы', 'поскольку', 'а', 'и', 'или']);
+
+function asksQuestionByName(text: string): boolean {
+  // Оклик перед вопросом или сразу после него может стоять отдельной репликой.
+  const address = text
+    .replace(/^\s*пенек\s*[.!?]+\s*/u, 'пенек ')
+    .replace(/[.!?]+\s*пенек\s*[.!?]*\s*$/u, ' пенек');
+  const sentence = address
+    .split(/[.!?;]+/u)
+    .map((text) => ({ text, words: wordsIn(text) }))
+    .find(({ words }) => words.includes(name));
+  if (!sentence) return false;
+
+  const nameIndex = sentence.words.indexOf(name);
+  const question = sentence.words.filter((word) => word !== name);
+  const [first, second] = question;
+  const asksHour = first === 'во' && second === 'сколько';
+  if (!asksHour && !questionWords.has(first ?? '')) return false;
+  const start = asksHour ? 2 : 1;
+  const actionIndex = question.findIndex(
+    (word, index) => index >= start && !questionModifiers.has(word),
+  );
+  const action = question[actionIndex];
+  // Спряжение указывает на «мы» или «ты» как на подлежащее главного вопроса.
+  if (!action || (!jointMotion.has(action) && !/^[а-я]{2,}(?:ем|им|ешь|ишь)ся$/u.test(action)))
+    return false;
+
+  // После главного вопроса может следовать отдельное высказывание о Пеньке.
+  const beforeName = question.slice(actionIndex + 1, nameIndex);
+  if (beforeName.some((word) => questionWords.has(word) || clauseConnectives.has(word)))
+    return false;
+  return (
+    nameIndex <= actionIndex ||
+    question.slice(nameIndex).every((word) => questionModifiers.has(word)) ||
+    /(?:^|[^\p{L}\p{N}_])пенек\s*[,—–-]/u.test(sentence.text)
+  );
+}
+
 /** Консервативная грамматика; цитаты и неоднозначность не дают обычного обращения. */
 export function ownNameText(text: string) {
   const normalized = text.normalize('NFC').toLocaleLowerCase('ru').replaceAll('ё', 'е');
@@ -31,9 +101,9 @@ export function addressesRecapByName(text: string) {
 
 export function directlyAddressesName(text: string): boolean {
   const visible = ownNameText(text);
-  const words: string[] = visible.match(/[\p{L}\p{N}_]+/gu) ?? [];
-  if (!words.includes(name)) return false;
+  const words = wordsIn(visible);
   const nameIndex = words.indexOf(name);
+  if (nameIndex === -1) return false;
   if (
     ['молчит', 'работает', 'пишет', 'ответил', 'помог', 'сказал'].includes(
       words[nameIndex + 1] ?? '',
@@ -44,13 +114,15 @@ export function directlyAddressesName(text: string): boolean {
   const rest = words.filter((w) => w !== name);
   if (!rest.length) return true;
   // Явная передача слов, третье лицо и другой адресат имеют приоритет.
-  if (/(?:^|\s)(он|она|они|бот|бота|боту|сказал|сказала|обсуждали)(?:\s|$)/u.test(rest.join(' ')))
+  const phrase = rest.join(' ');
+  if (/(?:^|\s)(он|она|они|бот|бота|боту|сказал|сказала|обсуждали)(?:\s|$)/u.test(phrase))
     return false;
   const imperative = rest.findIndex((w) => requests.has(w));
   if (imperative > 0 && !['пожалуйста', 'ты', 'мне', 'нам'].includes(rest[0]!)) return false;
   return (
     imperative >= 0 ||
     rest.some((w) => ['ты', 'тебе', 'тебя', 'твой', 'привет', 'здравствуй'].includes(w)) ||
-    rest.join(' ').includes('как дела')
+    phrase.includes('как дела') ||
+    (words.length === rest.length + 1 && asksQuestionByName(visible))
   );
 }

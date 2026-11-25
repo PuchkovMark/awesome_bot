@@ -66,10 +66,14 @@ test('роутер различает прямой адрес и кандида�
       initiative: 'free_mention',
     });
     expect((await router.receive(scope, event)).admission?.status).toBe('duplicate');
-    expect(
-      (await router.receive(scope, { ...incoming, messageId: 'direct', text: 'Пенёк, подскажи' }))
-        .decision,
-    ).toMatchObject({ kind: 'ordinary', reason: 'name' });
+    const question = { ...incoming, messageId: 'direct', text: 'Пенёк, где встречаемся завтра?' };
+    expect((await router.receive(scope, question)).decision).toMatchObject({
+      kind: 'ordinary',
+      reason: 'name',
+    });
+    const repeatedQuestion = await router.receive(scope, question);
+    expect(repeatedQuestion.admission?.status).toBe('duplicate');
+    expect(repeatedQuestion.decision).toBeNull();
     await flushQueue();
     expect(handler).toHaveBeenCalledOnce();
     expect(await storage.messages.list(scope, { limit: 5 })).toHaveLength(2);

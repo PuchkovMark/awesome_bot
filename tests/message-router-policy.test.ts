@@ -91,6 +91,16 @@ for (const text of [
   'ПЕНЁК!',
   'Пенек, помоги!',
   'Помоги! Пенек?',
+  'Пенёк, где встречаемся завтра?',
+  'Где встречаемся завтра, Пенек?',
+  'Где, Пенёк, встречаемся завтра?',
+  'Где встречаемся, ПЕНЁК, завтра?',
+  'пенек где встречаемся завтра',
+  'Пенёк, во сколько выходим?',
+  'Куда мы сегодня идём, Пенёк?',
+  'Пенёк! Где встречаемся завтра?',
+  'Где встречаемся завтра? Пенёк!',
+  'Когда освободишься, Пенёк?',
 ])
   test(text, () => expect(directlyAddressesName(text)).toBe(true));
 for (const text of [
@@ -102,8 +112,43 @@ for (const text of [
   'суперпенек',
   'Почему Пенёк молчит',
   'Как ты думаешь почему Пенёк молчит',
+  'Где Пенёк?',
+  'Куда ушёл Пенёк?',
+  'Где сегодня Пенёк встречал гостей?',
+  'Где встречаемся, если Пенёк опаздывает?',
+  'Где встречаемся? Пенёк приедет вечером.',
+  'Где встречаемся, Пенёк туда придёт?',
+  'Где будем искать пенёк?',
+  'Где встречаемся завтра?',
+  'Где встречаемся завтра, суперпенек?',
+  'Где встречаемся завтра, «Пенёк»?',
+  '«Пенёк, где встречаемся завтра?»',
+  'Пенёк сегодня стоит. «Где встречаемся завтра?»',
 ])
   test(text, () => expect(directlyAddressesName(text)).toBe(false));
+
+test.each([
+  ['normal', {}, 'ordinary', 'name'],
+  ['active', {}, 'ordinary', 'name'],
+  ['silent', {}, 'silence', 'silent'],
+  ['normal', { isBot: 'unknown' }, 'silence', 'sender_unknown'],
+  ['normal', { replyAddress: 'other' }, 'silence', 'reply_other'],
+  ['normal', { replyAddress: 'unknown' }, 'silence', 'reply_unknown'],
+  ['normal', { isMentioned: true }, 'ordinary', 'mention'],
+  ['normal', { replyAddress: 'bot', isReplyToBot: true }, 'ordinary', 'reply'],
+] as const)(
+  'явный вопрос по имени в режиме %s с признаками %j',
+  (responseMode, flags, kind, reason) => {
+    expect(
+      routeMessage({
+        message: { ...incoming, text: 'Пенёк, где встречаемся завтра?', ...flags },
+        settings: { enabled: true, responseMode },
+        considerInitiative: true,
+      }),
+    ).toMatchObject({ kind, reason });
+  },
+);
+
 for (const kind of [
   'incomplete',
   'refused',

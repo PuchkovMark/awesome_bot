@@ -71,6 +71,21 @@ describe('нормализация входящего сообщения VK', ()
     ]);
   });
 
+  it.each(['Вот что прислали', 'Пенёк, где встречаемся завтра?'])(
+    'оставляет подпись автора отдельной от пересланного текста (%s)',
+    (caption) => {
+      const raw = parse({
+        text: caption,
+        fwd_messages: [{ from_id: 88, text: 'Пенёк, во сколько выходим?' }],
+      });
+      expect(normalizeVkIncoming(raw, groupId)).toMatchObject({
+        text: caption,
+        hasForwarded: true,
+        isMentioned: false,
+      });
+    },
+  );
+
   it.each([
     [-groupId, true],
     [73, false],

@@ -32,6 +32,12 @@
 | 032 | Ускорить сборку истории для ответа бота | выполнено | [Задача](tasks/completed/032-context-preparation-latency.md), [план фичи](plans/completed/032-context-preparation-latency.md), [план реализации и замеры](impl-plans/completed/032-context-preparation-latency.md#итог-проверки) |
 | 059 | Claude Haiku 5.5 для субагентов F5.10 | выполнено | [Задача](tasks/completed/059-subagent-model.md), [план фичи](plans/completed/059-subagent-model.md), [реализация и приёмка](impl-plans/completed/059-subagent-model.md#результаты-приёмки) |
 
+## Находки сквозного аудита VK
+
+| № | Задача | Приоритет | Статус |
+| --- | --- | --- | --- |
+| 089 | [Прямые вопросы Пеньку по имени в беседе](tasks/completed/089-vk-bot-name-address.md) · [План фичи](plans/completed/089-vk-bot-name-address.md) · [План реализации и приёмка](impl-plans/completed/089-vk-bot-name-address.md#результаты-приёмки) | P2 | выполнено |
+
 ## Веха 0. Процесс и документация
 
 | № | Фича | Краткая цель | Статус | Документы | Прежний этап / изменение |
