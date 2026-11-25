@@ -5,6 +5,7 @@ import {
   purgePersonalMessages,
   invalidateDependentData,
 } from './personal-deletion';
+import { reconcileDisputes } from './personal-dispute-restore';
 import { reconcileStagedProfileUpdates } from './profile-update-restore';
 import { reconcileStagedDepartures } from './participant-departure-restore';
 import { reconcileStagedQuestionnaires } from './questionnaire-profile-restore';
@@ -66,12 +67,15 @@ function reconcileSnapshot(staged: Database, newer: Database, now: number) {
           'UPDATE chat_passport_prompts SET actor_id=NULL,action=NULL,revision=NULL,expires_at=NULL WHERE actor_id IS NOT NULL',
         )
         .run();
-      for (const operation of deletions) {
+      const admitted = deletions.filter((operation) => {
         const existing = staged
           .prepare('SELECT generation FROM chat_connections WHERE chat_id=?')
           .get(operation.chatId) as { generation: number } | undefined;
-        if (!existing) continue;
+        if (!existing) return false;
         requireInput(existing.generation === operation.generation);
+        return true;
+      });
+      for (const operation of admitted) {
         staged
           .prepare(
             `INSERT OR IGNORE INTO personal_deletions(code,chat_id,generation,user_id,request_event,requested_at) VALUES(?,?,?,?,?,?)`,
@@ -84,6 +88,16 @@ function reconcileSnapshot(staged: Database, newer: Database, now: number) {
             operation.request_event,
             operation.requested_at,
           );
+        requireInput(
+          staged
+            .prepare(
+              `SELECT 1 FROM personal_deletions WHERE code=@code AND chat_id=@chatId AND generation=@generation
+            AND user_id=@userId AND request_event=@request_event AND requested_at=@requested_at
+            AND (confirmed_at IS NULL OR confirmed_at=@confirmed_at)`,
+            )
+            .get(operation),
+        );
+        reconcileDisputes(staged, newer, operation, now);
         confirmDeletion(
           staged,
           operation,
@@ -97,7 +111,7 @@ function reconcileSnapshot(staged: Database, newer: Database, now: number) {
             .get(operation.code, operation.confirmed_at),
         );
       }
-      for (const operation of deletions) {
+      for (const operation of admitted) {
         const rows = newer
           .prepare(
             `SELECT m.platform_message_id AS id,h.disputed FROM personal_hidden_messages h JOIN messages m ON m.id=h.message_id WHERE h.code=?`,
@@ -106,10 +120,11 @@ function reconcileSnapshot(staged: Database, newer: Database, now: number) {
         for (const row of rows)
           staged
             .prepare(
-              `INSERT OR REPLACE INTO personal_hidden_messages(message_id,code,disputed)
-          SELECT id,?,? FROM messages WHERE chat_id=? AND platform_message_id=? AND EXISTS(SELECT 1 FROM personal_deletions WHERE code=?)`,
+              `INSERT INTO personal_hidden_messages(message_id,code,disputed)
+          SELECT id,?,? FROM messages WHERE chat_id=? AND platform_message_id=?
+          ON CONFLICT(message_id,code) DO UPDATE SET disputed=min(disputed,excluded.disputed)`,
             )
-            .run(operation.code, row.disputed, operation.chatId, row.id, operation.code);
+            .run(operation.code, row.disputed, operation.chatId, row.id);
         const deleted = newer
           .prepare(
             'SELECT platform_message_id FROM history_deleted_inputs WHERE chat_id=? AND generation=?',
@@ -129,6 +144,12 @@ function reconcileSnapshot(staged: Database, newer: Database, now: number) {
             .run(operation.code, operation.chatId, id, operation.code);
         }
         invalidateDependentData(staged, operation.chatId, operation.code);
+        staged
+          .prepare(
+            `UPDATE personal_deletions SET verified_at=NULL WHERE code=@code
+          AND EXISTS(SELECT 1 FROM personal_hidden_messages WHERE code=@code)`,
+          )
+          .run({ code: operation.code });
       }
       const choices = newer.prepare('SELECT * FROM personal_profile_choices').all() as {
         chat_id: string;
@@ -172,7 +193,7 @@ function reconcileSnapshot(staged: Database, newer: Database, now: number) {
       reconcileStagedDepartures(staged, newer, now);
       reconcileStagedQuestionnaires(staged, newer);
       reconcileStagedProfileUpdates(staged, newer, now);
-      for (const operation of deletions) {
+      for (const operation of admitted) {
         requireInput(
           !staged
             .prepare(

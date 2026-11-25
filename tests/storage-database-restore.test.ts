@@ -7,6 +7,7 @@ import { lifecycleBackend } from '../src/storage/lifecycle-store';
 import { createSnapshot, openExisting, openCandidate } from '../src/storage/database-backup';
 import { reconcileConnections } from '../src/storage/database-restore';
 import { profileFixture, alice, set } from './helpers/profile-fact-fixture';
+import { reconcileStagedPersonalData } from '../src/storage/personal-data-restore';
 import { reconcileRestore } from '../src/storage/backup-history';
 import { personalDataStore } from '../src/storage/personal-data-store';
 import { createAuthorizationService } from '../src/core/index';
@@ -391,3 +392,166 @@ test('восстановление закрывает ожидающие отв�
     await f.close();
   }
 });
+
+test.each(['keep', 'erase', 'reopened'] as const)(
+  'сверка перенесла актуальный исход %s и обе квитанции',
+  async (outcome) => {
+    const files = storageFixture();
+    const live = await openStorage(files.path);
+    const authority = openExisting(files.path);
+    const now = Date.now();
+    try {
+      const a = scopeFor(live, 'vk:a');
+      const b = scopeFor(live, 'vk:b');
+      const privacy = personalDataStore(live);
+      for (const scope of [a, b]) {
+        for (const [messageId, userId] of [
+          ['1', 'vk:11'],
+          ['2', 'vk:12'],
+        ] as const) {
+          await live.messages.append(scope, {
+            chatId: scope.chatId,
+            messageId,
+            userId,
+            role: 'user',
+            authorName: '',
+            text: 'Упоминание',
+            timestamp: now,
+          });
+        }
+      }
+      const req = privacy.requestDeletion(a, 'vk:11', 'delete', now);
+      expect(privacy.confirmDeletion(a, 'vk:11', req.code, now)).toBe(true);
+      expect(privacy.reportMessage(a, 'vk:11', '2', 401)).toBe(true);
+      if (outcome === 'reopened') {
+        expect(privacy.resolveDisputed(a, '2', 'keep')).toBe(true);
+        privacy.cleanup(now);
+        expect(privacy.status(a, 'vk:11', now)).toContain('проверена');
+      }
+      const path = join(files.directory, 'staged');
+      await authority.backup(path);
+      privacy.reportMessage(a, 'vk:11', '2', 402);
+      if (outcome !== 'reopened') expect(privacy.resolveDisputed(a, '2', outcome)).toBe(true);
+      privacy.cleanup(now);
+      const staged = openExisting(path, false);
+      try {
+        for (let pass = 0; pass < 2; pass++) {
+          reconcileStagedPersonalData(staged, authority, now);
+          expect(
+            staged
+              .prepare(
+                'SELECT source_message_id FROM personal_dispute_reports ORDER BY source_message_id',
+              )
+              .pluck()
+              .all(),
+          ).toEqual([401, 402]);
+          expect(
+            staged
+              .prepare('SELECT state FROM personal_dispute_cases WHERE code=?')
+              .pluck()
+              .get(req.code),
+          ).toBe(outcome === 'reopened' ? 'open' : outcome);
+          const visible = staged
+            .prepare(
+              "SELECT chat_id FROM personal_visible_messages WHERE platform_message_id='2' ORDER BY chat_id",
+            )
+            .pluck()
+            .all();
+          expect(visible).toEqual(outcome === 'keep' ? ['vk:a', 'vk:b'] : ['vk:b']);
+          expect(
+            staged
+              .prepare('SELECT count(*) FROM personal_hidden_messages WHERE disputed=1')
+              .pluck()
+              .get(),
+          ).toBe(outcome === 'reopened' ? 1 : 0);
+          expect(
+            staged
+              .prepare(
+                "SELECT count(*) FROM messages WHERE chat_id='vk:a' AND platform_message_id='2'",
+              )
+              .pluck()
+              .get(),
+          ).toBe(outcome === 'erase' ? 0 : 1);
+          expect(
+            staged
+              .prepare('SELECT verified_at IS NULL FROM personal_deletions WHERE code=?')
+              .pluck()
+              .get(req.code),
+          ).toBe(outcome === 'reopened' ? 1 : 0);
+          expect(staged.pragma('foreign_key_check')).toEqual([]);
+        }
+      } finally {
+        staged.close();
+      }
+    } finally {
+      authority.close();
+      await live.close();
+      files.cleanup();
+    }
+  },
+);
+
+test.each(['видна', 'отсутствует', 'скрыта', 'истекла', 'удалена', 'другая операция'] as const)(
+  'старый спор из версии 57, в действующей базе реплика %s',
+  async (condition) => {
+    const files = storageFixture();
+    const db = new Database(files.path);
+    try {
+      migrate(db, migrations.slice(0, 57));
+      db.exec(`INSERT INTO chat_connections(chat_id,generation,revision,state) VALUES('vk:a',1,1,'active'),('vk:b',2,1,'active');
+        INSERT INTO personal_deletions(code,chat_id,generation,user_id,request_event,requested_at,confirmed_at,cutoff_id)
+        VALUES('op','vk:a',1,'vk:1','1',0,1,4);
+        INSERT INTO messages(chat_id,platform_message_id,user_id,author_name,role,text,timestamp)
+        VALUES('vk:a','2','vk:2','','user','Упоминание',1),('vk:b','2','vk:2','','user','Упоминание',1);
+        INSERT INTO personal_hidden_messages VALUES(1,'op',1)`);
+      const path = join(files.directory, 'staged');
+      await db.backup(path);
+      // Старое «оставить» не оставляло квитанции и происходило до обновления рабочей БД.
+      db.exec('DELETE FROM personal_hidden_messages');
+      if (condition === 'другая операция')
+        db.exec("UPDATE personal_deletions SET code='elsewhere',request_event='another-request'");
+      if (condition === 'скрыта')
+        db.exec(`INSERT INTO personal_deletions(code,chat_id,generation,user_id,request_event,requested_at,confirmed_at,cutoff_id)
+        VALUES('other','vk:a',1,'vk:3','3',0,1,4); INSERT INTO personal_hidden_messages VALUES(1,'other',1)`);
+      if (condition === 'отсутствует') db.exec("DELETE FROM messages WHERE chat_id='vk:a'");
+      if (condition === 'истекла')
+        db.exec(
+          "INSERT INTO history_retention_boundaries(chat_id,generation,expired_through) VALUES('vk:a',1,1)",
+        );
+      if (condition === 'удалена')
+        db.exec("INSERT INTO history_deleted_inputs VALUES('vk:a',1,'2')");
+      if (condition === 'видна') db.exec("UPDATE messages SET id=3 WHERE chat_id='vk:a'");
+      migrate(db);
+      const authority = openExisting(files.path);
+      const staged = openExisting(path, false);
+      try {
+        for (let pass = 0; pass < 2; pass++) {
+          reconcileStagedPersonalData(staged, authority, 4);
+          expect(
+            staged
+              .prepare(
+                "SELECT count(*) FROM personal_visible_messages WHERE chat_id='vk:a' AND platform_message_id='2'",
+              )
+              .pluck()
+              .get(),
+          ).toBe(condition === 'видна' ? 1 : 0);
+          expect(
+            staged
+              .prepare(
+                "SELECT platform_message_id FROM personal_visible_messages WHERE chat_id='vk:b'",
+              )
+              .pluck()
+              .all(),
+          ).toEqual(['2']);
+          expect(staged.pragma('foreign_key_check')).toEqual([]);
+        }
+      } finally {
+        staged.close();
+        authority.close();
+      }
+    } finally {
+      db.close();
+      files.cleanup();
+    }
+  },
+);
