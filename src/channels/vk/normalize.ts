@@ -46,6 +46,8 @@ export interface VkIncoming {
   readonly timestamp: number;
   readonly text: string;
   readonly literalText?: string;
+  readonly payload?: string;
+  readonly inlineKeyboard?: boolean;
   readonly isMentioned: boolean;
   readonly soleBotMention?: boolean;
   readonly hasOtherAddress?: boolean;
@@ -202,7 +204,8 @@ export function parseVkIncoming(update: unknown, groupId: number): ParseResult {
   const event = vkRecord(update);
   if (!event || typeof event.type !== 'string') return { kind: 'invalid' };
   if (event.type !== 'message_new' || event.group_id !== groupId) return { kind: 'ignored' };
-  const row = vkRecord(vkRecord(event.object)?.message);
+  const object = vkRecord(event.object);
+  const row = vkRecord(object?.message);
   if (!row) return { kind: 'invalid' };
   const peerId = vkId(row.peer_id);
   const action = vkRecord(row.action);
@@ -243,6 +246,8 @@ export function parseVkIncoming(update: unknown, groupId: number): ParseResult {
   const reply = parseReply(row.reply_message);
   const forwarded = row.fwd_messages;
   const hasForwarded = forwarded != null && (!Array.isArray(forwarded) || forwarded.length > 0);
+  const client = vkRecord(object?.client_info);
+  const inlineKeyboard = client?.inline_keyboard ?? client?.keyboard;
   return {
     kind: 'message',
     message: {
@@ -250,6 +255,10 @@ export function parseVkIncoming(update: unknown, groupId: number): ParseResult {
       authorId,
       cmid,
       timestamp,
+      ...(typeof row.payload === 'string' && row.payload.length <= 255
+        ? { payload: row.payload }
+        : {}),
+      ...(inlineKeyboard === false || inlineKeyboard === 0 ? { inlineKeyboard: false } : {}),
       isMentioned,
       soleBotMention: isMentioned && recipients.size === 1,
       ...(recipients.size > Number(isMentioned) ? { hasOtherAddress: true } : {}),

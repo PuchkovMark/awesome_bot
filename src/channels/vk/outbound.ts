@@ -16,8 +16,14 @@ type SendOutcome =
   | { readonly kind: 'delivered'; readonly confirmedParts: number }
   | { readonly kind: 'failed' | 'unknown'; readonly confirmedParts: number };
 
+export interface VkInlineKeyboard {
+  readonly json: string;
+  readonly fallbackText: string;
+}
+
 export interface VkSendRequest extends OutgoingMessage, VkRequestGuard {
   readonly kind: 'answer' | 'notice' | 'service';
+  readonly inlineKeyboard?: VkInlineKeyboard;
   readonly sendId?: number;
   readonly replayUntil?: number;
   readonly receivedId?: (messageId: string) => void;
@@ -154,6 +160,7 @@ export function createVkOutbound(options: {
       random_id: sendId ?? nextRandomId(),
       dont_parse_links: 1,
       disable_mentions: 1,
+      ...(input.inlineKeyboard ? { keyboard: input.inlineKeyboard.json } : {}),
       ...(parent
         ? {
             forward: JSON.stringify({
@@ -198,6 +205,17 @@ export function createVkOutbound(options: {
         return { cmid, text: params.message };
       } catch (error) {
         if (
+          params.keyboard &&
+          input.inlineKeyboard &&
+          error instanceof VkApiError &&
+          (error.code === 911 || error.code === 912)
+        ) {
+          delete params.keyboard;
+          params.message = input.inlineKeyboard.fallbackText;
+          params.random_id = nextRandomId();
+          continue;
+        }
+        if (
           invitation ||
           replayUntil !== undefined ||
           !(error instanceof VkApiError) ||
@@ -221,6 +239,8 @@ export function createVkOutbound(options: {
     const replyId = localMessageId(input.replyToMessageId);
     if (
       chunks.length === 0 ||
+      (input.inlineKeyboard &&
+        (chunks.length !== 1 || splitVkText(input.inlineKeyboard.fallbackText).length !== 1)) ||
       (input.replyToMessageId !== undefined && replyId === undefined) ||
       (input.kind === 'notice' && (chunks.length !== 1 || replyId === undefined)) ||
       (input.kind === 'service' &&

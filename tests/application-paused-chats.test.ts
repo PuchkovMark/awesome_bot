@@ -28,6 +28,11 @@ const overview = 'Приостановленные беседы';
 const firstPeer = 2_000_000_011;
 const chat = (peer: number): ChatId => `vk:${peer}`;
 
+interface SentKeyboard {
+  inline: boolean;
+  buttons: { action: { type: string; label: string; payload: string }; color: string }[][];
+}
+
 async function fixture() {
   const files = storageFixture();
   const config = loadApplicationConfig({
@@ -51,9 +56,10 @@ async function fixture() {
   const connection = await openConnection(files.path);
   const life = createLifecycleService({ storage, ownerId, source: unconfirmedLifecycleSource });
   const records = new Map<string, Record<string, unknown>>();
-  const sends: { peer: number; text: string }[] = [];
+  const sends: { peer: number; text: string; keyboard?: SentKeyboard }[] = [];
   const failed: { peer: number; text: string }[] = [];
   let writable = true;
+  let keyboardError: number | undefined;
   let denySend: (text: string) => boolean = () => false;
   let subscription: Parameters<VkPollTransport['run']>[0];
   let sequence = 100;
@@ -72,7 +78,11 @@ async function fixture() {
       return {
         response: {
           items: [
-            { peer: { id: peer }, can_write: { allowed: true }, chat_settings: { state: 'in' } },
+            {
+              peer: { id: peer },
+              can_write: { allowed: true },
+              chat_settings: { state: 'in', title: `Название VK ${peer}` },
+            },
           ],
         },
       };
@@ -101,11 +111,16 @@ async function fixture() {
     if (method === 'messages.setActivity') return { response: 1 };
     if (method !== 'messages.send') throw new Error('Неожиданный запрос к подмене VK');
     const text = String(params.message);
+    if (params.keyboard && keyboardError) return { error: { error_code: keyboardError } };
     if (denySend(text)) {
       failed.push({ peer, text });
       return { error: { error_code: 901 } };
     }
-    sends.push({ peer, text });
+    sends.push({
+      peer,
+      text,
+      ...(params.keyboard ? { keyboard: JSON.parse(String(params.keyboard)) as SentKeyboard } : {}),
+    });
     const forward =
       params.forward === undefined
         ? undefined
@@ -173,6 +188,10 @@ async function fixture() {
     attempt,
     paused,
     event,
+    textOverview() {
+      const update = event(overview);
+      return { ...update, object: { ...update.object, client_info: { inline_keyboard: false } } };
+    },
     record,
     update(...events: unknown[]) {
       subscription.onUpdates(events);
@@ -185,6 +204,9 @@ async function fixture() {
     },
     allowPrivate(value: boolean) {
       writable = value;
+    },
+    rejectKeyboard(code: number) {
+      keyboardError = code;
     },
     failSend(predicate: (text: string) => boolean) {
       denySend = predicate;
@@ -243,7 +265,7 @@ test('после решения владельца участнику снова
     await f.start();
     const paused = f.paused().find((item) => item.chatId === chat(member))!;
     expect(paused.generation).toBe(original.generation);
-    f.update(f.event('Начать', member), f.event('/помощь', member), f.event(overview));
+    f.update(f.event('Начать', member), f.event('/помощь', member), f.textOverview());
     await vi.waitFor(() => expect(f.sends.at(-1)?.peer).toBe(owner));
     expect(f.sends.filter((row) => row.peer === member)).toEqual([]);
     const command = 'Продолжить ' + paused.chatId + ' ' + paused.generation + '/' + paused.revision;
@@ -337,7 +359,7 @@ test('ранний личный путь принимает целую кома�
     expect(
       f.sends
         .slice(1)
-        .every(({ peer, text }) => peer === owner && text.startsWith('Скопируйте целую команду')),
+        .every(({ peer, text }) => peer === owner && text.includes('выберите действие')),
     ).toBe(true);
     expect(f.paused()).toEqual(previous);
     expect(f.model).not.toHaveBeenCalled();
@@ -348,7 +370,7 @@ test('ранний личный путь принимает целую кома�
     await vi.waitFor(() => expect(allowedCalls().length).toBe(rightsBefore + 7));
     expect(f.sends).toHaveLength(7);
     f.allowPrivate(true);
-    f.update(f.event(overview));
+    f.update(f.textOverview());
     await vi.waitFor(() => expect(f.sends).toHaveLength(8));
     expect(f.sends[7]).toMatchObject({ peer: owner, text: expect.stringContaining(reset) });
     expect(Buffer.byteLength(f.sends[7]!.text)).toBeLessThanOrEqual(vkMessageLength.value);
@@ -385,6 +407,119 @@ test('ранний личный путь принимает целую кома�
     await f.close();
   }
 });
+
+test('карточки владельца продолжают выбранную беседу, обновляют устаревший список и требуют подтверждения сброса', async () => {
+  const f = await fixture();
+  try {
+    await f.start();
+    const first = f.open(firstPeer);
+    await f.storage.chats.create(first, { enabled: false, responseMode: 'silent', createdAt: 1 });
+    f.connection.run((db) =>
+      db.prepare('UPDATE chats SET title=? WHERE chat_id=?').run('Клуб', first.chatId),
+    );
+    await f.record(first, '1');
+    const second = f.open(firstPeer + 1);
+    await f.gap();
+    const paused = f.paused();
+    const cards = () => f.sends.filter((s) => s.keyboard);
+    const click = (
+      button: SentKeyboard['buttons'][number][number],
+      peer = owner,
+      author = peer,
+      extra = {},
+    ) => f.event(button.action.label, peer, author, { payload: button.action.payload, ...extra });
+    f.update(f.event(overview));
+    await vi.waitFor(() => expect(cards()).toHaveLength(2));
+    for (const [index, card] of cards().entries()) {
+      const row = paused[index]!;
+      expect(card.peer).toBe(owner);
+      expect(card.text).toContain(row.chatId);
+      expect(card.text).not.toContain(`${row.generation}/${row.revision}`);
+      expect(card.keyboard).toMatchObject({
+        inline: true,
+        buttons: [
+          [
+            { action: { type: 'text', label: 'Продолжить' }, color: 'positive' },
+            { action: { type: 'text', label: 'Начать заново' }, color: 'secondary' },
+          ],
+        ],
+      });
+      for (const button of card.keyboard!.buttons[0]!) {
+        expect(JSON.parse(button.action.payload)).toEqual({
+          pausedChat: `${button.action.label} ${row.chatId} ${row.generation}/${row.revision}`,
+        });
+      }
+    }
+    expect(cards()[0]!.text).toContain('Клуб');
+    expect(cards()[1]!.text).toContain(`Название VK ${firstPeer + 1}`);
+    const resume = cards()[0]!.keyboard!.buttons[0]![0]!;
+    const reset = cards()[1]!.keyboard!.buttons[0]![1]!;
+    f.update(
+      click(resume, member),
+      click(resume, firstPeer, owner),
+      click(resume, owner, owner, { fwd_messages: [{ text: 'пересылка' }] }),
+      click(resume, owner, owner, {
+        reply_message: { conversation_message_id: 1, from_id: owner },
+      }),
+      click(resume, owner, owner, { attachments: [{ type: 'photo' }] }),
+      f.event('Начать заново', owner, owner, { payload: resume.action.payload }),
+    );
+    await vi.waitFor(() => expect(f.sends.at(-1)?.text).toContain('выберите действие'));
+    expect(f.paused()).toEqual(paused);
+    f.update(click(resume));
+    await vi.waitFor(() => expect(f.sends.at(-1)?.text).toBe('Беседа «Клуб» возобновлена.'));
+    expect(f.life.current(first.chatId).generation).toBe(first.generation);
+    expect(await f.storage.messages.list(f.life.current(first.chatId), { limit: 5 })).toMatchObject(
+      [{ messageId: '1' }],
+    );
+    expect(await f.storage.chats.get(f.life.current(first.chatId))).toMatchObject({
+      enabled: false,
+      responseMode: 'silent',
+    });
+
+    await f.life.verify(first.chatId, 'observation_lost');
+    const current = f.paused();
+    f.update(click(resume));
+    await vi.waitFor(() => expect(cards()).toHaveLength(4));
+    expect(f.paused()).toEqual(current);
+    expect(cards()[2]!.keyboard!.buttons[0]![0]!.action.payload).not.toBe(resume.action.payload);
+    f.update(click(reset));
+    await vi.waitFor(() => expect(f.sends.at(-1)?.text).toContain('/подтвердить-сброс'));
+    expect(f.paused()).toEqual(current);
+    const cancel = f.sends.at(-1)!.text.match(/\/отменить-сброс [a-f\d]+/u)![0];
+    f.update(f.event(cancel));
+    await vi.waitFor(() => expect(f.sends.at(-1)?.text).toContain('отменён'));
+    expect(f.paused().find((row) => row.chatId === second.chatId)?.generation).toBe(
+      second.generation,
+    );
+    expect(f.model).not.toHaveBeenCalled();
+  } finally {
+    await f.close();
+  }
+});
+
+test.each([911, 912])(
+  'при отказе VK от клавиатуры (%i) владелец получает команды для той же версии',
+  async (code) => {
+    const f = await fixture();
+    try {
+      await f.start();
+      await f.life.verify(chat(firstPeer), 'first_seen');
+      const [row] = f.paused();
+      f.rejectKeyboard(code);
+      f.update(f.event(overview));
+      await vi.waitFor(() => expect(f.sends).toHaveLength(1));
+      const expected = `Продолжить ${row!.chatId} ${row!.generation}/${row!.revision}`;
+      expect(f.sends[0]!.text).toContain(expected);
+      expect(f.sends[0]!.keyboard).toBeUndefined();
+      f.update(f.event(expected));
+      await vi.waitFor(() => expect(f.sends.at(-1)?.text).toContain('продолжена'));
+      expect(f.paused()).toEqual([]);
+    } finally {
+      await f.close();
+    }
+  },
+);
 
 test('десять строк обзора приводят к независимым решениям, повтор сброса сохраняет новое поколение', async () => {
   const f = await fixture();
@@ -445,7 +580,7 @@ test('десять строк обзора приводят к независи�
 
     const pauseSnapshot = f.paused();
     const parts = () => f.sends.filter(({ text }) => text.startsWith(`${overview} VK`));
-    f.update(f.event(overview));
+    f.update(f.textOverview());
     await vi.waitFor(() =>
       expect(parts().flatMap(({ text }) => text.split('\n\n').slice(1))).toHaveLength(10),
     );
@@ -553,7 +688,7 @@ test('десять строк обзора приводят к независи�
     expect(f.life.current(activeScope.chatId).generation).toBe(activeScope.generation);
 
     const initialPartCount = parts().length;
-    f.update(f.event(overview));
+    f.update(f.textOverview());
     await vi.waitFor(() =>
       expect(
         parts()

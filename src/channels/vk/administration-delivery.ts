@@ -2,6 +2,7 @@ import type { UserId } from '../../contracts/index';
 import type { VkApi } from './api';
 import { isVkGroupChat, vkRecord } from './normalize';
 import { createVkOutbound, vkLocalId } from './outbound';
+import type { VkInlineKeyboard } from './outbound';
 import type { VkRequestGuard } from './rate-limit';
 
 export function createVkAdministrationDelivery(
@@ -40,7 +41,7 @@ export function createVkAdministrationDelivery(
     }
   }
   const canWrite = async (guard: VkRequestGuard) => (await permission(guard)) === 'allowed';
-  async function deliver(text: string, guard: VkRequestGuard) {
+  async function deliver(text: string, guard: VkRequestGuard, inlineKeyboard?: VkInlineKeyboard) {
     if (chatId === undefined) return 'failed' as const;
     const access = await permission(guard);
     if (access !== 'allowed') return access;
@@ -50,6 +51,7 @@ export function createVkAdministrationDelivery(
         chatId,
         text,
         kind: 'answer',
+        ...(inlineKeyboard ? { inlineKeyboard } : {}),
         confirmPart() {
           /* Служебный текст вне журнала. */
         },
@@ -59,8 +61,8 @@ export function createVkAdministrationDelivery(
   return Object.freeze({
     canWrite,
     deliver,
-    async reply(text: string, guard: VkRequestGuard) {
-      await deliver(text, guard);
+    async reply(text: string, guard: VkRequestGuard, inlineKeyboard?: VkInlineKeyboard) {
+      await deliver(text, guard, inlineKeyboard);
     },
     async publish(
       text: string,

@@ -20,6 +20,7 @@ import type { VkInboundOptions } from './inbound';
 import type { VkPollTransport } from './long-poll';
 import { isVkGroupChat, vkRecord } from './normalize';
 import { createVkOutbound, vkLocalId } from './outbound';
+import type { VkInlineKeyboard } from './outbound';
 import { createVkIntroduction } from './introduction';
 import { createVkAdministrationEvidence } from './administration-evidence';
 import { createVkAdministrationDelivery } from './administration-delivery';
@@ -279,10 +280,35 @@ export function createVkChannel(
         guard,
       );
     },
-    async replyPrivateControl(sender: UserId, text: string, guard: PublicationGuard) {
+    async groupTitle(chatId: ChatId, guard: PublicationGuard): Promise<string | null> {
+      const peer = vkLocalId(chatId);
+      if (peer === undefined || !isVkGroupChat(peer) || !guard.isCurrent()) return null;
+      try {
+        const result = vkRecord(
+          await api.request('messages.getConversationsById', { peer_ids: String(peer) }, guard),
+        );
+        const row =
+          Array.isArray(result?.items) && result.items.length === 1
+            ? vkRecord(result.items[0])
+            : undefined;
+        const settings = vkRecord(row?.chat_settings);
+        return vkRecord(row?.peer)?.id === peer && typeof settings?.title === 'string'
+          ? settings.title
+          : null;
+      } catch {
+        return null;
+      }
+    },
+    async replyPrivateControl(
+      sender: UserId,
+      text: string,
+      guard: PublicationGuard,
+      inlineKeyboard?: VkInlineKeyboard,
+    ) {
       await createVkAdministrationDelivery(api, outbound, sender, options.groupId).reply(
         text,
         guard,
+        inlineKeyboard,
       );
     },
     async replyGroupControl(scope: ConnectionScope, text: string, guard: PublicationGuard) {
