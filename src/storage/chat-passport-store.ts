@@ -71,6 +71,17 @@ export function createChatPassportStore(connection: Connection, lifecycle: Lifec
             .get(scope.chatId, scope.generation, receipt) as PassportSection | undefined,
       );
     },
+    ownsPrompt(scope: ConnectionScope, receipt: string, actor: UserId) {
+      return lifecycle.transaction(scope, (db) =>
+        Boolean(
+          db
+            .prepare(
+              `SELECT 1 FROM chat_passport_prompts WHERE ${receiptScope} AND action='edit' AND actor_id=? AND expires_at>?`,
+            )
+            .get(scope.chatId, scope.generation, receipt, actor, Date.now()),
+        ),
+      );
+    },
     recordPrompt(
       scope: ConnectionScope,
       actor: UserId,

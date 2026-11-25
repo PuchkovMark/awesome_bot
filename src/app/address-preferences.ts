@@ -6,6 +6,7 @@ import {
 } from '../storage/address-preference-store';
 import { chatControlStore } from '../storage/chat-control-store';
 import type { Storage } from '../storage/index';
+import type { TrackPublication } from './control-publications';
 
 const botName = /^пен[её]к(?![\p{L}\p{N}_])[\s,!:.—-]*/iu;
 
@@ -35,6 +36,7 @@ export function createAddressPreferenceHandlers(options: {
   readonly storage: Storage;
   readonly channel: ReturnType<typeof createVkChannel>;
   readonly signal: AbortSignal;
+  readonly track: TrackPublication;
 }) {
   const store = addressPreferenceStore(options.storage);
   const controls = chatControlStore(options.storage);
@@ -56,7 +58,7 @@ export function createAddressPreferenceHandlers(options: {
       )
         return;
       const isCurrent = () => {
-        if (signal.aborted || !current()) return false;
+        if (!current()) return false;
         try {
           const state = controls.read(scope);
           return state.enabled && state.mode !== 'silent';
@@ -84,8 +86,11 @@ export function createAddressPreferenceHandlers(options: {
             ? 'В этом чате снова использую актуальное имя VK.'
             : 'Настройка обращения обновлена для этого чата.';
       const guard = { signal, isCurrent, allow: async () => isCurrent() };
-      if (message.isGroupChat) await channel.replyGroupControl(scope, response, guard);
-      else await channel.replyPrivateControl(message.userId, response, guard);
+      options.track(
+        message.isGroupChat
+          ? channel.replyGroupControl(scope, response, guard)
+          : channel.replyPrivateControl(message.userId, response, guard),
+      );
     },
   };
 }

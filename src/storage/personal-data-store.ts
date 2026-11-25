@@ -154,22 +154,53 @@ export function createPersonalDataStore(connection: Connection, lifecycle: Lifec
         return row.disabled_at + week;
       });
     },
-    reportMessage(scope: ConnectionScope, user: UserId, messageId: string) {
+    reportMessage(
+      scope: ConnectionScope,
+      user: UserId,
+      messageId: string,
+      sourceMessageId: number,
+    ) {
+      requireInput(Number.isSafeInteger(sourceMessageId) && sourceMessageId > 0);
       return lifecycle.transaction(scope, (db) => {
-        const row = db
+        // Жалобы принимаются в личке самого заявителя. Номер события уникален внутри этой лички.
+        const args = { ...parameters(scope, user), messageId, sourceMessageId };
+        if (
+          db
+            .prepare(
+              'SELECT 1 FROM personal_dispute_reports WHERE source_chat_id=@user AND source_message_id=@sourceMessageId',
+            )
+            .get(args)
+        )
+          return false;
+        const target = db
           .prepare(
-            `SELECT code,cutoff_id FROM personal_deletions WHERE ${subject} AND confirmed_at IS NOT NULL ORDER BY confirmed_at DESC LIMIT 1`,
+            `WITH latest AS (
+            SELECT code,cutoff_id FROM personal_deletions WHERE ${subject} AND confirmed_at IS NOT NULL
+            ORDER BY confirmed_at DESC,rowid DESC LIMIT 1
+          ) SELECT latest.code,m.id FROM latest JOIN messages m ON m.id<=latest.cutoff_id
+          WHERE m.chat_id=@chat AND m.platform_message_id=@messageId
+          AND NOT EXISTS(SELECT 1 FROM personal_hidden_messages WHERE message_id=m.id AND disputed=0)
+          AND NOT EXISTS(SELECT 1 FROM history_deleted_inputs WHERE chat_id=@chat AND generation=@generation AND platform_message_id=@messageId)`,
           )
-          .get(parameters(scope, user)) as { code: string; cutoff_id: number } | undefined;
-        if (!row) return false;
+          .get(args) as { code: string; id: number } | undefined;
+        if (!target) return false;
+        db.prepare(
+          'INSERT INTO personal_dispute_reports(source_chat_id,source_message_id,code,platform_message_id) VALUES(?,?,?,?)',
+        ).run(user, sourceMessageId, target.code, messageId);
+        db.prepare(
+          `INSERT INTO personal_dispute_cases(code,platform_message_id,state) VALUES(?,?,'open')
+          ON CONFLICT(code,platform_message_id) DO UPDATE SET state=excluded.state`,
+        ).run(target.code, messageId);
         const hidden = db
           .prepare(
-            `INSERT OR IGNORE INTO personal_hidden_messages(message_id,code,disputed) SELECT id,?,1 FROM messages WHERE chat_id=? AND platform_message_id=? AND id<=?`,
+            'INSERT OR IGNORE INTO personal_hidden_messages(message_id,code,disputed) VALUES(?,?,1)',
           )
-          .run(row.code, scope.chatId, messageId, row.cutoff_id).changes;
+          .run(target.id, target.code).changes;
         if (hidden) {
-          invalidateDependentData(db, scope.chatId, row.code);
-          db.prepare('UPDATE personal_deletions SET verified_at=NULL WHERE code=?').run(row.code);
+          invalidateDependentData(db, scope.chatId, target.code);
+          db.prepare('UPDATE personal_deletions SET verified_at=NULL WHERE code=?').run(
+            target.code,
+          );
         }
         return Boolean(hidden);
       });
@@ -193,6 +224,11 @@ export function createPersonalDataStore(connection: Connection, lifecycle: Lifec
           )
           .get(scope.chatId, messageId) as { id: number } | undefined;
         if (!row) return false;
+        db.prepare(
+          `INSERT INTO personal_dispute_cases(code,platform_message_id,state)
+          SELECT code,?,? FROM personal_hidden_messages WHERE message_id=? AND disputed=1
+          ON CONFLICT(code,platform_message_id) DO UPDATE SET state=excluded.state`,
+        ).run(messageId, decision, row.id);
         if (decision === 'keep')
           db.prepare('DELETE FROM personal_hidden_messages WHERE message_id=? AND disputed=1').run(
             row.id,

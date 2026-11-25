@@ -26,11 +26,12 @@ export function createPersonalCommands(options: {
   privacy: ReturnType<typeof personalDataStore>;
   channel: Pick<
     ReturnType<typeof createVkChannel>,
-    'replyPrivateControl' | 'replyGroupControl' | 'sendPersonalFile'
+    'replyPrivateControl' | 'privateControlDelivery' | 'replyGroupControl' | 'sendPersonalFile'
   >;
   lifecycle: ReturnType<typeof createLifecycleService>;
   onboarding: ReturnType<typeof createChatOnboarding>;
   signal: AbortSignal;
+  track: import('./control-publications').TrackPublication;
 }) {
   const { privacy, channel, lifecycle, onboarding, signal } = options;
   return function personalCommand(
@@ -130,7 +131,8 @@ export function createPersonalCommands(options: {
         };
         if (!(await guard.allow())) return;
         if (report) {
-          if (privacy.hasData(scope, sender)) privacy.reportMessage(scope, sender, report[2]!);
+          if (privacy.hasData(scope, sender))
+            privacy.reportMessage(scope, sender, report[2]!, message.cmid);
           await channel.replyPrivateControl(
             sender,
             'Запрос по указанному сообщению обработан.',
@@ -183,10 +185,12 @@ export function createPersonalCommands(options: {
         const source = lifecycle.admissionScope(vkChatId(message.peerId));
         const isCurrent = () =>
           current() && !signal.aborted && lifecycle.isAdmissionCurrent(source);
-        await channel.replyGroupControl(
-          source,
-          `Для другой беседы отправьте в личку сообщества ${match[0]}`,
-          { signal, isCurrent, allow: async () => isCurrent() },
+        options.track(
+          channel.replyGroupControl(
+            source,
+            `Для другой беседы отправьте в личку сообщества ${match[0]}`,
+            { signal, isCurrent, allow: async () => isCurrent() },
+          ),
         );
         return;
       }
@@ -202,31 +206,45 @@ export function createPersonalCommands(options: {
         allow: async () => isCurrent() && privacy.hasData(scope, sender),
       };
       if (!(await guard.allow())) return;
-      if (match[1]?.toLowerCase() === 'удалить-мои-данные') {
+      const commandName = match[1]!.toLowerCase();
+      async function guideInGroup() {
+        if (!direct && isCurrent()) {
+          await channel.replyGroupControl(
+            scope,
+            `Разрешите сообщения сообщества и отправьте в личку /${commandName} ${scope.chatId}`,
+            guard,
+          );
+        }
+      }
+      async function replyOrGuide(text: string) {
+        if ((await channel.privateControlDelivery(sender, text, guard)) !== 'delivered')
+          await guideInGroup();
+      }
+      if (commandName === 'удалить-мои-данные') {
         const request = privacy.requestDeletion(
           scope,
           sender,
           `${message.peerId}/${message.cmid}`,
           Date.now(),
         );
-        await channel.replyPrivateControl(
-          sender,
-          `Удалить анкету и остальные ваши данные из «${request.title ?? scope.chatId}» (${scope.chatId})? В течение 15 минут отправьте здесь /подтверждаю-удаление ${request.code}`,
-          guard,
+        options.track(
+          replyOrGuide(
+            `Удалить анкету и остальные ваши данные из «${request.title ?? scope.chatId}» (${scope.chatId})? В течение 15 минут отправьте здесь /подтверждаю-удаление ${request.code}`,
+          ),
         );
         return;
       }
-      if (match[1]?.toLowerCase() === 'статус-удаления') {
+      if (commandName === 'статус-удаления') {
         const status = privacy.status(scope, sender, Date.now());
-        await channel.replyPrivateControl(sender, status, guard);
+        options.track(replyOrGuide(status));
         return;
       }
-      if (match[1]?.toLowerCase() === 'отключить-профиль') {
+      if (commandName === 'отключить-профиль') {
         const until = privacy.disable(scope, sender, Date.now());
-        await channel.replyPrivateControl(
-          sender,
-          `Профилирование в ${scope.chatId} отключено. Личная выгрузка профиля доступна до ${new Date(until).toISOString()}.`,
-          guard,
+        options.track(
+          replyOrGuide(
+            `Профилирование в ${scope.chatId} отключено. Личная выгрузка профиля доступна до ${new Date(until).toISOString()}.`,
+          ),
         );
         return;
       }
@@ -246,23 +264,27 @@ export function createPersonalCommands(options: {
           return false;
         }
       };
-      try {
-        if (await channel.sendPersonalFile(sender, data, { signal, isCurrent, allow: fresh })) {
-          privacy.finishExport(scope, sender, event);
-          return;
-        }
-      } catch {
-        /* Содержимое и ответ платформы исключены из диагностики. */
-      } finally {
-        data.fill(0);
-      }
-      if (direct)
-        await channel.replyPrivateControl(
-          sender,
-          'Доставка личной выгрузки не подтверждена.',
-          guard,
-        );
-      else await channel.replyGroupControl(scope, 'Доставка файла в личку не подтверждена.', guard);
+      options.track(
+        (async () => {
+          try {
+            if (await channel.sendPersonalFile(sender, data, { signal, isCurrent, allow: fresh })) {
+              if (isCurrent()) privacy.finishExport(scope, sender, event);
+              return;
+            }
+          } catch {
+            /* Содержимое и ответ платформы исключены из диагностики. */
+          } finally {
+            data.fill(0);
+          }
+          if (direct)
+            await channel.replyPrivateControl(
+              sender,
+              'Доставка личной выгрузки не подтверждена.',
+              guard,
+            );
+          else await guideInGroup();
+        })(),
+      );
     })();
   };
 }

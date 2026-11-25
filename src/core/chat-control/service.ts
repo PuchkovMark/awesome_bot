@@ -19,7 +19,11 @@ export function applyChatControl(
 ): ChatControlResult {
   const state = tx.controlState();
   switch (command.kind) {
+    case 'questionnaireEdit':
     case 'questionnaire':
+    case 'greetingHelp':
+    case 'invitationHelp':
+    case 'extendHelp':
     case 'modeHelp':
     case 'quietHelp':
     case 'settings':
@@ -78,11 +82,21 @@ export function formatChatControl(
   const { state } = result;
   if (
     command.kind === 'questionnaire' ||
+    command.kind === 'questionnaireEdit' ||
     result.status === 'duplicate' ||
     result.status === 'waiting'
   )
     return undefined;
   const binding = privateControl ? ` ${scope.chatId}@${scope.generation}` : '';
+  if (command.kind === 'extendHelp' || result.status === 'invalid_duration')
+    return `Укажите число минут, например /продлить-паузу${binding} 5.`;
+  if (command.kind === 'greetingHelp' || command.kind === 'invitationHelp') {
+    const greeting = command.kind === 'greetingHelp';
+    const name = greeting ? '/приветствие' : '/приглашение';
+    const enabled = greeting ? state.greetingEnabledAt : state.invitationEnabledAt;
+    const title = greeting ? 'Приветствия' : 'Приглашения к анкете';
+    return `${title} ${enabled === null ? 'выключены' : 'включены'}.\n${name}${binding} вкл\n${name}${binding} выкл`;
+  }
   if (command.kind === 'modeHelp')
     return [
       `Текущий режим — ${modeLabel[state.mode]}.`,
@@ -99,7 +113,6 @@ export function formatChatControl(
   if (result.status === 'permanent') return 'Самостоятельные реплики отключены.';
   if (result.status === 'expired') return 'Действующей паузы для продления нет.';
   if (result.status === 'inactive') return 'Команда «помолчи» доступна в активном режиме.';
-  if (result.status === 'invalid_duration') return 'Укажи допустимую длительность паузы.';
   const time = (at: number) =>
     new Intl.DateTimeFormat('ru', {
       dateStyle: 'short',

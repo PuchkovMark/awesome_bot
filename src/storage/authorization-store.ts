@@ -21,6 +21,7 @@ import {
   writeQuietHours,
   writeWelcomeSetting,
   type ChatPause,
+  type ControlMessageEvent,
   type QuietHours,
 } from './chat-control-store';
 import { createChatStore } from './chats';
@@ -116,9 +117,9 @@ export function createAuthorizationStore(connection: Connection): SyncAuthorizat
                 check();
                 writeQuietHours(db, chatId, hours);
               },
-              claimControlMessage(actorId: UserId, messageId: number) {
+              claimControlMessage(actorId: UserId, event: ControlMessageEvent) {
                 check(actorId);
-                return claimControlMessage(db, chatId, actorId, messageId);
+                return claimControlMessage(db, chatId, actorId, event);
               },
               bases(userId: UserId) {
                 check(userId);

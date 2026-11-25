@@ -1,4 +1,7 @@
 import { isRecapRequest } from '../chat-summaries/recap-intent';
+import { unquotedText as ownNameText } from '../author-text';
+
+export { unquotedText as ownNameText } from '../author-text';
 
 const name = 'пенек';
 const wordsIn = (text: string): string[] => text.match(/[\p{L}\p{N}_]+/gu) ?? [];
@@ -80,12 +83,6 @@ function asksQuestionByName(text: string): boolean {
   );
 }
 
-/** Консервативная грамматика; цитаты и неоднозначность не дают обычного обращения. */
-export function ownNameText(text: string) {
-  const normalized = text.normalize('NFC').toLocaleLowerCase('ru').replaceAll('ё', 'е');
-  return normalized.replace(/«[^»]*»|“[^”]*”|"[^"\n]*"|\x60[^\x60]*\x60/gu, ' ');
-}
-
 export function addressesQuestionnaireByName(text: string): boolean {
   const normalized = text.normalize('NFC');
   const address = /^\s*пен[её]к\s*,\s*/iu.exec(normalized);
@@ -95,8 +92,10 @@ export function addressesQuestionnaireByName(text: string): boolean {
 export function addressesRecapByName(text: string) {
   const match = /^\s*пен[её]к\s*,\s*([\s\S]+)$/iu.exec(text.normalize('NFC'));
   if (!match) return false;
-  const request = ownNameText(match[1]!);
-  return /^(?:что|перескажи|сделай|дай|подведи)(?!\p{L})/u.test(request) && isRecapRequest(request);
+  const request = match[1]!;
+  return (
+    /^(?:что|перескажи|сделай|дай|подведи)(?!\p{L})/iu.test(request) && isRecapRequest(request)
+  );
 }
 
 export function directlyAddressesName(text: string): boolean {

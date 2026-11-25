@@ -17,6 +17,74 @@ const observed = (creatorId: 'vk:a' | 'vk:b'): LifecycleObservation => ({
   bot: 'present',
   creatorId,
 });
+test('потеря наблюдения во время проверки новой лички оставляет её неоткрытой', async () => {
+  const storage = await openStorage(':memory:');
+  const response = deferred();
+  const life = createLifecycleService({
+    storage,
+    ownerId: 'vk:owner',
+    source: { observe: () => response.promise },
+  });
+  let current = true;
+  try {
+    const pending = life.verify('vk:1', undefined, { isCurrent: () => current });
+    current = false;
+    response.resolve(observed('vk:a'));
+    expect(await pending).toEqual({ status: 'stale' });
+    expect(() => life.current('vk:1')).toThrow('stale_scope');
+    const fresh = await life.verify('vk:1', undefined, { isCurrent: () => true });
+    expect(fresh.status).toBe('applied');
+    expect(life.isAdmissionCurrent(fresh.scope!)).toBe(true);
+    life.decide(life.owner('vk:1', 'vk:owner'), 'continue');
+    expect(life.isAdmissionCurrent(fresh.scope!)).toBe(false);
+  } finally {
+    await storage.close();
+  }
+});
+test('параллельный первый вход проверяет право заново после открытия соседней лички', async () => {
+  const storage = await openStorage(':memory:');
+  const response = deferred();
+  let observations = 0;
+  const life = createLifecycleService({
+    storage,
+    ownerId: 'vk:owner',
+    source: {
+      async observe() {
+        observations++;
+        return response.promise;
+      },
+    },
+  });
+  try {
+    const entries = ['vk:1', 'vk:2'] as const;
+    const pending = entries.map((chat) => life.verify(chat, undefined, { isCurrent: () => true }));
+    response.resolve(observed('vk:a'));
+    const result = await Promise.all(pending);
+    expect(result.map((entry) => entry.scope?.chatId)).toEqual(entries);
+    expect(observations).toBe(3);
+  } finally {
+    await storage.close();
+  }
+});
+test('позднее подтверждение первого входа не возвращает личку, удалённую владельцем', async () => {
+  const storage = await openStorage(':memory:');
+  const response = deferred();
+  const life = createLifecycleService({
+    storage,
+    ownerId: 'vk:owner',
+    source: { observe: () => response.promise },
+  });
+  try {
+    const pending = life.verify('vk:1', undefined, { isCurrent: () => true });
+    const opened = life.decide(life.owner('vk:1', 'vk:owner'), 'new');
+    life.deleteData(life.owner('vk:1', 'vk:owner'), opened.generation);
+    response.resolve(observed('vk:a'));
+    expect(await pending).toEqual({ status: 'stale' });
+    expect(() => life.current('vk:1')).toThrow('stale_scope');
+  } finally {
+    await storage.close();
+  }
+});
 test.each([false, true])(
   'два пересекающихся запроса: поздний ответ не перезаписывает принятый, reverse=%s',
   async (reverse) => {

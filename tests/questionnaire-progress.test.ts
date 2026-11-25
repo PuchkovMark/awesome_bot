@@ -57,7 +57,12 @@ test('редакции двух бесед и лички одного участ
       }),
     ).toBe(true);
     expect(
-      templates.replace(first, twin, { eventId: 801, receipt: '800', text: 'Новый вопрос?' }, 26),
+      templates.replace(
+        first,
+        twin,
+        { eventId: 801, eventAt: 26, receipt: '800', text: 'Новый вопрос?\nЕщё вопрос?' },
+        26,
+      ),
     ).toMatchObject({ status: 'applied' });
     expect(groupActor.pause(before.attempt)).toBe(true);
     expect(groupActor.resume(before.attempt, 27)?.template).toEqual(before.template);
@@ -66,7 +71,7 @@ test('редакции двух бесед и лички одного участ
         .participant(first, twin)
         .open(27)
         ?.template.questions.map((q) => q.text),
-    ).toEqual(['Новый вопрос?']);
+    ).toEqual(['Новый вопрос?', 'Ещё вопрос?']);
     expect(progress.revision(second, alice)).toEqual(other.template);
     expect(progress.revision(direct, alice)).toEqual(privateAttempt.template);
   } finally {

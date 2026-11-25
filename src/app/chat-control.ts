@@ -1,6 +1,6 @@
 import { createQuestionnaireEditor } from './questionnaire-editor';
 import type { createVkChannel } from '../channels/vk/channel';
-import { isVkGroupChat, type VkIncoming } from '../channels/vk/normalize';
+import { isVkGroupChat, vkChatId, type VkIncoming } from '../channels/vk/normalize';
 import type { AuthorizationContext, ChatId, IncomingMessage, UserId } from '../contracts/index';
 import { chatControlAction, parseChatControl } from '../core/chat-control/commands';
 import { formatChatControl } from '../core/chat-control/service';
@@ -21,6 +21,7 @@ export function createChatControlHandlers(options: {
   readonly ownerId: UserId;
   readonly group: (chatId: ChatId) => boolean;
   readonly signal: AbortSignal;
+  readonly track: (work: Promise<unknown>) => void;
 }) {
   const { authorization, lifecycle, channel, ownerId, signal } = options;
   const controls = chatControlStore(options.storage);
@@ -37,7 +38,9 @@ export function createChatControlHandlers(options: {
         return { action: 'chat.configure', minimumRole: 'admin' } as const;
       if (request.command.kind === 'pause' && replyToOther) return null;
       if (
-        (request.command.kind === 'greeting' || request.command.kind === 'invitation') &&
+        ['greeting', 'invitation', 'greetingHelp', 'invitationHelp'].includes(
+          request.command.kind,
+        ) &&
         (replyToOther || message.hasForwarded)
       )
         return null;
@@ -51,7 +54,13 @@ export function createChatControlHandlers(options: {
       const request = parseChatControl(message.text, 'group');
       if (!request || typeof request.command === 'string') return;
       const command = request.command;
-      if (command.kind === 'questionnaire') return questionnaire.show(context, message, isCurrent);
+      if (command.kind === 'questionnaire' || command.kind === 'questionnaireEdit')
+        return questionnaire.show(
+          context,
+          message,
+          isCurrent,
+          command.kind === 'questionnaireEdit',
+        );
       const messageId =
         command.kind === 'greeting' || command.kind === 'invitation'
           ? Number(message.messageId)
@@ -63,18 +72,33 @@ export function createChatControlHandlers(options: {
           String(messageId) !== message.messageId)
       )
         return;
-      const result = await authorization.controlChat(context, command, isCurrent, messageId);
+      const event =
+        messageId === undefined
+          ? undefined
+          : { sourceChatId: message.chatId, messageId, timestamp: message.timestamp };
+      const result = await authorization.controlChat(context, command, isCurrent, event);
       if (!result.allowed || !result.value.state.enabled) return;
       const reply = formatChatControl(context.scope, command, result.value, Date.now());
-      if (reply)
-        await channel.replyGroupControl(context.scope, reply, {
-          signal,
-          isCurrent: () => isCurrent() && controls.read(context.scope).enabled,
-          async allow() {
-            if (!isCurrent()) return false;
-            return (await authorization.check(context, chatControlAction(command).action)).allowed;
-          },
-        });
+      if (reply) {
+        const current = () => {
+          if (!isCurrent()) return false;
+          const latest = controls.read(context.scope);
+          return latest.enabled && latest.responseRevision === result.value.state.responseRevision;
+        };
+        options.track(
+          channel.replyGroupControl(context.scope, reply, {
+            signal,
+            isCurrent: current,
+            async allow() {
+              return (
+                current() &&
+                (await authorization.check(context, chatControlAction(command).action)).allowed &&
+                current()
+              );
+            },
+          }),
+        );
+      }
     },
     privateCommand(message: VkIncoming, current: () => boolean) {
       if (isVkGroupChat(message.peerId)) return undefined;
@@ -87,7 +111,7 @@ export function createChatControlHandlers(options: {
         message.reply
       )
         return Promise.resolve();
-      const sender = `vk:${message.authorId}` as const;
+      const sender = vkChatId(message.authorId);
       const command = request.command;
       if (command !== 'explain' && sender !== ownerId) return Promise.resolve();
       return (async () => {
@@ -129,7 +153,11 @@ export function createChatControlHandlers(options: {
           );
           return;
         }
-        const result = await authorization.controlChat(context, command, isCurrent, message.cmid);
+        const result = await authorization.controlChat(context, command, isCurrent, {
+          sourceChatId: vkChatId(message.peerId),
+          messageId: message.cmid,
+          timestamp: message.timestamp,
+        });
         if (!result.allowed) return;
         const reply = formatChatControl(scope, command, result.value, Date.now(), true);
         if (reply)

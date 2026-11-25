@@ -1,14 +1,15 @@
 import {
   addressedSlash,
   commandHelp,
+  commandInput,
   isCommandHelp,
-  slashText,
+  isPrivateStart,
   helpAction,
   unknownHint,
 } from './command-help';
 import { createQuestionnaireProgress } from '../core/questionnaire/progress';
 import { createLlmAdmission } from '../core/llm-admission';
-import { createPersonaCommands, isPersonaCommand } from './persona-commands';
+import { createPersonaCommands } from './persona-commands';
 import {
   createQuestionnaireCommands,
   openQuestionnaire,
@@ -51,7 +52,7 @@ import type { SafeLogger } from '../logger/index';
 import type { ApplicationFailure } from '../logger/types';
 import { catalogAdministration, installStarterPersonas } from '../storage/catalog-admin';
 import { openApplicationStorage } from './database-access';
-import type { Storage } from '../storage/index';
+import { StorageError, type Storage } from '../storage/index';
 import { createChatOnboarding } from '../core/chat-onboarding/service';
 import { canonicalTimezone, parseTimezoneCommand } from '../core/chat-onboarding/timezone';
 import { vkLocalId } from '../channels/vk/outbound';
@@ -64,6 +65,7 @@ import { parseAdminRecoveryCommand } from '../core/admin-recovery/commands';
 import { adminRecoveryStore } from '../storage/admin-recovery-store';
 import { chatControlStore } from '../storage/chat-control-store';
 import { createChatControlHandlers } from './chat-control';
+import { createBotAdminCommands } from './bot-admin-commands';
 import { createChatPassport } from './chat-passport';
 import { chatPassportStore } from '../storage/chat-passport-store';
 import { createHistoryHandlers } from './history-retention';
@@ -101,12 +103,14 @@ export async function runApplication(
 ): Promise<ApplicationFailure | null> {
   const controller = new AbortController();
   const signal = controller.signal;
+  const input = new AbortController();
   const stopping = Promise.withResolvers<void>();
   const deadline = Promise.withResolvers<'stop_timeout'>();
   let reason: ApplicationFailure | null = null;
   let storage: Storage | undefined;
   let authorization: Awaited<ReturnType<typeof createAuthorizationService>> | undefined;
   let queue: ChatQueue | undefined;
+  let queueStop: Promise<void> | undefined;
   let poll: Promise<void> | undefined;
   let introductionWork: Promise<void> | undefined;
   let administrationWork: Promise<void> | undefined;
@@ -118,18 +122,27 @@ export async function runApplication(
   let readyTimer: ReturnType<typeof setTimeout> | undefined;
   let stopTimer: ReturnType<typeof setTimeout> | undefined;
   const typing = new Set<Promise<void>>();
-  const floodPublications = new Set<Promise<void>>();
-  const questionnairePublications = new Set<Promise<void>>();
+  const publications = new Set<Promise<unknown>>();
+
+  function trackPublication(work: Promise<unknown>) {
+    const operation = work
+      .catch((error: unknown) => logger.componentError(error))
+      .finally(() => publications.delete(operation));
+    publications.add(operation);
+  }
 
   function stop(failure: ApplicationFailure | null) {
     if (signal.aborted) return;
     reason = failure;
-    stopTimer = setTimeout(
-      () => deadline.resolve('stop_timeout'),
-      dependencies.stopTimeoutMs ?? 15_000,
-    );
+    stopTimer = setTimeout(() => {
+      deadline.resolve('stop_timeout');
+      input.abort();
+    }, dependencies.stopTimeoutMs ?? 15_000);
     clearTimeout(readyTimer);
+    if (failure) input.abort();
     controller.abort();
+    queueStop = queue?.stop(input.signal);
+    void queueStop?.catch(() => {});
     stopping.resolve();
   }
 
@@ -175,6 +188,7 @@ export async function runApplication(
           lifecycle,
           chats: storage.chats,
           signal,
+          inputSignal: input.signal,
           owner: config.authorization.ownerId,
           captureDisclosure: (scope) => {
             const disclosure = onboarding.capture(scope);
@@ -233,14 +247,9 @@ export async function runApplication(
           },
           verifyFirstPrivate(message) {
             return (
-              message.peerId > 0 &&
-              !isVkGroupChat(message.peerId) &&
-              message.authorId === message.peerId &&
-              !message.hasReply &&
-              !message.hasForwarded &&
-              (onboarding.configuredForProfiles() ||
-                !!parseReminderCommand(message.text, false) ||
-                (!message.attachments.length && isPersonaCommand(message.text)))
+              onboarding.configuredForProfiles() ||
+              !!parseReminderCommand(message.text, false) ||
+              (!message.attachments.length && !!message.text.trim())
             );
           },
           onReady() {
@@ -259,8 +268,15 @@ export async function runApplication(
         },
         dependencies.vk,
       );
-      canWritePrivate = (chatId) => channel.reminderDelivery(chatId).canWrite({ signal });
-      const reminders = createReminderHandlers({ storage, channel, lifecycle, signal });
+      canWritePrivate = (chatId) =>
+        channel.reminderDelivery(chatId).canWrite({ signal: input.signal });
+      const reminders = createReminderHandlers({
+        storage,
+        channel,
+        lifecycle,
+        signal,
+        track: trackPublication,
+      });
       async function deliverReminders() {
         while (!signal.aborted) {
           if (await reminders.due()) continue;
@@ -562,6 +578,7 @@ export async function runApplication(
         ownerId,
         group,
         signal,
+        track: trackPublication,
       });
       const history = createHistoryHandlers({
         storage,
@@ -573,6 +590,7 @@ export async function runApplication(
         signal,
         isRunning: queue.isRunning,
         wakeMaintenance: queue.wakeHistoryMaintenance ?? (() => {}),
+        track: trackPublication,
       });
       const usage = createUsageCommand({
         channel,
@@ -589,6 +607,7 @@ export async function runApplication(
         ownerId,
         authorization,
         storage,
+        track: trackPublication,
       });
       const profiles = createProfileCommands({
         storage,
@@ -598,8 +617,16 @@ export async function runApplication(
         lifecycle,
         onboarding,
         signal,
+        track: trackPublication,
       });
-      const passports = createChatPassport({ storage, authorization, channel, lifecycle, signal });
+      const passports = createChatPassport({
+        storage,
+        authorization,
+        channel,
+        lifecycle,
+        signal,
+        track: trackPublication,
+      });
       const questionnaires = createQuestionnaireCommands({
         storage,
         authorization,
@@ -608,53 +635,104 @@ export async function runApplication(
         signal,
         progress: questionnaireProgress,
         present: publication.presentQuestionnaire,
-        track(work) {
-          const publication = work
-            .catch((error: unknown) => logger.componentError(error))
-            .finally(() => questionnairePublications.delete(publication));
-          questionnairePublications.add(publication);
-        },
+        track: trackPublication,
       });
-      const address = createAddressPreferenceHandlers({ storage, channel, signal });
-      const personas = createPersonaCommands({ storage, authorization, channel, signal });
+      const address = createAddressPreferenceHandlers({
+        storage,
+        channel,
+        signal,
+        track: trackPublication,
+      });
+      const botAdministrators = createBotAdminCommands({
+        storage,
+        authorization,
+        lifecycle,
+        channel,
+        signal,
+        ownerId,
+        reasonRetentionMs: config.authorization.reasonRetentionDays * 86_400_000,
+        disclosureVersion: (scope) => onboarding.gate(scope).version,
+        track: trackPublication,
+      });
+      const personas = createPersonaCommands({
+        storage,
+        authorization,
+        channel,
+        signal,
+        track: trackPublication,
+      });
       const pausedChats = createPausedChatCommands({ channel, lifecycle, ownerId, signal });
+      function ownerServiceHelpOnly() {
+        try {
+          return !controls.read(lifecycle.admissionScope(ownerId)).enabled;
+        } catch (error) {
+          if (error instanceof StorageError && error.code === 'stale_scope') return false;
+          if (error instanceof StorageError && error.code === 'uncertain_connection') return true;
+          throw error;
+        }
+      }
       const router = createMessageRouter({
         storage,
         queue,
         logger,
         authorization,
         canAnswerQuestionnaire: questionnaireAttempts.canAnswer,
-        onQueueFull: publication.queueFull,
+        onQueueFull(scope, messageId, route, guard) {
+          trackPublication(publication.queueFull(scope, messageId, route, guard));
+        },
         onDecision: profileUpdates.wake,
         onFlood(scope, candidate, isCurrent) {
-          const operation = publication
-            .flood(scope, candidate, { signal, isCurrent })
-            .finally(() => floodPublications.delete(operation));
-          floodPublications.add(operation);
+          trackPublication(publication.flood(scope, candidate, { signal, isCurrent }));
         },
-        recognizeCommand: (message, replyToOther, scope) =>
-          questionnaires.recognize(scope, message) ??
-          passports.recognize(scope, message) ??
-          chatControl.editor.recognizeReply(scope, message) ??
-          (isUsageCommand(message.text)
-            ? ({ action: 'usage.read', minimumRole: 'owner' } as const)
-            : null) ??
-          profiles.recognize(message) ??
-          groupPersonalCommand(message) ??
-          personas.recognize(message) ??
-          history.recognize(message) ??
-          chatControl.recognize(message, replyToOther) ??
-          reminders.recognize(message) ??
-          address.recognize(message) ??
-          (message.isGroupChat &&
-          message.isBot === false &&
-          parseTimezoneCommand(message.text) !== null
-            ? { action: 'chat.configure', minimumRole: 'admin' }
-            : null) ??
-          (addressedSlash(message) ? helpAction : null),
+        commandInput: (message) => commandInput(message, config.vk.groupId),
+        recognizeCommand: (message, replyToOther, scope) => {
+          if (isPrivateStart(message)) {
+            const form = questionnaireProgress
+              .participant(scope, message.userId)
+              .current(Date.now());
+            return form?.state === 'active' ? null : helpAction;
+          }
+          const adminCommand = botAdministrators.recognizeGroup(message);
+          // Личная команда может содержать закрытую причину отзыва.
+          if (adminCommand?.minimumRole === 'owner') return adminCommand;
+          return (
+            (chatControl.editor.ownsReply(scope, message)
+              ? chatControl.editor.recognizeReply(scope, message)
+              : null) ??
+            (passports.ownsReply(scope, message) ? passports.recognize(scope, message) : null) ??
+            questionnaires.recognize(scope, message) ??
+            adminCommand ??
+            (isCommandHelp(message.text) && addressedSlash(message) ? helpAction : null) ??
+            passports.recognize(scope, message) ??
+            chatControl.editor.recognizeReply(scope, message) ??
+            (isUsageCommand(message.text)
+              ? ({ action: 'usage.read', minimumRole: 'owner' } as const)
+              : null) ??
+            profiles.recognize(message) ??
+            groupPersonalCommand(message) ??
+            personas.recognize(message) ??
+            history.recognize(message) ??
+            chatControl.recognize(message, replyToOther) ??
+            reminders.recognize(message) ??
+            address.recognize(message) ??
+            (message.isGroupChat &&
+            message.isBot === false &&
+            parseTimezoneCommand(message.text) !== null
+              ? { action: 'chat.configure', minimumRole: 'admin' }
+              : null) ??
+            (addressedSlash(message) ? helpAction : null)
+          );
+        },
         identity: (scope, message) =>
           commandAuthorization.context({ scope, userId: message.userId }),
-        async executeCommand(context, message, isCurrent, replayOnly, command) {
+        async executeCommand(context, message, isCurrent, replayOnly, command, isObserving) {
+          if (command?.action === 'admin.grant' || command?.action === 'admin.remove')
+            return botAdministrators.executeGroup(
+              context,
+              message,
+              isCurrent,
+              isObserving ?? isCurrent,
+            );
           if (command?.action === 'commands.read') {
             const role = await commandAuthorization.role(context);
             if (!role.allowed || !isCurrent()) return;
@@ -678,25 +756,40 @@ export async function runApplication(
                 );
               },
             };
-            const input = slashText(message);
-            const text = isCommandHelp(input)
-              ? commandHelp(
-                  role.value,
-                  message.isGroupChat,
-                  state.enabled,
-                  state.mode,
-                  message.userId,
-                )
-              : unknownHint(
-                  input,
-                  questionnaireProgress
-                    .participant(context.scope, message.userId)
-                    .current(Date.now())?.state === 'active',
-                );
-            return message.isGroupChat
-              ? channel.replyGroupControl(context.scope, text, guard)
-              : channel.replyPrivateControl(message.userId, text, guard);
+            const input = message.text.trim();
+            const text =
+              isCommandHelp(input) || isPrivateStart(message)
+                ? commandHelp(
+                    role.value,
+                    message.isGroupChat,
+                    state.enabled,
+                    state.mode,
+                    message.userId,
+                    input,
+                  )
+                : unknownHint(
+                    input,
+                    questionnaireProgress
+                      .participant(context.scope, message.userId)
+                      .current(Date.now())?.state === 'active',
+                  );
+            trackPublication(
+              message.isGroupChat
+                ? channel.replyGroupControl(context.scope, text, guard)
+                : channel.replyPrivateControl(message.userId, text, guard),
+            );
+            return;
           }
+          if (
+            command?.action === 'chat.onboarding.configure' &&
+            chatControl.editor.recognizeReply(context.scope, message)
+          )
+            return chatControl.editor.reply(context, message, isCurrent);
+          if (
+            command?.action === 'chat.passport.edit' &&
+            passports.recognize(context.scope, message)
+          )
+            return passports.execute(context, message, isCurrent);
           if (questionnaires.recognize(context.scope, message))
             return questionnaires.execute(context, message, isCurrent);
           if (passports.recognize(context.scope, message))
@@ -738,81 +831,81 @@ export async function runApplication(
             : 'Укажите часовой пояс, например /часовой-пояс Europe/Moscow.';
           const current = () =>
             isCurrent() && (!timezone || controls.read(context.scope).timezone === timezone);
-          await channel.replyGroupControl(context.scope, text, {
-            signal,
-            isCurrent: current,
-            allow: async () =>
-              current() &&
-              (await commandAuthorization.check(context, 'chat.configure')).allowed &&
-              current(),
-          });
+          trackPublication(
+            channel.replyGroupControl(context.scope, text, {
+              signal,
+              isCurrent: current,
+              allow: async () =>
+                current() &&
+                (await commandAuthorization.check(context, 'chat.configure')).allowed &&
+                current(),
+            }),
+          );
         },
       });
       readyTimer = setTimeout(() => stop('ready_timeout'), dependencies.readyTimeoutMs ?? 45_000);
-      poll = channel
-        .startRouted(router, undefined, {
-          membership(scope, userId, present, messageId, at) {
-            lifecycle.observeAdminMembership(scope, userId, present, messageId, at);
-          },
-          command(message, isCurrent) {
-            if (
-              isCommandHelp(message.text) &&
-              message.peerId === ownerPeer &&
-              message.authorId === ownerPeer &&
-              ownerPeer !== undefined &&
-              ownerPeer > 0 &&
-              !isVkGroupChat(ownerPeer) &&
-              !message.isMentioned &&
-              !message.hasReply &&
-              !message.hasForwarded &&
-              !message.attachments.length
-            ) {
-              const active = lifecycle.activeChatIds('vk').includes(ownerId);
-              if (!active || !controls.read(lifecycle.admissionScope(ownerId)).enabled)
-                return channel.replyPrivateControl(
-                  ownerId,
-                  commandHelp('owner', false, false, 'silent', ownerId),
-                  { signal, isCurrent, allow: async () => isCurrent() },
-                );
-            }
-            if (
-              passports.beforePersonalCommands(message) ||
-              chatControl.editor.beforePersonalCommands(message)
-            )
-              return undefined;
-            const passportAction = passports.privateCommand(message);
-            if (passportAction) return passportAction;
-            const profileAction = profiles.private(message, isCurrent);
-            if (profileAction) return profileAction;
-            const personalAction = !isVkGroupChat(message.peerId) && personal(message, isCurrent);
-            if (personalAction) return personalAction;
-            const command = parseAdminRecoveryCommand(message.text);
-            if (!command)
-              return (
-                pausedChats(message, isCurrent) ??
-                usage(message, isCurrent) ??
-                history.privateCommand(message, isCurrent) ??
-                chatControl.privateCommand(message, isCurrent)
-              );
-            if (
-              message.peerId !== ownerPeer ||
-              message.authorId !== ownerPeer ||
-              message.isMentioned ||
-              message.reply ||
-              ownerPeer === undefined ||
-              ownerPeer <= 0 ||
-              isVkGroupChat(ownerPeer)
-            )
-              return Promise.resolve();
-            return administration.handle(ownerId, command, message.cmid, isCurrent);
-          },
-        })
-        .then(
-          () => {
-            if (!signal.aborted) stop('vk_failed');
-          },
-          () => stop('vk_failed'),
-        );
+      poll = channel.startRouted(router, undefined, {
+        membership(scope, userId, present, messageId, at) {
+          lifecycle.observeAdminMembership(scope, userId, present, messageId, at);
+        },
+        command(message, isCurrent) {
+          const administratorCommand = botAdministrators.privateCommand(message, isCurrent);
+          if (administratorCommand) return administratorCommand;
+          if (
+            isCommandHelp(message.text) &&
+            message.peerId === ownerPeer &&
+            message.authorId === ownerPeer &&
+            ownerPeer !== undefined &&
+            ownerPeer > 0 &&
+            !isVkGroupChat(ownerPeer) &&
+            !message.isMentioned &&
+            !message.hasReply &&
+            !message.hasForwarded &&
+            !message.attachments.length &&
+            ownerServiceHelpOnly()
+          ) {
+            return channel.replyPrivateControl(
+              ownerId,
+              commandHelp('owner', false, false, 'silent', ownerId, message.text),
+              { signal, isCurrent, allow: async () => isCurrent() && ownerServiceHelpOnly() },
+            );
+          }
+          if (
+            passports.beforePersonalCommands(message) ||
+            chatControl.editor.beforePersonalCommands(message)
+          )
+            return undefined;
+          const passportAction = passports.privateCommand(message);
+          if (passportAction) return passportAction;
+          const profileAction = profiles.private(message, isCurrent);
+          if (profileAction) return profileAction;
+          const personalAction = !isVkGroupChat(message.peerId) && personal(message, isCurrent);
+          if (personalAction) return personalAction;
+          const command = parseAdminRecoveryCommand(message.text);
+          if (!command)
+            return (
+              pausedChats(message, isCurrent) ??
+              usage(message, isCurrent) ??
+              history.privateCommand(message, isCurrent) ??
+              chatControl.privateCommand(message, isCurrent)
+            );
+          if (
+            message.peerId !== ownerPeer ||
+            message.authorId !== ownerPeer ||
+            message.isMentioned ||
+            message.reply ||
+            ownerPeer === undefined ||
+            ownerPeer <= 0 ||
+            isVkGroupChat(ownerPeer)
+          )
+            return Promise.resolve();
+          return administration.handle(ownerId, command, message.cmid, isCurrent);
+        },
+      });
+      void poll.then(
+        () => stop('vk_failed'),
+        () => stop('vk_failed'),
+      );
     } catch (error) {
       stop(error instanceof QueueError && error.code === 'owned' ? 'queue_owned' : startupFailure);
     }
@@ -822,7 +915,7 @@ export async function runApplication(
     await stopping.promise;
     await startup;
     const results = await Promise.allSettled([
-      queue?.stop(),
+      queueStop ?? queue?.stop(input.signal),
       poll,
       introductionWork,
       administrationWork,
@@ -832,9 +925,9 @@ export async function runApplication(
       profileUpdateWork,
       summaryWork,
       ...typing,
-      ...floodPublications,
-      ...questionnairePublications,
     ]);
+    input.abort();
+    while (publications.size) await Promise.allSettled(publications);
     authorization?.dispose();
     try {
       await storage?.close();

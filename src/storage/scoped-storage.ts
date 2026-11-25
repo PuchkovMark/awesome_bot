@@ -109,20 +109,33 @@ export function createScopedStorage(
             callback(
               Object.freeze<ScopedAuthorizationTransaction>({
                 ...tx,
-                selectStarterPersona(actorId, personaId, messageId) {
+                selectStarterPersona(actorId, personaId, event) {
                   tx.revision();
-                  if (!tx.claimControlMessage(actorId, messageId)) return { status: 'duplicate' };
+                  if (!tx.claimControlMessage(actorId, event)) return { status: 'duplicate' };
                   return versions.selectStarterPersona(db, scope, personaId);
                 },
                 applyQuestionnaireReply(actorId, input, now) {
                   tx.revision();
-                  if (!tx.claimControlMessage(actorId, input.eventId))
+                  if (
+                    !tx.claimControlMessage(actorId, {
+                      sourceChatId: scope.chatId,
+                      messageId: input.eventId,
+                      timestamp: input.eventAt,
+                    })
+                  )
                     return { status: 'duplicate' };
                   return replaceQuestionnaire(scope, actorId, input, now);
                 },
                 applyPassportReply(actorId, input, now) {
                   tx.revision();
-                  if (!tx.claimControlMessage(actorId, input.eventId)) return 'duplicate';
+                  if (
+                    !tx.claimControlMessage(actorId, {
+                      sourceChatId: scope.chatId,
+                      messageId: input.eventId,
+                      timestamp: input.eventAt,
+                    })
+                  )
+                    return 'duplicate';
                   return applyPassport(scope, actorId, input, now);
                 },
                 editOwnProfile(actorId, input, now) {

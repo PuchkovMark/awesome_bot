@@ -168,7 +168,13 @@ function vkFixture(
   return {
     api,
     attempt,
-    event(id: number, peer = 73, action?: object, text = '[club314|Пенек] Вопрос') {
+    event(
+      id: number,
+      peer = 73,
+      action?: object,
+      text = '[club314|Пенек] Вопрос',
+      forwardedFrom?: number,
+    ) {
       const message = {
         peer_id: peer,
         from_id: 73,
@@ -177,6 +183,7 @@ function vkFixture(
         date: eventStart + id,
         out: 0,
         ...(action ? { action } : {}),
+        ...(forwardedFrom ? { fwd_messages: [{ from_id: forwardedFrom, text: 'Вопрос' }] } : {}),
       };
       rows.set(`${peer}:${id}`, message);
       return { type: 'message_new', group_id: groupId, object: { message } };
@@ -428,7 +435,7 @@ test('штатная композиция ждёт допуска, публик�
           }
           transport.update(
             vk.event(50, 2_000_000_010, { type: 'chat_invite_user', member_id: -groupId }),
-            vk.event(99),
+            round === 1 ? vk.event(99, 73, undefined, 'Пересылаю вопрос', 74) : vk.event(99),
           );
           await vi.waitFor(() =>
             expect(() => inspector.life.current(chatId)).toThrow('uncertain_connection'),

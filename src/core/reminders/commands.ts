@@ -3,6 +3,7 @@ import type { IncomingMessage } from '../../contracts/index';
 export type ReminderCommand =
   | { readonly kind: 'create'; readonly input: string }
   | { readonly kind: 'list' }
+  | { readonly kind: 'cancel-options' }
   | { readonly kind: 'cancel'; readonly id: number }
   | { readonly kind: 'clarify'; readonly id?: number; readonly input: string }
   | { readonly kind: 'timezone'; readonly input: string };
@@ -22,6 +23,7 @@ export function parseReminderCommand(text: string, group: boolean): ReminderComm
     }
   }
   if (group) return undefined;
+  if (/^отмени(?:ть)? напоминание[.!]?$/iu.test(own)) return { kind: 'cancel-options' };
   const cancel = /^отмени(?:ть)? напоминание\s+#?(\d+)[.!]?$/iu.exec(own);
   if (cancel && Number.isSafeInteger(Number(cancel[1])))
     return { kind: 'cancel', id: Number(cancel[1]) };

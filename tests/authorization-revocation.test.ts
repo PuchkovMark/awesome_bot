@@ -3,6 +3,61 @@ import { expect, test } from 'vitest';
 
 import { authConfig, authorizationFixture } from './helpers/authorization-fixture';
 
+test('событие прежнего отзыва не возвращает аудит после отмены и нового назначения', async () => {
+  let now = 100;
+  const f = await authorizationFixture({ now: () => now });
+  const { service, owner, storage } = f;
+  const candidate = 'vk:user';
+  const original = { sourceChatId: owner.userId, messageId: 10, timestamp: now };
+  const revoke = { kind: 'revoke', userId: candidate, reason: 'Первая причина' } as const;
+  const current = () => true;
+  try {
+    await service.applyTrustedInitialAuthorities(owner.scope, { creatorId: candidate });
+    expect(await service.executeAdminCommand(owner, revoke, original, current)).toMatchObject({
+      value: { status: 'revoked' },
+    });
+    now += 1000;
+    expect(
+      await service.executeAdminCommand(
+        owner,
+        { ...revoke, reason: 'Вторая причина' },
+        {
+          ...original,
+          messageId: 11,
+          timestamp: now,
+        },
+        current,
+      ),
+    ).toMatchObject({ value: { status: 'existing' } });
+    expect(await service.audit(owner, candidate)).toMatchObject({
+      value: { reason: revoke.reason, revokedAt: original.timestamp },
+    });
+    expect(
+      await service.executeAdminCommand(
+        owner,
+        { kind: 'restore', userId: candidate },
+        {
+          ...original,
+          messageId: 12,
+          timestamp: now,
+        },
+        current,
+      ),
+    ).toMatchObject({ value: { status: 'restored' } });
+    expect(await service.audit(owner, candidate)).toEqual({ allowed: true, value: null });
+    await service.applyTrustedInitialAuthorities(owner.scope, { creatorId: candidate });
+    expect(await service.executeAdminCommand(owner, revoke, original, current)).toMatchObject({
+      value: { status: 'duplicate' },
+    });
+    expect(await service.audit(owner, candidate)).toEqual({ allowed: true, value: null });
+    expect(
+      await storage.authorization.transaction(owner.scope, (tx) => tx.bases(candidate)),
+    ).toEqual(['creator']);
+  } finally {
+    await f.close();
+  }
+});
+
 test('отзыв снимает все основания, сохраняет запрет и не обходится синхронизацией', async () => {
   let time = 100;
   const f = await authorizationFixture({ now: () => time });

@@ -37,12 +37,16 @@ interface VkChannelDependencies {
   readonly wait?: typeof waitForVkRetry;
 }
 
+type ControlGuard = PublicationGuard & { readonly receivedId?: (messageId: string) => void };
+
 export function createVkChannel(
   options: VkChannelOptions,
   dependencies: VkChannelDependencies = {},
 ) {
   const signal = options.signal ?? new AbortController().signal;
-  const api = dependencies.api ?? createVkSdkApi(options.groupId, options.token, signal);
+  const api =
+    dependencies.api ??
+    createVkSdkApi(options.groupId, options.token, options.inputSignal ?? signal);
   const inbound = createVkInbound(options, {
     api,
     ...(dependencies.transport ? { transport: dependencies.transport } : {}),
@@ -74,7 +78,7 @@ export function createVkChannel(
   async function confirmServicePart(
     scope: ConnectionScope,
     text: string,
-    guard: PublicationGuard & { readonly beforeSend?: () => boolean },
+    guard: ControlGuard & { readonly beforeSend?: () => boolean },
   ) {
     let receipt: PublishedPart | undefined;
     const outcome = await outbound.send({
@@ -269,8 +273,14 @@ export function createVkChannel(
     reminderDelivery(recipient: UserId) {
       return createVkAdministrationDelivery(api, outbound, recipient, options.groupId);
     },
-    replyPrivateControl(sender: UserId, text: string, guard: PublicationGuard) {
-      return createVkAdministrationDelivery(api, outbound, sender, options.groupId).reply(
+    privateControlDelivery(sender: UserId, text: string, guard: PublicationGuard) {
+      return createVkAdministrationDelivery(api, outbound, sender, options.groupId).deliver(
+        text,
+        guard,
+      );
+    },
+    async replyPrivateControl(sender: UserId, text: string, guard: PublicationGuard) {
+      await createVkAdministrationDelivery(api, outbound, sender, options.groupId).reply(
         text,
         guard,
       );
@@ -289,14 +299,14 @@ export function createVkChannel(
     async deliverGroupControl(
       scope: ConnectionScope,
       text: string,
-      guard: PublicationGuard,
+      guard: ControlGuard,
     ): Promise<PublishedPart | null> {
       const peer = vkLocalId(scope.chatId);
       if (peer === undefined || !isVkGroupChat(peer) || !guard.isCurrent()) return null;
       const outcome = await confirmServicePart(scope, text, guard);
       return outcome.kind === 'delivered' ? outcome.receipt : null;
     },
-    async deliverQuestionnairePart(scope: ConnectionScope, text: string, guard: PublicationGuard) {
+    async deliverQuestionnairePart(scope: ConnectionScope, text: string, guard: ControlGuard) {
       const id = vkLocalId(scope.chatId);
       if (
         id === undefined ||

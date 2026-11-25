@@ -1,4 +1,5 @@
 import type { BotRole, IncomingMessage } from '../contracts/index';
+import { vkMentionCommand } from '../channels/vk/normalize';
 
 export const helpAction = {
   action: 'commands.read',
@@ -6,8 +7,25 @@ export const helpAction = {
   journalLabel: 'Подсказка по командам',
 } as const;
 
+const helpRequest = /^\/(?:помощь|команды)(?:\s+([\s\S]+))?$/iu;
+
 export function isCommandHelp(text: string) {
-  return /^\/(?:помощь|команды)$/iu.test(text.trim());
+  return helpRequest.test(text.trim());
+}
+
+export function isPrivateStart(message: IncomingMessage) {
+  return (
+    !message.isGroupChat &&
+    message.userId === message.chatId &&
+    message.isBot === false &&
+    !message.attachments.length &&
+    !message.isMentioned &&
+    !message.hasOtherAddress &&
+    !message.hasForwarded &&
+    !message.isReplyToBot &&
+    message.replyAddress === undefined &&
+    /^начать$/iu.test((message.literalText ?? message.text).trim())
+  );
 }
 
 export function commandHelp(
@@ -16,71 +34,120 @@ export function commandHelp(
   enabled: boolean,
   mode: 'normal' | 'active' | 'silent',
   actor: string,
+  request = '/помощь',
 ) {
-  const lines = ['Доступные команды'];
-  const manage = role !== 'member';
-  if (enabled && mode !== 'silent') {
-    lines.push(
-      '/анкета — начать или продолжить заполнение, после заполнения — посмотреть свою анкету.',
-      '/анкета пауза · /анкета отмена — приостановить или отменить заполнение.',
-      '/анкета показать — посмотреть свою анкету.',
+  const ordinary = enabled && mode !== 'silent';
+  const manage = enabled && group && role !== 'member';
+  const topic = helpRequest.exec(request.trim())?.[1]?.toLowerCase();
+  const topics: string[] = [];
+  if (ordinary || manage) {
+    const actions = [ordinary && 'заполнение и просмотр', manage && 'вопросы беседы'].filter(
+      Boolean,
     );
-    if (group)
-      lines.push(
-        `/анкета показать @id${actor.slice(3)} — пример просмотра по упоминанию участника.`,
-        '/анкета изменить — исправить ответ или заполнить пропуск.',
-        '/анкета удалить — удалить свою анкету с подтверждением в этой беседе.',
-        '/анкета представить — разрешить представление в беседе.',
-      );
-    lines.push(
-      '/профиль — получить свой список фактов в личке.',
-      '/мои-данные — получить выгрузку. /статус-удаления — проверить удаление.',
-      '/отключить-профиль — отключить профиль. /удалить-мои-данные — запросить удаление всех своих данных этого чата.',
-      '/персонаж — посмотреть персонажей.',
-    );
-    if (group) {
-      lines.push(
-        'Пенёк, что было вчера? — пересказать обсуждение.',
-        'Пенёк, напомни мне через 20 минут взять документы — создать личное напоминание.',
-      );
-      if (mode === 'active') lines.push('Помолчи — поставить самостоятельные реплики на паузу.');
-    } else
-      lines.push(
-        'Мои напоминания — посмотреть свои задания.',
-        '/пояс-напоминаний Europe/Moscow — выбрать пояс для напоминаний.',
-      );
+    topics.push('/помощь анкета — ' + actions.join(', ') + '.');
   }
-  if (enabled && group && (mode !== 'silent' || manage)) {
-    lines.push('/паспорт — посмотреть сведения о беседе. /правила — прочитать её правила.');
+  if (ordinary)
+    topics.push(
+      '/помощь профиль — посмотреть и исправить свои факты.',
+      '/помощь напоминания — создать, посмотреть или отменить.',
+    );
+  if (topic === 'анкета' && (ordinary || manage)) {
+    const lines = ['Анкета'];
+    if (ordinary) {
+      lines.push(
+        '/анкета — начать или продолжить заполнение.',
+        '/анкета показать — посмотреть свою анкету.',
+        '/анкета пауза · /анкета отмена — приостановить или отменить заполнение.',
+      );
+      if (group)
+        lines.push(
+          `/анкета показать @id${actor.slice(3)} — пример просмотра по упоминанию.`,
+          '/анкета изменить — исправить свой ответ.',
+          '/анкета удалить — удалить свою анкету с подтверждением.',
+          '/анкета представить — разрешить представление в беседе.',
+        );
+    }
     if (manage)
-      lines.push(
-        '/настройки — посмотреть настройки беседы. /режим — выбрать режим.',
-        '/тихие-часы 23:00–07:00 — задать интервал. /тихие-часы выкл — отключить его.',
-        '/часовой-пояс Europe/Moscow — сменить пояс беседы.',
-        '/вопросы — настроить вопросы анкеты.',
-        '/приветствие вкл · /приглашение вкл — включить приветствие или приглашение к анкете. Для отключения укажите «выкл».',
-      );
+      lines.push('/вопросы — посмотреть общие вопросы. /вопросы изменить — открыть редактор.');
+    return lines.join('\n');
   }
-  if (!group && role === 'owner')
+  if (topic === 'профиль' && ordinary)
+    return [
+      'Профиль',
+      group
+        ? '/профиль — получить в личке список своих фактов из этой беседы.'
+        : '/профиль — открыть профиль этого личного диалога. Для выбора беседы укажите её ID, например /профиль vk:2000000001.',
+      'Чтобы исправить факт, ответьте на ту часть личного списка, где он указан. Подставьте номер факта и новое значение, например /исправить 2 Казань.',
+    ].join('\n');
+  if (topic === 'напоминания' && ordinary) {
+    return [
+      'Личные напоминания',
+      (group ? 'Пенёк, напомни' : 'Напомни') +
+        ' мне через 20 минут взять документы — создать напоминание. Оно придёт в личку.',
+      'В личке: Мои напоминания — посмотреть список.',
+      'В личке: Отмени напоминание — выбрать задание. Отмени напоминание 12 — пример отмены по номеру.',
+      'В личке: /пояс-напоминаний Europe/Moscow — выбрать часовой пояс.',
+    ].join('\n');
+  }
+  if (topic)
+    return topics.length
+      ? ['Доступные темы', ...topics].join('\n')
+      : 'Открыть доступные команды — /помощь.';
+  const lines = ['Доступные команды', ...topics];
+  if (ordinary) {
     lines.push(
-      'Приостановленные беседы — посмотреть список, продолжить беседу или запросить сброс.',
-      '/беседы-без-админов — найти беседы для восстановления управления.',
-      'Показать расход — посмотреть расход по беседам.',
+      '/профиль — свои факты. /мои-данные — выгрузка.',
+      '/отключить-профиль · /удалить-мои-данные · /статус-удаления',
     );
+    if (group) lines.push('Пенёк, что было вчера? — пересказать переписку.');
+    if (group && mode === 'active')
+      lines.push('Помолчи — поставить самостоятельные реплики на паузу.');
+  }
+  if (ordinary || manage) lines.push('/персонаж — текущий персонаж и доступные имена.');
+  if (group && (ordinary || manage))
+    lines.push('/паспорт — сведения о беседе. /правила — правила.');
+  if (manage)
+    lines.push(
+      '/настройки · /режим · /тихие-часы · /часовой-пояс',
+      '/приветствие · /приглашение — посмотреть состояние и варианты.',
+      '/назначить-админа · /снять-админа — ответом на сообщение человека или с VK ID, например /назначить-админа vk:42.',
+    );
+  if (!group && role === 'owner') {
+    const target = 'vk:2000000041@7 vk:42';
+    lines.push(
+      'Приостановленные беседы — управление подключениями.',
+      '/беседы-без-админов — восстановление управления.',
+      'Показать расход — расход по беседам.',
+      'ID беседы и поколение показывает /настройки в беседе.',
+      `/назначить-админа ${target}`,
+      `/снять-админа ${target}`,
+      `/отозвать-админа ${target} Причина отзыва`,
+      `/аудит-админа ${target}`,
+      `/отменить-отзыв ${target}`,
+    );
+  }
   return lines.join('\n');
 }
 
-export function slashText(message: IncomingMessage) {
-  const own = message.text.trim();
+const namedSlash = /^\s*пен[её]к\s*,\s*(\/[\s\S]*)$/iu;
+
+export function commandInput(message: IncomingMessage, groupId: number): IncomingMessage {
   if (
     !message.isGroupChat ||
+    message.isBot !== false ||
     message.hasForwarded ||
-    message.hasOtherAddress ||
+    message.attachments.length ||
     message.replyAddress === 'other' ||
     message.replyAddress === 'unknown'
   )
-    return own;
-  return /^\s*пен[её]к\s*,\s*(\/[\s\S]*)$/iu.exec(own)?.[1] ?? own;
+    return message;
+  const literal = message.literalText ?? message.text;
+  const command =
+    namedSlash.exec(literal)?.[1] ??
+    (message.isMentioned
+      ? (vkMentionCommand(literal, groupId) ?? namedSlash.exec(message.text)?.[1])
+      : undefined);
+  return command ? { ...message, text: command, literalText: literal } : message;
 }
 
 export function addressedSlash(message: IncomingMessage) {
@@ -93,10 +160,10 @@ export function addressedSlash(message: IncomingMessage) {
     message.hasOtherAddress
   )
     return false;
-  const text = slashText(message);
+  const text = message.text.trim();
   if (!text.startsWith('/')) return false;
   return (
-    text !== message.text.trim() ||
+    namedSlash.test(message.literalText ?? '') ||
     isCommandHelp(text) ||
     !message.isGroupChat ||
     message.isMentioned ||

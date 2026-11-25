@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeVkIncoming, parseVkIncoming } from '../src/channels/vk/normalize';
+import {
+  normalizeVkIncoming,
+  parseVkIncoming,
+  vkMentionCommand,
+} from '../src/channels/vk/normalize';
 
 const groupId = 314;
 const peer = 2_000_000_004;
@@ -59,6 +63,24 @@ describe('нормализация входящего сообщения VK', ()
     expect(parse({ text: '  Бот, [club314|\nТекст]  ' }).text).toBe('  Бот, [club314|\nТекст]  ');
   });
 
+  it('относит запятую к начальному обращению и сохраняет остальных адресатов', () => {
+    const request = 'напомни мне через 20 минут взять билет';
+    for (const prefix of ['  [club314|Пенёк], ', '[public314|Пенёк] ']) {
+      const literalText = prefix + request;
+      expect(parse({ text: literalText })).toMatchObject({
+        text: request,
+        literalText,
+        soleBotMention: true,
+      });
+    }
+    expect(parse({ text: '[club315|Другой], ' + request })).toMatchObject({ isMentioned: false });
+    expect(parse({ text: '[club314|Пенёк], [id41|Ира], ' + request })).toMatchObject({
+      text: '[id41|Ира], ' + request,
+      hasOtherAddress: true,
+    });
+    expect(parse({ text: 'Спасибо [club314|Пенёк], до завтра' }).text).toBe('Спасибо , до завтра');
+  });
+
   it('извлекает только тип вложения и допускает пустой текст', () => {
     const parsed = parse({
       text: '',
@@ -86,6 +108,23 @@ describe('нормализация входящего сообщения VK', ()
     },
   );
 
+  it('выделяет команду только после начальной метки своего сообщества и сохраняет её аргументы', () => {
+    const command = '/анкета показать [id42|Второй]';
+    for (const mark of ['[club314|Пенёк], ', '[public314|Пенёк] ']) {
+      const raw = normalizeVkIncoming(parse({ text: mark + command }), groupId);
+      expect(raw.literalText).toBe(mark + command);
+      expect(vkMentionCommand(raw.literalText!, groupId)).toBe(command);
+      expect(raw.hasOtherAddress).toBe(true);
+    }
+    for (const text of [
+      '[club315|Пенёк], /режим',
+      '[id314|Пенёк], /режим',
+      'Он сказал [club314|Пенёк], /режим',
+      ', /режим [club314|Пенёк]',
+    ])
+      expect(vkMentionCommand(text, groupId)).toBeUndefined();
+  });
+
   it.each([
     [-groupId, true],
     [73, false],
@@ -95,9 +134,12 @@ describe('нормализация входящего сообщения VK', ()
       reply_message: { peer_id: peer, from_id: from, conversation_message_id: 7, id: 991 },
     });
     expect(normalizeVkIncoming(parsed, groupId)).not.toHaveProperty('replyToMessageId');
-    expect(
-      normalizeVkIncoming(parsed, groupId, { verifiedReply: { cmid: 7, authorId: from } }),
-    ).toMatchObject({ replyToMessageId: '7', isReplyToBot: toBot });
+    expect(normalizeVkIncoming(parsed, groupId)).not.toHaveProperty('replyAuthorId');
+    const verified = normalizeVkIncoming(parsed, groupId, {
+      verifiedReply: { cmid: 7, authorId: from },
+    });
+    expect(verified).toMatchObject({ replyToMessageId: '7', isReplyToBot: toBot });
+    expect(verified.replyAuthorId).toBe(from === undefined ? undefined : `vk:${from}`);
   });
 
   it('требует подтверждения reply, если родитель пришёл в другой адресации', () => {

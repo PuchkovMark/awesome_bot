@@ -202,7 +202,11 @@ export async function runScenario(
         installStarterPersonas(storage, 0);
         if (!persona.useDefault) {
           const selected = await storage.authorization.transaction(scope, (tx) =>
-            tx.selectStarterPersona(stimulus.userId, persona.id, 90),
+            tx.selectStarterPersona(stimulus.userId, persona.id, {
+              sourceChatId: scope.chatId,
+              messageId: 90,
+              timestamp: stimulus.timestamp,
+            }),
           );
           if (selected.status !== 'selected') return evaluate('setup_failed');
         }

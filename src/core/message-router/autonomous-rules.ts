@@ -1,5 +1,5 @@
 import type { IncomingMessage } from '../../contracts/index';
-import { ownNameText } from './name-address';
+import { unquotedText } from '../author-text';
 
 export type InitiativeCause = 'help' | 'free_mention' | 'unanswered';
 
@@ -21,7 +21,7 @@ const freeMention =
 
 const normalized = (text: string) =>
   text.normalize('NFC').toLowerCase().replaceAll('ё', 'е').trim().replace(/\s+/gu, ' ');
-const ownText = (text: string) => normalized(ownNameText(text.replace(/^\s*>.*$/gmu, '')));
+const ownText = (text: string) => normalized(unquotedText(text.replace(/^\s*>.*$/gmu, '')));
 export const sensitiveDialogue = (text: string) => danger.test(normalized(text));
 
 export type MeetingQuestion = { readonly asks: 'time' | 'place'; readonly anchor: string };

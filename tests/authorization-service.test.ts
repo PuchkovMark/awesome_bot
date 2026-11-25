@@ -4,6 +4,81 @@ import { expect, test } from 'vitest';
 import type { AuthorizationContext } from '../src/contracts/index';
 import { authConfig, authorizationFixture } from './helpers/authorization-fixture';
 
+test('учитывает событие изменения прав в исходном диалоге и проверяет доказательство в текущей области', async () => {
+  const f = await authorizationFixture();
+  const { service, storage, owner, member } = f;
+  const subject = 'vk:other' as const;
+  const other = scopeFor(storage, 'vk:two');
+  const incoming = { sourceChatId: member.chatId, messageId: 15, timestamp: 100 };
+  const direct = { ...incoming, sourceChatId: owner.userId };
+  const current = () => true;
+  const remove = { kind: 'remove', userId: subject } as const;
+  try {
+    const grant = async (scope = member.scope) => ({
+      kind: 'grant' as const,
+      userId: subject,
+      membership: await service.confirmMembership(scope, subject),
+    });
+    const stale = await grant();
+    expect(await service.executeAdminCommand(member, stale, incoming, current)).toEqual({
+      allowed: false,
+      code: 'forbidden',
+    });
+    await service.grant(
+      owner,
+      member.userId,
+      await service.confirmMembership(member.scope, member.userId),
+    );
+    expect(await service.executeAdminCommand(member, stale, incoming, current)).toEqual({
+      allowed: false,
+      code: 'unconfirmed_member',
+    });
+    expect(
+      await service.executeAdminCommand(member, await grant(other), incoming, current),
+    ).toEqual({
+      allowed: false,
+      code: 'unconfirmed_member',
+    });
+    expect(await service.executeAdminCommand(member, await grant(), direct, current)).toEqual({
+      allowed: false,
+      code: 'wrong_scope',
+    });
+    expect(await service.executeAdminCommand(member, await grant(), incoming, () => false)).toEqual(
+      {
+        allowed: false,
+        code: 'conflict',
+      },
+    );
+    const previous = await storage.authorization.transaction(member.scope, (tx) => tx.revision());
+    expect(await service.executeAdminCommand(member, await grant(), incoming, current)).toEqual({
+      allowed: true,
+      value: { status: 'granted', revision: previous + 1 },
+    });
+    const otherOwner = service.context({ scope: other, kind: 'owner', userId: owner.userId });
+    expect(
+      await service.executeAdminCommand(otherOwner, await grant(other), direct, current),
+    ).toMatchObject({
+      value: { status: 'granted' },
+    });
+    expect(await service.executeAdminCommand(owner, remove, direct, current)).toEqual({
+      allowed: true,
+      value: { status: 'removed', revision: previous + 2 },
+    });
+    expect(await service.executeAdminCommand(member, await grant(), incoming, current)).toEqual({
+      allowed: true,
+      value: { status: 'duplicate', revision: previous + 2 },
+    });
+    expect(
+      await storage.authorization.transaction(member.scope, (tx) => tx.bases(subject)),
+    ).toEqual([]);
+    expect(await storage.authorization.transaction(other, (tx) => tx.bases(subject))).toEqual([
+      'explicit',
+    ]);
+  } finally {
+    await f.close();
+  }
+});
+
 test('назначения, совмещение оснований и защита от обычного снятия', async () => {
   const f = await authorizationFixture();
   const { service: s, storage, owner, member } = f;

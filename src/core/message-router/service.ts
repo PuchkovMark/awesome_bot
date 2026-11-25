@@ -1,13 +1,14 @@
 import { createRouterMetrics } from './metrics';
 import type { SafeLogger } from '../../logger/types';
 import type {
+  ChatId,
   ConnectionScope,
   IncomingMessage,
   AuthorizationContext,
   UserId,
 } from '../../contracts/index';
 import type { Storage } from '../../storage/index';
-import type { ChatQueue } from '../chat-queue/types';
+import type { ChatQueue, ReceivedInput } from '../chat-queue/types';
 import type { RoutingDecision, ServiceCommand } from './types';
 import { routeMessage } from './routing';
 import { addressesQuestionnaireByName } from './name-address';
@@ -39,6 +40,7 @@ export interface RouterOptions {
     messageId: number,
     receivedAt: number,
   ) => boolean;
+  readonly commandInput?: (message: IncomingMessage) => IncomingMessage;
   readonly recognizeCommand?: (
     message: IncomingMessage,
     replyToOther: boolean | undefined,
@@ -54,6 +56,7 @@ export interface RouterOptions {
     isCurrent: () => boolean,
     replayOnly?: boolean,
     command?: ServiceCommand,
+    isObserving?: () => boolean,
   ) => Promise<void>;
   readonly onDecision?: (decision: RoutingDecision) => void;
   readonly onFlood?: (
@@ -66,12 +69,15 @@ export interface RouterOptions {
     messageId: number,
     route: RouteMetadata,
     guard: { readonly signal: AbortSignal; readonly isCurrent: () => boolean },
-  ) => Promise<void>;
+  ) => Promise<void> | void;
 }
 export function createMessageRouter(options: RouterOptions) {
   const metrics = createRouterMetrics(options.logger);
   return Object.freeze({
     stats: metrics.snapshot,
+    registerInput(chatId: ChatId, scope: ConnectionScope | undefined, current: () => boolean) {
+      return options.queue.registerInput(chatId, scope, current);
+    },
     async receive(
       scope: ConnectionScope,
       input: IncomingMessage,
@@ -79,6 +85,8 @@ export function createMessageRouter(options: RouterOptions) {
       isCurrent?: () => boolean,
       disclosure?: RoutedAdmissionGuard,
       replyToOther?: boolean,
+      isObserving?: () => boolean,
+      received?: ReceivedInput,
     ) {
       const message = Object.freeze({ ...input });
       if (isCurrent && !isCurrent()) return { decision: null, admission: null };
@@ -96,7 +104,8 @@ export function createMessageRouter(options: RouterOptions) {
         })
       ).settings;
       if (isCurrent && !isCurrent()) return { decision: null, admission: null };
-      const command = options.recognizeCommand?.(message, replyToOther, scope) ?? null;
+      const commandMessage = options.commandInput?.(message) ?? message;
+      const command = options.recognizeCommand?.(commandMessage, replyToOther, scope) ?? null;
       if (command) context ??= options.identity?.(scope, message);
       const service = command
         ? await commandAccess(options.authorization, context, scope, message, command)
@@ -168,6 +177,7 @@ export function createMessageRouter(options: RouterOptions) {
         },
         disclosure,
         command?.journalLabel === undefined ? undefined : true,
+        received,
       );
       const decision = result.decision ? fromDecision(result.decision) : null;
       if (decision) {
@@ -212,10 +222,15 @@ export function createMessageRouter(options: RouterOptions) {
       ) {
         await options.executeCommand?.(
           context,
-          message,
-          () => (!isCurrent || isCurrent()) && (!disclosure || disclosure().respond),
+          commandMessage,
+          () => {
+            if (isCurrent && !isCurrent()) return false;
+            const gate = disclosure?.();
+            return !gate || (gate.journal && gate.respond);
+          },
           replayOnly || undefined,
           command ?? undefined,
+          isObserving,
         );
       }
       return { decision, admission: result.admission };

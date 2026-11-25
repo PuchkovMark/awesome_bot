@@ -32,7 +32,12 @@ export function seedPassport(
     )
       return false;
     if (
-      store.apply(scope, owner, { receipt: messageId, text, eventId: index + 20 }, 2) !== 'applied'
+      store.apply(
+        scope,
+        owner,
+        { receipt: messageId, text, eventId: index + 20, eventAt: 2 },
+        2,
+      ) !== 'applied'
     )
       return false;
   }

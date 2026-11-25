@@ -1,4 +1,5 @@
-import { openStorage, scopeFor } from './helpers/connection-scope';
+import Database from 'better-sqlite3';
+import { createAuthorizationService, openStorage, scopeFor } from './helpers/connection-scope';
 import { expect, test } from 'vitest';
 
 import type { AuthorizationTransaction } from '../src/storage/index';
@@ -30,6 +31,48 @@ const audit = {
   bases: ['creator', 'explicit'],
   reason: 'Причина 🐈',
 } as const;
+
+test('ошибка записи аудита откатывает команду отзыва вместе с её отметкой', async () => {
+  const files = storageFixture();
+  const storage = await openStorage(files.path);
+  const db = new Database(files.path);
+  const service = await createAuthorizationService({
+    config: { ownerId: 'vk:owner', reasonMaxLength: 500, reasonRetentionDays: 90 },
+    store: storage.authorization,
+    now: () => 100,
+  });
+  try {
+    const scope = scopeFor(storage, 'vk:one');
+    await storage.chats.create(scope, { responseMode: 'normal', enabled: true, createdAt: 0 });
+    await service.applyTrustedInitialAuthorities(scope, { creatorId: 'vk:user' });
+    const owner = service.context({ scope, kind: 'owner', userId: 'vk:owner' });
+    const event = { sourceChatId: owner.userId, messageId: 20, timestamp: 100 };
+    const revoke = { kind: 'revoke', userId: 'vk:user', reason: 'Синтетическая причина' } as const;
+    db.exec(`CREATE TRIGGER reject_audit BEFORE INSERT ON bot_admin_revocation_audit
+      BEGIN SELECT RAISE(ABORT, 'test audit failure'); END`);
+    await expect(
+      service.executeAdminCommand(owner, revoke, event, () => true),
+    ).rejects.toMatchObject({
+      code: 'operation_failed',
+    });
+    const marks = db.prepare('SELECT count(*) FROM chat_control_commands').pluck();
+    expect(marks.get()).toBe(0);
+    expect(await service.audit(owner, revoke.userId)).toEqual({ allowed: true, value: null });
+    expect(await storage.authorization.transaction(scope, (tx) => tx.bases('vk:user'))).toEqual([
+      'creator',
+    ]);
+    db.exec('DROP TRIGGER reject_audit');
+    expect(await service.executeAdminCommand(owner, revoke, event, () => true)).toMatchObject({
+      value: { status: 'revoked' },
+    });
+    expect(marks.get()).toBe(1);
+  } finally {
+    service.dispose();
+    db.close();
+    await storage.close();
+    files.cleanup();
+  }
+});
 
 test('назначения изолированы, повтор не дублирует, защищённое основание уникально', async () => {
   const s = await memory();

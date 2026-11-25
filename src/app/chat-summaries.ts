@@ -15,7 +15,9 @@ import { noticeBackend } from '../storage/notice-store';
 import { summaryEngine, type SummaryRun } from '../core/chat-summaries/worker';
 import { SummaryFailure } from '../core/chat-summaries/compress';
 import { localDay } from '../core/chat-summaries/calendar';
-import { recap, recapPeriod } from '../core/chat-summaries/recap';
+import { recap } from '../core/chat-summaries/recap';
+import { isRecapRequest } from '../core/chat-summaries/recap-intent';
+import { parseRecapPeriod, recapClarification } from '../core/chat-summaries/recap-period';
 import type { PreparedSummaries } from '../core/context/summaries';
 import { scheduleLlmCall, type LlmAdmission, type SendLlmCall } from '../core/llm-admission';
 import { measureModelCall } from '../core/model-measurement';
@@ -246,21 +248,38 @@ export function applicationSummaries(options: {
     async answer(work: QueueHandlerInput): Promise<QueueCompletion | null> {
       if (!work.route || work.route.kind === 'initiative') return null;
       const source = await storage.contextMessages.get(work.scope, work.messageId);
-      if (!source || !/(?:что|перескажи|сводку|итоги)/iu.test(source.text)) return null;
+      if (!source) return null;
+      const pending = source.replyToMessageId
+        ? store.recapInput(work.scope, work.messageId)
+        : undefined;
+      if (pending === 'closed') return { outcome: 'interrupted' };
+      if (!pending && !isRecapRequest(source.text)) return null;
       const settings = await storage.contextState.settings(work.scope);
       if (!settings?.enabled) return null;
-      const period = recapPeriod(source.text, source.timestamp, settings.timezone);
-      if (!period) return null;
+      const parsed = parseRecapPeriod(
+        source.text,
+        source.timestamp,
+        settings.timezone,
+        pending?.known,
+      );
+      const root = pending?.root ?? work.messageId;
+      const bindingCurrent = () => {
+        if (!pending) return true;
+        const fresh = store.recapInput(work.scope, work.messageId);
+        return fresh !== 'closed' && fresh?.prompt === pending.prompt;
+      };
       const usage = createAttemptSummary(),
         started = Date.now();
       let firstDeadline: number | undefined;
-      const run = buildRun(work.scope, work.messageId - 1, work, usage, () => {
+      const run = buildRun(work.scope, root - 1, work, usage, () => {
         const deadline = firstDeadline;
         firstDeadline = undefined;
         return deadline;
       });
       const current = () =>
-        run.current() && noticeBackend(storage).sourceVisible(work.scope, work.messageId);
+        run.current() &&
+        bindingCurrent() &&
+        noticeBackend(storage).sourceVisible(work.scope, work.messageId);
       let text = '',
         entries: readonly number[] = [],
         sources: readonly number[] = [];
@@ -272,8 +291,7 @@ export function applicationSummaries(options: {
         | 'llm_wait_timeout'
         | 'llm_provider_paused'
         | undefined;
-      if (period === 'clarify')
-        text = 'За какой период собрать пересказ? Укажи даты начала и конца.';
+      if (parsed.kind === 'clarify') text = recapClarification(parsed.known, source.timestamp);
       else
         try {
           let notification: Promise<void> | undefined;
@@ -314,7 +332,7 @@ export function applicationSummaries(options: {
                     );
                 })()),
             },
-            period,
+            parsed.period,
           );
           text = result.text;
           entries = result.entries;
@@ -361,8 +379,17 @@ export function applicationSummaries(options: {
       return {
         result,
         outcome: failure === 'rate_limit' ? 'rate_limit' : failure ? 'failed' : 'completed',
-        toolResultsCurrent: () => store.current(work.scope, entries),
-        toolSourceIds: sources,
+        ...(!failure &&
+          (pending || parsed.kind === 'clarify') && {
+            recapReply: {
+              root,
+              actor: source.userId,
+              ...(pending && { previous: pending.prompt }),
+              ...(parsed.kind === 'clarify' && { known: parsed.known }),
+            },
+          }),
+        toolResultsCurrent: () => bindingCurrent() && store.current(work.scope, entries),
+        toolSourceIds: pending ? [...new Set([root, pending.prompt, ...sources])] : sources,
       };
     },
   };

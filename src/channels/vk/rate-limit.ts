@@ -16,6 +16,17 @@ export class VkRequestCancelled extends Error {
   }
 }
 
+/** Чтение можно прекратить и после передачи запроса платформе. */
+export function waitForVkRead<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return work;
+  const result = Promise.withResolvers<T>();
+  const cancel = () => result.reject(new VkRequestCancelled());
+  if (signal.aborted) cancel();
+  else signal.addEventListener('abort', cancel, { once: true });
+  void work.then(result.resolve, result.reject);
+  return result.promise.finally(() => signal.removeEventListener('abort', cancel));
+}
+
 type Wait = (ms: number, signal?: AbortSignal) => Promise<unknown>;
 
 export function createVkRateLimiter(

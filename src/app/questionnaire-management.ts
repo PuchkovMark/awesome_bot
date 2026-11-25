@@ -1,9 +1,16 @@
 import { splitVkText, vkMessageLength } from '../channels/vk/outbound-text';
 import type { QuestionnaireRevision } from '../contracts/questionnaire';
 
+const header =
+  'Ответьте на это сообщение номером вопроса и новым ответом, например «2 Казань». Список действует 24 часа.';
+export const questionnaireDeletionPrompt =
+  'Удалить вашу анкету и её ответы из профиля этой беседы? Остальные данные профиля и сообщения в VK сохранятся. В течение 15 минут ответьте на это сообщение «Удалить» или «Оставить».';
+
+export function isQuestionnaireManagementPrompt(text: string | undefined) {
+  return text === questionnaireDeletionPrompt || text?.startsWith(header + '\n\n') === true;
+}
+
 export function questionnaireEditorParts(questions: QuestionnaireRevision['questions']) {
-  const header =
-    'Ответьте на это сообщение номером вопроса и новым ответом, например «2 Казань». Список действует 24 часа.';
   const parts: { text: string; first: number; last: number }[] = [];
   for (const { position, text } of questions) {
     const label = `${position}. `;

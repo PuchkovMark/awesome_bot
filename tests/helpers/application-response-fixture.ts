@@ -5,6 +5,7 @@ import { expect, vi } from 'vitest';
 import { runApplication } from '../../src/app/service';
 import { initializePrompt, resolveApplicationChat } from '../../src/app/setup';
 import { createVkApi, createVkApiCall } from '../../src/channels/vk/api';
+import type { VkApiCall } from '../../src/channels/vk/api';
 import type { VkPollTransport } from '../../src/channels/vk/long-poll';
 import { createVkRateLimiter } from '../../src/channels/vk/rate-limit';
 import { loadApplicationConfig } from '../../src/config/application';
@@ -38,6 +39,9 @@ export function until(check: () => void | Promise<void>) {
 
 export async function fixture(
   options: {
+    startAt?: number;
+    files?: ReturnType<typeof storageFixture>;
+    resume?: boolean;
     limit?: number;
     profileNotice?: string;
     retentionDays?: number;
@@ -51,14 +55,20 @@ export async function fixture(
     modelClients?: { client?: LlmClient; auxiliaryClient?: LlmClient };
     logger?: SafeLogger;
     upload?: (peer: number, data: Buffer) => Promise<string>;
+    loseFileReceipt?: () => boolean;
     threshold?: number;
     window?: number;
     hold?: boolean;
     existingChat?: (path: string) => void;
+    beforeVkRequest?: (
+      method: Parameters<ReturnType<typeof createVkApi>['request']>[0],
+      parameters: Parameters<ReturnType<typeof createVkApi>['request']>[1],
+    ) => Promise<void>;
     userRequests?: number;
     active?: boolean;
     vkAdmins?: readonly number[];
     administrationIntervalMs?: number;
+    stopTimeoutMs?: number;
     greetings?: {
       readonly members?: readonly number[];
       readonly rules?: string;
@@ -67,11 +77,11 @@ export async function fixture(
     quotas?: Partial<ChatLimits>;
   } = {},
 ) {
-  const files = storageFixture();
+  const files = options.files ?? storageFixture();
   try {
     options.existingChat?.(files.path);
   } catch (error) {
-    files.cleanup();
+    if (!options.files) files.cleanup();
     throw error;
   }
   const clock = vi.spyOn(Date, 'now');
@@ -79,7 +89,7 @@ export async function fixture(
   const monotonic = vi.spyOn(performance, 'now');
   let elapsed = 0;
   monotonic.mockImplementation(() => realMonotonic() + elapsed);
-  const start = Date.UTC(2026, 10, 23, 12);
+  const start = options.startAt ?? Date.UTC(2026, 10, 23, 12);
   clock.mockReturnValue(start);
   const { config } = loadApplicationConfig({
     env: {
@@ -148,13 +158,22 @@ export async function fixture(
     fwd_messages?: readonly unknown[];
     action?: { type: string; member_id?: number };
   };
-  const messages = new Map<number, Message>();
+  const messages = new Map<string, Message>();
+  const messageKey = (destination: number, cmid: number) => destination + '/' + cmid;
+  function remember(message: Message) {
+    messages.set(messageKey(message.peer_id, message.conversation_message_id), message);
+  }
   const names = new Map<number, { first_name: string; last_name: string }>();
   const sends: (Message & { readonly disableMentions: number; readonly sendId: number })[] = [];
   let members: readonly number[] | null = options.greetings?.members ?? null;
   const filesSent: { peer: number; attachment: string }[] = [];
   let privateAllowed = true;
-  let serial = 0;
+  let serial = options.resume
+    ? (db
+        .prepare('SELECT coalesce(max(CAST(platform_message_id AS INTEGER)),0) FROM messages')
+        .pluck()
+        .get() as number)
+    : 0;
   let tick = 0;
   let sendFault:
     ((text: string) => number | 'unknown' | 'unknownAfterDelivery' | undefined) | undefined;
@@ -167,6 +186,15 @@ export async function fixture(
       }
     | undefined;
   const holds: { release: () => void; finished: Promise<void> }[] = [];
+  type VkRequestMatch = (
+    method: Parameters<VkApiCall>[0],
+    args: Parameters<VkApiCall>[1],
+  ) => boolean;
+  const requestHolds = new Set<{
+    match: VkRequestMatch;
+    wait: () => Promise<void>;
+    release: () => void;
+  }>();
   const limit = createVkRateLimiter({
     now: () => tick,
     wait: async (ms) => {
@@ -177,6 +205,7 @@ export async function fixture(
     group,
     createVkApiCall(
       async (method, args) => {
+        for (const hold of requestHolds) if (hold.match(method, args)) await hold.wait();
         if (method === 'users.get')
           return {
             response: String(args.user_ids)
@@ -208,10 +237,14 @@ export async function fixture(
         if (method === 'messages.getByConversationMessageId') {
           const items = String(args.conversation_message_ids)
             .split(',')
-            .map((id) => messages.get(Number(id)))
+            .map((id) => messages.get(messageKey(Number(args.peer_id), Number(id))))
             .filter((item) => item !== undefined);
           const hold = receiptHold;
-          if (hold && items.some((item) => item.from_id === -group && hold.match(item.text))) {
+          if (
+            hold &&
+            !String(args.conversation_message_ids).includes(',') &&
+            items.some((item) => item.from_id === -group && hold.match(item.text))
+          ) {
             hold.enter();
             await hold.wait;
           }
@@ -221,6 +254,8 @@ export async function fixture(
           return { response: { is_allowed: Number(privateAllowed) } };
         if (method === 'messages.send' && args.attachment) {
           filesSent.push({ peer: Number(args.peer_id), attachment: String(args.attachment) });
+          if (options.loseFileReceipt?.())
+            throw Error('Синтетическая потеря ответа после отправки файла');
           return { response: ++serial };
         }
         if (method === 'messages.setActivity') return { response: 1 };
@@ -232,7 +267,9 @@ export async function fixture(
           args.forward === undefined
             ? undefined
             : (JSON.parse(String(args.forward)) as { conversation_message_ids: number[] });
-        const parent = forward && messages.get(forward.conversation_message_ids[0]!);
+        const parent =
+          forward &&
+          messages.get(messageKey(Number(args.peer_ids), forward.conversation_message_ids[0]!));
         const row: Message = {
           peer_id: Number(args.peer_ids),
           conversation_message_id: ++serial,
@@ -241,7 +278,7 @@ export async function fixture(
           text: String(args.message),
           ...(parent ? { reply_message: parent } : {}),
         };
-        messages.set(row.conversation_message_id, row);
+        remember(row);
         sends.push({
           ...row,
           disableMentions: Number(args.disable_mentions),
@@ -270,11 +307,23 @@ export async function fixture(
   const launch = () =>
     runApplication(config, options.logger ?? logger, stop.signal, {
       vk: {
-        api: { ...api, ...(options.upload ? { uploadPrivateDocument: options.upload } : {}) },
+        api: {
+          ...api,
+          ...(options.beforeVkRequest
+            ? {
+                async request(...args: Parameters<typeof api.request>) {
+                  await options.beforeVkRequest!(args[0], args[1]);
+                  return api.request(...args);
+                },
+              }
+            : {}),
+          ...(options.upload ? { uploadPrivateDocument: options.upload } : {}),
+        },
         transport,
       },
       ...(options.modelClients ?? { client: { complete }, auxiliaryClient: { complete } }),
       onboardingIntervalMs: 5,
+      ...(options.stopTimeoutMs === undefined ? {} : { stopTimeoutMs: options.stopTimeoutMs }),
       ...(options.administrationIntervalMs === undefined
         ? {}
         : {
@@ -298,16 +347,17 @@ export async function fixture(
       },
     });
   let running = launch();
-  async function close() {
+  async function close(expected: Awaited<ReturnType<typeof runApplication>> = null) {
     stop.abort();
     receiptHold?.release();
     for (const hold of holds) hold.release();
+    for (const hold of requestHolds) hold.release();
     try {
-      expect(await running).toBeNull();
+      expect(await running).toBe(expected);
     } finally {
       db.close();
       await storage.close();
-      files.cleanup();
+      if (!options.files) files.cleanup();
       clock.mockRestore();
       monotonic.mockRestore();
     }
@@ -317,7 +367,7 @@ export async function fixture(
     await resolveApplicationChat(
       { databasePath: files.path, ownerId },
       chat,
-      options.existingChat ? 'continue' : 'new',
+      options.resume || options.existingChat ? 'continue' : 'new',
     );
     const scope = lifecycleBackend(storage).current(chat);
     await until(() => expect(disclosure.gate(scope).version).toBe(version));
@@ -341,6 +391,9 @@ export async function fixture(
       setMembers(value: readonly number[] | null) {
         members = value;
       },
+      loseObservation() {
+        return listener.onGap('lost_position');
+      },
       membership(type: string, actor: number, member?: number, destination = peer) {
         const row: Message = {
           peer_id: destination,
@@ -350,13 +403,21 @@ export async function fixture(
           text: '',
           action: { type, ...(member === undefined ? {} : { member_id: member }) },
         };
-        messages.set(row.conversation_message_id, row);
+        remember(row);
         listener.onUpdates([{ type: 'message_new', group_id: group, object: { message: row } }]);
         return row.conversation_message_id;
       },
-      async restart(resume = false, neighbors: readonly number[] = []) {
+      stop() {
         stop.abort();
-        receiptHold?.release();
+        return running;
+      },
+      async restart(
+        resume = false,
+        neighbors: readonly number[] = [],
+        options: { retainReceipt?: boolean } = {},
+      ) {
+        stop.abort();
+        if (!options.retainReceipt) receiptHold?.release();
         for (const hold of holds) hold.release();
         expect(await running).toBeNull();
         ready = Promise.withResolvers<void>();
@@ -395,6 +456,23 @@ export async function fixture(
         receiptHold = { match, enter: entered.resolve, wait: gate.promise, release };
         return { entered: entered.promise, release };
       },
+      holdRequest(match: VkRequestMatch) {
+        const entered = Promise.withResolvers<void>();
+        const gate = Promise.withResolvers<void>();
+        const hold = {
+          match,
+          wait() {
+            entered.resolve();
+            return gate.promise;
+          },
+          release() {
+            requestHolds.delete(hold);
+            gate.resolve();
+          },
+        };
+        requestHolds.add(hold);
+        return { entered: entered.promise, release: hold.release };
+      },
       failSend(fault: typeof sendFault) {
         sendFault = fault;
       },
@@ -425,22 +503,36 @@ export async function fixture(
       name(from: number, first: string, last = '') {
         names.set(from, { first_name: first, last_name: last });
       },
-      replay(id: number) {
-        const message = messages.get(id);
+      hideVkMessage(id: number, destination = peer) {
+        messages.delete(messageKey(destination, id));
+      },
+      replay(id: number, destination?: number) {
+        const message =
+          destination === undefined
+            ? [...messages.values()].find((row) => row.conversation_message_id === id)
+            : messages.get(messageKey(destination, id));
         if (message)
           listener.onUpdates([{ type: 'message_new', group_id: group, object: { message } }]);
       },
-      submit(text: string, from = 41, parent?: Message, destination = peer, forwarded = false) {
+      submit(
+        text: string,
+        from = 41,
+        parent?: Message,
+        destination = peer,
+        forwarded = false,
+        cmid = serial + 1,
+      ) {
+        serial = Math.max(serial, cmid);
         const row: Message = {
           peer_id: destination,
-          conversation_message_id: ++serial,
+          conversation_message_id: cmid,
           from_id: from,
           date: Math.floor(Date.now() / 1000),
           text,
           ...(parent ? { reply_message: parent } : {}),
           ...(forwarded ? { fwd_messages: [{}] } : {}),
         };
-        messages.set(row.conversation_message_id, row);
+        remember(row);
         listener.onUpdates([{ type: 'message_new', group_id: group, object: { message: row } }]);
         return row.conversation_message_id;
       },

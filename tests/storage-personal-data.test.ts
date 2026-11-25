@@ -168,7 +168,7 @@ test('удаление скрывает источники сразу, сохр�
     }
     const current = scopeFor(storage, chat);
     expect(reopened.status(current, user, at + 900000)).toContain('проверена');
-    expect(reopened.reportMessage(current, user, '11')).toBe(true);
+    expect(reopened.reportMessage(current, user, '11', 17)).toBe(true);
     expect(reopened.disputed(current)).toEqual([{ messageId: '11' }]);
     expect(reopened.status(current, user, at + 899999 + 86400000)).toContain('Истёк срок');
     expect(await storage.messages.list(current, { limit: 10 })).toEqual([]);
@@ -235,7 +235,7 @@ test('перечень источников F5.8 охватывает табли
     migrate(db);
     const categories = {
       personal:
-        'chat_participants participant_profiles profile_facts chat_author_labels messages request_quota_admissions chat_control_commands history_clear_requests personal_profile_choices personal_exports address_preferences greeting_candidates greeting_members profile_command_lists profile_command_positions profile_command_parts chat_passport_prompts questionnaire_editor_prompts questionnaire_progress questionnaire_presentations questionnaire_management_prompts',
+        'chat_participants participant_profiles profile_facts chat_author_labels messages request_quota_admissions chat_control_commands history_clear_requests personal_profile_choices personal_exports address_preferences greeting_candidates greeting_members profile_command_lists profile_command_positions profile_command_parts chat_passport_prompts recap_clarifications questionnaire_editor_prompts questionnaire_progress questionnaire_presentations questionnaire_management_prompts',
       dependent:
         'messages_fts messages_fts_config messages_fts_data messages_fts_docsize messages_fts_idx personal_answer_sources tool_answer_subjects departed_profile_answers greeting_windows queue_jobs response_traces mention_flood_inputs autonomous_questions autonomous_reply_parts questionnaire_inputs questionnaire_answer_facts profile_update_waiting chat_summaries chat_summary_sources chat_summary_parts chat_summary_notices',
       authority:
@@ -243,7 +243,7 @@ test('перечень источников F5.8 охватывает табли
       privateReminders:
         'personal_reminders personal_reminder_parts personal_reminder_inputs personal_reminder_timezones',
       erasureAndReplay:
-        'questionnaire_removals personal_deletions personal_hidden_messages history_deleted_inputs participant_departures participant_events profile_command_events profile_fact_rejections profile_inference_rejections profile_update_runs',
+        'questionnaire_removals personal_deletions personal_dispute_cases personal_dispute_reports personal_hidden_messages history_deleted_inputs participant_departures participant_events profile_command_events profile_fact_rejections profile_inference_rejections profile_update_runs',
       sharedSettingsAndUsage:
         'chats chat_connections lifecycle_clock chat_token_budgets token_budget_attempts response_rate_clock response_rate_publications mention_flood_state history_retention_policy history_retention_boundaries autonomous_quota_reservations chat_controls disclosure_versions disclosure_publications connection_membership_signals notice_periods queue_turns queue_lease llm_recovery chat_metrics_collection chat_metrics_buckets chat_metrics_job_events chat_metrics_attempts chat_metrics_publications global_content_versions starter_persona_versions local_content_versions chat_content_selections global_prompt_selection bot_admin_controls participant_sync chat_passport_sections questionnaire_revisions questionnaire_default_boundary schema_migrations sqlite_sequence',
     };
@@ -408,5 +408,133 @@ test('экспорт, удаление и сверка старой копии �
     files.cleanup();
     backup.cleanup();
     now.mockRestore();
+  }
+});
+
+test('жалобы из разных личек, откат транзакции и повтор после перезапуска', async () => {
+  const files = storageFixture();
+  let storage = await openStorage(files.path);
+  const raw = new Database(files.path);
+  const chat = 'vk:2000000010';
+  try {
+    let scope = scopeFor(storage, chat);
+    let privacy = personalDataStore(storage);
+    for (const [messageId, userId] of [
+      ['1', 'vk:11'],
+      ['2', 'vk:12'],
+      ['3', 'vk:13'],
+    ] as const) {
+      await storage.messages.append(scope, {
+        chatId: chat,
+        messageId,
+        userId,
+        role: 'user',
+        authorName: '',
+        text: 'упоминание',
+        timestamp: 1,
+      });
+    }
+    const first = privacy.requestDeletion(scope, 'vk:11', 'a', 2);
+    const second = privacy.requestDeletion(scope, 'vk:12', 'b', 2);
+    expect(privacy.confirmDeletion(scope, 'vk:11', first.code, 3)).toBe(true);
+    expect(privacy.confirmDeletion(scope, 'vk:12', second.code, 3)).toBe(true);
+    raw.exec(`CREATE TRIGGER fail_report BEFORE INSERT ON personal_hidden_messages
+      WHEN NEW.disputed=1 BEGIN SELECT RAISE(ABORT,'rollback'); END`);
+    expect(() => privacy.reportMessage(scope, 'vk:11', '3', 8)).toThrow();
+    expect(raw.prepare('SELECT * FROM personal_dispute_cases').all()).toEqual([]);
+    expect(raw.prepare('SELECT * FROM personal_dispute_reports').all()).toEqual([]);
+    expect(privacy.disputed(scope)).toEqual([]);
+    raw.exec('DROP TRIGGER fail_report');
+    expect(privacy.reportMessage(scope, 'vk:11', '3', 8)).toBe(true);
+    expect(privacy.reportMessage(scope, 'vk:12', '3', 8)).toBe(true);
+    raw.exec(`CREATE TRIGGER fail_decision BEFORE DELETE ON personal_hidden_messages
+      BEGIN SELECT RAISE(ABORT,'rollback'); END`);
+    expect(() => privacy.resolveDisputed(scope, '3', 'keep')).toThrow();
+    expect(raw.prepare('SELECT state FROM personal_dispute_cases').pluck().all()).toEqual([
+      'open',
+      'open',
+    ]);
+    expect(privacy.disputed(scope)).toEqual([{ messageId: '3' }]);
+    raw.exec('DROP TRIGGER fail_decision');
+    expect(privacy.resolveDisputed(scope, '3', 'keep')).toBe(true);
+    expect(raw.prepare('SELECT state FROM personal_dispute_cases').pluck().all()).toEqual([
+      'keep',
+      'keep',
+    ]);
+    await storage.close();
+    storage = await openStorage(files.path);
+    scope = scopeFor(storage, chat);
+    privacy = personalDataStore(storage);
+    const later = privacy.requestDeletion(scope, 'vk:11', 'again', 5);
+    expect(privacy.confirmDeletion(scope, 'vk:11', later.code, 6)).toBe(true);
+    privacy.cleanup(7);
+    for (const user of ['vk:11', 'vk:12'] as const)
+      expect(privacy.reportMessage(scope, user, '3', 8)).toBe(false);
+    expect(privacy.status(scope, 'vk:11', 7)).toContain('проверена');
+    expect(privacy.disputed(scope)).toEqual([]);
+    expect(privacy.reportMessage(scope, 'vk:12', '3', 9)).toBe(true);
+    expect(privacy.reportMessage(scope, 'vk:11', '3', 8)).toBe(false);
+    expect(privacy.disputed(scope)).toEqual([{ messageId: '3' }]);
+    expect(privacy.resolveDisputed(scope, '3', 'erase')).toBe(true);
+    expect(privacy.reportMessage(scope, 'vk:11', '3', 10)).toBe(false);
+    expect(privacy.cleanup(8)).toBe(1);
+    expect(privacy.reportMessage(scope, 'vk:12', '3', 9)).toBe(false);
+    expect(
+      raw.prepare('SELECT state FROM personal_dispute_cases WHERE code=?').pluck().get(second.code),
+    ).toBe('erase');
+    expect(raw.pragma('foreign_key_check')).toEqual([]);
+  } finally {
+    raw.close();
+    await storage.close();
+    files.cleanup();
+  }
+});
+
+test('пересчёт спорных ответов учитывает решение по каждой операции и сохраняет безусловное скрытие', async () => {
+  const files = storageFixture();
+  const storage = await openStorage(files.path);
+  try {
+    const scope = scopeFor(storage, 'vk:chat');
+    const privacy = personalDataStore(storage);
+    const ids: number[] = [];
+    const authors = ['vk:1', 'vk:2', 'vk:3', 'vk:-5', 'vk:-5'] as const;
+    for (const [i, userId] of authors.entries()) {
+      const saved = await storage.messages.append(scope, {
+        chatId: scope.chatId,
+        userId,
+        messageId: String(i + 1),
+        role: i < 3 ? 'user' : 'assistant',
+        text: 'цепочка',
+        authorName: '',
+        timestamp: i + 1,
+      });
+      ids.push(saved.id);
+    }
+    lifecycleBackend(storage).transaction(scope, (db) => {
+      privacy.recordAnswerSources(db, scope, '4', [ids[2]!]);
+      privacy.recordAnswerSources(db, scope, '5', [ids[3]!]);
+    });
+    for (const user of ['vk:1', 'vk:2'] as const) {
+      const req = privacy.requestDeletion(scope, user, 'delete', 10);
+      expect(privacy.confirmDeletion(scope, user, req.code, 10)).toBe(true);
+    }
+    expect(privacy.reportMessage(scope, 'vk:1', '3', 11)).toBe(true);
+    expect(privacy.disputed(scope)).toEqual(['3', '4', '5'].map((messageId) => ({ messageId })));
+    for (const messageId of ['4', '5'])
+      expect(privacy.resolveDisputed(scope, messageId, 'keep')).toBe(true);
+    expect(privacy.reportMessage(scope, 'vk:1', '5', 12)).toBe(true);
+    expect(privacy.disputed(scope)).toEqual(['3', '5'].map((messageId) => ({ messageId })));
+    expect(privacy.resolveDisputed(scope, '5', 'keep')).toBe(true);
+    expect(privacy.reportMessage(scope, 'vk:2', '3', 11)).toBe(true);
+    expect(privacy.disputed(scope)).toEqual(['3', '4', '5'].map((messageId) => ({ messageId })));
+    const own = privacy.requestDeletion(scope, 'vk:3', 'by-author', 12);
+    expect(privacy.confirmDeletion(scope, 'vk:3', own.code, 12)).toBe(true);
+    expect(privacy.resolveDisputed(scope, '3', 'keep')).toBe(true);
+    expect(await storage.messages.get(scope, ids[2]!)).toBeNull();
+    privacy.cleanup(13);
+    expect(await storage.messages.get(scope, ids[2]!)).toBeNull();
+  } finally {
+    await storage.close();
+    files.cleanup();
   }
 });

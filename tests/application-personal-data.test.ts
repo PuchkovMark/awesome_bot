@@ -1,4 +1,5 @@
 import { expect, test, vi } from 'vitest';
+import { personalDataStore } from '../src/storage/personal-data-store';
 import {
   fixture,
   chat,
@@ -90,7 +91,12 @@ test('удаление во время загрузки JSON отменяет о
       expect(app.sends.some((x) => x.text.startsWith('Удаление принято'))).toBe(true),
     );
     uploaded.resolve('doc1_2');
-    await until(() => expect(app.sends.some((x) => x.text.includes('не подтверждена'))).toBe(true));
+    await until(() =>
+      expect(app.sends.at(-1)).toMatchObject({
+        peer_id: peer,
+        text: 'Разрешите сообщения сообщества и отправьте в личку /мои-данные ' + chat,
+      }),
+    );
     expect(app.filesSent).toEqual([]);
   } finally {
     uploaded.resolve('doc1_2');
@@ -169,3 +175,210 @@ test('явный ID соседней беседы даёт только кома
     await app.close();
   }
 });
+
+test.each(['закрыта', 'потеряна квитанция'])(
+  'статус и файл исходной беседы доступны по подсказке, если личка %s',
+  async (fault) => {
+    let loseReceipt = fault === 'потеряна квитанция';
+    let exported = '';
+    const app = await fixture({
+      loseFileReceipt: () => loseReceipt,
+      upload: async (_, data) => {
+        exported = data.toString();
+        return 'doc1_2';
+      },
+    });
+    try {
+      const author = 'vk:41';
+      const privacy = personalDataStore(app.storage);
+      const neighbor = await app.connectGroup(peer + 1);
+      await app.storage.messages.append(neighbor, {
+        chatId: neighbor.chatId,
+        messageId: 'other',
+        userId: author,
+        authorName: 'Участник',
+        role: 'user',
+        text: 'Запись из соседней беседы',
+        timestamp: app.start,
+      });
+      await app.journaled(app.submit('Прошлая запись автора'));
+      const deletion = privacy.requestDeletion(app.scope, author, 'past-deletion', app.start);
+      expect(privacy.confirmDeletion(app.scope, author, deletion.code, app.start)).toBe(true);
+      privacy.cleanup(app.start);
+      app.at(1000);
+      await app.journaled(app.submit('Новая запись в исходной беседе'));
+      const status = privacy.status(app.scope, author, app.start);
+      expect(status).toContain('Очистка рабочей базы проверена.');
+      expect(status).not.toBe(privacy.status(neighbor, author, app.start));
+
+      if (loseReceipt)
+        app.failSend((text) => (text === status ? 'unknownAfterDelivery' : undefined));
+      else app.setPrivateAllowed(false);
+      const before = app.sends.length;
+      const groupReplies = () =>
+        app.sends
+          .slice(before)
+          .filter((row) => row.peer_id === peer)
+          .map((row) => row.text);
+      const guide = 'Разрешите сообщения сообщества и отправьте в личку ';
+      const copied: string[] = [];
+      for (const name of ['/статус-удаления', '/мои-данные']) {
+        const event = app.submit(name);
+        await until(() => expect(groupReplies().at(-1)).toBe(guide + name + ' ' + chat));
+        copied.push(groupReplies().at(-1)!.slice(guide.length));
+        if (name === '/мои-данные') app.replay(event);
+      }
+      const filesBefore = loseReceipt ? 1 : 0;
+      expect(app.filesSent).toHaveLength(filesBefore);
+      loseReceipt = false;
+      app.failSend(undefined);
+      app.setPrivateAllowed(true);
+      const next = app.sends.length;
+      for (const command of copied) app.submit(command, 41, undefined, 41);
+      await until(() => {
+        expect(app.sends.slice(next).some((row) => row.peer_id === 41 && row.text === status)).toBe(
+          true,
+        );
+        expect(app.filesSent).toHaveLength(filesBefore + 1);
+      });
+      expect(JSON.parse(exported)).toMatchObject({ chat, user: author });
+      expect(exported).toContain('Новая запись в исходной беседе');
+      expect(exported).not.toContain('Запись из соседней беседы');
+
+      const success = app.sends.length;
+      app.submit('/статус-удаления');
+      app.submit('/мои-данные');
+      await until(() => {
+        expect(
+          app.sends.slice(success).some((row) => row.peer_id === 41 && row.text === status),
+        ).toBe(true);
+        expect(app.filesSent).toHaveLength(filesBefore + 2);
+      });
+      expect(groupReplies()).toEqual(copied.map((command) => guide + command));
+      expect(app.filesSent.every((file) => file.peer === 41)).toBe(true);
+    } finally {
+      await app.close();
+    }
+  },
+);
+
+test.each(['закрыта', 'потеряна квитанция'])(
+  'из беседы можно продолжить в личке, когда она %s',
+  async (fault) => {
+    const app = await fixture({ profileNotice: 'Уведомление' });
+    try {
+      await app.journaled(app.submit('Запись автора'));
+      if (fault === 'закрыта') app.setPrivateAllowed(false);
+      else
+        app.failSend((text) =>
+          text.startsWith('Профилирование') || text.startsWith('Удалить анкету')
+            ? 'unknownAfterDelivery'
+            : undefined,
+        );
+      for (const name of ['отключить-профиль', 'удалить-мои-данные']) {
+        app.submit('/' + name);
+        await until(() =>
+          expect(
+            app.sends.some(
+              (row) =>
+                row.peer_id === peer &&
+                row.text ===
+                  'Разрешите сообщения сообщества и отправьте в личку /' + name + ' ' + chat,
+            ),
+          ).toBe(true),
+        );
+      }
+      const selection = () =>
+        app.db
+          .prepare('SELECT disabled_at FROM personal_profile_choices WHERE chat_id=? AND user_id=?')
+          .pluck()
+          .get(chat, 'vk:41');
+      const first = selection();
+      expect(typeof first).toBe('number');
+      expect(app.db.prepare('SELECT confirmed_at FROM personal_deletions').pluck().all()).toEqual([
+        null,
+      ]);
+      expect(
+        app.sends
+          .filter((row) => row.peer_id === peer)
+          .map((row) => row.text)
+          .join('\n'),
+      ).not.toMatch(/подтверждаю-удаление|выгрузка профиля доступна|Запись автора/iu);
+      app.setPrivateAllowed(true);
+      app.failSend(undefined);
+      app.at(1000);
+      const start = app.sends.length;
+      app.submit('/отключить-профиль ' + chat, 41, undefined, 41);
+      app.submit('/удалить-мои-данные ' + chat, 41, undefined, 41);
+      await until(() => {
+        const personal = app.sends
+          .slice(start)
+          .filter((row) => row.peer_id === 41)
+          .map((row) => row.text);
+        expect(personal.some((text) => text.startsWith('Профилирование'))).toBe(true);
+        expect(personal.some((text) => text.includes('/подтверждаю-удаление'))).toBe(true);
+      });
+      expect(selection()).toBe(first);
+    } finally {
+      await app.close();
+    }
+  },
+);
+
+test.each(['оставить', 'удалить'])(
+  'повтор двух принятых жалоб после решения «%s» и потери квитанции',
+  async (decision) => {
+    const app = await fixture({ profileNotice: 'Уведомление' });
+    try {
+      await app.journaled(app.submit('Запись заявителя'));
+      const target = app.submit('Упоминание', 42);
+      await app.journaled(target);
+      const privacy = personalDataStore(app.storage);
+      const request = privacy.requestDeletion(app.scope, 'vk:41', 'request', app.start);
+      expect(privacy.confirmDeletion(app.scope, 'vk:41', request.code, app.start)).toBe(true);
+      const report = '/сообщить-упоминание ' + chat + ' ' + target;
+      const replies = () =>
+        app.sends.filter(
+          (row) => row.peer_id === 41 && row.text === 'Запрос по указанному сообщению обработан.',
+        ).length;
+      const first = app.submit(report, 41, undefined, 41);
+      await until(() => expect(replies()).toBe(1));
+      const second = app.submit(report, 41, undefined, 41);
+      await until(() => expect(replies()).toBe(2));
+      expect(privacy.disputed(app.scope)).toEqual([{ messageId: String(target) }]);
+      app.failSend((text) => (text === 'Решение сохранено.' ? 'unknownAfterDelivery' : undefined));
+      app.submit('/' + decision + '-запись ' + chat + ' ' + target, 73, undefined, 73);
+      await until(() =>
+        expect(
+          app.sends.some((row) => row.peer_id === 73 && row.text === 'Решение сохранено.'),
+        ).toBe(true),
+      );
+      app.failSend(undefined);
+      async function checkVisibility() {
+        const visible = decision === 'оставить';
+        expect(
+          (await app.storage.messages.list(app.scope, { limit: 100 })).some(
+            (row) => row.messageId === String(target),
+          ),
+        ).toBe(visible);
+        expect(
+          await app.storage.contextMessages.search(app.scope, 'Упоминание', 5, 128),
+        ).toHaveLength(visible ? 1 : 0);
+        expect(privacy.disputed(app.scope)).toEqual([]);
+      }
+      for (const [index, event] of [first, second].entries()) {
+        app.replay(event);
+        await until(() => expect(replies()).toBe(3 + index));
+        await checkVisibility();
+      }
+      privacy.cleanup(app.start);
+      await checkVisibility();
+      app.submit('/спорные-записи ' + chat, 73, undefined, 73);
+      await until(() =>
+        expect(app.sends.at(-1)).toMatchObject({ peer_id: 73, text: 'Спорных записей нет.' }),
+      );
+    } finally {
+      await app.close();
+    }
+  },
+);

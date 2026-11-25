@@ -12,6 +12,7 @@ import {
 import { chatControlStore } from '../storage/chat-control-store';
 import { StorageError } from '../storage/errors';
 import type { Storage } from '../storage/index';
+import type { TrackPublication } from './control-publications';
 import {
   reminderGraceMs,
   reminderStore,
@@ -65,6 +66,8 @@ function fields(input: string, originAt: number, timezone?: string, edited?: Rem
   ): ReminderFields {
     return { draft: { needs, date, schedule, explicitTimezone, ...overrides }, text };
   }
+  if (parsed.ambiguous)
+    return clarify('time', { schedule: undefined, timeExample: parsed.timeExample });
   if (resolved.kind === 'overlap')
     return clarify('overlap', { choices: resolved.choices, explicitTimezone: resolved.timezone });
   if (resolved.kind !== 'scheduled') return clarify(resolved.kind);
@@ -109,19 +112,36 @@ function prompt(item: Reminder, proposedZone: string | undefined) {
     case 'text':
       return lead + `укажите, о чём напомнить. Например, ${command} взять документы».`;
     case 'time':
+      if (item.draft.timeExample)
+        return (
+          lead +
+          `выберите один срок и укажите его полностью. Например, ${command} ${item.draft.timeExample}».`
+        );
       return lead + `укажите точное время в будущем. Например, ${command} завтра в 18:00».`;
     default:
       return missing;
   }
 }
 
+function dueLabel(item: Reminder) {
+  if (item.dueAt !== null && item.timezone !== null)
+    return `${formatReminderTime(item.dueAt, item.timezone)} (${item.timezone})`;
+}
+
 function summary(item: Reminder) {
   const prefix = `#${item.id}`;
   if (item.state === 'draft') return `${prefix} · ожидается уточнение`;
-  const time = `${formatReminderTime(item.dueAt!, item.timezone!)} (${item.timezone})`;
-  return item.state === 'pending'
-    ? `${prefix} · ${time} · ${item.deliveryUnknown ? display.unknown : item.text}`
-    : `${prefix} · ${time} · ${display[item.state]}`;
+  const parts = [prefix];
+  const due = dueLabel(item);
+  if (due) parts.push(due);
+  parts.push(
+    item.state === 'pending'
+      ? item.deliveryUnknown
+        ? display.unknown
+        : item.text!
+      : display[item.state],
+  );
+  return parts.join(' · ');
 }
 
 export function createReminderHandlers(options: {
@@ -129,6 +149,7 @@ export function createReminderHandlers(options: {
   readonly channel: Channel;
   readonly lifecycle: Lifecycle;
   readonly signal: AbortSignal;
+  readonly track: TrackPublication;
 }) {
   const { storage, channel, lifecycle, signal } = options;
   const store = reminderStore(storage);
@@ -220,34 +241,52 @@ export function createReminderHandlers(options: {
       if (!isCurrent()) return;
       if (!target) {
         if (event.isGroupChat && !replayOnly)
-          await channel.replyGroupControl(scope, closed, {
-            signal,
-            isCurrent,
-            allow: async () => isCurrent(),
-          });
+          options.track(
+            channel.replyGroupControl(scope, closed, {
+              signal,
+              isCurrent,
+              allow: async () => isCurrent(),
+            }),
+          );
         return;
       }
       const reply = (text: string) =>
-        channel.replyPrivateControl(target.userId, text, {
-          signal,
-          allow: async () => isCurrent(),
-          isCurrent: () => isCurrent() && lifecycle.isAdmissionCurrent(target.scope),
-        });
+        options.track(
+          channel.replyPrivateControl(target.userId, text, {
+            signal,
+            allow: async () => isCurrent(),
+            isCurrent: () => isCurrent() && lifecycle.isAdmissionCurrent(target.scope),
+          }),
+        );
       const now = Date.now();
+      if (command.kind === 'cancel-options') {
+        const items = store.list(target, now, 'cancellable');
+        const choices = items.map((item) => {
+          const text = Array.from(
+            item.text?.replace(/\s+/gu, ' ').trim() || 'поручение пока не указано',
+          );
+          const description = text.length > 120 ? text.slice(0, 120).join('') + '…' : text.join('');
+          return (
+            (dueLabel(item) ?? 'Черновик') + ' · ' + description + '\nОтмени напоминание ' + item.id
+          );
+        });
+        reply(choices.join('\n\n') || 'Сейчас нечего отменять.');
+        return;
+      }
       if (command.kind === 'list') {
         const items = store.list(target, now);
-        await reply(items.length ? items.map(summary).join('\n') : 'Напоминаний пока нет.');
+        reply(items.length ? items.map(summary).join('\n') : 'Напоминаний пока нет.');
         return;
       }
       if (command.kind === 'cancel') {
         const state = store.cancel(target, command.id, now);
-        await reply(state === 'missing' ? missing : `#${command.id} · ${display[state]}`);
+        reply(state === 'missing' ? missing : `#${command.id} · ${display[state]}`);
         return;
       }
       if (command.kind === 'timezone') {
         const zone = command.input ? reminderTimezone(command.input) : store.timezone(target);
         if (zone && command.input) store.timezone(target, zone);
-        await reply(
+        reply(
           zone
             ? `Ваш часовой пояс напоминаний — ${zone}.`
             : 'Укажите часовой пояс, например /пояс-напоминаний Europe/Moscow.',
@@ -274,7 +313,7 @@ export function createReminderHandlers(options: {
               : undefined
             : drafts.find(({ id }) => id === command.id);
         if (!selected) {
-          await reply(
+          reply(
             command.id === undefined && drafts.length > 1
               ? `Укажите номер черновика: ${drafts.map(({ id }) => '#' + id).join(', ')}.`
               : missing,
@@ -292,12 +331,12 @@ export function createReminderHandlers(options: {
       if (!item || !isCurrent()) return;
       if (item.state === 'draft') {
         const proposed = event.isGroupChat ? controls.read(scope).timezone : undefined;
-        await reply(prompt(item, proposed));
+        reply(prompt(item, proposed));
         return;
       }
       if (item.state === 'pending') {
         const lease = store.claimConfirmation(target, item.id, Date.now());
-        if (lease) await deliver(lease, target.scope, isCurrent);
+        if (lease) options.track(deliver(lease, target.scope, isCurrent));
       }
     },
     async due() {

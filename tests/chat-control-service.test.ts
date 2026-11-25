@@ -103,7 +103,35 @@ test('включение доступно владельцу из служебн
   try {
     const { owner, member, service, storage } = f;
     const groupOwner = service.context({ scope: owner.scope, userId: owner.userId });
-    expect(await service.controlChat(owner, { kind: 'off' }, current, 14)).toMatchObject({
+    const off = { kind: 'off' } as const;
+    const on = { kind: 'on' } as const;
+    const event = (messageId: number) => ({
+      sourceChatId: owner.userId,
+      messageId,
+      timestamp: 100,
+    });
+    expect(
+      await service.controlChat(
+        groupOwner,
+        { kind: 'greeting', enabled: true },
+        current,
+        event(14),
+      ),
+    ).toEqual({ allowed: false, code: 'wrong_scope' });
+    expect(
+      await service.controlChat(owner, off, current, { ...event(14), sourceChatId: owner.chatId }),
+    ).toEqual({ allowed: false, code: 'wrong_scope' });
+    await expect(
+      service.controlChat(owner, off, current, event(Number.MAX_SAFE_INTEGER + 1)),
+    ).rejects.toMatchObject({ code: 'invalid_input' });
+    await expect(
+      service.controlChat(owner, off, current, { ...event(14), timestamp: -1 }),
+    ).rejects.toMatchObject({ code: 'invalid_input' });
+    expect(chatControlStore(storage).read(owner.scope)).toMatchObject({
+      enabled: true,
+      greetingEnabledAt: null,
+    });
+    expect(await service.controlChat(owner, off, current, event(14))).toMatchObject({
       value: { state: { enabled: false, mode: 'normal' } },
     });
     expect(await service.controlChat(groupOwner, { kind: 'on' }, current)).toMatchObject({
@@ -114,16 +142,16 @@ test('включение доступно владельцу из служебн
       allowed: false,
       code: 'disabled',
     });
-    expect(await service.controlChat(owner, { kind: 'on' }, current, 15)).toMatchObject({
+    expect(await service.controlChat(owner, on, current, event(15))).toMatchObject({
       value: { state: { enabled: true, mode: 'normal' } },
     });
-    expect(await service.controlChat(owner, { kind: 'off' }, current, 14)).toMatchObject({
+    expect(await service.controlChat(owner, off, current, event(14))).toMatchObject({
       value: { status: 'duplicate', state: { enabled: true } },
     });
     const freshScope = scopeFor(storage, 'vk:2000000070');
     const freshOwner = service.context({ scope: freshScope, userId: owner.userId, kind: 'owner' });
     expect(await storage.chats.get(freshScope)).toBeNull();
-    expect(await service.controlChat(freshOwner, { kind: 'off' }, current, 16)).toMatchObject({
+    expect(await service.controlChat(freshOwner, off, current, event(16))).toMatchObject({
       allowed: true,
       value: { state: { enabled: false, mode: 'normal' } },
     });
@@ -136,7 +164,9 @@ test('включение доступно владельцу из служебн
       target: { chatId: 'vk:2000000004', generation: 7 },
     });
     expect(parseChatControl('помолчи, пожалуйста', 'group')).toBeUndefined();
-    expect(parseChatControl('/продлить-паузу -1', 'group')).toEqual({ command: 'invalid' });
+    expect(parseChatControl('/продлить-паузу -1', 'group')).toEqual({
+      command: { kind: 'extendHelp' },
+    });
   } finally {
     await f.close();
   }

@@ -15,6 +15,7 @@ import type {
   StoredMessage,
 } from './types';
 import type { AuthorizationTransaction } from './authorization-types';
+import type { ControlMessageEvent } from './chat-control-store';
 import type {
   ContextCardFact,
   ContextCardFactReference,
@@ -30,7 +31,7 @@ export interface ScopedAuthorizationTransaction extends AuthorizationTransaction
   selectStarterPersona(
     actorId: UserId,
     personaId: string,
-    messageId: number,
+    event: ControlMessageEvent,
   ): SelectionResult | { readonly status: 'duplicate' };
   applyQuestionnaireReply(
     actorId: UserId,

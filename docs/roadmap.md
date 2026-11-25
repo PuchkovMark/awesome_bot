@@ -36,7 +36,20 @@
 
 | № | Задача | Приоритет | Статус |
 | --- | --- | --- | --- |
+| 084 | [Различение команд управления из лички и беседы VK](tasks/completed/084-vk-control-event-identity.md) · [План фичи](plans/completed/084-vk-control-event-identity.md) · [План реализации и приёмка](impl-plans/completed/084-vk-control-event-identity.md#результаты-приёмки) | P1 | выполнено |
+| 085 | [Сохранение решения владельца по спорной записи](tasks/completed/085-personal-dispute-decision-durability.md) · [План фичи](plans/completed/085-personal-dispute-decision-durability.md) · [План реализации и приёмка](impl-plans/completed/085-personal-dispute-decision-durability.md#результаты-приёмки) | P1 | выполнено |
+| 086 | [Приём событий VK при задержке квитанции и остановке](tasks/completed/086-vk-inbound-durability.md) · [План фичи](plans/completed/086-vk-inbound-durability.md) · [План реализации и приёмка](impl-plans/completed/086-vk-inbound-durability.md#результаты-приёмки) | P1 | выполнено |
+| 087 | [Справка после первого свободного сообщения в личке VK](tasks/completed/087-vk-first-private-recovery.md) · [План фичи](plans/completed/087-vk-first-private-recovery.md) · [План реализации и приёмка](impl-plans/completed/087-vk-first-private-recovery.md#результаты-приёмки) | P1 | выполнено |
+| 088 | [Назначение и отзыв прав администраторов бота](tasks/completed/088-bot-admin-management.md) · [План фичи](plans/completed/088-bot-admin-management.md) · [План реализации и приёмка](impl-plans/completed/088-bot-admin-management.md#результаты-приёмки) | P2 | выполнено |
 | 089 | [Прямые вопросы Пеньку по имени в беседе](tasks/completed/089-vk-bot-name-address.md) · [План фичи](plans/completed/089-vk-bot-name-address.md) · [План реализации и приёмка](impl-plans/completed/089-vk-bot-name-address.md#результаты-приёмки) | P2 | выполнено |
+| 090 | [Распознавание пересказа в собственном тексте запроса](tasks/completed/090-vk-recap-quoted-intent.md) · [План фичи](plans/completed/090-vk-recap-quoted-intent.md) · [План реализации и приёмка](impl-plans/completed/090-vk-recap-quoted-intent.md#результаты-приёмки) | P2 | выполнено |
+| 091 | [Уточнение неполной длительности напоминания](tasks/completed/091-reminder-incomplete-duration.md) · [План фичи](plans/completed/091-reminder-incomplete-duration.md) · [План реализации и приёмка](impl-plans/completed/091-reminder-incomplete-duration.md#результаты-приёмки) | P2 | выполнено |
+| 092 | [Личная просьба о напоминании в ответе участнику](tasks/092-vk-reminder-reply-address.md) · [Утверждённый план фичи](plans/092-vk-reminder-reply-address.md) · [Черновик плана реализации](impl-plans/092-vk-reminder-reply-address.md) | P2 | утверждено |
+| 093 | [Получение подтверждения уже назначенного напоминания](tasks/093-reminder-confirmation-recovery.md) · [Утверждённый план фичи](plans/093-reminder-confirmation-recovery.md) · [Черновик плана реализации](impl-plans/093-reminder-confirmation-recovery.md) | P2 | утверждено |
+| 094 | [Команды личных данных с пересылкой](tasks/094-vk-personal-data-forwarding.md) · [Утверждённый план фичи](plans/094-vk-personal-data-forwarding.md) · [Черновик плана реализации](impl-plans/094-vk-personal-data-forwarding.md) | P2 | утверждено |
+| 095 | [Переход от справки к диагностике беседы](tasks/095-vk-diagnostics-discovery.md) · [Утверждённый план фичи](plans/095-vk-diagnostics-discovery.md) · [Черновик плана реализации](impl-plans/095-vk-diagnostics-discovery.md) | P3 | утверждено |
+| 096 | [Продолжение запроса после ошибки кода удаления](tasks/096-vk-deletion-confirmation-feedback.md) | P3 | черновик |
+| 097 | [Напоминания, пересказ до полудня и правка по подсказкам в VK](tasks/097-vk-reminders-recap-and-editors.md) | — | черновик |
 
 ## Веха 0. Процесс и документация
 
@@ -125,6 +138,12 @@ F1.6b выполнена по утверждённым задаче и план�
 ### Удобство команд VK
 
 Выполнено 2026-11-24. Заполненная анкета сразу доступна участникам беседы. Автор исправляет и удаляет её в той же беседе. Справка учитывает роль и канал, настройки дают обратную связь, пересказ распознаёт вопрос по имени. Команды личных данных проверяют указанную беседу, а сброс подключения требует подтверждения владельца. [Задача 080](tasks/completed/080-vk-command-usability.md) · [План фичи](plans/completed/080-vk-command-usability.md) · [План реализации и приёмка](impl-plans/completed/080-vk-command-usability.md#результаты-приёмки)
+
+Выполнено 2026-11-25. Период пересказа можно указать словами и цифрами в исходной просьбе или в ответе на уточнение. Администратор явно открывает правку вопросов и правил. Исправлены список напоминаний после отмены черновика и переход в личку команд профиля и удаления данных. Добавлены тематическая справка, команды после обращения по имени и подсказки настроек. [Задача 081](tasks/completed/081-vk-command-feedback.md) · [План фичи](plans/completed/081-vk-command-feedback.md) · [Реализация и приёмка](impl-plans/completed/081-vk-command-feedback.md#результаты-приёмки)
+
+Выполнено 2026-11-25. Исправлены сроки личных напоминаний и границы пересказа. В личке доступен выбор задания для отмены. Команды распознают выбранное упоминание VK, правка каждого раздела паспорта открывается явно. Справка учитывает режим и подсказывает темы при опечатке. [Задача 082](tasks/completed/082-vk-command-reliability.md) · [План фичи](plans/completed/082-vk-command-reliability.md) · [План реализации и приёмка](impl-plans/completed/082-vk-command-reliability.md#результаты-приёмки)
+
+Выполнено 2026-11-25. Напоминания учитывают числовую дату и составной срок. Для пересказа можно задать обе границы в часах или указать время окончания в ответе на вопрос бота. Справку можно открыть с первого сообщения и найти во вступлении. При закрытой личке участник может скопировать команду в личку и получить статус или файл по своей беседе. [Задача 083](tasks/completed/083-vk-command-timing-and-help.md) · [План фичи](plans/completed/083-vk-command-timing-and-help.md) · [План реализации и приёмка](impl-plans/completed/083-vk-command-timing-and-help.md#результаты-приёмки)
 
 ## Веха 5. Участники и профили
 

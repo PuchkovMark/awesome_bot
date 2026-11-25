@@ -7,6 +7,7 @@ import type { createAuthorizationService } from '../core/authorization/service';
 import type { createLifecycleService } from '../core/lifecycle/service';
 import { chatControlStore } from '../storage/chat-control-store';
 import type { Storage } from '../storage/index';
+import type { TrackPublication } from './control-publications';
 
 export function createHistoryHandlers(options: {
   readonly storage: Storage;
@@ -19,6 +20,7 @@ export function createHistoryHandlers(options: {
   readonly ownerId: UserId;
   readonly group: (chatId: ChatId) => boolean;
   readonly signal: AbortSignal;
+  readonly track: TrackPublication;
   readonly isRunning: () => boolean;
   readonly wakeMaintenance: () => void;
 }) {
@@ -45,8 +47,7 @@ export function createHistoryHandlers(options: {
     ) {
       const command = parseHistoryCommand(message.text, 'group');
       if (!command) return;
-      const isCurrent = () =>
-        options.isRunning() && current() && controls.read(context.scope).enabled;
+      const isCurrent = () => current() && controls.read(context.scope).enabled;
       const reply = await service.handle(
         context,
         message.chatId,
@@ -56,15 +57,17 @@ export function createHistoryHandlers(options: {
         replayOnly,
       );
       if (reply)
-        await channel.replyGroupControl(context.scope, reply, {
-          signal,
-          isCurrent,
-          async allow() {
-            return (
-              isCurrent() && (await authorization.check(context, 'chat.history.clear')).allowed
-            );
-          },
-        });
+        options.track(
+          channel.replyGroupControl(context.scope, reply, {
+            signal,
+            isCurrent,
+            async allow() {
+              return (
+                isCurrent() && (await authorization.check(context, 'chat.history.clear')).allowed
+              );
+            },
+          }),
+        );
     },
     privateCommand(message: VkIncoming, current: () => boolean) {
       if (isVkGroupChat(message.peerId)) return undefined;
@@ -105,11 +108,13 @@ export function createHistoryHandlers(options: {
           isCurrent,
         );
         if (reply)
-          await channel.replyPrivateControl(sender, reply, {
-            signal,
-            isCurrent,
-            allow: async () => isCurrent(),
-          });
+          options.track(
+            channel.replyPrivateControl(sender, reply, {
+              signal,
+              isCurrent,
+              allow: async () => isCurrent(),
+            }),
+          );
       })();
     },
   };

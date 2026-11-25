@@ -22,6 +22,8 @@ export interface IncomingMessage {
   readonly literalText?: NeutralText;
   readonly messageId: PlatformMessageId;
   readonly replyToMessageId?: PlatformMessageId;
+  /** Автор проверенного сообщения, на которое пришёл прямой ответ. */
+  readonly replyAuthorId?: UserId;
   /** Непроверенная ссылка позволяет отклонить действие, но не подтверждает ответ. */
   readonly unverifiedReplyToMessageId?: PlatformMessageId;
   readonly isReplyToBot: boolean;

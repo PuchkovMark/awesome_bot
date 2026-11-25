@@ -15,6 +15,7 @@ export function validIncoming(message: IncomingMessage): boolean {
     typeof message.text === 'string' &&
     (message.botReplyText === undefined || typeof message.botReplyText === 'string') &&
     (message.literalText === undefined || typeof message.literalText === 'string') &&
+    (message.replyAuthorId === undefined || typeof message.replyAuthorId === 'string') &&
     (message.unverifiedReplyToMessageId === undefined ||
       typeof message.unverifiedReplyToMessageId === 'string') &&
     typeof message.chatId === 'string' &&

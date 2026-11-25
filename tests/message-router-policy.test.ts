@@ -149,6 +149,28 @@ test.each([
   },
 );
 
+test.each([
+  'Пенёк, объясни фразу «что было вчера?»',
+  'Пенёк, что было вчера?',
+  'Пенёк, дай сводку за вчера. В чате это назвали «репетицией».',
+])('адресованный запрос «%s» проходит по имени', (text) => {
+  expect(
+    routeMessage({
+      message: { ...incoming, text },
+      settings: { enabled: true, responseMode: 'normal' },
+    }),
+  ).toMatchObject({ kind: 'ordinary', reason: 'name' });
+});
+
+test('части вопроса по обе стороны цитаты не образуют адресованный пересказ', () => {
+  expect(
+    routeMessage({
+      message: { ...incoming, text: 'Пенёк, что«цитата»было вчера?' },
+      settings: { enabled: true, responseMode: 'normal' },
+    }),
+  ).toEqual({ kind: 'silence', reason: 'not_addressed' });
+});
+
 for (const kind of [
   'incomplete',
   'refused',

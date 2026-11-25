@@ -127,6 +127,43 @@ test('обычная реплика, цитата, пересылка и неп�
   }
 });
 
+test('явная справка сохраняет открытую личную анкету, а слово «Начать» передаётся как ответ', async () => {
+  const app = await fixture({ profileNotice });
+  const send = (text: string) => app.submit(text, 41, undefined, 41);
+  try {
+    send('/анкета');
+    await until(() => expect(app.sends.at(-1)?.text).toContain('повторите /анкета'));
+    app.at(1000);
+    send('/анкета');
+    await until(() => expect(attempt(app, 41)?.state).toBe('active'));
+    const opened = attempt(app, 41);
+    send('/помощь');
+    await until(() => expect(app.sends.at(-1)?.text).toContain('Доступные команды'));
+    expect(attempt(app, 41)).toEqual(opened);
+    expect(app.complete).not.toHaveBeenCalled();
+    app.at(2000);
+    app.complete.mockImplementation(async (request) => {
+      const data = JSON.parse(request.messages[0]!.text!);
+      expect(data.answer).toBe('Начать');
+      expect(data.questions).toHaveLength(3);
+      return {
+        kind: 'complete',
+        text: '{"1":"Начать","2":null,"3":null}',
+        usage: { input: 20, output: 10 },
+      };
+    });
+    await app.published(send('Начать'));
+    expect(attempt(app, 41)).toMatchObject({
+      attempt: opened!.attempt,
+      state: 'completed',
+      answers: '{"1":"Начать"}',
+    });
+    expect(app.complete).toHaveBeenCalledOnce();
+  } finally {
+    await app.close();
+  }
+});
+
 test('тёзки заполняют свои анкеты, а команды и ответы разделены между двумя беседами и личкой', async () => {
   const app = await fixture({ profileNotice, active: true, greetings: { members: [41, 42, 73] } });
   const model = Promise.withResolvers<void>();

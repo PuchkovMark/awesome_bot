@@ -6,6 +6,7 @@ import { starterPersonas, type PersonaCard } from '../core/personas/catalog';
 import { starterPersonaCard } from '../core/personas/card';
 import { chatControlStore } from '../storage/chat-control-store';
 import type { Storage } from '../storage/index';
+import type { TrackPublication } from './control-publications';
 
 type Request =
   | { readonly kind: 'view'; readonly unknownName: boolean }
@@ -53,6 +54,7 @@ export function createPersonaCommands(options: {
     'replyGroupControl' | 'replyPrivateControl'
   >;
   readonly signal: AbortSignal;
+  readonly track: TrackPublication;
 }) {
   const { storage, authorization, channel, signal } = options;
   const controls = chatControlStore(storage);
@@ -68,7 +70,7 @@ export function createPersonaCommands(options: {
       const command = service(request, message.isGroupChat);
       const subject = command.action === 'persona.self.select' ? context.userId : undefined;
       const isCurrent = () => {
-        if (signal.aborted || !current()) return false;
+        if (!current()) return false;
         try {
           const state = controls.read(context.scope);
           return state.enabled && (message.isGroupChat || state.mode !== 'silent');
@@ -99,7 +101,7 @@ export function createPersonaCommands(options: {
         const result = await authorization.selectPersona(
           context,
           request.card.id,
-          sequence,
+          { sourceChatId: message.chatId, messageId: sequence, timestamp: message.timestamp },
           isCurrent,
         );
         if (!result.allowed || result.value.status !== 'selected') return;
@@ -120,8 +122,11 @@ export function createPersonaCommands(options: {
       }
       if (!isCurrent()) return;
       const guard = { signal, isCurrent, allow };
-      if (message.isGroupChat) await channel.replyGroupControl(context.scope, text, guard);
-      else await channel.replyPrivateControl(context.userId, text, guard);
+      options.track(
+        message.isGroupChat
+          ? channel.replyGroupControl(context.scope, text, guard)
+          : channel.replyPrivateControl(context.userId, text, guard),
+      );
     },
   };
 }

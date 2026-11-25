@@ -11,6 +11,9 @@ export const reminderGraceMs = 15 * 60_000;
 export const reminderStatusMs = 7 * 86_400_000;
 const leaseMs = 90_000;
 const retryMs = 15_000;
+const startedDelivery = `SELECT state FROM personal_reminder_parts
+  WHERE reminder_id=r.id AND stage='delivery' AND state!='ready'
+  ORDER BY state='unknown' DESC,part LIMIT 1`;
 
 export type ReminderStage = 'confirmation' | 'delivery';
 type ReminderState = 'draft' | 'pending' | 'delivered' | 'cancelled' | 'missed' | 'unknown';
@@ -21,6 +24,7 @@ export interface ReminderDraft {
   readonly explicitTimezone?: string | undefined;
   readonly choices?: readonly [number, number] | undefined;
   readonly chosenAt?: number | undefined;
+  readonly timeExample?: string | undefined;
 }
 
 export type ReminderFields =
@@ -330,7 +334,7 @@ export function createReminderStore(connection: Connection, lifecycle: Lifecycle
         )?.timezone;
       });
     },
-    list(recipient: Recipient, now: number) {
+    list(recipient: Recipient, now: number, filter?: 'cancellable') {
       return transaction((db) => {
         assertRecipient(db, recipient);
         maintain(db, now);
@@ -341,7 +345,9 @@ export function createReminderStore(connection: Connection, lifecycle: Lifecycle
               SELECT 1 FROM personal_reminder_parts p WHERE p.reminder_id=r.id
               AND p.stage='delivery' AND p.state='unknown'
             ) AS delivery_unknown FROM personal_reminders r
-            WHERE r.chat_id=? AND r.generation=? ORDER BY coalesce(r.due_at,r.origin_at),r.id`,
+            WHERE r.chat_id=? AND r.generation=?
+            ${filter === 'cancellable' ? `AND r.state IN ('draft','pending') AND (${startedDelivery}) IS NULL` : ''}
+            ORDER BY coalesce(r.due_at,r.origin_at),r.id`,
             )
             .all(recipient.scope.chatId, recipient.scope.generation) as ReminderRecord[]
         ).map(view);
@@ -351,20 +357,17 @@ export function createReminderStore(connection: Connection, lifecycle: Lifecycle
       return transaction((db) => {
         assertRecipient(db, recipient);
         maintain(db, now);
-        const row = record(db, id);
-        if (
-          row?.chat_id !== recipient.scope.chatId ||
-          row.generation !== recipient.scope.generation
-        )
-          return 'missing' as const;
-        if (row.state !== 'pending' && row.state !== 'draft') return row.state;
-        const sent = db
+        const row = db
           .prepare(
-            `SELECT state FROM personal_reminder_parts WHERE reminder_id=? AND stage='delivery'
-          AND state!='ready' ORDER BY state='unknown' DESC,part LIMIT 1`,
+            `SELECT r.state, (${startedDelivery}) AS started FROM personal_reminders r
+          WHERE r.id=? AND r.chat_id=? AND r.generation=?`,
           )
-          .get(id) as { state: string } | undefined;
-        if (sent) return sent.state === 'unknown' ? ('unknown' as const) : ('sending' as const);
+          .get(id, recipient.scope.chatId, recipient.scope.generation) as
+          { state: ReminderState; started: Part['state'] | null } | undefined;
+        if (!row) return 'missing' as const;
+        if (row.state !== 'pending' && row.state !== 'draft') return row.state;
+        if (row.started)
+          return row.started === 'unknown' ? ('unknown' as const) : ('sending' as const);
         finish(db, id, 'cancelled', now);
         return 'cancelled' as const;
       });

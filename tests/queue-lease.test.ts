@@ -4,6 +4,7 @@ import { queueBackend } from '../src/storage/queue-registry';
 import { createChatQueue, createLifecycleService } from '../src/core/index';
 import { queueMessage } from './helpers/chat-queue';
 import { storageFixture } from './helpers/storage-fixture';
+import { scopeFor } from './helpers/connection-scope';
 test('отдельные соединения: второй владелец, продление, истечение, старый маркер', async () => {
   const f = storageFixture();
   const a = await openStorage(f.path),
@@ -124,5 +125,51 @@ test('истечение внутри транзакции откатывает 
   } finally {
     vi.useRealTimers();
     await storage.close();
+  }
+});
+
+test('поздняя запись принятого входа отклоняется после потери владения', async () => {
+  const f = storageFixture();
+  const storage = await openStorage(f.path),
+    other = await openStorage(f.path);
+  const scope = scopeFor(storage, 'vk:a');
+  const drain = new AbortController();
+  vi.useFakeTimers();
+  vi.setSystemTime(1000);
+  const q = createChatQueue({
+    storage,
+    tracing: { messageRetentionDays: 30 },
+    handler: async () => 'completed',
+  });
+  const next = queueBackend(other);
+  try {
+    await storage.chats.create(scope, { enabled: true, responseMode: 'normal', createdAt: 0 });
+    await q.start();
+    const old = q.registerInput(scope.chatId, scope, () => true)!;
+    const stopping = q.stop(drain.signal);
+    void stopping.catch(() => {});
+    vi.setSystemTime(40_000);
+    next.acquire('new-owner', 20_000, 100);
+    expect(old.isCurrent()).toBe(false);
+    await expect(
+      q.admitRouted(
+        scope,
+        queueMessage(scope.chatId, 'late'),
+        () => ({ route: null, reason: 'not_addressed' }),
+        undefined,
+        undefined,
+        old,
+      ),
+    ).rejects.toMatchObject({ code: 'lost_ownership' });
+    await expect(stopping).rejects.toMatchObject({ code: 'lost_ownership' });
+    expect(await storage.messages.list(scope, { limit: 5 })).toEqual([]);
+    next.release('new-owner');
+  } finally {
+    drain.abort();
+    await q.stop().catch(() => {});
+    vi.useRealTimers();
+    await storage.close();
+    await other.close();
+    f.cleanup();
   }
 });

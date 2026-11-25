@@ -92,7 +92,7 @@ async function setup() {
     ) {
       return auth.applyPassportReply(
         auth.context({ scope, userId: actor }),
-        { receipt: String(receipt), eventId: event, text },
+        { receipt: String(receipt), eventId: event, eventAt: now, text },
         () => true,
       );
     },

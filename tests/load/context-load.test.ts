@@ -87,7 +87,11 @@ test('50000 записей: индекс, ограниченные SQL-прое�
     installStarterPersonas(s, 0);
     expect(
       await s.authorization.transaction(scope, (tx) =>
-        tx.selectStarterPersona('vk:u', 'chipsik', 1),
+        tx.selectStarterPersona('vk:u', 'chipsik', {
+          sourceChatId: scope.chatId,
+          messageId: 1,
+          timestamp: 0,
+        }),
       ),
     ).toEqual({ status: 'selected' });
     const admin = catalogAdministration(s);

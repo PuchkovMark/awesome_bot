@@ -9,11 +9,15 @@ export type ChatControlCommand =
         | 'settings'
         | 'modeHelp'
         | 'quietHelp'
+        | 'greetingHelp'
+        | 'invitationHelp'
+        | 'extendHelp'
         | 'on'
         | 'off'
         | 'pause'
         | 'disableAutonomous'
-        | 'questionnaire';
+        | 'questionnaire'
+        | 'questionnaireEdit';
     }
   | { readonly kind: 'mode'; readonly mode: ResponseMode }
   | { readonly kind: 'greeting' | 'invitation'; readonly enabled: boolean }
@@ -25,14 +29,18 @@ export type ChatControlRequest = {
 };
 
 export function chatControlAction(command: ChatControlCommand): ServiceCommand {
-  if (command.kind === 'questionnaire')
+  if (command.kind === 'questionnaire' || command.kind === 'questionnaireEdit')
     return {
       action: 'chat.onboarding.configure',
       minimumRole: 'admin',
       journalLabel: 'Команда вопросов анкеты',
     };
   if (command.kind === 'pause') return { action: 'chat.pause', minimumRole: 'member' };
-  if (command.kind === 'extend' || command.kind === 'disableAutonomous')
+  if (
+    command.kind === 'extend' ||
+    command.kind === 'extendHelp' ||
+    command.kind === 'disableAutonomous'
+  )
     return { action: 'chat.pause.extend', minimumRole: 'admin' };
   return { action: 'chat.configure', minimumRole: command.kind === 'on' ? 'owner' : 'admin' };
 }
@@ -85,7 +93,14 @@ export function parseChatControl(
   if (!name || (name === 'помолчи' && (location === 'private' || args.length))) return undefined;
   if (name === '/вопросы')
     return {
-      command: location === 'group' && !args.length ? { kind: 'questionnaire' } : 'invalid',
+      command:
+        location !== 'group'
+          ? 'invalid'
+          : !args.length
+            ? { kind: 'questionnaire' }
+            : args.length === 1 && args[0] === 'изменить'
+              ? { kind: 'questionnaireEdit' }
+              : 'invalid',
     };
   const kind = simple.get(name);
   if (
@@ -107,12 +122,17 @@ export function parseChatControl(
       kind: name === '/приветствие' ? 'greeting' : 'invitation',
       enabled: args[0] === 'вкл',
     };
+  else if (name === '/приветствие' || name === '/приглашение')
+    command = { kind: name === '/приветствие' ? 'greetingHelp' : 'invitationHelp' };
   else if (name === '/режим') {
     const mode = args.length === 1 ? modes.get(args[0]!) : undefined;
     command = mode ? { kind: 'mode', mode } : { kind: 'modeHelp' };
-  } else if (name === '/продлить-паузу' && args.length === 1 && /^[1-9]\d*$/u.test(args[0]!)) {
+  } else if (name === '/продлить-паузу') {
     const minutes = Number(args[0]);
-    if (Number.isSafeInteger(minutes)) command = { kind: 'extend', minutes };
+    command =
+      args.length === 1 && /^[1-9]\d*$/u.test(args[0]!) && Number.isSafeInteger(minutes)
+        ? { kind: 'extend', minutes }
+        : { kind: 'extendHelp' };
   } else if (
     kind &&
     kind !== 'mode' &&

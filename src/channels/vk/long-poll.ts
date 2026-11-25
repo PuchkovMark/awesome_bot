@@ -1,6 +1,7 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { VkApiError, vkCursor } from './api';
 import type { VkApi } from './api';
+import { waitForVkRead } from './rate-limit';
 import { vkRecord } from './normalize';
 
 const waitSeconds = 25;
@@ -88,7 +89,7 @@ export function createVkLongPoll(options: {
       while (!signal.aborted) {
         if (!session) {
           try {
-            const server = await options.api.getLongPollServer(signal);
+            const server = await waitForVkRead(options.api.getLongPollServer(signal), signal);
             session = { url: serverUrl(server.server), key: server.key, cursor: server.ts };
           } catch (error) {
             if (signal.aborted) return;
@@ -134,7 +135,6 @@ export function createVkLongPoll(options: {
 
         const next = vkCursor(page?.ts);
         if (page?.failed === undefined && next !== undefined && Array.isArray(page?.updates)) {
-          session.cursor = next;
           backoff = 250;
           lastGap = undefined;
           if (!ready) {
@@ -143,6 +143,7 @@ export function createVkLongPoll(options: {
           }
           if (signal.aborted) return;
           listener.onUpdates(page.updates);
+          session.cursor = next;
           continue;
         }
         if (page?.failed === 1 && next !== undefined && next !== session.cursor) {

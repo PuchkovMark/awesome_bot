@@ -8,7 +8,7 @@ import type {
   PassportRevision,
   PassportSection,
 } from '../../contracts/chat-passport';
-import { ownNameText } from '../message-router/name-address';
+import { unquotedText } from '../author-text';
 
 const signs = [
   [
@@ -35,7 +35,7 @@ const signs = [
 
 export function passportCandidates(text: string): readonly PassportSection[] {
   const words =
-    ownNameText(text)
+    unquotedText(text)
       .match(/[\p{L}\p{N}]+/gu)
       ?.join(' ') ?? '';
   return signs.filter(([, match]) => match.test(words)).map(([section]) => section);

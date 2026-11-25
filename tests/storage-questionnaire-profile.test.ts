@@ -61,7 +61,12 @@ test('позиции одинаковых вопросов, источник и 
       text: 'Редактор',
     });
     expect(
-      templates.replace(scope, twin, { receipt: '201', eventId: 202, text: 'Новый вопрос?' }, 126),
+      templates.replace(
+        scope,
+        twin,
+        { receipt: '201', eventId: 202, eventAt: 126, text: 'Новый вопрос?\nВторой вопрос?' },
+        126,
+      ),
     ).toMatchObject({ status: 'applied' });
     expect(store.finish(scope, id, 130, answers, () => true)).toBe(true);
     expect(store.finish(scope, id, 131, answers, () => true)).toBe(false);
@@ -141,7 +146,10 @@ test('обновление переносит только проверяемы�
     const life = lifecycleBackend(f.storage);
     // Восстанавливаем схему предыдущей версии и заполняем данные, существовавшие до переноса.
     life.transaction(scope, (db) => {
-      db.exec(`DROP TABLE chat_metrics_publications;
+      db.exec(`DROP TRIGGER personal_dispute_keep;
+        DROP TABLE personal_dispute_reports;
+        DROP TABLE personal_dispute_cases;
+        DROP TABLE chat_metrics_publications;
         DROP TABLE chat_metrics_attempts;
         DROP TABLE chat_metrics_job_events;
         DROP TABLE chat_metrics_buckets;
@@ -149,6 +157,13 @@ test('обновление переносит только проверяемы�
         DROP TABLE llm_recovery;
         DROP TABLE questionnaire_presentations;
         DROP TABLE questionnaire_answer_facts;
+        ALTER TABLE queue_jobs DROP COLUMN recap_prompt_id;
+        DROP TRIGGER recap_hide_source;
+        DROP TABLE recap_clarifications;
+        DROP TRIGGER close_questionnaire_proposal;
+        ALTER TABLE questionnaire_editor_prompts DROP COLUMN proposal_source_id;
+        ALTER TABLE questionnaire_editor_prompts DROP COLUMN editor_message_id;
+        ALTER TABLE questionnaire_editor_prompts DROP COLUMN proposal;
         DROP TRIGGER close_paused_resets;
         DROP TABLE paused_reset_requests;
         DROP TABLE questionnaire_removals;

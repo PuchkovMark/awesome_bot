@@ -22,6 +22,7 @@ import type { AppConfig } from '../../config/types';
 import type { AuthorizationTransaction, RevocationAudit } from '../../storage/index';
 import type { ProfileFactInput, ProfileFactWriteResult } from '../../storage/participant-types';
 import type { RecoveryOperation } from '../../storage/admin-recovery-store';
+import type { ControlMessageEvent } from '../../storage/chat-control-store';
 import { chatControlAction, type ChatControlCommand } from '../chat-control/commands';
 import { applyChatControl, type ChatControlResult } from '../chat-control/service';
 import { createContextAuthority } from './context';
@@ -37,6 +38,40 @@ export interface AuthorizationOptions {
   readonly scheduler?: AuthorizationScheduler;
   readonly now?: () => number;
 }
+
+export type AdminCommand =
+  | { readonly kind: 'grant'; readonly userId: UserId; readonly membership: unknown }
+  | { readonly kind: 'revoke'; readonly userId: UserId; readonly reason: unknown }
+  | { readonly kind: 'remove' | 'restore'; readonly userId: UserId };
+
+type AdminChangeStatus =
+  'granted' | 'existing' | 'removed' | 'not_assigned' | 'revoked' | 'restored' | 'not_revoked';
+
+export interface AdminCommandResult {
+  readonly status: AdminChangeStatus | 'duplicate';
+  readonly revision: number;
+}
+
+type PreparedChange<T extends AdminChangeStatus = AdminChangeStatus> = AuthorizationResult<{
+  readonly status: T;
+  readonly write?: () => void;
+}>;
+
+function adminChange<T extends AdminChangeStatus>(
+  status: T,
+  write?: () => void,
+): PreparedChange<T> {
+  return { allowed: true, value: { status, ...(write ? { write } : {}) } };
+}
+
+function applyAdminChange<T extends AdminChangeStatus>(
+  change: PreparedChange<T>,
+): AuthorizationResult<T> {
+  if (!change.allowed) return change;
+  change.value.write?.();
+  return { allowed: true, value: change.value.status };
+}
+
 export const deny = (
   code: AuthorizationDenial,
 ): { readonly allowed: false; readonly code: AuthorizationDenial } => ({ allowed: false, code });
@@ -100,6 +135,85 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
   }
   const maintenance = createReasonMaintenance(options.store, retentionMs, now, options.scheduler);
   await maintenance.run();
+
+  async function maintainAudit(
+    context: AuthorizationContext,
+    action: 'admin.revoke' | 'admin.audit.read',
+    userId: UserId,
+  ) {
+    const decision = await guarded(context, action, userId, () => ({
+      allowed: true,
+      value: undefined,
+    }));
+    if (decision.allowed) await maintenance.run();
+    return decision;
+  }
+
+  function prepareGrant(
+    tx: AuthorizationTransaction,
+    context: AuthorizationContext,
+    userId: UserId,
+    membership: unknown,
+  ): PreparedChange<'granted' | 'existing'> {
+    if (tx.isRevoked(userId)) return deny('revoked');
+    if (!authority.hasMembership(membership, context.scope, userId, tx.revision()))
+      return deny('unconfirmed_member');
+    if (tx.bases(userId).includes('explicit')) return adminChange('existing');
+    return adminChange('granted', () =>
+      tx.grant({ userId, basis: 'explicit', grantedAt: now(), grantedBy: context.userId }),
+    );
+  }
+
+  function prepareRevoke(
+    tx: AuthorizationTransaction,
+    context: AuthorizationContext,
+    userId: UserId,
+    reason: unknown,
+    at: number,
+  ): PreparedChange<'revoked' | 'existing'> {
+    if (typeof reason !== 'string' || !reason.trim()) return deny('invalid_reason');
+    let length = 0;
+    for (const character of reason) {
+      void character;
+      if (++length > config.reasonMaxLength)
+        return { allowed: false, code: 'reason_too_long', maxLength: config.reasonMaxLength };
+    }
+    if (tx.isRevoked(userId)) return adminChange('existing');
+    const bases = tx.bases(userId);
+    if (!bases.some((basis) => basis !== 'explicit')) return deny('conflict');
+    return adminChange('revoked', () =>
+      tx.revoke({ userId, revokedBy: context.userId, revokedAt: at, bases, reason }),
+    );
+  }
+
+  function prepareRemove(tx: AuthorizationTransaction, userId: UserId) {
+    const bases = tx.bases(userId);
+    if (bases.some((basis) => basis !== 'explicit')) return deny('protected');
+    return bases.length
+      ? adminChange('removed', () => tx.remove(userId, false))
+      : adminChange('not_assigned');
+  }
+
+  function prepareAdminChange(
+    tx: AuthorizationTransaction,
+    context: AuthorizationContext,
+    command: AdminCommand,
+    at: number,
+  ): PreparedChange {
+    switch (command.kind) {
+      case 'grant':
+        return prepareGrant(tx, context, command.userId, command.membership);
+      case 'remove':
+        return prepareRemove(tx, command.userId);
+      case 'revoke':
+        return prepareRevoke(tx, context, command.userId, command.reason, at);
+      case 'restore':
+        return tx.isRevoked(command.userId)
+          ? adminChange('restored', () => tx.restore(command.userId))
+          : adminChange('not_revoked');
+    }
+  }
+
   return Object.freeze({
     dispose() {
       disposed = true;
@@ -163,11 +277,12 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
     async selectPersona(
       context: AuthorizationContext,
       personaId: string,
-      messageId: number,
+      event: ControlMessageEvent,
       current: () => boolean,
     ) {
       if (disposed || !authority.contains(context)) return deny('invalid_context');
-      if (context.kind !== 'chat') return deny('wrong_scope');
+      if (context.kind !== 'chat' || event.sourceChatId !== context.chatId)
+        return deny('wrong_scope');
       const direct = context.chatId === context.userId;
       return guarded<ReturnType<ScopedAuthorizationTransaction['selectStarterPersona']>>(
         context,
@@ -179,7 +294,7 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
           if (!current()) return deny('conflict');
           return {
             allowed: true,
-            value: tx.selectStarterPersona(context.userId, personaId, messageId),
+            value: tx.selectStarterPersona(context.userId, personaId, event),
           };
         },
       );
@@ -238,7 +353,7 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
       context: AuthorizationContext,
       command: ChatControlCommand,
       isCurrent: () => boolean,
-      messageId?: number,
+      event?: ControlMessageEvent,
     ): Promise<AuthorizationResult<ChatControlResult>> {
       return guarded<ChatControlResult>(
         context,
@@ -246,13 +361,15 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
         undefined,
         (tx) => {
           if (!isCurrent()) return deny('conflict');
+          const sourceChatId = context.kind === 'owner' ? context.userId : context.chatId;
+          if (event && event.sourceChatId !== sourceChatId) return deny('wrong_scope');
           const state = tx.controlState();
           if ((!state.enabled || command.kind === 'on') && context.kind !== 'owner')
             return deny('disabled');
           if (
             command.kind !== 'settings' &&
-            messageId !== undefined &&
-            !tx.claimControlMessage(context.userId, messageId)
+            event &&
+            !tx.claimControlMessage(context.userId, event)
           ) {
             return { allowed: true, value: { status: 'duplicate', state } };
           }
@@ -262,7 +379,7 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
               tx,
               command,
               now(),
-              context.kind === 'chat' ? messageId : undefined,
+              context.kind === 'chat' ? event?.messageId : undefined,
             ),
           };
         },
@@ -345,14 +462,40 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
       userId: UserId,
       membership: unknown,
     ): Promise<AuthorizationResult<'granted' | 'existing'>> {
-      return guarded(context, 'admin.grant', userId, (tx) => {
-        if (tx.isRevoked(userId)) return deny('revoked');
-        if (!authority.hasMembership(membership, context.scope, userId, tx.revision()))
-          return deny('unconfirmed_member');
-        const existing = tx.bases(userId).includes('explicit');
-        tx.grant({ userId, basis: 'explicit', grantedAt: now(), grantedBy: context.userId });
-        return { allowed: true, value: existing ? 'existing' : 'granted' };
-      });
+      return guarded(context, 'admin.grant', userId, (tx) =>
+        applyAdminChange(prepareGrant(tx, context, userId, membership)),
+      );
+    },
+    async executeAdminCommand(
+      context: AuthorizationContext,
+      command: AdminCommand,
+      event: ControlMessageEvent,
+      isCurrent: () => boolean,
+    ): Promise<AuthorizationResult<AdminCommandResult>> {
+      if (command.kind === 'revoke') {
+        const decision = await maintainAudit(context, 'admin.revoke', command.userId);
+        if (!decision.allowed) return decision;
+      }
+      const at = now();
+      const result = await guarded<AdminCommandResult>(
+        context,
+        `admin.${command.kind}`,
+        command.userId,
+        (tx) => {
+          if (!isCurrent()) return deny('conflict');
+          const source = context.kind === 'owner' ? context.userId : context.chatId;
+          if (event.sourceChatId !== source) return deny('wrong_scope');
+          if (context.kind === 'chat' && !tx.controlState().enabled) return deny('disabled');
+          const change = prepareAdminChange(tx, context, command, at);
+          if (!change.allowed) return change;
+          if (!tx.claimControlMessage(context.userId, event))
+            return { allowed: true, value: { status: 'duplicate', revision: tx.revision() } };
+          change.value.write?.();
+          return { allowed: true, value: { status: change.value.status, revision: tx.revision() } };
+        },
+      );
+      if (result.allowed && result.value.status === 'revoked') maintenance.notify(at);
+      return result;
     },
     async recoverAdmin(
       context: AuthorizationContext,
@@ -402,31 +545,11 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
       userId: UserId,
       reason: unknown,
     ): Promise<AuthorizationResult<'revoked' | 'existing'>> {
-      const preliminary = await guarded(context, 'admin.revoke', userId, () => ({
-        allowed: true,
-        value: undefined,
-      }));
+      const preliminary = await maintainAudit(context, 'admin.revoke', userId);
       if (!preliminary.allowed) return preliminary;
-      await maintenance.run();
       const time = now();
-      const result = await guarded<'revoked' | 'existing'>(
-        context,
-        'admin.revoke',
-        userId,
-        (tx) => {
-          if (typeof reason !== 'string' || !reason.trim()) return deny('invalid_reason');
-          let length = 0;
-          for (const character of reason) {
-            void character;
-            if (++length > config.reasonMaxLength)
-              return { allowed: false, code: 'reason_too_long', maxLength: config.reasonMaxLength };
-          }
-          if (tx.isRevoked(userId)) return { allowed: true, value: 'existing' };
-          const bases = tx.bases(userId);
-          if (!bases.some((basis) => basis !== 'explicit')) return deny('conflict');
-          tx.revoke({ userId, revokedBy: context.userId, revokedAt: time, bases, reason });
-          return { allowed: true, value: 'revoked' };
-        },
+      const result = await guarded(context, 'admin.revoke', userId, (tx) =>
+        applyAdminChange(prepareRevoke(tx, context, userId, reason, time)),
       );
       if (result.allowed && result.value === 'revoked') maintenance.notify(time);
       return result;
@@ -444,12 +567,8 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
       context: AuthorizationContext,
       userId: UserId,
     ): Promise<AuthorizationResult<RevocationAudit | null>> {
-      const preliminary = await guarded(context, 'admin.audit.read', userId, () => ({
-        allowed: true,
-        value: undefined,
-      }));
+      const preliminary = await maintainAudit(context, 'admin.audit.read', userId);
       if (!preliminary.allowed) return preliminary;
-      await maintenance.run();
       return guarded(context, 'admin.audit.read', userId, (tx) => {
         const audit = tx.audit(userId);
         return {
@@ -464,8 +583,8 @@ export async function createAuthorizationService(options: AuthorizationOptions) 
       userId: UserId,
     ): Promise<AuthorizationResult<'removed'>> {
       return guarded(context, 'admin.remove', userId, (tx) => {
-        if (tx.bases(userId).some((basis) => basis !== 'explicit')) return deny('protected');
-        tx.remove(userId, false);
+        const result = applyAdminChange(prepareRemove(tx, userId));
+        if (!result.allowed) return result;
         return { allowed: true, value: 'removed' };
       });
     },

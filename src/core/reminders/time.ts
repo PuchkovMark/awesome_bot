@@ -3,14 +3,33 @@ import { canonicalTimezone } from '../chat-onboarding/timezone';
 const minute = 60_000;
 const day = 24 * 60 * minute;
 const maxDate = 8_640_000_000_000_000;
-const intervalUnits = /^(?:минут[ауые]?|час(?:а|ов)?|(?:день|дня|дней))$/u;
-const interval =
-  /(?<![\p{L}\p{N}])через\s+(\d+)\s+(минут[ауые]?|час(?:а|ов)?|день|дня|дней)(?![\p{L}\p{N}])/giu;
+const amount = /(\d+)\s+(мин(?:ут[ауые]?|\.)?|час(?:а|ов)?|день|дня|дней)(?![\p{L}\p{N}_])/giu;
+const impreciseAmount =
+  /(?:полчаса|полтора(?:\s+часа)?|с\s+половиной|ещ[её]\s+немного|(?:ещ[её]\s+)?(?:несколько|пару)\s+(?:минут|часов|дней)|час|день|минуту|\d+\s*(?:ч\.|мин\.)|(?:\d+\s+)?(?:секунд[ауые]?|недел[юяиеь]?|месяц(?:а|ев)?|года?|лет))(?![\p{L}\p{N}])/iu;
+const amountWithoutUnit = /\d+(?![\p{L}\p{N}_]|[.,:]\d)/u;
+function components(first: string, subsequent = first) {
+  return first + '(?:(?:\\s*,\\s*|\\s+)(?:и\\s+)?(?:ещ[её]\\s+)?' + subsequent + ')*';
+}
+const exactDuration = new RegExp('^' + components(amount.source) + '$', 'iu');
+const durationComponent = '(?:' + amount.source + '|' + impreciseAmount.source + ')';
+// Число без единицы относится к сроку внутри уже распознанной длительности или её альтернативы.
+const subsequentComponent = '(?:' + durationComponent + '|' + amountWithoutUnit.source + ')';
+const duration = components(durationComponent, subsequentComponent);
+const alternativeDuration = components(subsequentComponent);
+const interval = new RegExp(
+  '(?<![\\p{L}\\p{N}])через\\s+' +
+    duration +
+    '(?:\\s+или\\s+(?:через\\s+)?' +
+    alternativeDuration +
+    ')*',
+  'giu',
+);
 const clock =
-  /(?<![\p{L}\p{N}:.])(?:(сегодня|завтра|послезавтра|\d{1,2}\.\d{1,2}(?:\.\d{4})?)\s+(?:в\s+)?|в\s+)(\d{1,2}):(\d{2})(?![\p{L}\p{N}:])/giu;
+  /(?<![\p{L}\p{N}:.])(?:(сегодня|завтра|послезавтра|\d{1,2}\.\d{1,2}(?:\.\d{4})?)\s+(?:в\s+)?|(?:в|или)\s+)(\d{1,2}):(\d{2})(?![\p{L}\p{N}:])/giu;
 const relativeDay = /^(?:сегодня|завтра|послезавтра)$/u;
 const vague =
-  /(?<!\p{L})(сегодня|завтра|послезавтра)(?:\s+(?:утром|дн[её]м|вечером|ночью))?|(?<!\p{L})(?:утром|дн[её]м|вечером|ночью)(?!\p{L})/giu;
+  /(?<!\p{L})(?:(сегодня|завтра|послезавтра)(?:\s+(?:утром|дн[её]м|вечером|ночью))?|утром|дн[её]м|вечером|ночью)(?!\p{L})/giu;
+const numericDate = /(?<![\p{L}\p{N}_./:])(\d{1,2}\.\d{1,2}(?:\.\d{4})?)(?![\p{L}\p{N}_/:]|\.\d)/gu;
 const zoneToken =
   /(?:по\s+Москве|(?<![\p{L}\p{N}_])(?:UTC|[A-Za-z][A-Za-z_+-]*(?:\/[A-Za-z0-9_+.-]+)+))(?![\p{L}\p{N}_/])/giu;
 
@@ -118,37 +137,75 @@ export function resolveReminderTime(input: ReminderTimeInput): ReminderTime {
 
 export function extractReminderTime(text: string) {
   const relatives = [...text.matchAll(interval)];
-  const absolute = [...text.matchAll(clock)];
+  // Номер версии принадлежит поручению. Пробелы сохраняют индексы диапазонов в исходном тексте.
+  const calendarText = text.replace(/(?<!\p{L})верси(?:я|ю|и|ей)\s+\d+(?:\.\d+)+/giu, (version) =>
+    ' '.repeat(version.length),
+  );
+  const absolute = [...calendarText.matchAll(clock)];
   const zones = [...text.matchAll(zoneToken)];
-  const relative = relatives.length === 1 && absolute.length === 0 ? relatives[0] : undefined;
-  const local = absolute.length === 1 && relatives.length === 0 ? absolute[0] : undefined;
-  const vagueTime =
-    relatives.length + absolute.length === 0 ? [...text.matchAll(vague)][0] : undefined;
+  const separateDays = [...text.matchAll(vague), ...calendarText.matchAll(numericDate)].filter(
+    (part) => !absolute.some((local) => local.index === part.index),
+  );
+  const relativeChoices = relatives.flatMap((part) =>
+    part[0]
+      .toLowerCase()
+      .split(/\s+или\s+/u)
+      .map((choice) => choice.replace(/^через\s+/u, '')),
+  );
+  const days = [...absolute, ...separateDays].flatMap((part) =>
+    part[1] ? [part[1].toLowerCase()] : [],
+  );
+  const date = days.length === 1 ? days[0] : undefined;
+  const possibleTimes = relativeChoices.length + absolute.length;
+  const preciseChoices = relativeChoices.filter((choice) => exactDuration.test(choice));
+  const parts = [...relatives, ...absolute, ...separateDays, ...zones].sort(
+    (a, b) => a.index - b.index,
+  );
+  const kept: string[] = [];
+  let end = 0;
+  let alternatives = false;
+  for (const part of parts) {
+    const gap = text.slice(end, part.index);
+    if (end && /^\s*или\s*$/iu.test(gap)) alternatives = true;
+    else if (!end || !/^\s*и\s*$/iu.test(gap)) kept.push(gap);
+    end = part.index + part[0].length;
+  }
+  kept.push(text.slice(end));
+  const ambiguous =
+    alternatives ||
+    possibleTimes > 1 ||
+    days.length > 1 ||
+    preciseChoices.length < relativeChoices.length ||
+    (relatives.length > 0 && separateDays.length > 0);
   let schedule: ReminderSchedule | undefined;
-  if (relative && intervalUnits.test(relative[2]!.toLowerCase())) {
-    const unit = relative[2]!.toLowerCase();
-    schedule = {
-      kind: 'relative',
-      minutes:
-        Number(relative[1]) * (unit.startsWith('минут') ? 1 : unit.startsWith('час') ? 60 : 1440),
-    };
-  } else if (local) {
+  if (!ambiguous && relativeChoices.length === 1) {
+    let minutes = 0;
+    for (const part of relativeChoices[0]!.matchAll(amount)) {
+      const unit = part[2]!;
+      minutes +=
+        Number(part[1]) * (unit.startsWith('мин') ? 1 : unit.startsWith('час') ? 60 : 1440);
+    }
+    schedule = { kind: 'relative', minutes };
+  } else if (!ambiguous && absolute.length === 1) {
+    const local = absolute[0]!;
     schedule = {
       kind: 'local',
-      date: local[1]?.toLowerCase() ?? 'сегодня',
+      date: date ?? 'сегодня',
       hour: Number(local[2]),
       minute: Number(local[3]),
     };
   }
-  const parts = [relative ?? local ?? vagueTime, ...zones]
-    .filter((match) => match !== undefined)
-    .sort((a, b) => b.index! - a.index!);
-  let content = text;
-  for (const part of parts)
-    content = content.slice(0, part.index) + ' ' + content.slice(part.index! + part[0].length);
+  let timeExample: string | undefined;
+  if (relativeChoices.length > 1 && preciseChoices.length)
+    timeExample = 'через ' + preciseChoices.at(-1);
+  else if (relativeChoices.length === 1 && !preciseChoices.length)
+    timeExample = 'через 1 час 30 минут';
+  const content = kept.join(' ');
   return {
     schedule,
-    date: (local?.[1] ?? vagueTime?.[1])?.toLowerCase(),
+    date,
+    ambiguous,
+    timeExample,
     explicitTimezone: zones.length > 1 ? 'неоднозначно' : zones[0]?.[0],
     content: content.replace(/^[\s,.:;–—-]+|[\s,;–—-]+$/gu, '').replace(/[ \t]{2,}/gu, ' '),
   };

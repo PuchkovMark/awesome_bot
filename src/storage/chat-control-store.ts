@@ -1,9 +1,15 @@
 import type { Database } from 'better-sqlite3';
-import type { ChatId, ConnectionScope, UserId } from '../contracts/index';
+import type { ChatId, ConnectionScope, Timestamp, UserId } from '../contracts/index';
 import type { Connection } from './connection';
 import type { LifecycleBackend } from './lifecycle-store';
 import type { ResponseMode, Storage } from './types';
-import { requireInput, timestamp } from './validation';
+import { compositeId, requireInput, timestamp } from './validation';
+
+export interface ControlMessageEvent {
+  readonly sourceChatId: ChatId;
+  readonly messageId: number;
+  readonly timestamp: Timestamp;
+}
 
 export interface ChatControlState {
   readonly enabled: boolean;
@@ -175,17 +181,27 @@ export function claimControlMessage(
   db: Database,
   chatId: ChatId,
   actorId: UserId,
-  messageId: number,
+  event: ControlMessageEvent,
 ): boolean {
+  const { sourceChatId, messageId, timestamp: eventAt } = event;
+  compositeId(sourceChatId);
   requireInput(Number.isSafeInteger(messageId) && messageId > 0);
+  timestamp(eventAt);
   return (
     db
       .prepare(
-        `INSERT INTO chat_control_commands(chat_id,generation,actor_id,message_id)
-    SELECT chat_id,generation,?,? FROM chat_connections WHERE chat_id=?
-    ON CONFLICT DO NOTHING`,
+        `INSERT INTO chat_control_commands(chat_id,generation,actor_id,message_id,source_chat_id)
+        SELECT target.chat_id,target.generation,@actorId,@messageId,@sourceChatId
+        FROM chat_connections AS target
+        WHERE target.chat_id=@chatId AND NOT EXISTS (
+          SELECT 1 FROM chat_control_commands AS legacy
+          WHERE legacy.chat_id=target.chat_id AND legacy.generation=target.generation
+            AND legacy.actor_id=@actorId AND legacy.message_id=@messageId
+            AND legacy.source_chat_id IS NULL AND @eventAt < legacy.legacy_before
+        )
+        ON CONFLICT DO NOTHING`,
       )
-      .run(actorId, messageId, chatId).changes === 1
+      .run({ chatId, actorId, sourceChatId, messageId, eventAt }).changes === 1
   );
 }
 
