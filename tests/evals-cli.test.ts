@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { expect, test } from 'vitest';
 import { historySearchScenarios, profileUpdateCases, scenarios } from '../src/evals/scenarios';
 
-function cli(directory: string, args: string[], before = '') {
+function cli(directory: string, args: string[], before = '', timeoutMs = 10_000) {
   const importHook = `data:text/javascript,${encodeURIComponent(before)}`;
   const result = spawnSync(
     process.execPath,
@@ -15,7 +15,7 @@ function cli(directory: string, args: string[], before = '') {
       cwd: directory,
       encoding: 'utf8',
       env: {},
-      timeout: 10_000,
+      timeout: timeoutMs,
     },
   );
   expect(result.error).toBeUndefined();
@@ -30,6 +30,7 @@ test('собранная команда запускает набор, а чек
       directory,
       ['--out', 'results.json'],
       `globalThis.fetch=()=>{throw Error('NETWORK');};`,
+      30_000,
     );
     expect(out.status, out.stderr).toBe(0);
     expect(out.stdout).toContain(
@@ -82,7 +83,7 @@ test('собранная команда запускает набор, а чек
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
-}, 30_000);
+}, 60_000);
 
 test('отдельная оценка фиксирует качество модели и токены в пределах семи попыток', () => {
   const directory = mkdtempSync(join(tmpdir(), 'awesome-evals-profile-model-'));

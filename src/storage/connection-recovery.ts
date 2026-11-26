@@ -16,7 +16,8 @@ export function restrictPreviousSources(db: Database, scope: RecoveryVersion) {
       coalesce((SELECT max(id) FROM profile_facts WHERE chat_id=@chatId),0),
       max(coalesce((SELECT max(CAST(platform_message_id AS INTEGER)) FROM messages WHERE chat_id=@chatId),0),
         coalesce((SELECT input_through FROM connection_observations WHERE chat_id=@chatId),0)),
-      coalesce((SELECT max(reminder_id) FROM personal_reminder_inputs WHERE source_chat_id=@chatId AND source_generation=@generation),0)
+      coalesce((SELECT max(reminder_id) FROM personal_reminder_inputs
+        WHERE source_chat_id=@chatId AND source_generation=@generation AND repeated_request=0),0)
     ON CONFLICT(chat_id) DO UPDATE SET revision=excluded.revision,
       message_floor=max(message_floor,excluded.message_floor),fact_floor=max(fact_floor,excluded.fact_floor),
       input_floor=max(input_floor,excluded.input_floor),reminder_floor=max(reminder_floor,excluded.reminder_floor)`,

@@ -1,25 +1,32 @@
 import type { Database } from 'better-sqlite3';
 
+function matchingColumns(staged: Database, newer: Database, table: string) {
+  const columns = (db: Database) =>
+    db.prepare('SELECT name FROM pragma_table_info(?)').pluck().all(table) as string[];
+  const present = new Set(columns(newer));
+  return columns(staged)
+    .filter((name) => present.has(name))
+    .map((name) => '"' + name.replaceAll('"', '""') + '"');
+}
+
 function reconcileReminders(staged: Database, newer: Database) {
+  const reminderColumns = matchingColumns(staged, newer, 'personal_reminders');
+  const partColumns = matchingColumns(staged, newer, 'personal_reminder_parts');
   const find = newer
-    .prepare('SELECT * FROM personal_reminders WHERE id=? AND chat_id=? AND generation=?')
+    .prepare(
+      `SELECT ${reminderColumns.join(',')} FROM personal_reminders WHERE id=? AND chat_id=? AND generation=?`,
+    )
     .raw();
-  const parts = newer.prepare('SELECT * FROM personal_reminder_parts WHERE reminder_id=?').raw();
+  const parts = newer
+    .prepare(`SELECT ${partColumns.join(',')} FROM personal_reminder_parts WHERE reminder_id=?`)
+    .raw();
   const insert = staged.prepare(
-    'INSERT INTO personal_reminders VALUES (' +
-      find
-        .columns()
-        .map(() => '?')
-        .join(',') +
-      ')',
+    `INSERT INTO personal_reminders(${reminderColumns.join(',')})
+     VALUES (${reminderColumns.map(() => '?').join(',')})`,
   );
   const insertPart = staged.prepare(
-    'INSERT INTO personal_reminder_parts VALUES (' +
-      parts
-        .columns()
-        .map(() => '?')
-        .join(',') +
-      ')',
+    `INSERT INTO personal_reminder_parts(${partColumns.join(',')})
+     VALUES (${partColumns.map(() => '?').join(',')})`,
   );
   const remove = staged.prepare('DELETE FROM personal_reminders WHERE id=?');
   for (const saved of staged

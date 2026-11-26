@@ -28,6 +28,7 @@ type Lifecycle = ReturnType<typeof createLifecycleService>;
 
 const missing = 'Напоминание не найдено.';
 const closed = 'Чтобы получить напоминание, разрешите сообщения от сообщества и повторите просьбу.';
+const recoveryHint = 'Проверить напоминание можно в личке по команде «Мои напоминания».';
 const display = {
   delivered: 'доставлено',
   cancelled: 'отменено',
@@ -35,6 +36,18 @@ const display = {
   unknown: 'доставка не подтверждена',
   sending: 'отправка уже началась',
 } as const;
+const confirmationText = {
+  delivered: 'Подтверждение доставлено.',
+  failed: 'Подтверждение не доставлено.',
+  unknown: 'Доставка подтверждения неизвестна.',
+} as const;
+
+function confirmationParts(text: string, dueAt: number, timezone: string, copyId?: number) {
+  const copy = copyId === undefined ? '' : ` Копия #${copyId}.`;
+  return splitVkText(
+    `Напомню вам в этой личке ${formatReminderTime(dueAt, timezone)} (${timezone}).${copy}\n${text}`,
+  );
+}
 
 function fields(input: string, originAt: number, timezone?: string, edited?: Reminder) {
   const draft = edited?.draft;
@@ -80,9 +93,11 @@ function fields(input: string, originAt: number, timezone?: string, edited?: Rem
     dueAt,
     timezone: selected,
     text,
-    confirmation: splitVkText(
-      `Напомню вам в этой личке ${formatReminderTime(dueAt, selected)} (${selected}).\n${text}`,
-    ),
+    scheduleKey:
+      schedule?.kind === 'relative'
+        ? `relative:${schedule.minutes}`
+        : `calendar:${dueAt}:${selected}`,
+    confirmation: () => confirmationParts(text, dueAt, selected),
   };
 }
 
@@ -128,7 +143,7 @@ function dueLabel(item: Reminder) {
     return `${formatReminderTime(item.dueAt, item.timezone)} (${item.timezone})`;
 }
 
-function summary(item: Reminder) {
+function summary(item: Reminder, now: number) {
   const prefix = `#${item.id}`;
   if (item.state === 'draft') return `${prefix} · ожидается уточнение`;
   const parts = [prefix];
@@ -138,10 +153,31 @@ function summary(item: Reminder) {
     item.state === 'pending'
       ? item.deliveryUnknown
         ? display.unknown
-        : item.text!
+        : item.deliveryStarted
+          ? display.sending
+          : item.text!
       : display[item.state],
   );
+  if (item.state === 'pending' && !item.deliveryStarted) {
+    parts.push(confirmationText[item.confirmation]);
+    const lines = [parts.join(' · ')];
+    const action = confirmationAction(item);
+    if (action) lines.push(action);
+    if (item.dueAt! > now) lines.push('Копия на тот же срок.', `Создать ещё одно #${item.id}`);
+    return lines.join('\n');
+  }
   return parts.join(' · ');
+}
+
+function confirmationAction(item: Reminder) {
+  if (item.confirmation === 'failed') return `Повтори подтверждение #${item.id}`;
+  if (item.confirmation === 'unknown') return `Проверь напоминание #${item.id}`;
+}
+
+function recoveryStatus(item: Reminder | undefined) {
+  if (!item) return missing;
+  if (item.state !== 'pending' || item.deliveryStarted) return summary(item, Date.now());
+  return `Напоминание #${item.id} назначено на ${dueLabel(item)}. ${confirmationText[item.confirmation]}`;
 }
 
 export function createReminderHandlers(options: {
@@ -200,7 +236,7 @@ export function createReminderHandlers(options: {
       } else {
         outcome = 'unknown' as const;
       }
-      if (!store.settle(lease, part, outcome, Date.now())) return;
+      if (!store.settle(lease, part, outcome, Date.now())) return outcome;
     }
   }
 
@@ -211,7 +247,8 @@ export function createReminderHandlers(options: {
         ? ({
             action: 'reminder.manage',
             minimumRole: 'member',
-            replayRequest: command.kind === 'create' || command.kind === 'clarify',
+            replayRequest:
+              command.kind === 'create' || command.kind === 'clarify' || command.kind === 'copy',
           } as const)
         : null;
     },
@@ -250,14 +287,14 @@ export function createReminderHandlers(options: {
           );
         return;
       }
+      const recipientCurrent = () => isCurrent() && lifecycle.isAdmissionCurrent(target.scope);
+      const privateGuard = {
+        signal,
+        isCurrent: recipientCurrent,
+        allow: async () => recipientCurrent(),
+      };
       const reply = (text: string) =>
-        options.track(
-          channel.replyPrivateControl(target.userId, text, {
-            signal,
-            allow: async () => isCurrent(),
-            isCurrent: () => isCurrent() && lifecycle.isAdmissionCurrent(target.scope),
-          }),
-        );
+        options.track(channel.replyPrivateControl(target.userId, text, privateGuard));
       const now = Date.now();
       if (command.kind === 'cancel-options') {
         const items = store.list(target, now, 'cancellable');
@@ -275,7 +312,53 @@ export function createReminderHandlers(options: {
       }
       if (command.kind === 'list') {
         const items = store.list(target, now);
-        reply(items.length ? items.map(summary).join('\n') : 'Напоминаний пока нет.');
+        reply(
+          items.length
+            ? items.map((item) => summary(item, now)).join('\n\n')
+            : 'Напоминаний пока нет.',
+        );
+        return;
+      }
+      if (command.kind === 'retry-confirmation') {
+        const lease = store.claimConfirmation(target, command.id, now, true);
+        if (!lease) {
+          reply(recoveryStatus(store.inspectConfirmation(target, command.id, now)?.item));
+          return;
+        }
+        options.track(
+          deliver(lease, target.scope, recipientCurrent).then((outcome) => {
+            if (outcome !== 'delivered' && recipientCurrent())
+              reply(
+                recoveryStatus(store.inspectConfirmation(target, command.id, Date.now())?.item),
+              );
+          }),
+        );
+        return;
+      }
+      if (command.kind === 'check-confirmation') {
+        const inspected = store.inspectConfirmation(target, command.id, now);
+        if (!inspected?.parts.length) {
+          reply(recoveryStatus(inspected?.item));
+          return;
+        }
+        const id = command.id;
+        const endpoint = channel.reminderDelivery(target.userId);
+        options.track(
+          (async () => {
+            for (const part of inspected.parts) {
+              if (!recipientCurrent()) return;
+              const found = await endpoint.confirm(
+                part.text,
+                part.receipt,
+                part.attempted_at,
+                privateGuard,
+              );
+              if (!recipientCurrent()) return;
+              if (found) store.confirmObservedPart(target, id, part, Date.now());
+            }
+            reply(recoveryStatus(store.inspectConfirmation(target, id, Date.now())?.item));
+          })(),
+        );
         return;
       }
       if (command.kind === 'cancel') {
@@ -297,13 +380,44 @@ export function createReminderHandlers(options: {
       let item: Reminder | null | undefined;
       if (replayOnly) {
         item = store.replay(target, origin, now);
+        if (item?.state !== 'draft') return;
       } else if (command.kind === 'create') {
-        item = store.create(
+        const assignment = store.create(
           target,
           origin,
           fields(command.input, event.timestamp, store.timezone(target)),
           now,
         );
+        if (!assignment) return;
+        if (assignment.kind === 'choose') {
+          const candidates = assignment.items.map(({ id }) => `#${id}`).join(', ');
+          reply(
+            `С этой просьбой могут совпадать напоминания ${candidates}. Откройте «Мои напоминания» и выберите нужное по номеру.`,
+          );
+          return;
+        }
+        item = assignment.item;
+        if (assignment.kind === 'existing' && item.state !== 'draft') {
+          const action =
+            item.state === 'pending' && !item.deliveryStarted && confirmationAction(item);
+          reply(recoveryStatus(item) + (action ? '\n' + action : ''));
+          return;
+        }
+      } else if (command.kind === 'copy') {
+        const copy = store.copy(target, origin, command.id, Date.now, confirmationParts);
+        if (!copy) {
+          reply(missing);
+          return;
+        }
+        if (copy.kind === 'replayed') return;
+        item = copy.item;
+        if (copy.kind === 'unavailable') {
+          const next = copy.deadlineReached
+            ? '\nДля нового напоминания отправьте просьбу с новым сроком.'
+            : '';
+          reply(recoveryStatus(item) + next);
+          return;
+        }
       } else {
         const drafts = store.list(target, now).filter(({ state }) => state === 'draft');
         const selected =
@@ -336,7 +450,22 @@ export function createReminderHandlers(options: {
       }
       if (item.state === 'pending') {
         const lease = store.claimConfirmation(target, item.id, Date.now());
-        if (lease) options.track(deliver(lease, target.scope, isCurrent));
+        if (lease)
+          options.track(
+            deliver(lease, target.scope, recipientCurrent).then(async (outcome) => {
+              if (
+                event.isGroupChat &&
+                (outcome === 'failed' || outcome === 'unknown') &&
+                recipientCurrent() &&
+                store.claimRecoveryHint(target, origin, lease.id)
+              )
+                await channel.replyGroupControl(scope, recoveryHint, {
+                  signal,
+                  isCurrent: recipientCurrent,
+                  allow: async () => recipientCurrent(),
+                });
+            }),
+          );
       }
     },
     async due() {

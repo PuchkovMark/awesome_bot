@@ -5,6 +5,465 @@ import { mention, peer, remindersFixture, until } from './helpers/application-re
 const direct = '[club314|Пенёк] ';
 const minute = 60_000;
 const future = Date.UTC(2026, 10, 24, 15);
+const recoveryHint = 'Проверить напоминание можно в личке по команде «Мои напоминания».';
+
+test('после отказа повтор по номеру отправляет только оставшуюся часть с прежним ключом', async () => {
+  const f = await remindersFixture();
+  const ending = 'уникальная концовка подтверждения';
+  const text = 'а'.repeat(2400) + ' ' + ending;
+  try {
+    f.refuseOnce(ending);
+    const original = f.send(direct + 'Напомни мне через 1 минуту ' + text, 41, peer);
+    await until(() => expect(f.sends.find((row) => row.peer_id === peer)?.text).toBe(recoveryHint));
+    const item = f.pending()[0]!;
+    const parts = f.db
+      .prepare(
+        `SELECT send_id AS sendId,state,definite_failure AS failed FROM personal_reminder_parts
+       WHERE reminder_id=? AND stage='confirmation' ORDER BY part`,
+      )
+      .all(item.id) as { sendId: number; state: string; failed: number }[];
+    const failed = parts.at(-1)!;
+    expect(parts.length).toBeGreaterThan(1);
+    expect(
+      parts.slice(0, -1).every(({ state, failed }) => state === 'confirmed' && failed === 0),
+    ).toBe(true);
+    expect(failed).toMatchObject({ state: 'ready', failed: 1 });
+    const requests = () =>
+      f.attempt.mock.calls
+        .filter(
+          ([method, args]) =>
+            method === 'messages.send' &&
+            parts.some((part) => part.sendId === Number(args.random_id)),
+        )
+        .map(([, args]) => Number(args.random_id));
+
+    f.repeat(original);
+    f.send('Мои напоминания');
+    await until(() =>
+      expect(
+        f.sends.some(
+          (row) => row.peer_id === 41 && row.text.includes(`Повтори подтверждение #${item.id}`),
+        ),
+      ).toBe(true),
+    );
+    expect(requests()).toEqual(parts.map(({ sendId }) => sendId));
+
+    const before = f.sends.length;
+    f.send(`Повтори подтверждение #${item.id}`);
+    await until(() =>
+      expect(
+        f.db.prepare('SELECT confirmation FROM personal_reminders WHERE id=?').pluck().get(item.id),
+      ).toBe('delivered'),
+    );
+    expect(requests()).toEqual([...parts.map(({ sendId }) => sendId), failed.sendId]);
+    expect(f.sends.slice(before)).toEqual([
+      expect.objectContaining({
+        peer_id: 41,
+        random_id: failed.sendId,
+        text: expect.stringContaining(ending),
+      }),
+    ]);
+    expect(f.sends.filter(({ peer_id }) => peer_id === peer).map(({ text }) => text)).toEqual([
+      recoveryHint,
+    ]);
+    expect(f.pending()).toEqual([item]);
+    expect(f.complete).not.toHaveBeenCalled();
+  } finally {
+    await f.close();
+  }
+});
+
+test.each(['скрытая квитанция', 'потеря ответа'] as const)(
+  'проверка после исхода «%s» не отправляет подтверждение снова',
+  async (fault) => {
+    const f = await remindersFixture();
+    const prefix = 'Напомню вам';
+    try {
+      if (fault === 'скрытая квитанция') f.hide(prefix);
+      else f.lost(prefix);
+      const original = f.send(direct + 'Напомни мне через 1 минуту взять билет', 41, peer);
+      await until(() =>
+        expect(f.sends.find((row) => row.peer_id === peer)?.text).toBe(recoveryHint),
+      );
+      const item = f.pending()[0]!;
+      const confirmation = f.sends.find(({ text }) => text.startsWith(prefix))!;
+      const requests = () =>
+        f.attempt.mock.calls.filter(
+          ([method, args]) => method === 'messages.send' && String(args.message).startsWith(prefix),
+        ).length;
+      const reads = () =>
+        f.attempt.mock.calls.filter(
+          ([method, args]) =>
+            method === 'messages.getByConversationMessageId' &&
+            args.peer_id === 41 &&
+            args.conversation_message_ids === String(confirmation.conversation_message_id),
+        ).length;
+      const beforeReads = reads();
+      let sentBefore = f.sends.length;
+      f.repeat(original);
+      f.send(`Проверь напоминание #${item.id}`);
+      await until(() =>
+        expect(f.sends.slice(sentBefore).at(-1)).toMatchObject({
+          peer_id: 41,
+          text: expect.stringMatching(
+            new RegExp(
+              `^Напоминание #${item.id} назначено на .*Доставка подтверждения неизвестна\\.$`,
+              'u',
+            ),
+          ),
+        }),
+      );
+      expect(requests()).toBe(1);
+      expect(reads()).toBeGreaterThanOrEqual(beforeReads);
+      if (fault === 'скрытая квитанция') {
+        expect(reads()).toBeGreaterThan(beforeReads);
+        f.reveal();
+        sentBefore = f.sends.length;
+        f.send(`Проверь напоминание #${item.id}`);
+        await until(() =>
+          expect(f.sends.slice(sentBefore).at(-1)).toMatchObject({
+            peer_id: 41,
+            text: expect.stringContaining('Подтверждение доставлено.'),
+          }),
+        );
+      } else {
+        expect(reads()).toBe(beforeReads);
+      }
+      expect(requests()).toBe(1);
+      expect(f.pending()).toEqual([item]);
+      expect(f.sends.filter(({ peer_id }) => peer_id === peer).map(({ text }) => text)).toEqual([
+        recoveryHint,
+      ]);
+      expect(f.complete).not.toHaveBeenCalled();
+    } finally {
+      await f.close();
+    }
+  },
+);
+
+test('при сверке первой части подтверждения готовая вторая часть остаётся без отправки', async () => {
+  const f = await remindersFixture();
+  const ending = 'конец второго фрагмента';
+  try {
+    f.hide('Напомню вам');
+    f.send(direct + 'Напомни мне через 1 минуту ' + 'а'.repeat(2400) + ' ' + ending, 41, peer);
+    await until(() => expect(f.sends.find((row) => row.peer_id === peer)?.text).toBe(recoveryHint));
+    const id = f.pending()[0]!.id;
+    f.reveal();
+    f.send(`Проверь напоминание #${id}`);
+    await until(() => expect(f.sends.at(-1)?.text).toContain('Доставка подтверждения неизвестна.'));
+    expect(f.sends.some(({ text }) => text.includes(ending))).toBe(false);
+    const states = f.db
+      .prepare(
+        "SELECT state FROM personal_reminder_parts WHERE reminder_id=? AND stage='confirmation' ORDER BY part",
+      )
+      .pluck()
+      .all(id);
+    expect(states.length).toBeGreaterThan(1);
+    expect(states[0]).toBe('confirmed');
+    expect(states.slice(1).every((state) => state === 'ready')).toBe(true);
+    expect(f.complete).not.toHaveBeenCalled();
+  } finally {
+    await f.close();
+  }
+});
+
+test.each(['отказ', 'потеря ответа'] as const)(
+  'та же просьба после сбоя «%s» и перезапуска сохраняет номер и одну доставку в 12:01 UTC',
+  async (fault) => {
+    const f = await remindersFixture(Date.UTC(2026, 10, 25, 12));
+    const request = direct + 'Напомни мне через 1 минуту взять билет';
+    const dueAt = f.origin + minute;
+    const confirmations = () => f.sends.filter(({ text }) => text.startsWith('Напомню вам'));
+    try {
+      if (fault === 'отказ') f.refuseOnce('взять билет');
+      else f.lost('Напомню вам');
+      const original = f.send(request, 41, peer);
+      await until(() =>
+        expect(f.sends.find((row) => row.peer_id === peer)?.text).toBe(recoveryHint),
+      );
+      const item = f.pending()[0]!;
+      expect(item).toMatchObject({ dueAt, chatId: 'vk:41', text: 'взять билет' });
+      expect(confirmations()).toHaveLength(fault === 'отказ' ? 0 : 1);
+
+      f.at(f.origin + 20_000);
+      const repeated = f.send(request, 41, peer);
+      await until(() =>
+        expect(f.sends.at(-1)).toMatchObject({
+          peer_id: 41,
+          text: expect.stringContaining(
+            `Напоминание #${item.id} назначено на 25 ноября 2026 г. в 12:01 (UTC).`,
+          ),
+        }),
+      );
+      expect(f.pending()).toEqual([item]);
+      expect(
+        f.db
+          .prepare(
+            'SELECT event_id AS event,reminder_id AS id FROM personal_reminder_inputs ORDER BY CAST(event_id AS INTEGER)',
+          )
+          .all(),
+      ).toEqual(
+        [original, repeated].map(({ conversation_message_id }) => ({
+          event: String(conversation_message_id),
+          id: item.id,
+        })),
+      );
+      expect(confirmations()).toHaveLength(fault === 'отказ' ? 0 : 1);
+
+      await f.halt();
+      await f.launch();
+      await f.resolve('vk:41');
+      await f.resolve(`vk:${peer}`);
+      f.repeat(original);
+      f.repeat(repeated);
+      f.send('Мои напоминания');
+      const action = fault === 'отказ' ? 'Повтори подтверждение' : 'Проверь напоминание';
+      await until(() => expect(f.sends.at(-1)?.text).toContain(`${action} #${item.id}`));
+      f.send(`${action} #${item.id}`);
+      await until(() =>
+        expect(f.sends.at(-1)?.text).toContain(
+          fault === 'отказ' ? 'Напомню вам' : 'Доставка подтверждения неизвестна.',
+        ),
+      );
+      expect(f.pending()).toEqual([item]);
+      f.at(dueAt);
+      await until(() =>
+        expect(f.pending()[0]).toMatchObject({ id: item.id, state: 'delivered', dueAt }),
+      );
+      expect(confirmations()).toEqual([expect.objectContaining({ peer_id: 41 })]);
+      expect(f.sends.filter(({ text }) => text === 'Напоминание.\nвзять билет')).toEqual([
+        expect.objectContaining({ peer_id: 41, date: dueAt / 1_000 }),
+      ]);
+      expect(f.sends.filter(({ peer_id }) => peer_id === peer).map(({ text }) => text)).toEqual([
+        recoveryHint,
+      ]);
+      expect(f.complete).not.toHaveBeenCalled();
+    } finally {
+      await f.close();
+    }
+  },
+);
+
+test('календарная просьба совпадает по дню, времени и поясу, а другой срок создаёт свою запись', async () => {
+  const f = await remindersFixture(Date.UTC(2026, 10, 25, 12));
+  const dueAt = Date.UTC(2026, 10, 26, 15);
+  try {
+    f.refuseOnce('взять билет');
+    f.send(direct + 'Напомни мне завтра в 18:00 по Москве взять билет', 41, peer);
+    await until(() => expect(f.sends.at(-1)?.text).toBe(recoveryHint));
+    const item = f.pending()[0]!;
+    f.at(f.origin + 20_000);
+    f.send('Напомни мне 26.11.2026 в 18:00 Europe/Moscow взять билет');
+    await until(() => expect(f.sends.at(-1)?.text).toContain(`Повтори подтверждение #${item.id}`));
+    expect(f.pending()).toEqual([item]);
+
+    f.send('Напомни мне 26.11.2026 в 18:00 Asia/Riyadh взять билет');
+    f.send('Напомни мне 26.11.2026 в 18:01 Europe/Moscow взять билет');
+    f.send('Напомни мне 27.11.2026 в 18:00 Europe/Moscow взять билет');
+    await until(() =>
+      expect(f.sends.filter(({ text }) => text.startsWith('Напомню вам'))).toHaveLength(3),
+    );
+    expect(f.pending()).toEqual([
+      expect.objectContaining({ id: item.id, dueAt, timezone: 'Europe/Moscow' }),
+      expect.objectContaining({ dueAt, timezone: 'Asia/Riyadh' }),
+      expect.objectContaining({ dueAt: dueAt + minute, timezone: 'Europe/Moscow' }),
+      expect.objectContaining({ dueAt: dueAt + 24 * 60 * minute, timezone: 'Europe/Moscow' }),
+    ]);
+    expect(f.complete).not.toHaveBeenCalled();
+  } finally {
+    await f.close();
+  }
+});
+
+test('копия и восстановление остаются в личке автора при одинаковых номерах сообщений в двух беседах', async () => {
+  const f = await remindersFixture(Date.UTC(2026, 10, 25, 12));
+  const secondPeer = peer + 1;
+  const dueAt = f.origin + minute;
+  async function ask(input: string, user = 41) {
+    const index = f.sends.length;
+    const event = f.send(input, user);
+    await until(() => expect(f.sends[index]?.peer_id).toBe(user));
+    return { event, text: f.sends[index]!.text };
+  }
+  try {
+    await f.readyGroup(secondPeer);
+    f.sends.length = 0;
+    const parentA = f.send('Реплика в первой беседе.', 42, peer, f.origin, undefined, 40_001);
+    const parentB = f.send(
+      'Реплика во второй беседе.',
+      41,
+      secondPeer,
+      f.origin,
+      undefined,
+      40_001,
+    );
+    f.refuseOnce('взять билет');
+    const originalA = f.send(
+      direct + 'Напомни мне через 1 минуту взять билет',
+      41,
+      peer,
+      f.origin,
+      parentA,
+      40_002,
+    );
+    await until(() => expect(f.sends.at(-1)).toMatchObject({ peer_id: peer, text: recoveryHint }));
+    f.refuseOnce('забрать ключи');
+    const originalB = f.send(
+      direct + 'Напомни мне через 1 минуту забрать ключи',
+      42,
+      secondPeer,
+      f.origin,
+      parentB,
+      40_002,
+    );
+    await until(() =>
+      expect(f.sends.at(-1)).toMatchObject({ peer_id: secondPeer, text: recoveryHint }),
+    );
+    const [a, b] = f.pending();
+    expect(a).toMatchObject({ chatId: 'vk:41', text: 'взять билет', dueAt });
+    expect(b).toMatchObject({ chatId: 'vk:42', text: 'забрать ключи', dueAt });
+    expect(originalA.conversation_message_id).toBe(originalB.conversation_message_id);
+    const aId = a!.id;
+    const bId = b!.id;
+    for (const cmd of ['Проверь напоминание', 'Повтори подтверждение', 'Создать ещё одно']) {
+      expect((await ask(`${cmd} #${aId}`, 42)).text).toBe('Напоминание не найдено.');
+    }
+    const listed = (await ask('Мои напоминания')).text;
+    expect(listed).toContain(`Копия на тот же срок.\nСоздать ещё одно #${aId}`);
+    expect(listed).not.toContain('забрать ключи');
+
+    const copied = await ask(`Создать ещё одно #${aId}`);
+    const copy = f.pending().find(({ id }) => id !== aId && id !== bId)!;
+    expect(copy).toMatchObject({ chatId: 'vk:41', dueAt, timezone: a!.timezone, text: a!.text });
+    expect(copied.text).toContain(`Копия #${copy.id}.`);
+    f.repeat(copied.event);
+    for (const original of [originalA, originalB]) f.repeat(original);
+    const listA = (await ask('Мои напоминания')).text;
+    expect(listA).toContain(`#${aId} ·`);
+    expect(listA).toContain(`#${copy.id} ·`);
+    const listB = (await ask('Мои напоминания', 42)).text;
+    expect(listB).toContain(`#${bId} ·`);
+    expect(listB).not.toContain('взять билет');
+    expect(f.pending()).toHaveLength(3);
+    expect((await ask(`Повтори подтверждение #${aId}`)).text).toContain('взять билет');
+    expect((await ask(`Повтори подтверждение #${bId}`, 42)).text).toContain('забрать ключи');
+    const confirmations = f.sends.filter(({ text }) => text.startsWith('Напомню вам'));
+    expect(confirmations.map(({ peer_id, text }) => [peer_id, text.split('\n').at(-1)])).toEqual([
+      [41, 'взять билет'],
+      [41, 'взять билет'],
+      [42, 'забрать ключи'],
+    ]);
+    expect(new Set(confirmations.map(({ random_id }) => random_id)).size).toBe(3);
+    f.at(dueAt);
+    await until(() =>
+      expect(f.pending().map(({ state }) => state)).toEqual([
+        'delivered',
+        'delivered',
+        'delivered',
+      ]),
+    );
+    const deliveries = f.sends.filter(({ text }) => text.startsWith('Напоминание.\n'));
+    expect(deliveries.map(({ peer_id, text, date }) => [peer_id, text, date])).toEqual([
+      [41, 'Напоминание.\nвзять билет', dueAt / 1_000],
+      [42, 'Напоминание.\nзабрать ключи', dueAt / 1_000],
+      [41, 'Напоминание.\nвзять билет', dueAt / 1_000],
+    ]);
+    expect(new Set([...confirmations, ...deliveries].map(({ random_id }) => random_id)).size).toBe(
+      6,
+    );
+    for (const destination of [peer, secondPeer]) {
+      expect(
+        f.sends.filter(({ peer_id }) => peer_id === destination).map(({ text }) => text),
+      ).toEqual([recoveryHint]);
+    }
+    expect(f.complete).not.toHaveBeenCalled();
+  } finally {
+    await f.close();
+  }
+});
+
+test('копирование закрывается в момент срока, после отмены и при смене поколения лички', async () => {
+  const f = await remindersFixture();
+  async function ask(input: string) {
+    const index = f.sends.length;
+    f.send(input);
+    await until(() => expect(f.sends[index]?.peer_id).toBe(41));
+    return f.sends[index]!.text;
+  }
+  try {
+    await ask('Напомни мне через 1 минуту проверить почту');
+    await ask('Напомни мне через 5 минут забрать заказ');
+    const first = f.pending()[0]!.id;
+    const second = f.pending()[1]!.id;
+    expect(await ask(`Отмени напоминание #${second}`)).toContain('отменено');
+    expect(await ask(`Создать ещё одно #${second}`)).toContain('отменено');
+    f.hold();
+    f.at(f.origin + minute);
+    await until(() => expect(f.holds).toHaveLength(1));
+    expect(await ask(`Создать ещё одно #${first}`)).toContain('отправьте просьбу с новым сроком');
+    expect(f.pending().map(({ id }) => id)).toEqual([first, second]);
+    f.holds.shift()?.();
+    await until(() => expect(f.pending()[0]?.state).toBe('delivered'));
+    const old = f.life.current('vk:41');
+    const next = await f.resolve('vk:41', 'new');
+    expect(next.generation).not.toBe(old.generation);
+    expect(await ask(`Создать ещё одно #${first}`)).toBe('Напоминание не найдено.');
+    expect(await ask(`Проверь напоминание #${second}`)).toBe('Напоминание не найдено.');
+    expect(f.pending()).toEqual([]);
+    expect(f.complete).not.toHaveBeenCalled();
+  } finally {
+    await f.close();
+  }
+});
+
+test('задержанная сверка подтверждения пропускает доставку в срок и показывает её исход', async () => {
+  const f = await remindersFixture();
+  const dueAt = f.origin + minute;
+  try {
+    f.hide('Напомню вам');
+    f.send('Напомни мне через 1 минуту взять билет');
+    await until(() =>
+      expect(f.db.prepare('SELECT confirmation FROM personal_reminders').pluck().get()).toBe(
+        'unknown',
+      ),
+    );
+    const id = f.pending()[0]!.id;
+    const confirmed = f.sends[0]!;
+    const reads = () =>
+      f.attempt.mock.calls.filter(
+        ([method, args]) =>
+          method === 'messages.getByConversationMessageId' &&
+          args.peer_id === 41 &&
+          args.conversation_message_ids === String(confirmed.conversation_message_id),
+      ).length;
+    f.reveal();
+    const countBefore = reads();
+    const release = f.holdRead(41, confirmed.conversation_message_id);
+    f.send(`Проверь напоминание #${id}`);
+    await until(() => expect(reads()).toBe(countBefore + 1));
+    f.at(dueAt);
+    await until(() => expect(f.pending()[0]?.state).toBe('delivered'));
+    expect(f.sends.slice(1)).toEqual([
+      expect.objectContaining({
+        peer_id: 41,
+        text: 'Напоминание.\nвзять билет',
+        date: dueAt / 1_000,
+      }),
+    ]);
+    release();
+    await until(() =>
+      expect(f.sends.at(-1)).toMatchObject({
+        peer_id: 41,
+        text: expect.stringMatching(/^#\d+ .* · доставлено$/u),
+      }),
+    );
+    expect(f.sends.filter(({ text }) => text.startsWith('Напомню вам'))).toHaveLength(1);
+    expect(f.complete).not.toHaveBeenCalled();
+  } finally {
+    await f.close();
+  }
+});
 
 test('личный выбор отмены показывает реальные номера и ждёт команды даже при одном задании', async () => {
   const f = await remindersFixture();

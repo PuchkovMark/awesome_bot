@@ -14,6 +14,10 @@ const retryMs = 15_000;
 const startedDelivery = `SELECT state FROM personal_reminder_parts
   WHERE reminder_id=r.id AND stage='delivery' AND state!='ready'
   ORDER BY state='unknown' DESC,part LIMIT 1`;
+const reminderDetails = `r.*, (${startedDelivery}) AS delivery_state,
+  (SELECT definite_failure FROM personal_reminder_parts
+    WHERE reminder_id=r.id AND stage='confirmation' AND state!='confirmed'
+    ORDER BY part LIMIT 1) AS confirmation_failed`;
 
 export type ReminderStage = 'confirmation' | 'delivery';
 type ReminderState = 'draft' | 'pending' | 'delivered' | 'cancelled' | 'missed' | 'unknown';
@@ -33,7 +37,8 @@ export type ReminderFields =
       readonly dueAt: number;
       readonly timezone: string;
       readonly text: string;
-      readonly confirmation: readonly string[];
+      readonly confirmation: (id: number) => readonly string[];
+      readonly scheduleKey?: string;
     };
 
 interface ReminderRecord {
@@ -49,7 +54,11 @@ interface ReminderRecord {
   readonly due_at: number | null;
   readonly timezone: string | null;
   readonly finished_at: number | null;
-  readonly delivery_unknown?: 0 | 1;
+  readonly schedule_key: string | null;
+  readonly lock_until: number | null;
+  readonly lock_stage: ReminderStage | null;
+  readonly delivery_state: Part['state'] | null;
+  readonly confirmation_failed: 0 | 1 | null;
 }
 
 interface Source {
@@ -77,11 +86,31 @@ interface Part {
   readonly state: 'ready' | 'sending' | 'confirmed' | 'unknown';
   readonly attempted_at: number | null;
   readonly receipt: string | null;
+  readonly definite_failure: 0 | 1;
 }
 
+interface ConfirmationReceipt {
+  readonly part: number;
+  readonly send_id: number;
+  readonly text: string;
+  readonly attempted_at: number;
+  readonly receipt: string;
+}
+
+type ReminderAssignment =
+  | { readonly kind: 'created' | 'existing'; readonly item: ReturnType<typeof view> }
+  | { readonly kind: 'choose'; readonly items: readonly ReturnType<typeof view>[] };
+
 function record(db: Database, id: number) {
-  return db.prepare('SELECT * FROM verified_reminders WHERE id=?').get(id) as
+  return db.prepare(`SELECT ${reminderDetails} FROM verified_reminders r WHERE id=?`).get(id) as
     ReminderRecord | undefined;
+}
+
+function recipientRecord(db: Database, recipient: Recipient, id: number) {
+  const row = record(db, id);
+  return row?.chat_id === recipient.scope.chatId && row.generation === recipient.scope.generation
+    ? row
+    : undefined;
 }
 
 function view(row: ReminderRecord) {
@@ -89,15 +118,28 @@ function view(row: ReminderRecord) {
     id: row.id,
     originAt: row.origin_at,
     state: row.state,
-    confirmation: row.confirmation,
+    confirmation:
+      row.confirmation === 'delivered'
+        ? ('delivered' as const)
+        : row.confirmation_failed === 1
+          ? ('failed' as const)
+          : ('unknown' as const),
     text: row.text,
     draft: row.draft === null ? null : (JSON.parse(row.draft) as ReminderDraft),
     expiresAt: row.expires_at,
     dueAt: row.due_at,
     timezone: row.timezone,
     finishedAt: row.finished_at,
-    deliveryUnknown: row.delivery_unknown === 1,
+    deliveryStarted: row.delivery_state !== null,
+    deliveryUnknown: row.delivery_state === 'unknown',
   };
+}
+
+function finishConfirmation(db: Database, id: number) {
+  db.prepare("UPDATE personal_reminders SET confirmation='delivered' WHERE id=?").run(id);
+  db.prepare(
+    "DELETE FROM personal_reminder_parts WHERE reminder_id=? AND stage='confirmation'",
+  ).run(id);
 }
 
 function finish(
@@ -108,7 +150,8 @@ function finish(
 ) {
   db.prepare(
     `UPDATE personal_reminders SET state=?, finished_at=?, text=NULL,draft=NULL,expires_at=NULL,
-    next_at=NULL,lock_token=NULL,lock_until=NULL,lock_stage=NULL WHERE id=?`,
+    next_at=NULL,lock_token=NULL,lock_until=NULL,lock_stage=NULL,schedule_key=NULL,hint_claimed=0
+    WHERE id=?`,
   ).run(state, at, id);
   db.prepare('DELETE FROM personal_reminder_parts WHERE reminder_id=?').run(id);
 }
@@ -130,7 +173,7 @@ function insertParts(db: Database, id: number, stage: ReminderStage, chunks: rea
 function nextPart(db: Database, lease: Lease) {
   return db
     .prepare(
-      `SELECT part,send_id,text,state,attempted_at,receipt FROM personal_reminder_parts
+      `SELECT part,send_id,text,state,attempted_at,receipt,definite_failure FROM personal_reminder_parts
     WHERE reminder_id=? AND stage=? AND state!='confirmed' ORDER BY part LIMIT 1`,
     )
     .get(lease.id, lease.stage) as Part | undefined;
@@ -191,14 +234,25 @@ function pendingFromOrigin(db: Database, recipient: Recipient, source: Source) {
     ) as { id: number } | undefined;
 }
 
-function rememberOrigin(db: Database, recipient: Recipient, source: Source, id: number) {
-  db.prepare('INSERT INTO personal_reminder_inputs VALUES (?,?,?,?,?,?)').run(
+function rememberOrigin(
+  db: Database,
+  recipient: Recipient,
+  source: Source,
+  id: number,
+  repeated = false,
+) {
+  db.prepare(
+    `INSERT INTO personal_reminder_inputs(
+      source_chat_id,source_generation,event_id,target_chat_id,target_generation,reminder_id,repeated_request)
+      VALUES(?,?,?,?,?,?,?)`,
+  ).run(
     source.scope.chatId,
     source.scope.generation,
     source.messageId,
     recipient.scope.chatId,
     recipient.scope.generation,
     id,
+    Number(repeated),
   );
 }
 
@@ -244,9 +298,36 @@ export function createReminderStore(connection: Connection, lifecycle: Lifecycle
     }
     db.prepare(
       `UPDATE personal_reminders SET text=?,state='pending',draft=NULL,expires_at=NULL,
-      due_at=?,timezone=?,next_at=? WHERE id=?`,
-    ).run(fields.text, fields.dueAt, fields.timezone, fields.dueAt, id);
-    insertParts(db, id, 'confirmation', fields.confirmation);
+      due_at=?,timezone=?,next_at=?,schedule_key=? WHERE id=?`,
+    ).run(fields.text, fields.dueAt, fields.timezone, fields.dueAt, fields.scheduleKey ?? null, id);
+    insertParts(db, id, 'confirmation', fields.confirmation(id));
+  }
+
+  function addReminder(
+    db: Database,
+    recipient: Recipient,
+    source: Source,
+    fields: ReminderFields,
+    now: number,
+  ) {
+    const expiresAt = now + reminderGraceMs;
+    const row = db
+      .prepare(
+        `INSERT INTO personal_reminders(chat_id,generation,origin_at,text,state,draft,expires_at)
+        VALUES(?,?,?,?,'draft','{}',?) RETURNING id`,
+      )
+      .get(
+        recipient.scope.chatId,
+        recipient.scope.generation,
+        source.originAt,
+        fields.text,
+        expiresAt,
+      ) as {
+      id: number;
+    };
+    save(db, row.id, fields, expiresAt);
+    rememberOrigin(db, recipient, source, row.id);
+    return view(record(db, row.id)!);
   }
 
   return Object.freeze({
@@ -257,35 +338,88 @@ export function createReminderStore(connection: Connection, lifecycle: Lifecycle
         maintain(db, now);
         const previous = pendingFromOrigin(db, recipient, source);
         if (!previous) return undefined;
-        const row = record(db, previous.id);
+        const row = recipientRecord(db, recipient, previous.id);
         return row ? view(row) : null;
       });
     },
-    create(recipient: Recipient, source: Source, fields: ReminderFields, now: number) {
+    create(
+      recipient: Recipient,
+      source: Source,
+      fields: ReminderFields,
+      now: number,
+    ): ReminderAssignment | null {
       return transaction((db) => {
         assertRecipient(db, recipient);
         lifecycle.assertScope(db, source.scope);
         maintain(db, now);
         const previous = pendingFromOrigin(db, recipient, source);
         if (previous) {
-          const row = record(db, previous.id);
-          return row ? view(row) : null;
+          const row = recipientRecord(db, recipient, previous.id);
+          return row ? { kind: 'existing', item: view(row) } : null;
         }
-        const row = db
-          .prepare(
-            `INSERT INTO personal_reminders(chat_id,generation,origin_at,text,state,draft,expires_at)
-          VALUES(?,?,?,?,'draft','{}',?) RETURNING id`,
-          )
-          .get(
-            recipient.scope.chatId,
-            recipient.scope.generation,
-            source.originAt,
-            fields.text,
-            now + reminderGraceMs,
-          ) as { id: number };
-        save(db, row.id, fields, now + reminderGraceMs);
-        rememberOrigin(db, recipient, source, row.id);
-        return view(record(db, row.id)!);
+        if (!('draft' in fields) && fields.scheduleKey !== undefined) {
+          const candidates = db
+            .prepare(
+              `SELECT ${reminderDetails} FROM verified_reminders r
+              WHERE r.chat_id=? AND r.generation=? AND r.state='pending' AND r.confirmation!='delivered'
+              AND r.text=? AND (r.schedule_key=? OR r.schedule_key IS NULL) ORDER BY r.id`,
+            )
+            .all(
+              recipient.scope.chatId,
+              recipient.scope.generation,
+              fields.text,
+              fields.scheduleKey,
+            ) as ReminderRecord[];
+          if (candidates.length === 1 && candidates[0]!.schedule_key === fields.scheduleKey) {
+            const row = candidates[0]!;
+            rememberOrigin(db, recipient, source, row.id, true);
+            return { kind: 'existing', item: view(row) };
+          }
+          if (candidates.length) return { kind: 'choose', items: candidates.map(view) };
+        }
+        return { kind: 'created', item: addReminder(db, recipient, source, fields, now) };
+      });
+    },
+    copy(
+      recipient: Recipient,
+      source: Source,
+      id: number,
+      clock: () => number,
+      confirmation: (
+        text: string,
+        dueAt: number,
+        timezone: string,
+        copyId: number,
+      ) => readonly string[],
+    ) {
+      return transaction((db) => {
+        assertRecipient(db, recipient);
+        requireInput(source.scope === recipient.scope);
+        const now = clock();
+        maintain(db, now);
+        if (pendingFromOrigin(db, recipient, source)) return { kind: 'replayed' } as const;
+        const row = recipientRecord(db, recipient, id);
+        if (!row) return null;
+        const deadlineReached = row.due_at !== null && row.due_at <= now;
+        if (row.state !== 'pending' || row.delivery_state !== null || deadlineReached)
+          return { kind: 'unavailable', item: view(row), deadlineReached } as const;
+        const text = row.text!;
+        const dueAt = row.due_at!;
+        const timezone = row.timezone!;
+        const item = addReminder(
+          db,
+          recipient,
+          source,
+          {
+            text,
+            dueAt,
+            timezone,
+            ...(row.schedule_key === null ? {} : { scheduleKey: row.schedule_key }),
+            confirmation: (copyId) => confirmation(text, dueAt, timezone, copyId),
+          },
+          now,
+        );
+        return { kind: 'created', item } as const;
       });
     },
     revise(
@@ -341,10 +475,7 @@ export function createReminderStore(connection: Connection, lifecycle: Lifecycle
         return (
           db
             .prepare(
-              `SELECT r.*, EXISTS(
-              SELECT 1 FROM personal_reminder_parts p WHERE p.reminder_id=r.id
-              AND p.stage='delivery' AND p.state='unknown'
-            ) AS delivery_unknown FROM verified_reminders r
+              `SELECT ${reminderDetails} FROM verified_reminders r
             WHERE r.chat_id=? AND r.generation=?
             ${filter === 'cancellable' ? `AND r.state IN ('draft','pending') AND (${startedDelivery}) IS NULL` : ''}
             ORDER BY coalesce(r.due_at,r.origin_at),r.id`,
@@ -372,17 +503,103 @@ export function createReminderStore(connection: Connection, lifecycle: Lifecycle
         return 'cancelled' as const;
       });
     },
-    claimConfirmation(recipient: Recipient, id: number, now: number) {
+    claimConfirmation(recipient: Recipient, id: number, now: number, retry = false) {
       return transaction((db) => {
         assertRecipient(db, recipient);
-        const row = db
+        if (retry) maintain(db, now);
+        const row = recipientRecord(db, recipient, id);
+        if (
+          row?.state !== 'pending' ||
+          row.confirmation === 'delivered' ||
+          row.delivery_state !== null ||
+          (row.lock_until !== null && row.lock_until > now)
+        )
+          return;
+        const part = db
           .prepare(
-            `SELECT * FROM verified_reminders WHERE id=? AND chat_id=? AND generation=? AND state='pending'
-          AND confirmation!='delivered' AND (lock_until IS NULL OR lock_until<=?)`,
+            `SELECT state,attempted_at,definite_failure FROM personal_reminder_parts
+          WHERE reminder_id=? AND stage='confirmation' AND state!='confirmed'
+          ORDER BY part LIMIT 1`,
           )
-          .get(id, recipient.scope.chatId, recipient.scope.generation, now) as
-          ReminderRecord | undefined;
-        return row ? leaseRow(db, row, 'confirmation', now) : undefined;
+          .get(id) as Pick<Part, 'state' | 'attempted_at' | 'definite_failure'> | undefined;
+        if (part?.state !== 'ready') return;
+        if (
+          retry
+            ? part.definite_failure !== 1
+            : row.confirmation !== 'pending' ||
+              part.attempted_at !== null ||
+              part.definite_failure === 1
+        )
+          return;
+        return leaseRow(db, row, 'confirmation', now);
+      });
+    },
+    inspectConfirmation(recipient: Recipient, id: number, now: number) {
+      return transaction((db) => {
+        assertRecipient(db, recipient);
+        maintain(db, now);
+        const row = recipientRecord(db, recipient, id);
+        if (!row) return;
+        const parts =
+          row.state === 'pending' && row.delivery_state === null && row.confirmation !== 'delivered'
+            ? (db
+                .prepare(
+                  `SELECT part,send_id,text,attempted_at,receipt FROM personal_reminder_parts
+                WHERE reminder_id=? AND stage='confirmation' AND state IN ('unknown','sending')
+                AND receipt IS NOT NULL AND attempted_at IS NOT NULL ORDER BY part`,
+                )
+                .all(id) as ConfirmationReceipt[])
+            : [];
+        return { item: view(row), parts };
+      });
+    },
+    confirmObservedPart(recipient: Recipient, id: number, part: ConfirmationReceipt, now: number) {
+      return transaction((db) => {
+        assertRecipient(db, recipient);
+        const row = recipientRecord(db, recipient, id);
+        if (
+          row?.state !== 'pending' ||
+          row.delivery_state !== null ||
+          (row.lock_stage === 'confirmation' && row.lock_until! > now)
+        )
+          return;
+        const confirmed = db
+          .prepare(
+            `UPDATE personal_reminder_parts SET state='confirmed' WHERE reminder_id=?
+          AND stage='confirmation' AND part=? AND send_id=? AND receipt=? AND attempted_at=?
+          AND state IN ('sending','unknown')`,
+          )
+          .run(id, part.part, part.send_id, part.receipt, part.attempted_at);
+        if (
+          confirmed.changes &&
+          !db
+            .prepare(
+              `SELECT 1 FROM personal_reminder_parts WHERE reminder_id=?
+          AND stage='confirmation' AND state!='confirmed'`,
+            )
+            .get(id)
+        )
+          finishConfirmation(db, id);
+      });
+    },
+    claimRecoveryHint(recipient: Recipient, source: Source, id: number) {
+      return transaction((db) => {
+        assertRecipient(db, recipient);
+        lifecycle.assertScope(db, source.scope);
+        if (
+          source.scope.chatId === recipient.scope.chatId ||
+          pendingFromOrigin(db, recipient, source)?.id !== id
+        )
+          return false;
+        const row = recipientRecord(db, recipient, id);
+        return (
+          row?.state === 'pending' &&
+          row.delivery_state === null &&
+          (row.confirmation === 'unknown' || row.confirmation_failed === 1) &&
+          db
+            .prepare('UPDATE personal_reminders SET hint_claimed=1 WHERE id=? AND hint_claimed=0')
+            .run(id).changes === 1
+        );
       });
     },
     claimDelivery(now: number, chunks: (text: string, late: boolean) => readonly string[]) {
@@ -415,7 +632,7 @@ export function createReminderStore(connection: Connection, lifecycle: Lifecycle
         return (
           db
             .prepare(
-              `UPDATE personal_reminder_parts SET state='sending',attempted_at=?
+              `UPDATE personal_reminder_parts SET state='sending',attempted_at=?,definite_failure=0
           WHERE reminder_id=? AND stage=? AND part=? AND state='ready' AND receipt IS NULL`,
             )
             .run(now, lease.id, lease.stage, part.part).changes === 1
@@ -436,19 +653,22 @@ export function createReminderStore(connection: Connection, lifecycle: Lifecycle
         const state =
           outcome === 'delivered' ? 'confirmed' : outcome === 'failed' ? 'ready' : 'unknown';
         db.prepare(
-          `UPDATE personal_reminder_parts SET state=?,receipt=CASE WHEN ?='ready' THEN NULL ELSE receipt END
+          `UPDATE personal_reminder_parts SET state=?,receipt=CASE WHEN ?='ready' THEN NULL ELSE receipt END,
+          definite_failure=?
           WHERE reminder_id=? AND stage=? AND part=?`,
-        ).run(state, state, lease.id, lease.stage, part.part);
+        ).run(
+          state,
+          state,
+          Number(lease.stage === 'confirmation' && outcome === 'failed'),
+          lease.id,
+          lease.stage,
+          part.part,
+        );
         if (outcome === 'delivered') {
           if (nextPart(db, lease)) return true;
           if (lease.stage === 'delivery') finish(db, lease.id, 'delivered', now);
           else {
-            db.prepare("UPDATE personal_reminders SET confirmation='delivered' WHERE id=?").run(
-              lease.id,
-            );
-            db.prepare(
-              "DELETE FROM personal_reminder_parts WHERE reminder_id=? AND stage='confirmation'",
-            ).run(lease.id);
+            finishConfirmation(db, lease.id);
             release(db, lease);
           }
           return false;

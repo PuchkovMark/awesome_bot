@@ -150,6 +150,10 @@ test('обновление переносит только проверяемы�
         db.exec(`DROP TRIGGER personal_dispute_keep;
         DROP INDEX reminder_inputs_by_reminder;
         DROP VIEW verified_reminders;
+        ALTER TABLE personal_reminder_inputs DROP COLUMN repeated_request;
+        ALTER TABLE personal_reminder_parts DROP COLUMN definite_failure;
+        ALTER TABLE personal_reminders DROP COLUMN hint_claimed;
+        ALTER TABLE personal_reminders DROP COLUMN schedule_key;
         DROP VIEW personal_visible_messages;
         CREATE VIEW personal_visible_messages AS SELECT * FROM messages
           WHERE id NOT IN (SELECT message_id FROM personal_hidden_messages)

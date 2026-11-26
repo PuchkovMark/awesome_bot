@@ -47,6 +47,84 @@ test('старая копия сохраняет выключение лички
   }
 });
 
+test.each([59, 60])(
+  'старый снимок напоминания сверяется с рабочей схемой %s по именам полей',
+  async (version) => {
+    const files = storageFixture();
+    const snapshot = join(files.directory, 'reminders.sqlite');
+    const candidate = join(files.directory, 'reminders-candidate.sqlite');
+    const now = Date.parse('2026-11-26T12:00:00Z');
+    const dueAt = now + 60_000;
+    const live = new Database(files.path);
+    try {
+      live.pragma('foreign_keys=ON');
+      migrate(live, migrations.slice(0, 58));
+      live.exec(
+        "INSERT INTO chat_connections(chat_id,generation,revision,state) VALUES ('vk:41',1,0,'active')",
+      );
+      live
+        .prepare(
+          `INSERT INTO personal_reminders(id,chat_id,generation,origin_at,text,due_at,timezone,next_at,state,confirmation)
+       VALUES (12,'vk:41',1,?,'взять билет',?,'UTC',?,'pending','unknown')`,
+        )
+        .run(now, dueAt, dueAt);
+      live
+        .prepare(
+          `INSERT INTO personal_reminder_parts(reminder_id,stage,part,send_id,text,state,attempted_at,receipt)
+       VALUES (12,'confirmation',0,8,'Первая','confirmed',?,'80'),
+              (12,'confirmation',1,9,'Вторая','unknown',?,'81')`,
+        )
+        .run(now, now);
+      const before = openExisting(files.path);
+      try {
+        await createSnapshot(before, snapshot, 'one', now);
+      } finally {
+        before.close();
+      }
+      migrate(live, migrations.slice(0, version));
+      if (version === 60) {
+        live.exec(`UPDATE personal_reminders SET schedule_key='relative:1',hint_claimed=1;
+        UPDATE personal_reminder_parts SET state='ready',receipt=NULL,definite_failure=1 WHERE part=1;`);
+      }
+      await openCandidate(snapshot, candidate, 'one', now + 1);
+      const restored = openExisting(candidate, false);
+      const authority = openExisting(files.path);
+      try {
+        reconcileRestore(restored, authority, now + 1, 30 * 86_400_000);
+        expect(
+          restored
+            .prepare('SELECT id,due_at,schedule_key,hint_claimed FROM personal_reminders')
+            .get(),
+        ).toEqual({
+          id: 12,
+          due_at: dueAt,
+          schedule_key: version === 60 ? 'relative:1' : null,
+          hint_claimed: version === 60 ? 1 : 0,
+        });
+        expect(
+          restored
+            .prepare(
+              'SELECT state,receipt,send_id,definite_failure FROM personal_reminder_parts ORDER BY part',
+            )
+            .all(),
+        ).toEqual([
+          { state: 'confirmed', receipt: '80', send_id: 8, definite_failure: 0 },
+          version === 60
+            ? { state: 'ready', receipt: null, send_id: 9, definite_failure: 1 }
+            : { state: 'unknown', receipt: '81', send_id: 9, definite_failure: 0 },
+        ]);
+        expect(restored.pragma('foreign_key_check')).toEqual([]);
+      } finally {
+        authority.close();
+        restored.close();
+      }
+    } finally {
+      live.close();
+      files.cleanup();
+    }
+  },
+);
+
 test('восстановление берёт актуальные права и отметки и сохраняет отмену отзыва при повторе', async () => {
   const files = storageFixture();
   const snapshot = join(files.directory, 'admin-snapshot.sqlite');
