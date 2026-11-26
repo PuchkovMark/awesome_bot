@@ -9,6 +9,7 @@ import type { VkPollTransport } from '../src/channels/vk/long-poll';
 import { createVkRateLimiter } from '../src/channels/vk/rate-limit';
 import { loadApplicationConfig } from '../src/config/application';
 import { createLifecycleService } from '../src/core/index';
+import type { ConnectionScope } from '../src/contracts/index';
 import type { LlmClient, LlmResult } from '../src/llm/types';
 import type { SafeLogger } from '../src/logger/index';
 import { chatControlStore } from '../src/storage/chat-control-store';
@@ -165,7 +166,7 @@ async function setupControlApplication(
     },
   };
   function notify(message: Record<string, unknown>) {
-    listener.onUpdates([{ type: 'message_new', group_id: group, object: { message } }]);
+    return listener.onUpdates([{ type: 'message_new', group_id: group, object: { message } }]);
   }
   function event(
     id: number,
@@ -184,8 +185,10 @@ async function setupControlApplication(
       ...(reply ? { reply_message: reply } : {}),
     };
     messages.set(`${destination}:${id}`, message);
-    notify(message);
-    return { conversation_message_id: id, from_id: author, date: message.date };
+    return {
+      reply: { conversation_message_id: id, from_id: author, date: message.date },
+      handled: notify(message),
+    };
   }
   const sent = () =>
     attempt.mock.calls.filter(([method]) => method === 'messages.send').map(([, args]) => args);
@@ -221,6 +224,126 @@ async function setupControlApplication(
     },
   };
 }
+
+test('строка из групповой справки открывает сводку выбранной беседы по действующим правам и поколению', async () => {
+  const model = vi
+    .fn<() => Promise<LlmResult>>()
+    .mockResolvedValue(answer('Синтетическая реплика'));
+  const f = await setupControlApplication(model);
+  const neighborPeer = peer + 1;
+  let nextEvent = 300;
+
+  async function openGroup(destination: number) {
+    const id = `vk:${destination}` as const;
+    await resolveApplicationChat({ databasePath: f.files.path, ownerId }, id, 'new');
+    const scope = f.life.current(id);
+    await vi.waitFor(() => expect(f.disclosure.gate(scope).version).toBe(f.version));
+    return scope;
+  }
+
+  async function request(input: string, actor: number, destination: number, prefix: string) {
+    const before = f.delivered().length;
+    expect(await f.event(nextEvent++, input, actor, destination).handled).toBe(true);
+    const reply = () =>
+      f
+        .delivered()
+        .slice(before)
+        .find((row) => row.peer_id === destination && String(row.text).startsWith(prefix));
+    await vi.waitFor(() => expect(reply()).toBeDefined());
+    return String(reply()!.text);
+  }
+
+  async function copyCommand(scope: ConnectionScope, actor: number) {
+    const destination = Number(scope.chatId.slice(3));
+    const general = await request('/помощь', actor, destination, 'Доступные команды');
+    const shortcut = general.match(/^\/помощь управление(?= — )/mu)?.[0];
+    expect(shortcut).toBe('/помощь управление');
+    const topic = await request(shortcut!, actor, destination, 'Управление\n');
+    expect(topic).toContain('скопируйте следующую строку в личку сообщества');
+    expect(topic).not.toContain('Повод ответа:');
+    const command = topic.split('\n').find((line) => line.startsWith('почему ты так ответил '));
+    expect(command).toBe(`почему ты так ответил ${scope.chatId}@${scope.generation}`);
+    return command!;
+  }
+
+  async function deliverOrdinary(scope: ConnectionScope, text: string) {
+    expect(await f.event(nextEvent++, text, member, Number(scope.chatId.slice(3))).handled).toBe(
+      true,
+    );
+    await vi.waitFor(async () =>
+      expect(
+        (await f.storage.traces.last(scope))?.payload.publication.status,
+        `${scope.chatId}@${scope.generation} · ${text}`,
+      ).toBe('delivered'),
+    );
+  }
+
+  async function withoutSummary(command: string, actor: number) {
+    const before = f.sent().length;
+    expect(await f.event(nextEvent++, command, actor, actor).handled).toBe(true);
+    expect(f.sent()).toHaveLength(before);
+  }
+
+  const mentionReason = 'Повод ответа: упоминание бота.';
+  const nameReason = 'Повод ответа: обращение по имени.';
+  const empty = 'В этой беседе нет доступной сводки доставленного ответа.';
+  try {
+    await f.ready;
+    const a = await openGroup(peer);
+    const b = await openGroup(neighborPeer);
+    expect(b.generation).not.toBe(a.generation);
+    for (const scope of [a, b]) {
+      await f.storage.authorization.transaction(scope, (tx) =>
+        tx.grant({
+          userId: `vk:${administrator}`,
+          basis: 'explicit',
+          grantedAt: 1,
+          grantedBy: ownerId,
+        }),
+      );
+    }
+    const unpublished = await copyCommand(b, administrator);
+    expect(await request(unpublished, administrator, administrator, empty)).toBe(empty);
+    await deliverOrdinary(a, '[club314|Пенёк] Где начало встречи?');
+    await deliverOrdinary(b, 'Пенёк, где встречаемся завтра?');
+
+    const aCommand = await copyCommand(a, administrator);
+    const bCommand = await copyCommand(b, administrator);
+    await request(aCommand, administrator, administrator, mentionReason);
+    await request(bCommand, administrator, administrator, nameReason);
+    await request(await copyCommand(a, owner), owner, owner, mentionReason);
+    const oldB = await copyCommand(b, owner);
+    await request(oldB, owner, owner, nameReason);
+
+    await withoutSummary(aCommand, member);
+    await f.storage.authorization.transaction(b, (tx) => tx.remove(`vk:${administrator}`, false));
+    await request(aCommand, administrator, administrator, mentionReason);
+    await withoutSummary(bCommand, administrator);
+
+    const fresh = await openGroup(neighborPeer);
+    expect(fresh.generation).not.toBe(b.generation);
+    await deliverOrdinary(fresh, '[club314|Пенёк] Какой сегодня план?');
+    const freshCommand = await copyCommand(fresh, owner);
+    await withoutSummary(oldB, owner);
+    await request(freshCommand, owner, owner, mentionReason);
+
+    const summaries = f
+      .delivered()
+      .filter((row) => String(row.text).startsWith('Повод ответа:'))
+      .map((row) => [row.peer_id, String(row.text).split('\n')[0]]);
+    expect(summaries).toEqual([
+      [administrator, mentionReason],
+      [administrator, nameReason],
+      [owner, mentionReason],
+      [owner, nameReason],
+      [administrator, mentionReason],
+      [owner, mentionReason],
+    ]);
+    expect(model).toHaveBeenCalledTimes(3);
+  } finally {
+    await f.close();
+  }
+}, 12_000);
 
 test('команды VK сохраняют паузу, выключение отменяет старую работу, объяснение остаётся в личке', async () => {
   const oldResponse = Promise.withResolvers<LlmResult>(),
@@ -383,7 +506,7 @@ test('команды VK сохраняют паузу, выключение от
     event(1, '/режим активный', member);
     event(2, '/режим активный', administrator);
     await vi.waitFor(() => expect(controls.read(scope).mode).toBe('active'));
-    const neighbor = event(3, 'Обычный разговор', administrator);
+    const { reply: neighbor } = event(3, 'Обычный разговор', administrator);
     event(4, 'помолчи', member, peer, neighbor);
     await vi.waitFor(async () =>
       expect(

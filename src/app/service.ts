@@ -768,7 +768,7 @@ export async function runApplication(
               isCommandHelp(input) || isPrivateStart(message)
                 ? commandHelp(
                     role.value,
-                    message.isGroupChat,
+                    message.isGroupChat ? context.scope : undefined,
                     state.enabled,
                     state.mode,
                     message.userId,
@@ -874,7 +874,7 @@ export async function runApplication(
           ) {
             return channel.replyPrivateControl(
               ownerId,
-              commandHelp('owner', false, false, 'silent', ownerId, message.text),
+              commandHelp('owner', undefined, false, 'silent', ownerId, message.text),
               { signal, isCurrent, allow: async () => isCurrent() && ownerServiceHelpOnly() },
             );
           }
