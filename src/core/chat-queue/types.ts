@@ -113,6 +113,7 @@ export interface ChatQueue {
   readonly llmRecovery?: LlmRecovery;
   readonly signal: AbortSignal;
   isRunning(): boolean;
+  promoteGroupReply?(scope: ConnectionScope, messageId: number): 'queued' | 'full' | 'closed';
   readonly responseBudget?: import('../../storage/queue-types').ResponsePublicationBudget;
   wakeHistoryMaintenance?(): void;
   start(): Promise<void>;

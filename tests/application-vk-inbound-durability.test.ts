@@ -89,11 +89,11 @@ test('уведомление о переполнении не задержива
   const receipt = app.holdReceipt((text) => text === noticeText);
   try {
     app.complete.mockImplementationOnce(() => model.promise);
-    const first = app.submit('Пенёк, подскажи про встречу.');
+    const first = app.submit('[club314|Пенёк] Подскажи про встречу.');
     await until(() => expect(app.complete).toHaveBeenCalledOnce());
-    app.submit('Пенёк, подскажи про поездку.');
-    app.submit('Пенёк, подскажи про расписание.');
-    const overflow = app.submit('Пенёк, подскажи про концерт.');
+    app.submit('[club314|Пенёк] Подскажи про поездку.');
+    app.submit('[club314|Пенёк] Подскажи про расписание.');
+    const overflow = app.submit('[club314|Пенёк] Подскажи про концерт.');
     await receipt.entered;
     expect(journalCount(app, peer, overflow)).toBe(1);
     expect(app.sends).toContainEqual(

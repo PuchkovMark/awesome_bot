@@ -11,7 +11,8 @@ import type { Storage } from '../../storage/index';
 import type { ChatQueue, ReceivedInput } from '../chat-queue/types';
 import type { RoutingDecision, ServiceCommand } from './types';
 import { routeMessage } from './routing';
-import { addressesQuestionnaireByName } from './name-address';
+import { addressesQuestionnaireByName, glossaryBotNames } from './name-address';
+import { chatPassportStore } from '../../storage/chat-passport-store';
 import { validIncoming } from './validation';
 import { commandAccess, type RouterAuthorization } from './command-boundary';
 import type { InvitationReplyStatus } from '../../storage/questionnaire-invitation-input';
@@ -37,6 +38,7 @@ export interface RouterOptions {
   readonly logger?: SafeLogger;
   readonly storage: Storage;
   readonly queue: ChatQueue;
+  readonly groupReplyGate?: boolean;
   readonly authorization?: RouterAuthorization;
   readonly canAnswerQuestionnaire?: (
     scope: ConnectionScope,
@@ -90,6 +92,7 @@ export interface RouterOptions {
 }
 export function createMessageRouter(options: RouterOptions) {
   const metrics = createRouterMetrics(options.logger);
+  const passport = options.groupReplyGate ? chatPassportStore(options.storage) : undefined;
   return Object.freeze({
     stats: metrics.snapshot,
     registerInput(chatId: ChatId, scope: ConnectionScope | undefined, current: () => boolean) {
@@ -168,10 +171,21 @@ export function createMessageRouter(options: RouterOptions) {
               snapshot.receivedAt,
             ) ??
               (isQuestionnaireInvitationWarning(message.botReplyText) ? 'ignore' : undefined));
+          const glossary =
+            !service && message.isGroupChat && snapshot.settings.responseMode === 'normal'
+              ? passport?.read(scope).find(({ section }) => section === 'glossary')
+              : undefined;
           const decision = routeMessage({
             message,
             settings: snapshot.settings,
             considerInitiative: options.queue.autonomousReplies === true,
+            ...(passport &&
+              snapshot.settings.responseMode === 'normal' && {
+                replyGate: {
+                  allowInitiative: false,
+                  ...(glossary ? { glossary: glossaryBotNames(glossary) } : {}),
+                },
+              }),
             questionnaireName:
               !service &&
               answerForm &&

@@ -126,9 +126,11 @@ function values(buckets: readonly MetricsBucket[]) {
     tokens: tokens(sum(buckets)),
     initiative: { delivered: initiative.delivered, tokens: tokens(initiative) },
     background: {
-      tokens: tokens(sum(buckets, 'summary', 'profile_update')),
+      tokens: tokens(sum(buckets, 'summary', 'profile_update', 'gate_name', 'gate_initiative')),
       summary: tokens(sum(buckets, 'summary')),
       profileUpdate: tokens(sum(buckets, 'profile_update')),
+      groupReplyName: model(sum(buckets, 'gate_name')),
+      groupReplyInitiative: model(sum(buckets, 'gate_initiative')),
     },
   };
 }

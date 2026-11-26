@@ -70,7 +70,10 @@ test('ожидание связано с записанной репликой �
     expect(groupReplyGateStore(f.storage).valid(other, selected.messageId, Date.now())).toBeNull();
     const store = groupReplyGateStore(f.storage);
     expect(
-      store.reserve(scope, selected.messageId, 'try-one', [], selected.messageId, Date.now()),
+      store.reserve(scope, selected.messageId, 'try-one', [], selected.messageId, Date.now(), {
+        input: 10,
+        output: 5,
+      }),
     ).toBe(true);
     expect(
       groupReplyGateStore(second).reserve(
@@ -80,6 +83,7 @@ test('ожидание связано с записанной репликой �
         [],
         selected.messageId,
         Date.now(),
+        { input: 10, output: 5 },
       ),
     ).toBe(false);
     expect(store.sent(scope, selected.messageId, 'try-one', Date.now())).toBe(true);
@@ -112,9 +116,19 @@ test('неотправленная оценка восстанавливаетс
     const second = store.next('vk', now, [first.messageId])!;
     expect(store.next('vk', now, [first.messageId, second.messageId])).toBeUndefined();
     expect(queue.depth(lease).depthQueued).toBe(0);
-    expect(store.reserve(scope, first.messageId, 'a', [], first.messageId, now)).toBe(true);
+    expect(
+      store.reserve(scope, first.messageId, 'a', [], first.messageId, now, {
+        input: 10,
+        output: 5,
+      }),
+    ).toBe(true);
     expect(store.sent(scope, first.messageId, 'a', now)).toBe(true);
-    expect(store.reserve(scope, second.messageId, 'b', [], second.messageId, now)).toBe(true);
+    expect(
+      store.reserve(scope, second.messageId, 'b', [], second.messageId, now, {
+        input: 10,
+        output: 5,
+      }),
+    ).toBe(true);
     queue.release(lease);
     await f.reopen();
     const restored = scopeFor(f.storage, group);
@@ -154,7 +168,10 @@ test('копия до оценки сверяет исход из живой б�
     try {
       await newer.backup(path);
       expect(
-        store.reserve(scope, attempt.messageId, 'known', [], attempt.messageId, Date.now()),
+        store.reserve(scope, attempt.messageId, 'known', [], attempt.messageId, Date.now(), {
+          input: 10,
+          output: 5,
+        }),
       ).toBe(true);
       expect(store.sent(scope, attempt.messageId, 'known', Date.now())).toBe(true);
       expect(store.finish(scope, attempt.messageId, 'known', 'answer', 15, Date.now())).toBe(true);

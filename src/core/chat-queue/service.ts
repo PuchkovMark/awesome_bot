@@ -595,6 +595,12 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
         return false;
       }
     },
+    promoteGroupReply(scope, messageId) {
+      if (phase !== 'running') return 'closed';
+      const result = backend.promoteGroupReply(token, scope, messageId, config);
+      if (result === 'queued') schedule();
+      return result;
+    },
     async start() {
       if (phase !== 'idle') throw new QueueError('stopped');
       token = randomUUID();

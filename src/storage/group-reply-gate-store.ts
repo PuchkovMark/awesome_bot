@@ -1,11 +1,19 @@
 import type { Database } from 'better-sqlite3';
 import type { ChatId, ConnectionScope, UserId } from '../contracts/index';
 import type { GroupReplyAssessment } from '../core/message-router/types';
+import type { LlmUsage } from '../llm/types';
 import { readChatControl } from './chat-control-store';
 import { readDisclosureGate } from './chat-disclosure-store';
+import { recordFailedModelAttempt, recordSentModelAttempt } from './chat-request-metrics-store';
 import type { Connection } from './connection';
-import { historySourcesVisible } from './history-retention-store';
+import { historyBounds, historySourcesVisible } from './history-retention-store';
 import type { LifecycleBackend } from './lifecycle-store';
+import {
+  canReserveTokens,
+  deleteUnsentTokenReservation,
+  insertTokenReservation,
+  reconcileTokenReservation,
+} from './token-budget-store';
 import type { Storage } from './types';
 import { requireInput, timestamp } from './validation';
 
@@ -22,6 +30,23 @@ const columns = `message_id AS messageId,chat_id AS chatId,generation,kind,mode,
 
 type State = 'waiting' | 'reserved' | 'sent' | 'approved' | 'queued' | 'finished';
 export type GateOutcome = 'answer' | 'silence' | 'failed' | 'cancelled' | 'expired' | 'uncertain';
+
+export interface GroupReplySource {
+  readonly id: number;
+  readonly author: string;
+  readonly authorName: string;
+  readonly role: 'user' | 'assistant';
+  readonly senderBot: number | null;
+  readonly text: string;
+}
+
+export interface GroupReplyContext {
+  readonly current: GroupReplySource;
+  readonly quote?: GroupReplySource;
+  readonly nearby: readonly GroupReplySource[];
+  readonly frontier: number;
+  readonly glossary?: { readonly text: string | null; readonly revision: number };
+}
 
 export interface GroupReplyCandidate extends GroupReplyAssessment {
   readonly mode: 'normal' | 'active';
@@ -217,6 +242,11 @@ export function createGroupReplyGateStore(connection: Connection, lifecycle: Lif
           WHERE state='sent' AND substr(chat_id,1,length(@prefix))=@prefix`,
             ).run(params);
             db.prepare(
+              `DELETE FROM token_budget_attempts WHERE (chat_id,generation,attempt_key) IN (
+                SELECT chat_id,generation,attempt_key FROM group_reply_assessments
+                WHERE state='reserved' AND substr(chat_id,1,length(@prefix))=@prefix)`,
+            ).run(params);
+            db.prepare(
               `UPDATE group_reply_assessments SET state='waiting',attempt_key=NULL,source_ids=NULL,frontier=NULL
           WHERE state='reserved' AND substr(chat_id,1,length(@prefix))=@prefix`,
             ).run(params);
@@ -257,6 +287,78 @@ export function createGroupReplyGateStore(connection: Connection, lifecycle: Lif
         return row && groupReplyAssessmentCurrent(db, scope, row, now) ? row : null;
       });
     },
+    context(scope: ConnectionScope, messageId: number, now: number): GroupReplyContext | null {
+      return lifecycle.transaction(scope, (db) => {
+        const row = readGroupReplyAssessment(db, scope, messageId);
+        if (row?.state !== 'waiting') return null;
+        const current = groupReplyAssessmentCurrent(db, scope, row, now);
+        if (!current) return null;
+        const bounds = historyBounds(db, scope.chatId, now);
+        const floor = Math.max(bounds.clearedThrough, current.floor);
+        const fields = `id,user_id AS author,substr(author_name,1,128) AS authorName,role,
+          sender_bot AS senderBot,CASE WHEN length(CAST(text AS BLOB))<=4096 THEN text END AS text`;
+        const visible = "chat_id=? AND id>? AND timestamp>? AND purpose='conversation'";
+        const source = db
+          .prepare(
+            `SELECT ${fields},reply_to_message_id AS reply FROM personal_visible_messages
+          WHERE ${visible} AND id=?`,
+          )
+          .get(scope.chatId, floor, bounds.expiredThrough, messageId) as
+          (GroupReplySource & { reply: string | null }) | undefined;
+        if (!source || source.text === null) return null;
+        const { reply, ...input } = source;
+        const quote =
+          reply && row.replyAuthorId
+            ? (db
+                .prepare(
+                  `SELECT ${fields} FROM personal_visible_messages
+            WHERE ${visible} AND id<? AND platform_message_id=? AND user_id=?`,
+                )
+                .get(
+                  scope.chatId,
+                  floor,
+                  bounds.expiredThrough,
+                  messageId,
+                  reply,
+                  row.replyAuthorId,
+                ) as GroupReplySource | undefined)
+            : undefined;
+        const nearby = db
+          .prepare(
+            `SELECT ${fields} FROM personal_visible_messages
+          WHERE ${visible} AND id<=? AND id NOT IN (?,?) ORDER BY id DESC LIMIT 6`,
+          )
+          .all(
+            scope.chatId,
+            floor,
+            bounds.expiredThrough,
+            row.kind === 'name' ? messageId : Number.MAX_SAFE_INTEGER,
+            messageId,
+            quote?.id ?? 0,
+          ) as GroupReplySource[];
+        const glossary =
+          row.glossaryRevision === null
+            ? undefined
+            : (db
+                .prepare(
+                  `
+          SELECT text,revision FROM chat_passport_sections
+          WHERE chat_id=? AND generation=? AND section='glossary' AND revision=?`,
+                )
+                .get(
+                  scope.chatId,
+                  scope.generation,
+                  row.glossaryRevision,
+                ) as GroupReplyContext['glossary']);
+        return {
+          current: input,
+          ...(quote && quote.text !== null ? { quote } : {}),
+          nearby: nearby.filter(({ text }) => text !== null),
+          frontier: Math.max(messageId, nearby[0]?.id ?? 0),
+          ...(glossary ? { glossary } : {}),
+        };
+      });
+    },
     reserve(
       scope: ConnectionScope,
       messageId: number,
@@ -264,18 +366,26 @@ export function createGroupReplyGateStore(connection: Connection, lifecycle: Lif
       sourceIds: readonly number[],
       frontier: number,
       now: number,
+      tokens: { readonly input: number; readonly output: number },
     ) {
       return lifecycle.transaction(scope, (db) => {
         const row = readGroupReplyAssessment(db, scope, messageId);
         if (!row || row.state !== 'waiting') return false;
         const ids = [...new Set([messageId, ...sourceIds])];
         const current = groupReplyAssessmentCurrent(db, scope, row, now);
+        const attempt = {
+          key: attemptKey,
+          purpose: row.kind === 'name' ? ('gate_name' as const) : ('gate_initiative' as const),
+          ...tokens,
+        };
         if (
           !current ||
           ids.some((id) => id <= current.floor) ||
-          !historySourcesVisible(db, scope.chatId, ids, now)
+          !historySourcesVisible(db, scope.chatId, ids, now) ||
+          !canReserveTokens(db, scope, true, attempt, now)
         )
           return false;
+        insertTokenReservation(db, scope, attempt, now);
         return (
           db
             .prepare(
@@ -298,15 +408,24 @@ export function createGroupReplyGateStore(connection: Connection, lifecycle: Lif
         const row = readGroupReplyAssessment(db, scope, messageId);
         if (row?.state !== 'reserved' || !groupReplyAssessmentCurrent(db, scope, row, now))
           return false;
-        return (
+        const sent =
           db
             .prepare(
               `UPDATE group_reply_assessments SET state='sent' WHERE ${key}
           AND state='reserved' AND attempt_key=@attemptKey`,
             )
-            .run({ ...scope, messageId, attemptKey }).changes === 1
-        );
+            .run({ ...scope, messageId, attemptKey }).changes === 1;
+        if (sent) recordSentModelAttempt(db, scope, attemptKey, undefined, now);
+        return sent;
       });
+    },
+    reconcile(scope: ConnectionScope, attemptKey: string, usage: LlmUsage) {
+      return connection.run((db) => reconcileTokenReservation(db, scope, attemptKey, usage));
+    },
+    failed(scope: ConnectionScope, attemptKey: string) {
+      return connection.run((db) =>
+        db.transaction(() => recordFailedModelAttempt(db, scope, attemptKey)).immediate(),
+      );
     },
     finish(
       scope: ConnectionScope,
@@ -340,16 +459,27 @@ export function createGroupReplyGateStore(connection: Connection, lifecycle: Lif
         );
       });
     },
-    cancel(scope: ConnectionScope, messageId: number) {
-      return lifecycle.transaction(
-        scope,
-        (db) =>
-          db
-            .prepare(
-              `UPDATE group_reply_assessments
-        SET state='finished',outcome='cancelled' WHERE ${key} AND state IN ('waiting','reserved','approved')`,
-            )
-            .run({ ...scope, messageId }).changes === 1,
+    cancel(
+      scope: ConnectionScope,
+      messageId: number,
+      outcome: 'cancelled' | 'failed' = 'cancelled',
+    ) {
+      return connection.run((db) =>
+        db
+          .transaction(() => {
+            const row = readGroupReplyAssessment(db, scope, messageId);
+            if (row?.state === 'reserved' && row.attemptKey)
+              deleteUnsentTokenReservation(db, scope, row.attemptKey);
+            return (
+              db
+                .prepare(
+                  `UPDATE group_reply_assessments SET state='finished',outcome=@outcome
+          WHERE ${key} AND state IN ('waiting','reserved','approved')`,
+                )
+                .run({ ...scope, messageId, outcome }).changes === 1
+            );
+          })
+          .immediate(),
       );
     },
   };
