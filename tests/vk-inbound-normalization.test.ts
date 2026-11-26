@@ -93,20 +93,22 @@ describe('нормализация входящего сообщения VK', ()
     ]);
   });
 
-  it.each(['Вот что прислали', 'Пенёк, где встречаемся завтра?'])(
-    'оставляет подпись автора отдельной от пересланного текста (%s)',
-    (caption) => {
-      const raw = parse({
-        text: caption,
-        fwd_messages: [{ from_id: 88, text: 'Пенёк, во сколько выходим?' }],
-      });
-      expect(normalizeVkIncoming(raw, groupId)).toMatchObject({
-        text: caption,
-        hasForwarded: true,
-        isMentioned: false,
-      });
-    },
-  );
+  it.each([
+    ['Вот что прислали', 'Пенёк, во сколько выходим?'],
+    ['Пенёк, где встречаемся завтра?', 'Пенёк, во сколько выходим?'],
+    ['/мои-данные vk:2000000041', '/отключить-профиль'],
+    ['', '/удалить-мои-данные'],
+  ])('оставляет подпись автора отдельной от пересланного текста (%s)', (caption, forwarded) => {
+    const raw = parse({
+      text: caption,
+      fwd_messages: [{ from_id: 88, text: forwarded }],
+    });
+    expect(normalizeVkIncoming(raw, groupId)).toMatchObject({
+      text: caption,
+      hasForwarded: true,
+      isMentioned: false,
+    });
+  });
 
   it('выделяет команду только после начальной метки своего сообщества и сохраняет её аргументы', () => {
     const command = '/анкета показать [id42|Второй]';
