@@ -17,6 +17,9 @@ export interface PausedConnection extends ConnectionVersion {
   readonly title: string | null;
   readonly reason: ConnectionPauseReason | null;
 }
+export interface RecoveryVersion extends ConnectionVersion {
+  readonly controlRevision: number;
+}
 export interface LifecycleObservation {
   readonly confidence: 'confirmed' | 'uncertain' | 'unavailable';
   readonly bot: 'present' | 'absent' | 'unknown';

@@ -143,10 +143,21 @@ test('обновление переносит только проверяемы�
     f.deliver(scope);
     const first = await pending(f, scope, alice, '200');
     const second = await pending(f, scope, twin, '201');
-    const life = lifecycleBackend(f.storage);
+    const db = new Database(f.path);
     // Восстанавливаем схему предыдущей версии и заполняем данные, существовавшие до переноса.
-    life.transaction(scope, (db) => {
-      db.exec(`DROP TRIGGER personal_dispute_keep;
+    try {
+      db.transaction(() => {
+        db.exec(`DROP TRIGGER personal_dispute_keep;
+        DROP INDEX reminder_inputs_by_reminder;
+        DROP VIEW verified_reminders;
+        DROP VIEW personal_visible_messages;
+        CREATE VIEW personal_visible_messages AS SELECT * FROM messages
+          WHERE id NOT IN (SELECT message_id FROM personal_hidden_messages)
+          AND id NOT IN (SELECT answer_id FROM departed_profile_answers);
+        DROP TABLE connection_source_boundaries;
+        DROP TABLE connection_observations;
+        DROP TABLE unverified_admin_grants;
+        ALTER TABLE chat_connections DROP COLUMN established;
         DROP TABLE personal_dispute_reports;
         DROP TABLE personal_dispute_cases;
         DROP TABLE chat_metrics_publications;
@@ -175,14 +186,17 @@ test('обновление переносит только проверяемы�
         DROP INDEX questionnaire_progress_attempt;
         DELETE FROM schema_migrations WHERE version>=45;
         UPDATE messages SET purpose='conversation' WHERE id IN (SELECT message_id FROM questionnaire_inputs);`);
-      db.prepare(
-        "UPDATE questionnaire_progress SET state='completed',answers=? WHERE source_id=?",
-      ).run(JSON.stringify({ ...answers, '2': 'Отсутствующая цитата' }), first.id);
-      db.prepare(
-        "UPDATE questionnaire_progress SET state='completed',answers=? WHERE source_id=?",
-      ).run(JSON.stringify(answers), second.id);
-      db.prepare('DELETE FROM messages WHERE id=?').run(second.id);
-    });
+        db.prepare(
+          "UPDATE questionnaire_progress SET state='completed',answers=? WHERE source_id=?",
+        ).run(JSON.stringify({ ...answers, '2': 'Отсутствующая цитата' }), first.id);
+        db.prepare(
+          "UPDATE questionnaire_progress SET state='completed',answers=? WHERE source_id=?",
+        ).run(JSON.stringify(answers), second.id);
+        db.prepare('DELETE FROM messages WHERE id=?').run(second.id);
+      })();
+    } finally {
+      db.close();
+    }
     await f.reopen();
     const restored = scopeFor(f.storage, group);
     expect(own(f, restored).map(({ value }) => value)).toEqual(['Шахматы', 'Го']);

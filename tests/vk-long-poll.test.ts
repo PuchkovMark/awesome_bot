@@ -46,14 +46,59 @@ describe('Bots Long Poll', () => {
       2,
     );
     await run.done;
-    expect(run.received).toEqual(['startup', first, 'renew_server', second]);
+    expect(run.received).toEqual(['startup', first, 'transport_error', second]);
     expect(run.api.getLongPollServer).toHaveBeenCalledTimes(2);
     expect(run.fetch.mock.calls.map(([url]) => (url as URL).searchParams.get('ts'))).toEqual([
       '10',
       '11',
-      '10',
+      '11',
     ]);
     expect(run.fetch.mock.calls[0]?.[1]?.redirect).toBe('error');
+  });
+
+  it('после пустого опроса и тайм-аута повторяет последнюю принятую позицию', async () => {
+    const first = { message: 1 };
+    const run = simulate(
+      [
+        { ts: '11', updates: [] },
+        new Response('', { status: 503 }),
+        { ts: '12', updates: [first] },
+      ],
+      1,
+    );
+    await run.done;
+    expect(run.api.getLongPollServer).toHaveBeenCalledTimes(1);
+    expect(run.fetch.mock.calls.map(([url]) => (url as URL).searchParams.get('ts'))).toEqual([
+      '10',
+      '11',
+      '11',
+    ]);
+    expect(run.received).toEqual(['startup', 'transport_error', first]);
+  });
+
+  it('повторяет частично принятую страницу с тем же курсором', async () => {
+    const abort = new AbortController();
+    const cursors: string[] = [];
+    const transport = createVkLongPoll({
+      api: { getLongPollServer: async () => server },
+      fetch: async (url) => {
+        cursors.push((url as URL).searchParams.get('ts')!);
+        return Response.json({ ts: '11', updates: [{ message: 1 }] });
+      },
+      wait: async () => {},
+    });
+    await transport.run(
+      {
+        onGap: async () => {},
+        onUpdates: async () => {
+          if (cursors.length === 1) return false;
+          abort.abort();
+          return true;
+        },
+      },
+      abort.signal,
+    );
+    expect(cursors).toEqual(['10', '10']);
   });
 
   it('сообщает о потере позиции до первой пачки по новой позиции', async () => {

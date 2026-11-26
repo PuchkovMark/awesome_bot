@@ -54,7 +54,13 @@ export function createAddressPreferenceStore(privacy: ReturnType<typeof personal
       if (
         !saved?.form ||
         saved.visibility === 'unknown' ||
-        (isGroupChat && saved.visibility !== 'chat')
+        (isGroupChat &&
+          (saved.visibility !== 'chat' ||
+            db
+              .prepare(
+                'SELECT 1 FROM connection_source_boundaries WHERE chat_id=? AND input_floor>=?',
+              )
+              .get(scope.chatId, saved.form_message_id)))
       )
         return undefined;
       const bounds = includeSource ? historyBounds(db, scope.chatId) : undefined;

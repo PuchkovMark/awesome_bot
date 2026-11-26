@@ -62,7 +62,7 @@ export function createChatControlHandlers(options: {
           command.kind === 'questionnaireEdit',
         );
       const messageId =
-        command.kind === 'greeting' || command.kind === 'invitation'
+        command.kind === 'greeting' || command.kind === 'invitation' || command.kind === 'off'
           ? Number(message.messageId)
           : undefined;
       if (
@@ -116,7 +116,31 @@ export function createChatControlHandlers(options: {
       if (command !== 'explain' && sender !== ownerId) return Promise.resolve();
       return (async () => {
         const target = request.target;
-        if (!target || !options.group(target.chatId) || command === 'invalid') return;
+        if (!target || command === 'invalid' || !current() || signal.aborted) return;
+        const toggle = command !== 'explain' && (command.kind === 'on' || command.kind === 'off');
+        if (toggle && message.hasForwarded) return;
+        if (!options.group(target.chatId) && !(toggle && /^vk:[1-9]\d*$/.test(target.chatId)))
+          return;
+        const pausedEnabled =
+          toggle && sender === ownerId
+            ? lifecycle.setPausedEnabled(target, sender, command.kind === 'on', {
+                sourceChatId: sender,
+                messageId: message.cmid,
+                timestamp: message.timestamp,
+              })
+            : undefined;
+        if (pausedEnabled !== undefined) {
+          await channel.replyPrivateControl(
+            sender,
+            pausedEnabled ? 'Бот включён.' : 'Бот выключен.',
+            {
+              signal,
+              isCurrent: current,
+              allow: async () => current(),
+            },
+          );
+          return;
+        }
         const scope = lifecycle.admissionScope(target.chatId);
         if (scope.generation !== target.generation) return;
         const state = controls.read(scope);

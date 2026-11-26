@@ -55,6 +55,11 @@ export function acceptsHistoryInput(
     message.timestamp > historyBounds(db, scope.chatId, now).expiredThrough &&
     !db
       .prepare(
+        'SELECT 1 FROM connection_source_boundaries WHERE chat_id=? AND input_floor>=CAST(? AS INTEGER)',
+      )
+      .get(scope.chatId, message.messageId) &&
+    !db
+      .prepare(
         'SELECT 1 FROM personal_deletions WHERE chat_id=? AND generation=? AND user_id=? AND confirmed_at>=? LIMIT 1',
       )
       .get(scope.chatId, scope.generation, message.userId, message.timestamp) &&

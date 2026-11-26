@@ -80,7 +80,7 @@ interface Part {
 }
 
 function record(db: Database, id: number) {
-  return db.prepare('SELECT * FROM personal_reminders WHERE id=?').get(id) as
+  return db.prepare('SELECT * FROM verified_reminders WHERE id=?').get(id) as
     ReminderRecord | undefined;
 }
 
@@ -139,7 +139,7 @@ function nextPart(db: Database, lease: Lease) {
 function currentLease(db: Database, lease: Lease, now: number, forSend: boolean) {
   return !!db
     .prepare(
-      `SELECT 1 FROM personal_reminders r
+      `SELECT 1 FROM verified_reminders r
     JOIN chat_connections c USING(chat_id,generation)
     LEFT JOIN chats s USING(chat_id)
     WHERE r.id=? AND r.lock_token=? AND r.lock_stage=? AND r.lock_until>?
@@ -344,7 +344,7 @@ export function createReminderStore(connection: Connection, lifecycle: Lifecycle
               `SELECT r.*, EXISTS(
               SELECT 1 FROM personal_reminder_parts p WHERE p.reminder_id=r.id
               AND p.stage='delivery' AND p.state='unknown'
-            ) AS delivery_unknown FROM personal_reminders r
+            ) AS delivery_unknown FROM verified_reminders r
             WHERE r.chat_id=? AND r.generation=?
             ${filter === 'cancellable' ? `AND r.state IN ('draft','pending') AND (${startedDelivery}) IS NULL` : ''}
             ORDER BY coalesce(r.due_at,r.origin_at),r.id`,
@@ -359,7 +359,7 @@ export function createReminderStore(connection: Connection, lifecycle: Lifecycle
         maintain(db, now);
         const row = db
           .prepare(
-            `SELECT r.state, (${startedDelivery}) AS started FROM personal_reminders r
+            `SELECT r.state, (${startedDelivery}) AS started FROM verified_reminders r
           WHERE r.id=? AND r.chat_id=? AND r.generation=?`,
           )
           .get(id, recipient.scope.chatId, recipient.scope.generation) as
@@ -377,7 +377,7 @@ export function createReminderStore(connection: Connection, lifecycle: Lifecycle
         assertRecipient(db, recipient);
         const row = db
           .prepare(
-            `SELECT * FROM personal_reminders WHERE id=? AND chat_id=? AND generation=? AND state='pending'
+            `SELECT * FROM verified_reminders WHERE id=? AND chat_id=? AND generation=? AND state='pending'
           AND confirmation!='delivered' AND (lock_until IS NULL OR lock_until<=?)`,
           )
           .get(id, recipient.scope.chatId, recipient.scope.generation, now) as
@@ -390,7 +390,7 @@ export function createReminderStore(connection: Connection, lifecycle: Lifecycle
         maintain(db, now);
         const row = db
           .prepare(
-            `SELECT r.* FROM personal_reminders r JOIN chat_connections c USING(chat_id,generation)
+            `SELECT r.* FROM verified_reminders r JOIN chat_connections c USING(chat_id,generation)
           LEFT JOIN chats s USING(chat_id)
           WHERE r.state='pending' AND r.next_at<=? AND (r.lock_until IS NULL OR r.lock_until<=?)
           AND c.state='active' AND coalesce(s.enabled,1)=1
@@ -426,7 +426,7 @@ export function createReminderStore(connection: Connection, lifecycle: Lifecycle
       return transaction((db) => {
         db.prepare(
           `UPDATE personal_reminder_parts SET receipt=? WHERE reminder_id=? AND stage=? AND part=?
-          AND state='sending' AND EXISTS(SELECT 1 FROM personal_reminders WHERE id=? AND lock_token=?)`,
+          AND state='sending' AND EXISTS(SELECT 1 FROM verified_reminders WHERE id=? AND lock_token=?)`,
         ).run(receipt, lease.id, lease.stage, part.part, lease.id, lease.token);
       });
     },

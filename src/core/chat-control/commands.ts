@@ -42,7 +42,9 @@ export function chatControlAction(command: ChatControlCommand): ServiceCommand {
     command.kind === 'disableAutonomous'
   )
     return { action: 'chat.pause.extend', minimumRole: 'admin' };
-  return { action: 'chat.configure', minimumRole: command.kind === 'on' ? 'owner' : 'admin' };
+  if (command.kind === 'on' || command.kind === 'off')
+    return { action: 'chat.enable', minimumRole: 'owner' };
+  return { action: 'chat.configure', minimumRole: 'admin' };
 }
 
 const modes = new Map<string, ResponseMode>([

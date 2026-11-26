@@ -217,6 +217,9 @@ export function confirmDeletion(
   db.prepare(
     'DELETE FROM bot_admin_revocations WHERE chat_id=? AND (user_id=? OR revoked_by=?)',
   ).run(chat, user, user);
+  db.prepare(
+    'DELETE FROM unverified_admin_grants WHERE chat_id=? AND (user_id=? OR granted_by=?)',
+  ).run(chat, user, user);
   db.prepare('UPDATE bot_admin_grants SET granted_by=NULL WHERE chat_id=? AND granted_by=?').run(
     chat,
     user,

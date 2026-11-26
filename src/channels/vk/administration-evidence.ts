@@ -68,6 +68,61 @@ export function createVkAdministrationEvidence(api: Pick<VkApi, 'request'>, grou
   }
 
   return Object.freeze({
+    async confirmReplacement(
+      chatId: import('../../contracts/index').ChatId,
+      departure: number,
+      arrival: number,
+      guard: VkRequestGuard,
+    ) {
+      const peer = vkLocalId(chatId);
+      if (!peer || !isVkGroupChat(peer) || guard.isCurrent?.() === false) return false;
+      try {
+        const result = vkRecord(
+          await api.request(
+            'messages.getByConversationMessageId',
+            { peer_id: peer, conversation_message_ids: `${departure},${arrival}` },
+            guard,
+          ),
+        );
+        const entries = Array.isArray(result?.items)
+          ? result.items.map(vkRecord).filter((r) => r?.peer_id === peer)
+          : [];
+        const type = (id: number) => {
+          const rows = entries.filter((r) => r?.conversation_message_id === id);
+          const action = rows.length === 1 ? vkRecord(rows[0]?.action) : undefined;
+          return action?.member_id === community ? action.type : undefined;
+        };
+        return (
+          !guard.signal?.aborted &&
+          guard.isCurrent?.() !== false &&
+          type(departure) === 'chat_kick_user' &&
+          type(arrival) === 'chat_invite_user'
+        );
+      } catch {
+        return false;
+      }
+    },
+    async canWriteGroup(chatId: import('../../contracts/index').ChatId, guard: VkRequestGuard) {
+      const peer = vkLocalId(chatId);
+      if (!peer || !isVkGroupChat(peer) || guard.isCurrent?.() === false) return false;
+      try {
+        const result = vkRecord(
+          await api.request('messages.getConversationsById', { peer_ids: String(peer) }, guard),
+        );
+        const rows = Array.isArray(result?.items)
+          ? result.items.map(vkRecord).filter((row) => vkRecord(row?.peer)?.id === peer)
+          : [];
+        return (
+          !guard.signal?.aborted &&
+          guard.isCurrent?.() !== false &&
+          rows.length === 1 &&
+          vkRecord(rows[0]?.chat_settings)?.state === 'in' &&
+          vkRecord(rows[0]?.can_write)?.allowed === true
+        );
+      } catch {
+        return false;
+      }
+    },
     async observe(
       scope: ConnectionScope,
       input: {

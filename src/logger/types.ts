@@ -20,6 +20,19 @@ export const applicationFailures = [
 ] as const;
 export type ApplicationFailure = (typeof applicationFailures)[number];
 export type LogEvent =
+  | {
+      event: 'vk_connection';
+      reason:
+        | 'startup'
+        | 'lost_position'
+        | 'renew_server'
+        | 'invalid_response'
+        | 'transport_error'
+        | 'previous_position'
+        | 'new_position'
+        | 'delivery_allowed'
+        | 'delivery_unavailable';
+    }
   | ({ event: 'trace_stats'; window: 'run' } & Readonly<
       Record<import('../core/response-tracing/metrics').TraceEvent, number>
     >)

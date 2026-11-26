@@ -2,7 +2,10 @@ import { createHmac } from 'node:crypto';
 import type { ConnectionScope } from '../contracts/lifecycle';
 
 /** Вычисление не подтверждает актуальность области и не хранит соответствия. */
-export function createLlmSessionId(secret: string): (scope: ConnectionScope) => string {
+export function createLlmSessionId(
+  secret: string,
+  historyRevision?: (scope: ConnectionScope) => number | null,
+): (scope: ConnectionScope) => string {
   if (typeof secret !== 'string' || secret.trim().length === 0) {
     throw new TypeError('Некорректный секрет сессии LLM.');
   }
@@ -16,8 +19,13 @@ export function createLlmSessionId(secret: string): (scope: ConnectionScope) => 
     ) {
       throw new TypeError('Некорректная область сессии LLM.');
     }
-    return createHmac('sha256', secret)
-      .update(JSON.stringify(['awesome_bot:llm-session:v1', scope.chatId, scope.generation]))
-      .digest('hex');
+    const identity: (string | number)[] = [
+      'awesome_bot:llm-session:v1',
+      scope.chatId,
+      scope.generation,
+    ];
+    const revision = historyRevision?.(scope);
+    if (revision != null) identity.push(revision);
+    return createHmac('sha256', secret).update(JSON.stringify(identity)).digest('hex');
   };
 }

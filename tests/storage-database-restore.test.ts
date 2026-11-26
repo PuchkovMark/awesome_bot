@@ -16,6 +16,37 @@ import { migrate } from '../src/storage/migrate';
 import { migrations } from '../src/storage/migrations/index';
 import Database from 'better-sqlite3';
 
+test('старая копия сохраняет выключение лички, созданной уже после снимка', async () => {
+  const files = storageFixture();
+  const live = await openStorage(files.path);
+  const newer = openExisting(files.path);
+  const backup = join(files.directory, 'saved.sqlite');
+  const copy = join(files.directory, 'candidate.sqlite');
+  try {
+    await createSnapshot(newer, backup, 'owner-choice', 1);
+    await openCandidate(backup, copy, 'owner-choice', 2);
+    const scope = scopeFor(live, 'vk:42');
+    await live.chats.create(scope, { enabled: false, responseMode: 'normal', createdAt: 3 });
+    const staged = openExisting(copy, false);
+    try {
+      newer.transaction(() => staged.transaction(() => reconcileConnections(staged, newer))())();
+      expect(
+        staged
+          .prepare(
+            'SELECT enabled,established,state FROM chats JOIN chat_connections USING(chat_id) WHERE chat_id=?',
+          )
+          .get(scope.chatId),
+      ).toEqual({ enabled: 0, established: 1, state: 'uncertain' });
+    } finally {
+      staged.close();
+    }
+  } finally {
+    newer.close();
+    await live.close();
+    files.cleanup();
+  }
+});
+
 test('восстановление берёт актуальные права и отметки и сохраняет отмену отзыва при повторе', async () => {
   const files = storageFixture();
   const snapshot = join(files.directory, 'admin-snapshot.sqlite');

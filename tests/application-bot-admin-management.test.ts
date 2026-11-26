@@ -306,6 +306,7 @@ test('личный вход отклоняет неверное поколени
     app.submit(`/отозвать-админа ${target} ${user} ${'🐈'.repeat(501)}`, owner, undefined, owner);
     await receipt(app, 'Причина превышает предел в 500 символов.', owner);
     await app.loseObservation();
+    app.setGroupAllowed(peer, false);
     app.submit(`/отозвать-админа ${target} ${user} Синтетика`, owner, undefined, owner);
     await until(() =>
       expect(

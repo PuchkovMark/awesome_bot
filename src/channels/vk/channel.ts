@@ -48,15 +48,35 @@ export function createVkChannel(
   const api =
     dependencies.api ??
     createVkSdkApi(options.groupId, options.token, options.inputSignal ?? signal);
-  const inbound = createVkInbound(options, {
-    api,
-    ...(dependencies.transport ? { transport: dependencies.transport } : {}),
-  });
   const outbound = createVkOutbound({
     groupId: options.groupId,
     api,
     ...(dependencies.wait ? { wait: dependencies.wait } : {}),
   });
+  const administrationEvidence = createVkAdministrationEvidence(api, options.groupId);
+  function verifyDelivery(chatId: ChatId, isCurrent: () => boolean) {
+    const peer = vkLocalId(chatId);
+    if (peer === undefined || peer <= 0) return Promise.resolve(false);
+    const guard = { signal: options.inputSignal ?? signal, isCurrent };
+    return isVkGroupChat(peer)
+      ? administrationEvidence.canWriteGroup(chatId, guard)
+      : createVkAdministrationDelivery(api, outbound, chatId, options.groupId).canWrite(guard);
+  }
+  const inbound = createVkInbound(
+    {
+      ...options,
+      verifyDelivery,
+      confirmReplacement: (chat, departure, arrival, current) =>
+        administrationEvidence.confirmReplacement(chat, departure, arrival, {
+          signal: options.inputSignal ?? signal,
+          isCurrent: current,
+        }),
+    },
+    {
+      api,
+      ...(dependencies.transport ? { transport: dependencies.transport } : {}),
+    },
+  );
   let typingFailed = 0;
   let invitationMentionsOmitted = 0;
 
@@ -106,7 +126,12 @@ export function createVkChannel(
           options.lifecycle.isAdmissionCurrent(scope) && (!guard || guard.isCurrent()),
       });
     },
-    publish(input) {
+    async publish(input) {
+      if (
+        options.lifecycle.wasRecovered?.(input.scope) &&
+        !(await verifyDelivery(input.scope.chatId, input.isCurrent))
+      )
+        return { kind: 'failed', confirmedParts: 0 };
       return outbound.send({
         ...input,
         chatId: input.scope.chatId,
@@ -226,7 +251,8 @@ export function createVkChannel(
 
   return Object.freeze({
     ...adapter,
-    administrationEvidence: createVkAdministrationEvidence(api, options.groupId),
+    administrationEvidence,
+    retryGroups: inbound.retryGroups,
     administrationDelivery: options.owner
       ? createVkAdministrationDelivery(api, outbound, options.owner, options.groupId)
       : undefined,

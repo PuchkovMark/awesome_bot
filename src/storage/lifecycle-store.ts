@@ -7,6 +7,7 @@ import type {
   KnownBoolean,
   LifecycleObservation,
   PausedConnection,
+  RecoveryVersion,
   UserId,
 } from '../contracts/index';
 import type { Connection } from './connection';
@@ -15,6 +16,11 @@ import { advanceClock } from './lifecycle-clock';
 import { StorageError } from './errors';
 import { compositeId, requireInput, timestamp } from './validation';
 import { setAdminPresence } from './admin-recovery-store';
+import {
+  createRecoveryReader,
+  recoveryVersion,
+  restrictPreviousSources,
+} from './connection-recovery';
 
 interface State {
   chatId: ChatId;
@@ -23,6 +29,8 @@ interface State {
   state: 'active' | 'uncertain';
   creatorId: string | null;
   inviterId: string | null;
+  sourceRevision: number | null;
+  pauseReason: ConnectionPauseReason | null;
 }
 interface Expected {
   chatId: ChatId;
@@ -90,13 +98,13 @@ export function removeStoredChat(db: Database, chatId: ChatId): void {
 }
 
 export function createLifecycleBackend(connection: Connection) {
-  const scopes = new WeakMap<object, number | null>();
+  const scopes = new WeakMap<object, { revision: number | null; sourceRevision: number | null }>();
   const checks = new WeakSet<object>();
   function read(db: Database, chatId: ChatId): State | null {
     return (
       (db
         .prepare(
-          'SELECT chat_id AS chatId,generation,revision,state,creator_id AS creatorId,inviter_id AS inviterId FROM chat_connections WHERE chat_id=?',
+          'SELECT c.chat_id AS chatId,c.generation,c.revision,c.state,c.pause_reason AS pauseReason,c.creator_id AS creatorId,c.inviter_id AS inviterId,b.revision AS sourceRevision FROM chat_connections c LEFT JOIN connection_source_boundaries b USING(chat_id,generation) WHERE c.chat_id=?',
         )
         .get(chatId) as State | undefined) ?? null
     );
@@ -117,7 +125,10 @@ export function createLifecycleBackend(connection: Connection) {
       chatId: state.chatId,
       generation: state.generation,
     }) as ConnectionScope;
-    scopes.set(scope, pinRevision ? state.revision : null);
+    scopes.set(scope, {
+      revision: pinRevision ? state.revision : null,
+      sourceRevision: state.sourceRevision,
+    });
     return scope;
   }
   function bump(db: Database, chatId: ChatId) {
@@ -136,8 +147,8 @@ export function createLifecycleBackend(connection: Connection) {
   ) {
     const generation = advanceClock(db);
     db.prepare(
-      'INSERT INTO chat_connections(chat_id,generation,revision,state,pause_reason) VALUES (?,?,0,?,?)',
-    ).run(chatId, generation, state, reason);
+      'INSERT INTO chat_connections(chat_id,generation,revision,state,pause_reason,established) VALUES (?,?,0,?,?,?)',
+    ).run(chatId, generation, state, reason, Number(state === 'active'));
     db.prepare('INSERT INTO chat_metrics_collection VALUES (?,?,?)').run(
       chatId,
       generation,
@@ -173,12 +184,65 @@ export function createLifecycleBackend(connection: Connection) {
     const state = read(db, scope.chatId);
     if (!state || state.generation !== scope.generation) throw new StorageError('stale_scope');
     if (state.state !== 'active') throw new StorageError('uncertain_connection');
-    const revision = scopes.get(scope);
-    if (revision !== null && revision !== state.revision) throw new StorageError('stale_scope');
+    const issued = scopes.get(scope)!;
+    if (
+      issued.sourceRevision !== state.sourceRevision ||
+      (issued.revision !== null && issued.revision !== state.revision)
+    )
+      throw new StorageError('stale_scope');
     return state;
   }
   return {
     assertScope,
+    sourceRevision(scope: ConnectionScope) {
+      return connection.run((db) => assertScope(db, scope).sourceRevision);
+    },
+    recovery: createRecoveryReader(connection),
+    recoveredAdmission(expected: RecoveryVersion) {
+      return connection.run((db) => {
+        const state = read(db, expected.chatId);
+        if (
+          state?.state !== 'active' ||
+          state.generation !== expected.generation ||
+          state.sourceRevision !== expected.revision
+        )
+          return;
+        const allowed = db
+          .prepare(
+            `SELECT 1 FROM chat_connections c LEFT JOIN chats s USING(chat_id)
+          LEFT JOIN chat_controls k USING(chat_id,generation) WHERE c.chat_id=? AND coalesce(s.enabled,1)=1 AND coalesce(k.response_revision,0)=?`,
+          )
+          .get(expected.chatId, expected.controlRevision);
+        if (allowed) return issue(state, true);
+      });
+    },
+    resume(expected: RecoveryVersion, freshSources: boolean) {
+      return connection.run((db) =>
+        db
+          .transaction(() => {
+            const valid = recoveryVersion(db, expected.chatId);
+            if (
+              !valid ||
+              valid.revision !== expected.revision ||
+              valid.generation !== expected.generation ||
+              valid.controlRevision !== expected.controlRevision
+            )
+              return undefined;
+            if (freshSources) restrictPreviousSources(db, expected);
+            else
+              db.prepare(
+                `INSERT INTO connection_source_boundaries VALUES (?,?,?,0,0,0,0)
+          ON CONFLICT(chat_id) DO UPDATE SET revision=excluded.revision`,
+              ).run(expected.chatId, expected.generation, expected.revision);
+            bump(db, expected.chatId);
+            db.prepare(
+              "UPDATE chat_connections SET state='active',pause_reason=NULL WHERE chat_id=?",
+            ).run(expected.chatId);
+            return issue(read(db, expected.chatId)!, true);
+          })
+          .immediate(),
+      );
+    },
     pauseActivePlatform(db: Database, platform: string, reason: ConnectionPauseReason) {
       requireInput(db.inTransaction && /^[a-z][a-z0-9_-]*$/u.test(platform));
       const prefix = platform + ':';
@@ -295,6 +359,7 @@ export function createLifecycleBackend(connection: Connection) {
       proof: Verification,
       key: string | undefined,
       invite?: AdministrationInvite,
+      departure?: number,
     ) {
       return connection.run((db) => {
         requireInput(!db.inTransaction);
@@ -316,10 +381,20 @@ export function createLifecycleBackend(connection: Connection) {
             )
               return { status: 'duplicate' as const };
 
-            if (!state || state.state === 'active' || key !== undefined)
+            if (state?.pauseReason !== 'membership_signal' || key !== undefined)
               markUncertain(db, chatId, state, 'membership_signal');
             if (key !== undefined) {
               const connection = read(db, chatId)!;
+              if (
+                departure !== undefined &&
+                String(departure) === key &&
+                Number.isSafeInteger(departure) &&
+                departure > 0
+              )
+                db.prepare(
+                  `INSERT INTO connection_observations(chat_id,generation,last_departure) VALUES(?,?,?)
+                  ON CONFLICT(chat_id) DO UPDATE SET last_departure=max(coalesce(last_departure,0),excluded.last_departure)`,
+                ).run(chatId, connection.generation, departure);
               db.prepare(
                 'INSERT INTO connection_membership_signals(chat_id,generation,signal_key) VALUES (?,?,?)',
               ).run(chatId, connection.generation, key);
@@ -361,6 +436,45 @@ export function createLifecycleBackend(connection: Connection) {
           .all(scope.chatId) as { userId: UserId }[];
         return { invite, admins: admins.map((row) => row.userId) };
       });
+    },
+    priorDeparture(proof: Verification, arrival: number) {
+      return connection.run(
+        (db) =>
+          db
+            .prepare(
+              `SELECT last_departure FROM connection_observations
+        WHERE chat_id=? AND generation=? AND last_departure<?`,
+            )
+            .pluck()
+            .get(proof.expected.chatId, proof.expected.generation, arrival) as number | undefined,
+      );
+    },
+    replaceConfirmed(proof: Verification, departure: number, arrival: number) {
+      return connection.run((db) =>
+        db
+          .transaction(() => {
+            requireInput(checks.has(proof));
+            checks.delete(proof);
+            if (!matches(db, proof.expected) || this.priorDeparture(proof, arrival) !== departure)
+              return false;
+            const chat = proof.expected.chatId;
+            const disabled = !!db
+              .prepare('SELECT 1 FROM chats WHERE chat_id=? AND enabled=0')
+              .get(chat);
+            removeStoredChat(db, chat);
+            create(db, chat, 'uncertain', 'first_seen');
+            const generation = read(db, chat)!.generation;
+            const record = db.prepare('INSERT INTO connection_membership_signals VALUES(?,?,?)');
+            record.run(chat, generation, String(departure));
+            record.run(chat, generation, String(arrival));
+            if (disabled)
+              db.prepare(
+                "INSERT INTO chats(chat_id,response_mode,enabled,timezone,created_at) VALUES(?,'normal',0,'UTC',?)",
+              ).run(chat, Date.now());
+            return true;
+          })
+          .immediate(),
+      );
     },
     observeAdminMembership(
       scope: ConnectionScope,
@@ -648,7 +762,7 @@ export function createLifecycleBackend(connection: Connection) {
                 !db.prepare('SELECT 1 FROM chats WHERE chat_id=?').get(chatId);
               bump(db, chatId);
               db.prepare(
-                "UPDATE chat_connections SET state='active',pause_reason=NULL WHERE chat_id=?",
+                "UPDATE chat_connections SET state='active',pause_reason=NULL,established=1 WHERE chat_id=?",
               ).run(chatId);
               db.prepare(
                 `INSERT INTO admin_observations(chat_id,generation,opened_at) VALUES (?,?,?)

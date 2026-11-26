@@ -38,7 +38,8 @@ test('версия 7 сохраняет данные, FK и checksums; оба р
       'chat_content_selections',
     ];
     const addedColumns: Partial<Record<string, string>> = {
-      chat_connections: ',NULL AS pause_reason,0 AS erased_author_number',
+      chat_connections:
+        ",NULL AS pause_reason,0 AS erased_author_number,state='active' AS established",
       profile_facts:
         ",NULL AS generation,NULL AS source_at,NULL AS event_key,'' AS interest_key,'set' AS change_kind",
     };

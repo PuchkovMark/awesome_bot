@@ -239,13 +239,13 @@ test('перечень источников F5.8 охватывает табли
       dependent:
         'messages_fts messages_fts_config messages_fts_data messages_fts_docsize messages_fts_idx personal_answer_sources tool_answer_subjects departed_profile_answers greeting_windows queue_jobs response_traces mention_flood_inputs autonomous_questions autonomous_reply_parts questionnaire_inputs questionnaire_answer_facts profile_update_waiting chat_summaries chat_summary_sources chat_summary_parts chat_summary_notices',
       authority:
-        'paused_reset_requests admin_presence admin_observations admin_recovery_operations bot_admin_grants bot_admin_revocations bot_admin_revocation_audit personal_retained_denials',
+        'paused_reset_requests admin_presence admin_observations admin_recovery_operations bot_admin_grants unverified_admin_grants bot_admin_revocations bot_admin_revocation_audit personal_retained_denials',
       privateReminders:
         'personal_reminders personal_reminder_parts personal_reminder_inputs personal_reminder_timezones',
       erasureAndReplay:
         'questionnaire_removals personal_deletions personal_dispute_cases personal_dispute_reports personal_hidden_messages history_deleted_inputs participant_departures participant_events profile_command_events profile_fact_rejections profile_inference_rejections profile_update_runs',
       sharedSettingsAndUsage:
-        'chats chat_connections lifecycle_clock chat_token_budgets token_budget_attempts response_rate_clock response_rate_publications mention_flood_state history_retention_policy history_retention_boundaries autonomous_quota_reservations chat_controls disclosure_versions disclosure_publications connection_membership_signals notice_periods queue_turns queue_lease llm_recovery chat_metrics_collection chat_metrics_buckets chat_metrics_job_events chat_metrics_attempts chat_metrics_publications global_content_versions starter_persona_versions local_content_versions chat_content_selections global_prompt_selection bot_admin_controls participant_sync chat_passport_sections questionnaire_revisions questionnaire_default_boundary schema_migrations sqlite_sequence',
+        'chats chat_connections connection_source_boundaries connection_observations lifecycle_clock chat_token_budgets token_budget_attempts response_rate_clock response_rate_publications mention_flood_state history_retention_policy history_retention_boundaries autonomous_quota_reservations chat_controls disclosure_versions disclosure_publications connection_membership_signals notice_periods queue_turns queue_lease llm_recovery chat_metrics_collection chat_metrics_buckets chat_metrics_job_events chat_metrics_attempts chat_metrics_publications global_content_versions starter_persona_versions local_content_versions chat_content_selections global_prompt_selection bot_admin_controls participant_sync chat_passport_sections questionnaire_revisions questionnaire_default_boundary schema_migrations sqlite_sequence',
     };
     const actual = db
       .prepare("SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name")

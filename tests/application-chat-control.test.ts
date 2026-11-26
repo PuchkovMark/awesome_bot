@@ -415,6 +415,13 @@ test('команды VK сохраняют паузу, выключение от
       ).toBe(true),
     );
     event(9, '/выключить-бота', administrator);
+    await vi.waitFor(async () =>
+      expect(
+        (await storage.messages.list(scope, { limit: 30 })).some((row) => row.messageId === '9'),
+      ).toBe(true),
+    );
+    expect(controls.read(scope).enabled).toBe(true);
+    event(204, `/выключить-бота ${target}`, owner, owner);
     await vi.waitFor(() =>
       expect(controls.read(scope)).toMatchObject({
         enabled: false,

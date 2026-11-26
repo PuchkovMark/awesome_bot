@@ -92,6 +92,9 @@ const tables = [
   'bot_admin_revocation_audit',
   'bot_admin_revocations',
   'chat_connections',
+  'connection_source_boundaries',
+  'connection_observations',
+  'unverified_admin_grants',
   'chat_participants',
   'chats',
   'lifecycle_clock',
@@ -107,6 +110,8 @@ const tables = [
   'sqlite_sequence',
 ];
 const others = [
+  'verified_reminders',
+  'reminder_inputs_by_reminder',
   'personal_dispute_reports_by_code',
   'personal_dispute_keep',
   'control_commands_by_origin',

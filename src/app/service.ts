@@ -190,6 +190,7 @@ export async function runApplication(
           signal,
           inputSignal: input.signal,
           owner: config.authorization.ownerId,
+          enabled: (scope) => controls.read(scope).enabled,
           captureDisclosure: (scope) => {
             const disclosure = onboarding.capture(scope);
             try {
@@ -252,6 +253,9 @@ export async function runApplication(
               (!message.attachments.length && !!message.text.trim())
             );
           },
+          onDiagnostic(reason) {
+            logger.event({ event: 'vk_connection', reason }, 'info');
+          },
           onReady() {
             if (signal.aborted || ready) return;
             ready = true;
@@ -291,6 +295,8 @@ export async function runApplication(
         const local = vkLocalId(chatId);
         return local !== undefined && isVkGroupChat(local);
       };
+      const historyRevision = (scope: ConnectionScope) =>
+        group(scope.chatId) ? lifecycle.sourceRevision(scope) : null;
       const membership = createParticipantSync({
         signal,
         activeGroups: () => lifecycle.activeChatIds('vk').filter(group),
@@ -303,6 +309,7 @@ export async function runApplication(
       });
       async function checkAdministration() {
         while (!signal.aborted) {
+          channel.retryGroups();
           profiles.prune(Date.now());
           passports.prune(Date.now());
           const moreProfiles = privacy.purgeExpired(Date.now()) === 100;
@@ -464,7 +471,7 @@ export async function runApplication(
         storage,
         config: config.context,
         logger,
-        sessionId: createLlmSessionId(config.sessionSecret),
+        sessionId: createLlmSessionId(config.sessionSecret, historyRevision),
         capabilities: ({ chatId }) => channel.capabilities({ chatId }),
         addressForm: addressPreferences.resolve,
         participantCards: contextParticipantCards(storage),
@@ -501,7 +508,7 @@ export async function runApplication(
         llmAdmission,
         logger,
         client: modelClient,
-        sessionId: createLlmSessionId('profile-update:' + config.sessionSecret),
+        sessionId: createLlmSessionId('profile-update:' + config.sessionSecret, historyRevision),
         scope: lifecycle.admissionScope,
         group,
         signal,
@@ -517,7 +524,7 @@ export async function runApplication(
           llmAdmission,
           store: questionnaireAttempts,
           client: modelClient,
-          sessionId: createLlmSessionId(config.sessionSecret),
+          sessionId: createLlmSessionId(config.sessionSecret, historyRevision),
           maxOutputTokens: preparation.config.maxOutputTokens,
           inputLimit: config.context.modelContextTokens - preparation.config.maxOutputTokens,
           modelName: config.llm.model,

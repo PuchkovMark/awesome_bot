@@ -435,25 +435,24 @@ test('штатная композиция ждёт допуска, публик�
           }
           transport.update(
             vk.event(50, 2_000_000_010, { type: 'chat_invite_user', member_id: -groupId }),
-            round === 1 ? vk.event(99, 73, undefined, 'Пересылаю вопрос', 74) : vk.event(99),
           );
-          await vi.waitFor(() =>
-            expect(() => inspector.life.current(chatId)).toThrow('uncertain_connection'),
-          );
-          expect(paused(chatId)).toEqual({
-            state: 'uncertain',
-            pause_reason: round === 1 ? 'first_seen' : 'startup',
-          });
+          if (round === 1) {
+            transport.update(vk.event(99, 73, undefined, 'Пересылаю вопрос', 74));
+            await vi.waitFor(() =>
+              expect(paused(chatId)).toEqual({ state: 'uncertain', pause_reason: 'first_seen' }),
+            );
+            await resolveApplicationChat(
+              { databasePath: f.files.path, ownerId },
+              chatId,
+              'continue',
+            );
+          } else if (round === 4) {
+            await resolveApplicationChat({ databasePath: f.files.path, ownerId }, chatId, 'new');
+          }
           expect(paused(testGroup)).toEqual({
             state: 'uncertain',
             pause_reason: 'membership_signal',
           });
-          await resolveApplicationChat(
-            { databasePath: f.files.path, ownerId },
-            chatId,
-            round === 4 ? 'new' : 'continue',
-          );
-          expect(paused(chatId)).toEqual({ state: 'active', pause_reason: null });
           transport.update(vk.event(round));
           await vi.waitFor(async () => {
             const history = await inspector.storage.messages.list(inspector.life.current(chatId), {

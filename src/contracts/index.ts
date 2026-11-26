@@ -43,6 +43,7 @@ export type {
   LifecycleObservation,
   LifecycleSource,
   PausedConnection,
+  RecoveryVersion,
 } from './lifecycle';
 export type {
   ContentKind,

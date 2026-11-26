@@ -12,7 +12,8 @@ export type VkPollGap =
 
 interface VkPollListener {
   readonly onGap: (reason: VkPollGap) => Promise<void>;
-  readonly onUpdates: (updates: readonly unknown[]) => void;
+  readonly onUpdates: (updates: readonly unknown[]) => void | Promise<boolean>;
+  readonly onResume?: (position: 'previous_position' | 'new_position') => void;
   readonly onReady?: () => void;
 }
 
@@ -67,6 +68,9 @@ export function createVkLongPoll(options: {
       let backoff = 250;
       let ready = false;
       let lastGap: VkPollGap | undefined;
+      let retryCursor: string | undefined;
+      let consecutiveReadErrors = 0;
+      let resume: 'new_position' | 'previous_position' | undefined = 'new_position';
       let session: { url: URL; key: string; cursor: string } | undefined;
 
       async function retry() {
@@ -90,7 +94,12 @@ export function createVkLongPoll(options: {
         if (!session) {
           try {
             const server = await waitForVkRead(options.api.getLongPollServer(signal), signal);
-            session = { url: serverUrl(server.server), key: server.key, cursor: server.ts };
+            session = {
+              url: serverUrl(server.server),
+              key: server.key,
+              cursor: retryCursor ?? server.ts,
+            };
+            retryCursor = undefined;
           } catch (error) {
             if (signal.aborted) return;
             if (error instanceof VkPollError) throw error;
@@ -127,7 +136,12 @@ export function createVkLongPoll(options: {
           if (signal.aborted) return;
           await gap('transport_error');
           if (error instanceof VkPollError) throw error;
-          session = undefined;
+          resume ??= 'previous_position';
+          if (++consecutiveReadErrors >= 3) {
+            retryCursor = session.cursor;
+            session = undefined;
+            consecutiveReadErrors = 0;
+          }
           await retry();
           continue;
         }
@@ -135,24 +149,46 @@ export function createVkLongPoll(options: {
 
         const next = vkCursor(page?.ts);
         if (page?.failed === undefined && next !== undefined && Array.isArray(page?.updates)) {
-          backoff = 250;
-          lastGap = undefined;
           if (!ready) {
             ready = true;
             listener.onReady?.();
           }
           if (signal.aborted) return;
-          listener.onUpdates(page.updates);
+          if (resume) listener.onResume?.(resume);
+          resume = undefined;
+          if ((await listener.onUpdates(page.updates)) === false) {
+            await gap('transport_error');
+            resume = 'previous_position';
+            await retry();
+            continue;
+          }
           session.cursor = next;
+          consecutiveReadErrors = 0;
+          backoff = 250;
+          lastGap = undefined;
           continue;
         }
         if (page?.failed === 1 && next !== undefined && next !== session.cursor) {
           await gap('lost_position');
+          resume = 'new_position';
           session.cursor = next;
           continue;
         }
-        const expired = page?.failed === 2 || page?.failed === 3;
-        await gap(expired ? 'renew_server' : 'invalid_response');
+        if (page?.failed === 2) {
+          retryCursor = session.cursor;
+          await gap('transport_error');
+          resume ??= 'previous_position';
+          session = undefined;
+          await retry();
+          continue;
+        }
+        const lost = page?.failed === 3 || page?.failed === 1;
+        await gap(lost ? 'renew_server' : 'invalid_response');
+        if (lost) resume = 'new_position';
+        else {
+          retryCursor = session.cursor;
+          resume ??= 'previous_position';
+        }
         session = undefined;
         await retry();
       }

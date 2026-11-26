@@ -11,6 +11,7 @@ import { platformOf, validId } from './validation';
 const minimum: Record<AuthorizationAction, BotRole> = {
   'commands.read': 'member',
   'chat.configure': 'admin',
+  'chat.enable': 'owner',
   'chat.history.clear': 'admin',
   'chat.passport.read': 'member',
   'chat.passport.edit': 'admin',

@@ -3,6 +3,59 @@ import { expect, test } from 'vitest';
 import { migrate } from '../src/storage/migrate';
 import { migrations } from '../src/storage/migrations/index';
 import { advanceClock } from '../src/storage/lifecycle-clock';
+import { restrictPreviousSources } from '../src/storage/connection-recovery';
+
+test('граница группы скрывает старые источники и старую выдачу прав, сохраняя исходные записи', () => {
+  const db = new Database(':memory:');
+  try {
+    migrate(db);
+    db.exec(`INSERT INTO chat_connections(chat_id,generation,revision,state,pause_reason,established) VALUES ('vk:99',1,3,'uncertain','startup',1);
+      INSERT INTO chats(chat_id,response_mode,enabled,timezone,created_at) VALUES ('vk:99','normal',1,'UTC',0);
+      INSERT INTO messages(chat_id,platform_message_id,user_id,author_name,role,text,timestamp)
+      VALUES ('vk:99','10','vk:1','','user','до',100),('vk:98','5','vk:1','','user','сосед',100);
+      INSERT INTO bot_admin_grants VALUES ('vk:99','vk:1','explicit',10,NULL)`);
+    restrictPreviousSources(db, {
+      chatId: 'vk:99',
+      generation: 1,
+      revision: 3,
+      controlRevision: 0,
+    });
+    expect(db.prepare('SELECT text FROM personal_visible_messages').pluck().all()).toEqual([
+      'сосед',
+    ]);
+    expect(db.prepare('SELECT count(*) FROM messages').pluck().get()).toBe(2);
+    expect(db.prepare('SELECT user_id FROM bot_admin_grants').pluck().all()).toEqual([]);
+    expect(db.prepare('SELECT user_id FROM unverified_admin_grants').pluck().all()).toEqual([
+      'vk:1',
+    ]);
+  } finally {
+    db.close();
+  }
+});
+
+test('миграция восстановления различает начатые диалоги и первый допуск', () => {
+  const db = new Database(':memory:');
+  try {
+    migrate(db, migrations.slice(0, 58));
+    db.exec(`INSERT INTO chat_connections(chat_id,generation,revision,state,pause_reason) VALUES
+      ('vk:1',1,0,'active',NULL), ('vk:2',2,1,'uncertain','startup'),
+      ('vk:3',3,1,'uncertain','observation_lost'), ('vk:4',4,0,'uncertain','first_seen'),
+      ('vk:5',5,0,'uncertain',NULL);
+      INSERT INTO messages(chat_id,platform_message_id,user_id,author_name,role,text,timestamp)
+        VALUES ('vk:2','10','vk:2','','user','привет',0);
+      INSERT INTO admin_observations(chat_id,generation,opened_at) VALUES ('vk:3',3,100);
+      INSERT INTO chats(chat_id,response_mode,enabled,timezone,created_at) VALUES
+        ('vk:2','normal',0,'UTC',0),('vk:4','normal',1,'UTC',0),('vk:5','normal',1,'UTC',0)`);
+    migrate(db);
+    migrate(db);
+    expect(
+      db.prepare('SELECT established FROM chat_connections ORDER BY generation').pluck().all(),
+    ).toEqual([1, 1, 1, 0, 0]);
+    expect(db.prepare("SELECT enabled FROM chats WHERE chat_id='vk:2'").pluck().get()).toBe(0);
+  } finally {
+    db.close();
+  }
+});
 
 test('счётчик независим от чатов по схеме; миграция сохраняет версию 4 с журналом без настроек', () => {
   const db = new Database(':memory:');

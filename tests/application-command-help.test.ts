@@ -318,7 +318,7 @@ test('«Начать» в цитате, пересылке, упоминании
   }
 });
 
-test('перезапуск сохраняет для участника паузу прежней лички и ранее записанную first_seen', async () => {
+test('перезапуск возвращает участнику справку в начатой личке и сохраняет first_seen', async () => {
   const app = await fixture();
   try {
     const state = app.db.prepare('SELECT state,pause_reason FROM chat_connections WHERE chat_id=?');
@@ -338,10 +338,13 @@ test('перезапуск сохраняет для участника пауз
     }
     app.submit('/помощь', 43, undefined, 43);
     await until(() => expect(app.sends.some((row) => row.peer_id === 43)).toBe(true));
-    expect(state.get('vk:41')).toEqual({ state: 'uncertain', pause_reason: 'startup' });
+    await until(() =>
+      expect(app.sends.slice(sent).filter((s) => s.peer_id === 41)).toHaveLength(2),
+    );
+    expect(state.get('vk:41')).toEqual({ state: 'active', pause_reason: null });
     expect(state.get('vk:42')).toEqual({ state: 'uncertain', pause_reason: 'first_seen' });
-    expect(journal.all()).toEqual(before);
-    expect(app.sends.slice(sent).filter((s) => [41, 42].includes(s.peer_id))).toEqual([]);
+    expect(journal.all().length).toBeGreaterThan(before.length);
+    expect(app.sends.slice(sent).filter((s) => s.peer_id === 42)).toEqual([]);
     expect(app.complete).not.toHaveBeenCalled();
   } finally {
     await app.close();

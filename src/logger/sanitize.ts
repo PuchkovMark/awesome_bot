@@ -15,6 +15,22 @@ export function ownData(object: unknown, key: string): unknown {
 
 export function safeEvent(input: unknown): LogEvent | undefined {
   const event = ownData(input, 'event');
+  if (event === 'vk_connection') {
+    const reason = ownData(input, 'reason');
+    for (const supported of [
+      'startup',
+      'lost_position',
+      'renew_server',
+      'invalid_response',
+      'transport_error',
+      'previous_position',
+      'new_position',
+      'delivery_allowed',
+      'delivery_unavailable',
+    ] as const)
+      if (reason === supported) return { event, reason: supported };
+    return undefined;
+  }
   if (event === 'trace_stats' && ownData(input, 'window') === 'run') {
     const keys = [
       'full_write_failed',

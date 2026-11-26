@@ -168,6 +168,7 @@ export async function fixture(
   let members: readonly number[] | null = options.greetings?.members ?? null;
   const filesSent: { peer: number; attachment: string }[] = [];
   let privateAllowed = true;
+  const deniedGroups = new Set<number>();
   let serial = options.resume
     ? (db
         .prepare('SELECT coalesce(max(CAST(platform_message_id AS INTEGER)),0) FROM messages')
@@ -218,7 +219,7 @@ export async function fixture(
               items: [
                 {
                   peer: { id: Number(args.peer_ids) },
-                  can_write: { allowed: true },
+                  can_write: { allowed: !deniedGroups.has(Number(args.peer_ids)) },
                   chat_settings: { state: 'in' },
                 },
               ],
@@ -387,6 +388,16 @@ export async function fixture(
       sends,
       setPrivateAllowed(value: boolean) {
         privateAllowed = value;
+      },
+      setGroupAllowed(destination: number, allowed: boolean) {
+        if (allowed) deniedGroups.delete(destination);
+        else deniedGroups.add(destination);
+      },
+      emptyPoll() {
+        return listener.onUpdates([]);
+      },
+      transportRetry() {
+        return listener.onGap('transport_error');
       },
       setMembers(value: readonly number[] | null) {
         members = value;

@@ -59,6 +59,7 @@ async function fixture() {
   const sends: { peer: number; text: string; keyboard?: SentKeyboard }[] = [];
   const failed: { peer: number; text: string }[] = [];
   let writable = true;
+  const deniedGroups = new Set<number>();
   let keyboardError: number | undefined;
   let denySend: (text: string) => boolean = () => false;
   let subscription: Parameters<VkPollTransport['run']>[0];
@@ -80,7 +81,7 @@ async function fixture() {
           items: [
             {
               peer: { id: peer },
-              can_write: { allowed: true },
+              can_write: { allowed: !deniedGroups.has(peer) },
               chat_settings: { state: 'in', title: `Название VK ${peer}` },
             },
           ],
@@ -205,6 +206,9 @@ async function fixture() {
     allowPrivate(value: boolean) {
       writable = value;
     },
+    denyGroupWrites(...peers: number[]) {
+      for (const peer of peers) deniedGroups.add(peer);
+    },
     rejectKeyboard(code: number) {
       keyboardError = code;
     },
@@ -258,10 +262,11 @@ async function fixture() {
   };
 }
 
-test('после решения владельца участнику снова доступна справка в прежней личке', async () => {
+test('после решения владельца доступна справка в личке с неподтверждённым первым входом', async () => {
   const f = await fixture();
   try {
     const original = f.open(member);
+    await f.life.verify(original.chatId, 'first_seen');
     await f.start();
     const paused = f.paused().find((item) => item.chatId === chat(member))!;
     expect(paused.generation).toBe(original.generation);
@@ -419,6 +424,7 @@ test('карточки владельца продолжают выбранну�
     );
     await f.record(first, '1');
     const second = f.open(firstPeer + 1);
+    f.denyGroupWrites(firstPeer + 1);
     await f.gap();
     const paused = f.paused();
     const cards = () => f.sends.filter((s) => s.keyboard);
@@ -526,6 +532,7 @@ test('десять строк обзора приводят к независи�
   try {
     await f.start(5);
     const peers = Array.from({ length: 10 }, (_, index) => firstPeer + index);
+    f.denyGroupWrites(...peers);
     const firstScope = f.open(peers[0]!);
     const lastScope = f.open(peers.at(-1)!);
     await f.storage.chats.create(firstScope, {
@@ -714,6 +721,7 @@ test('десять строк обзора приводят к независи�
       await reopened.close();
     }
     await f.start();
+    f.denyGroupWrites(activePeer);
     const restarted = f.paused();
     expect(restarted).toHaveLength(11);
     expect(restarted.find(({ chatId }) => chatId === continued.chatId)).toMatchObject({

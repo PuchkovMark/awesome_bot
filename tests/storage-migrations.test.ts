@@ -17,7 +17,9 @@ test('миграция 13 сохраняет поколения и связыв�
     );
     const history = db.prepare('SELECT * FROM schema_migrations').all();
     const connections = db
-      .prepare('SELECT *,NULL AS pause_reason,0 AS erased_author_number FROM chat_connections')
+      .prepare(
+        "SELECT *,NULL AS pause_reason,0 AS erased_author_number,state='active' AS established FROM chat_connections",
+      )
       .all();
     migrate(db);
     expect(db.prepare('SELECT * FROM schema_migrations WHERE version<=12').all()).toEqual(history);

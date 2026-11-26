@@ -338,7 +338,7 @@ test('владелец очищает выключенную беседу из �
     const old = app.event(1, '[club314|Пенёк] Старое обращение');
     await app.waitForMessage('1');
     await app.findReply('Новый ответ');
-    app.event(2, '/выключить-бота', admin);
+    app.event(2, '/выключить-бота', owner);
     await vi.waitFor(async () => expect((await app.storage.chats.get(scope))?.enabled).toBe(false));
     const binding = `${chat}@${scope.generation}`;
     app.event(1, `/очистить-историю ${binding}`, owner, owner);

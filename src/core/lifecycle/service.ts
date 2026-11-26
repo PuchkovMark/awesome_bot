@@ -7,11 +7,13 @@ import type {
   UserId,
   LifecycleObservation,
   LifecycleSource,
+  RecoveryVersion,
 } from '../../contracts/index';
 import type { Storage } from '../../storage/index';
 import { StorageError } from '../../storage/errors';
 import { lifecycleBackend, type AdministrationInvite } from '../../storage/lifecycle-store';
 import { validId } from '../authorization/validation';
+import type { ControlMessageEvent } from '../../storage/chat-control-store';
 
 export function createLifecycleService(options: {
   readonly storage: Storage;
@@ -72,6 +74,47 @@ export function createLifecycleService(options: {
       requirePlatform(platform);
       return backend.activeChatIds(platform);
     },
+    recoveryCandidate(chatId: ChatId) {
+      return failedPauses.has(chatId) ? undefined : backend.recovery.candidate(chatId);
+    },
+    rememberInput(scope: ConnectionScope, sequence: number) {
+      if (this.isAdmissionCurrent(scope)) backend.recovery.rememberInput(scope, sequence);
+    },
+    wasRecovered(scope: ConnectionScope) {
+      return backend.sourceRevision(scope) !== null;
+    },
+    sourceRevision: backend.sourceRevision,
+    recoveryCandidates(platform: string) {
+      requirePlatform(platform);
+      return backend.recovery.candidates(platform).filter((chatId) => !failedPauses.has(chatId));
+    },
+    async recover(
+      expected: RecoveryVersion,
+      freshSources: boolean,
+      verifyDelivery: () => Promise<boolean>,
+      current: () => boolean,
+    ) {
+      if (!current() || failedPauses.has(expected.chatId)) return;
+      const reopened = backend.recoveredAdmission(expected);
+      if (reopened) return reopened;
+      if ((await verifyDelivery()) && current() && !failedPauses.has(expected.chatId))
+        return backend.resume(expected, freshSources) ?? backend.recoveredAdmission(expected);
+    },
+    setPausedEnabled(
+      target: { chatId: ChatId; generation: number },
+      user: UserId,
+      enabled: boolean,
+      event: ControlMessageEvent,
+    ) {
+      requireOwner(user);
+      return backend.recovery.setPausedEnabled(
+        target.chatId,
+        target.generation,
+        user,
+        enabled,
+        event,
+      );
+    },
     /** Личность до вызова подтверждает доверенная граница приложения. */
     pausedConnections(platform: string, userId: UserId) {
       requireOwner(userId);
@@ -123,18 +166,40 @@ export function createLifecycleService(options: {
       }
     },
     /** Доверенный вход сообщает о возможном изменении подключения. */
-    recordConnectionSignal(chatId: ChatId, key?: string, invite?: AdministrationInvite) {
+    recordConnectionSignal(
+      chatId: ChatId,
+      key?: string,
+      invite?: AdministrationInvite,
+      departure?: number,
+    ) {
       if (!validId(chatId) || (key !== undefined && (typeof key !== 'string' || !key.trim()))) {
         throw new TypeError('Lifecycle: invalid_signal');
       }
       try {
-        const result = backend.applyConnectionSignal(backend.begin(chatId), key, invite);
+        const result = backend.applyConnectionSignal(backend.begin(chatId), key, invite, departure);
         if (result.status === 'paused') failedPauses.delete(chatId);
         return result;
       } catch (error) {
         failedPauses.set(chatId, Symbol());
         throw error;
       }
+    },
+    async verifyReplacement(
+      chatId: ChatId,
+      arrival: number,
+      verify: (departure: number) => Promise<boolean>,
+      current: () => boolean,
+    ) {
+      if (!current() || failedPauses.has(chatId)) return false;
+      const proof = backend.begin(chatId);
+      const departure = backend.priorDeparture(proof, arrival);
+      return (
+        departure !== undefined &&
+        (await verify(departure)) &&
+        current() &&
+        !failedPauses.has(chatId) &&
+        backend.replaceConfirmed(proof, departure, arrival)
+      );
     },
     observeAdminMembership(
       scope: ConnectionScope,

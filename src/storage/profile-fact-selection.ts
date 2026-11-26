@@ -81,6 +81,7 @@ function selectSlots(db: Database, scope: ConnectionScope, query: ProfileQuery, 
     LEFT JOIN questionnaire_answer_facts q
       ON (q.chat_id,q.generation,q.user_id,q.field_key)=(f.chat_id,f.generation,f.user_id,f.field_key)
     WHERE f.chat_id=@chat AND (f.generation=@generation OR (f.generation IS NULL AND f.visibility<>'chat'))
+      AND (f.change_kind<>'set' OR f.id>coalesce((SELECT fact_floor FROM connection_source_boundaries WHERE chat_id=@chat),0))
       AND ${profile ? "p.status IN ('present','unknown')" : "p.status='present'"} AND ${condition}
       AND (f.field_key NOT GLOB '${questionnaireFieldPrefix}*' OR (q.fact_id IS NOT NULL AND f.source_kind='self'))
       AND (f.source_kind='self' OR f.generation IS NULL OR EXISTS (

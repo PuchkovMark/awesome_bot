@@ -1,9 +1,11 @@
+import { setTimeout as delay } from 'node:timers/promises';
 import type {
   ChatId,
   ConnectionScope,
   EventHandler,
   IncomingMessage,
   MembershipEvent,
+  RecoveryVersion,
   UserId,
 } from '../../contracts/index';
 import type { createLifecycleService, createMessageRouter } from '../../core/index';
@@ -31,7 +33,18 @@ type Lifecycle = Pick<
   | 'activeChatIds'
   | 'verify'
   | 'recordConnectionSignal'
->;
+> &
+  Partial<
+    Pick<
+      ReturnType<typeof createLifecycleService>,
+      | 'recover'
+      | 'recoveryCandidate'
+      | 'recoveryCandidates'
+      | 'wasRecovered'
+      | 'rememberInput'
+      | 'verifyReplacement'
+    >
+  >;
 type Router = Pick<ReturnType<typeof createMessageRouter>, 'receive'> &
   Partial<Pick<ReturnType<typeof createMessageRouter>, 'registerInput'>>;
 type Dispatch = (
@@ -68,6 +81,14 @@ export interface VkInboundOptions {
     message: VkIncoming,
   ) => Promise<boolean>;
   readonly onReady?: () => void;
+  readonly onDiagnostic?: (
+    reason:
+      | VkPollGap
+      | 'previous_position'
+      | 'new_position'
+      | 'delivery_allowed'
+      | 'delivery_unavailable',
+  ) => void;
   readonly onMembershipChanged?: (
     scope: ConnectionScope,
     event: MembershipEvent,
@@ -75,6 +96,14 @@ export interface VkInboundOptions {
   ) => Promise<void>;
   readonly captureDisclosure?: (scope: ConnectionScope) => RoutedAdmissionGuard;
   readonly verifyFirstPrivate?: (message: VkIncoming) => boolean;
+  readonly verifyDelivery?: (chatId: ChatId, current: () => boolean) => Promise<boolean>;
+  readonly confirmReplacement?: (
+    chatId: ChatId,
+    departure: number,
+    arrival: number,
+    current: () => boolean,
+  ) => Promise<boolean>;
+  readonly enabled?: (scope: ConnectionScope) => boolean;
 }
 
 interface VkInboundDependencies {
@@ -113,6 +142,11 @@ export function createVkInbound(
     transport_error: 0,
   };
   const membershipObservations = new Map<ChatId, ConnectionScope>();
+  const groupChecks = new Map<
+    ChatId,
+    { version: RecoveryVersion; work: Promise<ConnectionScope | undefined> }
+  >();
+  let retryGroups: () => void = () => {};
   let started = false;
 
   function current(chatId: ChatId): ConnectionScope | undefined {
@@ -193,9 +227,72 @@ export function createVkInbound(
     started = true;
     let subscription = Symbol();
     const tails = new Map<ChatId, { tail: Promise<void>; openingScope?: ConnectionScope }>();
-    const pending = new Set<Promise<void>>();
+    const pending = new Set<Promise<unknown>>();
     let observing = true;
     let drainFailed = false;
+    let available = false;
+    const retryAt = new Map<ChatId, number>();
+    function recoverGroup(expected: RecoveryVersion, current: () => boolean) {
+      const chatId = expected.chatId;
+      const existing = groupChecks.get(chatId);
+      if (
+        existing &&
+        existing.version.generation === expected.generation &&
+        existing.version.revision === expected.revision &&
+        existing.version.controlRevision === expected.controlRevision
+      )
+        return existing.work;
+      const work = (async () => {
+        if (!options.verifyDelivery || !lifecycle.recover) return;
+        const cooldown = (retryAt.get(chatId) ?? 0) - Date.now();
+        if (cooldown > 0) {
+          try {
+            await delay(Math.min(cooldown, 1_000), undefined, { signal: inputSignal });
+          } catch {
+            return;
+          }
+          if (!current()) return;
+        }
+        const recovered = await lifecycle.recover(
+          expected,
+          true,
+          () => options.verifyDelivery!(chatId, current),
+          current,
+        );
+        if (current()) {
+          options.onDiagnostic?.(recovered ? 'delivery_allowed' : 'delivery_unavailable');
+          if (recovered) retryAt.delete(chatId);
+          else retryAt.set(chatId, Date.now() + 30_000);
+        }
+        return recovered;
+      })().finally(() => {
+        if (groupChecks.get(chatId)?.work === work) groupChecks.delete(chatId);
+      });
+      groupChecks.set(chatId, { version: expected, work });
+      return work;
+    }
+    retryGroups = () => {
+      if (!available || signal.aborted || !lifecycle.recoveryCandidates || !options.verifyDelivery)
+        return;
+      const epoch = subscription;
+      const valid = () => available && !signal.aborted && subscription === epoch;
+      for (const chatId of lifecycle.recoveryCandidates('vk')) {
+        if (
+          !isVkGroupChat(Number(chatId.slice(3))) ||
+          groupChecks.has(chatId) ||
+          (retryAt.get(chatId) ?? 0) > Date.now()
+        )
+          continue;
+        const expected = lifecycle.recoveryCandidate?.(chatId);
+        if (!expected) continue;
+        const work = recoverGroup(expected, valid)
+          .catch(() => {
+            counters.failed++;
+          })
+          .finally(() => pending.delete(work));
+        pending.add(work);
+      }
+    };
 
     async function deliverMembership(event: MembershipEvent, handler: MembershipHandler) {
       counters.membershipDispatched++;
@@ -203,8 +300,20 @@ export function createVkInbound(
     }
 
     function onUpdates(updates: readonly unknown[]) {
+      const firstPage = !available;
+      available = true;
+      const pageWork: Promise<unknown>[] = [];
+      let complete = true;
+      function failed() {
+        complete = false;
+        counters.failed++;
+      }
+      function track(work: Promise<unknown>) {
+        pageWork.push(work);
+        pending.add(work);
+      }
       for (const update of updates) {
-        if (!observing || signal.aborted) return;
+        if (!observing || signal.aborted) break;
         const parsed = parseVkIncoming(update, groupId);
         if (parsed.kind === 'membership') {
           const { chatId, event } = parsed;
@@ -225,17 +334,41 @@ export function createVkInbound(
                       timestamp: event.timestamp,
                     }
                   : undefined;
-              const { status } = invitation
-                ? lifecycle.recordConnectionSignal(chatId, parsed.signalKey, invitation)
-                : lifecycle.recordConnectionSignal(chatId, parsed.signalKey);
+              const left = event?.change === 'left' || event?.change === 'removed';
+              const { status } = lifecycle.recordConnectionSignal(
+                chatId,
+                parsed.signalKey,
+                invitation,
+                left && parsed.signalKey ? Number(parsed.signalKey) : undefined,
+              );
               if (status === 'stale') {
                 counters.staleSignals++;
                 continue;
               }
               if (status === 'duplicate') counters.duplicateSignals++;
               else tails.delete(chatId);
+              if (
+                event?.change === 'invited' &&
+                parsed.signalKey &&
+                options.confirmReplacement &&
+                lifecycle.verifyReplacement
+              ) {
+                const seen = subscription;
+                const current = () => !inputSignal.aborted && seen === subscription;
+                const arrival = Number(parsed.signalKey);
+                const work = lifecycle
+                  .verifyReplacement(
+                    chatId,
+                    arrival,
+                    (departure) => options.confirmReplacement!(chatId, departure, arrival, current),
+                    current,
+                  )
+                  .catch(failed)
+                  .finally(() => pending.delete(work));
+                track(work);
+              }
             } catch {
-              counters.failed++;
+              failed();
               tails.delete(chatId);
               membershipObservations.delete(chatId);
               continue;
@@ -264,7 +397,7 @@ export function createVkInbound(
                   error instanceof StorageError &&
                   (error.code === 'uncertain_connection' || error.code === 'stale_scope')
                 ))
-                  counters.failed++;
+                  failed();
               }
             }
             observeMembership(chatId);
@@ -278,20 +411,20 @@ export function createVkInbound(
               const task = options
                 .onMembershipChanged(scope, event, parsed.signalKey)
                 .catch(() => {
-                  counters.failed++;
+                  failed();
                 })
                 .finally(() => pending.delete(task));
-              pending.add(task);
+              track(task);
             }
             if (membership) {
               const task = deliverMembership(event, membership)
                 .catch(() => {
-                  counters.failed++;
+                  failed();
                 })
                 .finally(() => {
                   pending.delete(task);
                 });
-              pending.add(task);
+              track(task);
             }
           }
           continue;
@@ -310,40 +443,51 @@ export function createVkInbound(
         if (command) {
           const work = command
             .catch(() => {
-              counters.failed++;
+              failed();
             })
             .finally(() => {
               pending.delete(work);
             });
-          pending.add(work);
+          track(work);
           continue;
         }
         let receivedScope: ReturnType<typeof admission>;
         try {
           receivedScope = admission(chatId);
         } catch {
-          counters.failed++;
+          failed();
           continue;
         }
-        if (receivedScope === 'paused') {
+        const recovery =
+          receivedScope === 'paused' && options.verifyDelivery
+            ? lifecycle.recoveryCandidate?.(chatId)
+            : undefined;
+        if (receivedScope === 'paused' && !recovery) {
           counters.paused++;
           continue;
         }
+        if (receivedScope === 'paused') receivedScope = undefined;
         if (
           !receivedScope &&
+          !recovery &&
           (!options.verifyFirstPrivate || message.peerId < 0 || isVkGroupChat(message.peerId))
         ) {
           counters.paused++;
-          void pause(chatId, 'first_seen').catch(() => {
-            counters.failed++;
-          });
+          const work = pause(chatId, 'first_seen')
+            .catch(failed)
+            .finally(() => pending.delete(work));
+          track(work);
           continue;
         }
         const observingEvent = () => !inputSignal.aborted && receivedIn === subscription;
+        const grouped = isVkGroupChat(message.peerId);
+        if (receivedScope && options.enabled?.(receivedScope) === false) {
+          counters.paused++;
+          continue;
+        }
+        if (grouped && receivedScope) lifecycle.rememberInput?.(receivedScope, message.cmid);
         const disclosure =
-          receivedScope && isVkGroupChat(message.peerId)
-            ? options.captureDisclosure?.(receivedScope)
-            : undefined;
+          receivedScope && grouped ? options.captureDisclosure?.(receivedScope) : undefined;
         if (disclosure && !disclosure().journal) {
           counters.paused++;
           continue;
@@ -357,9 +501,29 @@ export function createVkInbound(
         const batch = tails.get(chatId) ?? { tail: Promise.resolve() };
         const task = batch.tail
           .then(async () => {
-            const prior = receivedScope ?? batch.openingScope;
+            let prior = receivedScope ?? batch.openingScope;
+            let verifiedAuthor: Awaited<ReturnType<typeof api.enrich>> | undefined;
+            if (!prior && recovery && inputCurrent()) {
+              if (grouped) prior = await recoverGroup(recovery, inputCurrent);
+              else if (message.authorId === message.peerId && message.authorId > 0) {
+                verifiedAuthor = await waitForVkRead(
+                  api.enrich(message, { signal: inputSignal, isCurrent: inputCurrent }),
+                  inputSignal,
+                );
+                if (verifiedAuthor.isBot === false && inputCurrent()) {
+                  prior = await lifecycle.recover?.(
+                    recovery,
+                    false,
+                    () => options.verifyDelivery!(chatId, inputCurrent),
+                    inputCurrent,
+                  );
+                  options.onDiagnostic?.(prior ? 'delivery_allowed' : 'delivery_unavailable');
+                }
+              }
+              if (prior) batch.openingScope = prior;
+            }
             const opened =
-              prior === undefined && inputCurrent() && admission(chatId) === undefined
+              !recovery && prior === undefined && inputCurrent() && admission(chatId) === undefined
                 ? await openPrivate(message, chatId, inputCurrent)
                 : undefined;
             if (opened) batch.openingScope = opened.scope;
@@ -368,12 +532,17 @@ export function createVkInbound(
               counters.paused++;
               return;
             }
-            const isCurrent = () => inputCurrent() && lifecycle.isAdmissionCurrent(admittedScope);
+            if (grouped && !receivedScope) lifecycle.rememberInput?.(admittedScope, message.cmid);
+            const isCurrent = () =>
+              inputCurrent() &&
+              lifecycle.isAdmissionCurrent(admittedScope) &&
+              options.enabled?.(admittedScope) !== false;
             if (!isCurrent()) {
               counters.paused++;
               return;
             }
             const enrichment =
+              verifiedAuthor ??
               opened?.enrichment ??
               (await waitForVkRead(
                 api.enrich(message, { signal: inputSignal, isCurrent }),
@@ -402,16 +571,16 @@ export function createVkInbound(
               admittedScope,
               isCurrent,
               disclosure ??
-                (!normalized.isGroupChat
-                  ? options.capturePrivateDisclosure?.(admittedScope)
-                  : undefined),
+                (normalized.isGroupChat
+                  ? options.captureDisclosure?.(admittedScope)
+                  : options.capturePrivateDisclosure?.(admittedScope)),
               normalized.replyAddress === 'other' || normalized.replyAddress === 'unknown',
               inputCurrent,
               received,
             );
           })
           .catch(() => {
-            counters.failed++;
+            failed();
             if (signal.aborted && !inputSignal.aborted) drainFailed = true;
           })
           .finally(() => {
@@ -421,8 +590,10 @@ export function createVkInbound(
           });
         batch.tail = task;
         tails.set(chatId, batch);
-        pending.add(task);
+        track(task);
       }
+      if (firstPage) retryGroups();
+      return Promise.all(pageWork).then(() => complete);
     }
 
     let graceful = false;
@@ -430,8 +601,14 @@ export function createVkInbound(
       await transport.run(
         {
           ...(options.onReady ? { onReady: options.onReady } : {}),
+          ...(options.onDiagnostic ? { onResume: options.onDiagnostic } : {}),
           async onGap(reason) {
             gaps[reason]++;
+            options.onDiagnostic?.(reason);
+            if (reason === 'transport_error' || reason === 'invalid_response') return;
+            available = false;
+            groupChecks.clear();
+            retryAt.clear();
             const next = Symbol();
             subscription = next;
             observing = false;
@@ -455,6 +632,8 @@ export function createVkInbound(
         throw error;
       graceful = !inputSignal.aborted;
     } finally {
+      available = false;
+      retryGroups = () => {};
       observing = false;
       if (!graceful) subscription = Symbol();
       membershipObservations.clear();
@@ -466,6 +645,7 @@ export function createVkInbound(
 
   return Object.freeze({
     platform: 'vk' as const,
+    retryGroups: () => retryGroups(),
     start(handler: EventHandler) {
       return run((message) => handler(message), handler);
     },
