@@ -1,5 +1,6 @@
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import Database from 'better-sqlite3';
 import { expect, test, vi } from 'vitest';
 import { runApplication } from '../src/app/service';
 import { initializePrompt, resolveApplicationChat } from '../src/app/setup';
@@ -19,6 +20,7 @@ import type { LlmResult } from '../src/llm/types';
 import type { SafeLogger } from '../src/logger/index';
 import { openStorage } from '../src/storage/index';
 import { lifecycleBackend } from '../src/storage/lifecycle-store';
+import { migrate } from '../src/storage/migrate';
 import { noticeTemplate } from '../src/storage/notice-types';
 import { tokenBudgetStore, tokenBudgetWindowMs } from '../src/storage/token-budget-store';
 import { authConfig } from './helpers/authorization-fixture';
@@ -351,6 +353,125 @@ test('изменение обоих лимитов доступно владел
   } finally {
     authorization?.dispose();
     await storage.close();
+    files.cleanup();
+  }
+});
+
+test('существующая SQLite сразу применяет ступень и сохраняет окно, резервы и ручной предел', async () => {
+  const files = storageFixture();
+  const db = new Database(files.path);
+  let storage: Awaited<ReturnType<typeof openStorage>> | undefined;
+  let authorization: Awaited<ReturnType<typeof createAuthorizationService>> | undefined;
+  const first = 'vk:2000000041';
+  const second = 'vk:2000000042';
+  const personal = 'vk:41';
+  const now = at + 1;
+  const isGroupChat = (id: string) => id === first || id === second;
+  try {
+    migrate(db);
+    db.exec(`INSERT INTO chat_connections(chat_id,generation,revision,state) VALUES
+      ('vk:2000000041',1,0,'active'),('vk:2000000042',2,0,'active'),('vk:41',3,0,'active');
+      UPDATE lifecycle_clock SET value=3;
+      INSERT INTO chats(chat_id,enabled,response_mode,created_at,timezone)
+      SELECT chat_id,1,'normal',0,'UTC' FROM chat_connections;
+      INSERT INTO chat_token_budgets(chat_id,generation,people,total_limit) VALUES
+      ('vk:2000000041',1,4,NULL),('vk:2000000042',2,19,60000);`);
+    db.prepare(
+      `INSERT INTO token_budget_attempts VALUES
+      ('vk:2000000041',1,'paid',?,'direct',5000,500,4800,200),
+      ('vk:2000000041',1,'partial',?,'direct',1000,300,900,NULL),
+      ('vk:2000000042',2,'paid',?,'direct',600,0,600,0),
+      ('vk:41',3,'paid',?,'direct',70,0,70,0)`,
+    ).run(at, now, at, at);
+    const ledger = db.prepare('SELECT * FROM token_budget_attempts ORDER BY chat_id,admitted_at');
+    const stored = ledger.all();
+    const schema = db.prepare('SELECT * FROM schema_migrations ORDER BY version');
+    const migrationsBefore = schema.all();
+
+    storage = await openStorage(files.path);
+    const before = tokenBudgetStore(storage).overview(isGroupChat, now);
+    expect(before.chats).toMatchObject([
+      {
+        chatId: first,
+        people: 4,
+        total: { limit: 500_000, confirmed: 5900n, reserved: 300n, remaining: 493_800 },
+      },
+      {
+        chatId: second,
+        people: 19,
+        total: { limit: 60_000, confirmed: 600n, reserved: 0n, remaining: 59_400 },
+      },
+      {
+        chatId: personal,
+        people: null,
+        total: { limit: 500_000, confirmed: 70n, reserved: 0n, remaining: 499_930 },
+        initiative: null,
+      },
+    ]);
+    await storage.close();
+    storage = await openStorage(files.path);
+    const store = tokenBudgetStore(storage);
+    expect(store.overview(isGroupChat, now)).toEqual(before);
+    const a = scopeFor(storage, first);
+    expect(store.read(a, true, at + tokenBudgetWindowMs - 1).total).toEqual(before.chats[0]!.total);
+    expect(store.read(a, true, at + tokenBudgetWindowMs).total).toMatchObject({
+      confirmed: 900n,
+      reserved: 300n,
+      incompleteAttempts: 1,
+      remaining: 498_800,
+    });
+    expect(store.read(a, true, now + tokenBudgetWindowMs).total).toMatchObject({
+      confirmed: 0n,
+      reserved: 0n,
+      incompleteAttempts: 0,
+      remaining: 500_000,
+    });
+
+    authorization = await createAuthorizationService({
+      store: storage.authorization,
+      config: authConfig,
+    });
+    const admin = createTokenBudgetAdministration({
+      storage,
+      authorization,
+      isGroupChat,
+      now: () => now,
+    });
+    const b = scopeFor(storage, second);
+    const context = authorization.context({ scope: b, userId: authConfig.ownerId, kind: 'owner' });
+    expect(await admin.update(context, { total: 0 }, () => true)).toMatchObject({ allowed: true });
+    const members = Array.from({ length: 20 }, (_, i) => ({
+      userId: `vk:${i + 1}` as const,
+      role: 'member' as const,
+    }));
+    expect(
+      store.finishObservation(
+        b,
+        store.beginObservation(b, now),
+        { complete: true, people: 20, members },
+        now,
+      ),
+    ).toBe(true);
+    expect(await admin.read(context)).toMatchObject({
+      allowed: true,
+      value: { people: 20, total: { limit: 0, remaining: 0, confirmed: 600n } },
+    });
+    expect(
+      store.reserve(b, true, { key: 'over-zero', purpose: 'direct', input: 1, output: 0 }, now),
+    ).toBe(false);
+    expect(await admin.update(context, { total: null }, () => true)).toMatchObject({
+      allowed: true,
+      value: { people: 20, total: { limit: 800_000, remaining: 799_400, confirmed: 600n } },
+    });
+    expect(
+      store.overview(isGroupChat, now).chats.filter(({ chatId }) => chatId !== second),
+    ).toEqual(before.chats.filter(({ chatId }) => chatId !== second));
+    expect(ledger.all()).toEqual(stored);
+    expect(schema.all()).toEqual(migrationsBefore);
+  } finally {
+    authorization?.dispose();
+    await storage?.close();
+    db.close();
     files.cleanup();
   }
 });
