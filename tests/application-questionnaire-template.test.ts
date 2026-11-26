@@ -85,7 +85,11 @@ test('новая группа сразу получает 16 вопросов, �
       expect(controls.invitationEnabledAt).not.toBeNull();
     });
     await until(() =>
-      expect(app.sends.some(({ text }) => text === 'Приглашения к анкете включены.')).toBe(true),
+      expect(
+        app.sends.some(({ text }) =>
+          text.startsWith('Приглашения к анкете включены. В анкете 16 вопросов.'),
+        ),
+      ).toBe(true),
     );
     const beforeJoin = app.sends.length;
     app.at(1000);
@@ -104,6 +108,109 @@ test('новая группа сразу получает 16 вопросов, �
     expect(app.sends.slice(beforeJoin).map(({ text }) => text)).toEqual([
       'Привет, Тест! Добро пожаловать в беседу!',
     ]);
+    expect(app.complete).not.toHaveBeenCalled();
+  } finally {
+    await app.close();
+  }
+});
+
+test('подтверждение включения принимает список от своего администратора и сохраняет привязку после повтора', async () => {
+  const app = await fixture();
+  const invitationHint = 'ответьте на это сообщение всем списком, по одному вопросу на строку.';
+  try {
+    await app.storage.authorization.transaction(app.scope, (tx) =>
+      tx.grant({ userId: 'vk:41', basis: 'explicit', grantedAt: app.start, grantedBy: 'vk:73' }),
+    );
+    async function enable(count: string) {
+      const start = app.sends.length;
+      app.submit('/приглашение вкл', admin);
+      const reply = () =>
+        app.sends
+          .slice(start)
+          .find(
+            ({ peer_id, text }) =>
+              peer_id === peer &&
+              text.includes('В анкете ' + count) &&
+              text.endsWith(invitationHint),
+          );
+      await until(() => {
+        expect(reply()).toBeDefined();
+        const receipt = String(reply()!.conversation_message_id);
+        expect(questionnaireStore(app.storage).ownsPrompt(app.scope, receipt, 'vk:41')).toBe(true);
+      });
+      return reply()!;
+    }
+    const first = await enable('16 вопросов.');
+    const beforeHelp = app.sends.length;
+    app.submit('/помощь', admin, first);
+    await until(() =>
+      expect(
+        app.sends.slice(beforeHelp).some(({ text }) => text.startsWith('Доступные команды')),
+      ).toBe(true),
+    );
+    await app.journaled(app.submit('Чужая\nПопытка', member, first));
+    await app.journaled(app.submit('С пересылкой\nТекст', admin, first, peer, true));
+    expect(questions(app)).toEqual(original);
+    const two = ['Как к тебе обращаться?', 'Чем увлекаешься?'];
+    const event = app.submit(two.join('\n'), admin, first);
+    await until(() => expect(questions(app)).toEqual(two));
+    const savedVersion = current(app);
+    await app.restart(true);
+    app.replay(event);
+    const second = await enable('2 вопроса.');
+    expect(current(app)).toEqual(savedVersion);
+
+    const privateStart = app.sends.length;
+    app.submit(
+      '/приглашение ' + app.scope.chatId + '@' + app.scope.generation + ' вкл',
+      owner,
+      undefined,
+      owner,
+    );
+    await until(() =>
+      expect(app.sends.slice(privateStart)).toContainEqual(
+        expect.objectContaining({
+          peer_id: owner,
+          text: expect.stringContaining(
+            'В анкете 2 вопроса. Чтобы заменить список, отправьте /анкета вопросы изменить в самой беседе.',
+          ),
+        }),
+      ),
+    );
+
+    app.submit('/приглашение выкл', owner);
+    await until(() =>
+      expect(chatControlStore(app.storage).read(app.scope).invitationEnabledAt).toBeNull(),
+    );
+    const explicitStart = app.sends.length;
+    app.submit('/анкета вопросы изменить', owner);
+    await until(() => expect(opened(app, explicitStart)).toBeDefined());
+    const explicit = opened(app, explicitStart)!;
+    await until(() =>
+      expect(
+        questionnaireStore(app.storage).ownsPrompt(
+          app.scope,
+          String(explicit.conversation_message_id),
+          'vk:73',
+        ),
+      ).toBe(true),
+    );
+    app.submit('Следующая редакция?\nВторой вопрос?', owner, explicit);
+    await until(() => expect(questions(app)).toEqual(['Следующая редакция?', 'Второй вопрос?']));
+    const now = current(app);
+    const beforeStale = app.sends.length;
+    app.submit('Устаревший\nСписок', admin, second);
+    await until(() =>
+      expect(
+        app.sends
+          .slice(beforeStale)
+          .some(({ text }) => text.startsWith('Список вопросов изменился.')),
+      ).toBe(true),
+    );
+    const third = await enable('2 вопроса.');
+    await app.storage.authorization.transaction(app.scope, (tx) => tx.remove('vk:41', false));
+    await app.journaled(app.submit('После отзыва\nСписок', admin, third));
+    expect(current(app)).toEqual(now);
     expect(app.complete).not.toHaveBeenCalled();
   } finally {
     await app.close();

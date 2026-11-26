@@ -93,6 +93,8 @@ export function parseChatControl(
   }
   const [name, ...args] = clean.split(/\s+/u);
   if (!name || (name === 'помолчи' && (location === 'private' || args.length))) return undefined;
+  if (location === 'group' && name === '/анкета' && args.join(' ') === 'вопросы изменить')
+    return { command: { kind: 'questionnaireEdit' } };
   if (name === '/вопросы')
     return {
       command:
