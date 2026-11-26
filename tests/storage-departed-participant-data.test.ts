@@ -24,7 +24,7 @@ import {
 const start = Date.UTC(2026, 10, 23, 12);
 const departure = start + 500;
 const deadline = departure + departureGraceMs;
-const invitationEntry = { action: () => 'Открыть', state: () => 'available' as const };
+const invitationEntry = { state: () => 'available' as const };
 
 function observe(
   storage: Storage,

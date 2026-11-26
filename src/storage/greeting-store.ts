@@ -10,6 +10,12 @@ import { createMessageStore } from './messages';
 import { participantProfileAvailable, readDeparture } from './participant-departures';
 import { recordProfileAnswer } from './participant-derived-data';
 import { profileAdmitted } from './personal-data-store';
+import type { QuestionnaireRevision } from '../contracts/questionnaire';
+import {
+  createInvitationDeliveries,
+  invitationConfirmationDue,
+  recoverInvitationParts,
+} from './questionnaire-invitation-deliveries';
 import {
   finishResponse,
   responseSlotAvailable,
@@ -33,11 +39,9 @@ interface Window {
 const columns =
   'id,chat_id AS chatId,generation,due_at AS dueAt,state,invitation_state AS invitationState';
 const fields = {
-  greeting: { state: 'state', send: 'send_id', message: 'message_id' },
+  greeting: { state: 'state' },
   invitation: {
     state: 'invitation_state',
-    send: 'invitation_send_id',
-    message: 'invitation_message_id',
   },
 } as const;
 const rateKey = (id: number, publication: WelcomePublication) => publication + ':' + id;
@@ -124,18 +128,49 @@ export function createGreetingStore(
         !invitationsAllowed(controls, now)
       )
         return null;
+      const pinned = db
+        .prepare(
+          `SELECT invitation_template AS template,
+        invitation_disclosure AS disclosure, invitation_enabled_at AS enabledAt,
+        invitation_enabled_from AS enabledFrom FROM greeting_windows WHERE id=?`,
+        )
+        .get(id) as {
+        template: string | null;
+        disclosure: number | null;
+        enabledAt: number | null;
+        enabledFrom: number | null;
+      };
+      if (
+        pinned.template !== null &&
+        (pinned.disclosure !== disclosure.version ||
+          pinned.enabledAt !== controls.invitationEnabledAt ||
+          pinned.enabledFrom !== controls.invitationEnabledFrom)
+      )
+        return null;
       const followsGreeting = window.state === 'delivered' && greetingsAllowed(controls, now);
       const recipients = db
         .prepare(
           `SELECT g.user_id AS user,g.confirmed_at AS confirmedAt
         FROM greeting_members g JOIN chat_participants p ON p.chat_id=? AND p.user_id=g.user_id
         WHERE g.window_id=? AND (g.invitation=1 OR (g.invitation=2 AND ?=1))
+        AND (?=0 OR g.invited=1)
+        AND (g.invitation_attempt IS NULL OR EXISTS(
+          SELECT 1 FROM questionnaire_progress q
+          WHERE (q.chat_id,q.generation,q.user_id,q.attempt)=(p.chat_id,?,p.user_id,g.invitation_attempt)
+        ))
         AND p.status='present' AND NOT EXISTS (
           SELECT 1 FROM personal_deletions d WHERE d.chat_id=p.chat_id AND d.generation=? AND d.user_id=p.user_id
           AND d.confirmed_at IS NOT NULL
         ) ORDER BY g.confirmed_at,g.user_id`,
         )
-        .all(scope.chatId, id, Number(followsGreeting), scope.generation) as {
+        .all(
+          scope.chatId,
+          id,
+          Number(followsGreeting),
+          Number(pinned.template !== null),
+          scope.generation,
+          scope.generation,
+        ) as {
         user: UserId;
         confirmedAt: number;
       }[];
@@ -147,6 +182,8 @@ export function createGreetingStore(
             : [];
         }),
         disclosure: disclosure.version,
+        pinned:
+          pinned.template === null ? null : (JSON.parse(pinned.template) as QuestionnaireRevision),
       };
     });
   }
@@ -154,6 +191,7 @@ export function createGreetingStore(
   return {
     prepare,
     prepareInvitation,
+    invitations: createInvitationDeliveries(lifecycle),
     due(now: number): (Window & { publication: WelcomePublication }) | null {
       timestamp(now);
       return connection.run((db) =>
@@ -168,12 +206,12 @@ export function createGreetingStore(
               (db
                 .prepare(
                   `SELECT ${columns},CASE WHEN state='waiting' THEN 'greeting' ELSE 'invitation' END AS publication
-          FROM greeting_windows w WHERE due_at<=? AND (
-            state='waiting' OR (invitation_state='waiting' AND state IN ('delivered','skipped','unknown')
+          FROM greeting_windows w WHERE due_at<=@now AND (
+            state='waiting' OR ((invitation_state='waiting' OR ${invitationConfirmationDue}) AND state IN ('delivered','skipped','unknown')
               AND EXISTS(SELECT 1 FROM chat_connections c WHERE c.chat_id=w.chat_id AND c.generation=w.generation AND c.state='active'))
           ) ORDER BY due_at,id LIMIT 1`,
                 )
-                .get(now) as (Window & { publication: WelcomePublication }) | undefined) ?? null
+                .get({ now }) as (Window & { publication: WelcomePublication }) | undefined) ?? null
             );
           })
           .immediate(),
@@ -194,6 +232,7 @@ export function createGreetingStore(
                 `UPDATE greeting_windows SET ${state}='unknown' WHERE ${state}='dispatching'`,
               ).run();
             }
+            recoverInvitationParts(db, Date.now());
           })
           .immediate(),
       );
@@ -208,35 +247,24 @@ export function createGreetingStore(
       now: number,
       limit: number,
       current: () => boolean,
-      invitationRecipients?: readonly UserId[],
     ) {
-      const publication = invitationRecipients ? 'invitation' : 'greeting';
-      const { state, send } = fields[publication];
       return lifecycle.transaction(scope, (db) => {
         const window = windowRow(db, scope, id);
         if (
-          (publication === 'greeting' ? window?.state : window?.invitationState) !== 'waiting' ||
-          (invitationRecipients &&
-            (!invitationRecipients.length ||
-              window?.state === 'waiting' ||
-              window?.state === 'dispatching')) ||
+          window?.state !== 'waiting' ||
           !current() ||
           !responseSlotAvailable(db, scope, limit, now)
         )
           return false;
         const reserved = db
           .prepare(
-            `UPDATE OR IGNORE greeting_windows SET ${state}='dispatching',${send}=? WHERE id=?
-            AND NOT EXISTS(SELECT 1 FROM greeting_windows WHERE send_id=? OR invitation_send_id=?)`,
+            `UPDATE OR IGNORE greeting_windows SET state='dispatching',send_id=? WHERE id=?
+            AND NOT EXISTS(SELECT 1 FROM greeting_windows WHERE send_id=? OR invitation_send_id=?)
+            AND NOT EXISTS(SELECT 1 FROM questionnaire_invitation_parts WHERE send_id=?)`,
           )
-          .run(sendId, id, sendId, sendId);
+          .run(sendId, id, sendId, sendId, sendId);
         if (reserved.changes !== 1) return false;
-        if (invitationRecipients)
-          db.prepare(
-            `UPDATE greeting_members SET invited=1 WHERE window_id=?
-            AND user_id IN (SELECT value FROM json_each(?))`,
-          ).run(id, JSON.stringify(invitationRecipients));
-        startResponse(db, scope, rateKey(id, publication), now);
+        startResponse(db, scope, rateKey(id, 'greeting'), now);
         return true;
       });
     },
@@ -246,14 +274,10 @@ export function createGreetingStore(
       sendId: number,
       part: PublishedPart,
       subjects: readonly UserId[],
-      publication: WelcomePublication = 'greeting',
     ) {
-      const { state, send, message } = fields[publication];
       lifecycle.transaction(scope, (db) => {
         const window = windowRow(db, scope, id);
-        requireInput(
-          (publication === 'greeting' ? window?.state : window?.invitationState) === 'dispatching',
-        );
+        requireInput(window?.state === 'dispatching');
         const forgotten = db
           .prepare(
             `SELECT 1 FROM personal_deletions
@@ -279,13 +303,13 @@ export function createGreetingStore(
         requireInput(
           db
             .prepare(
-              `UPDATE greeting_windows SET ${state}='delivered',${message}=?
-          WHERE id=? AND ${send}=? AND ${state}='dispatching'`,
+              `UPDATE greeting_windows SET state='delivered',message_id=?
+          WHERE id=? AND send_id=? AND state='dispatching'`,
             )
             .run(messageId, id, sendId).changes === 1,
         );
         if (messageId !== null) recordProfileAnswer(db, scope, messageId, subjects);
-        finishResponse(db, scope, rateKey(id, publication), 'delivered');
+        finishResponse(db, scope, rateKey(id, 'greeting'), 'delivered');
       });
     },
     settle(
@@ -293,20 +317,18 @@ export function createGreetingStore(
       id: number,
       sendId: number,
       outcome: Exclude<ResponseRateOutcome, 'delivered'>,
-      publication: WelcomePublication = 'greeting',
     ) {
-      const { state, send } = fields[publication];
       lifecycle.transaction(scope, (db) => {
         const terminal = outcome === 'failed' ? 'skipped' : 'unknown';
         if (
           db
             .prepare(
-              `UPDATE greeting_windows SET ${state}=?
-          WHERE id=? AND chat_id=? AND generation=? AND ${state}='dispatching' AND ${send}=?`,
+              `UPDATE greeting_windows SET state=?
+          WHERE id=? AND chat_id=? AND generation=? AND state='dispatching' AND send_id=?`,
             )
             .run(terminal, id, scope.chatId, scope.generation, sendId).changes
         )
-          finishResponse(db, scope, rateKey(id, publication), outcome);
+          finishResponse(db, scope, rateKey(id, 'greeting'), outcome);
       });
     },
     skip(scope: ConnectionScope, id: number, publication: WelcomePublication = 'greeting') {

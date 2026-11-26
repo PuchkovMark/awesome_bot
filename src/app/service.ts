@@ -14,13 +14,11 @@ import { createPersonaCommands } from './persona-commands';
 import {
   createQuestionnaireCommands,
   isQuestionnaireQuestions,
-  openQuestionnaire,
   parseQuestionnaireCommand,
   parseQuestionnaireView,
 } from './questionnaire-commands';
 import { questionnaireAnswerHandler } from '../core/questionnaire/answer';
 import { questionnaireProgressStore } from '../storage/questionnaire-progress-store';
-import { questionnaireStore } from '../storage/questionnaire-store';
 import { createProfileCommands } from './profile-commands';
 import { createProfileUpdates } from '../core/profile-updates/service';
 import { applicationSummaries } from './chat-summaries';
@@ -90,7 +88,7 @@ interface ApplicationDependencies {
   readonly administrationIntervalMs?: number;
   readonly reminderIntervalMs?: number;
   readonly greetingIntervalMs?: number;
-  readonly questionnaireInvitations?: QuestionnaireInvitationSource;
+  readonly questionnaireInvitations?: Pick<QuestionnaireInvitationSource, 'state'>;
   readonly greetingRules?: (scope: ConnectionScope) => string | undefined;
   readonly membershipScanMs?: number;
   readonly membershipStaggerMs?: number;
@@ -176,7 +174,6 @@ export async function runApplication(
       });
       const privacy = personalDataStore(storage);
       const questionnaireProgress = createQuestionnaireProgress(storage);
-      const questionnaireTemplates = questionnaireStore(storage);
       const registry = participantRegistryStore(storage);
       privacy.purgeExpired(Date.now());
       privacy.cleanup(Date.now());
@@ -388,7 +385,6 @@ export async function runApplication(
         ...(dependencies.greetingRules ? { rules: dependencies.greetingRules } : {}),
         questionnaire: questionnaireProgress.invitations(
           dependencies.questionnaireInvitations ?? {
-            action: (scope) => (questionnaireTemplates.current(scope) ? openQuestionnaire : null),
             state(scope, user) {
               const state = controls.read(scope);
               return state.enabled &&
@@ -404,6 +400,7 @@ export async function runApplication(
           name: channel.getUserName,
           send: channel.sendGreeting,
           sendInvitation: channel.sendQuestionnaireInvitation,
+          confirmInvitation: channel.confirmQuestionnaireInvitation,
         },
       });
       let greetingWait: AbortController | undefined;
@@ -684,6 +681,27 @@ export async function runApplication(
         logger,
         authorization,
         canAnswerQuestionnaire: questionnaireAttempts.canAnswer,
+        invitationReply: questionnaireAttempts.invitationReply,
+        onInvitationHint(scope, status, user, accepted) {
+          const current = () =>
+            accepted() &&
+            questionnaireAttempts.participating(scope, user) &&
+            privacy.profileAllowed(scope, user, Date.now());
+          const text = {
+            restart:
+              'Список больше не принимает ответы. Чтобы заполнить анкету, отправьте /анкета.',
+            warning: 'Ответьте на сообщение с вопросами или отправьте /анкета.',
+            pending:
+              'Показ вопросов пока не подтверждён. Ответьте на список чуть позже или отправьте /анкета.',
+          }[status];
+          trackPublication(
+            channel.replyGroupControl(scope, text, {
+              signal,
+              isCurrent: current,
+              allow: async () => current(),
+            }),
+          );
+        },
         onQueueFull(scope, messageId, route, guard) {
           trackPublication(publication.queueFull(scope, messageId, route, guard));
         },

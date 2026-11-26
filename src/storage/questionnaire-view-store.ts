@@ -1,20 +1,11 @@
-import type { Database } from 'better-sqlite3';
 import type { ConnectionScope, UserId } from '../contracts/index';
 import { readDisclosureGate } from './chat-disclosure-store';
 import { lifecycleBackend } from './lifecycle-store';
-import { participantProfileAvailable, readDeparture } from './participant-departures';
+import { readDeparture } from './participant-departures';
+import { isQuestionnaireMember } from './questionnaire-input';
 import { profileAdmitted } from './personal-data-store';
 import { publiclyVisibleFact, selectCurrentFacts } from './profile-fact-selection';
 import type { Storage } from './types';
-
-export function isQuestionnaireMember(db: Database, scope: ConnectionScope, user: UserId) {
-  return (
-    participantProfileAvailable(readDeparture(db, scope, user)) &&
-    !!db
-      .prepare("SELECT 1 FROM chat_participants WHERE chat_id=? AND user_id=? AND status='present'")
-      .get(scope.chatId, user)
-  );
-}
 
 export function questionnaireViewStore(storage: Storage) {
   const lifecycle = lifecycleBackend(storage);

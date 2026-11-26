@@ -2,30 +2,78 @@ import { lifecycleBackend } from '../src/storage/lifecycle-store';
 import { legacyQuestionnaire } from '../src/core/questionnaires/legacy-template';
 import { privateQuestionnaireHint } from '../src/core/questionnaire/text';
 import { expect, test } from 'vitest';
-import { chat, fixture, peer, until } from './helpers/application-response-fixture';
+import {
+  answer,
+  chat,
+  fixture,
+  mention,
+  peer,
+  until,
+} from './helpers/application-response-fixture';
 import { chatControlStore } from '../src/storage/chat-control-store';
 import { participantRegistryStore } from '../src/storage/participant-registry';
 import { personalDataStore } from '../src/storage/personal-data-store';
 import type { UserId } from '../src/contracts/index';
 import type { QuestionnaireInvitationSource } from '../src/core/greetings/invitation';
 import { seedBeforeQuestionnaires, seedLegacyPrivateForm } from './helpers/questionnaire-upgrade';
+import { questionnaireStore } from '../src/storage/questionnaire-store';
+import { vkMessageLength } from '../src/channels/vk/outbound-text';
+import { questionnaireHour } from '../src/storage/questionnaire-input';
 
 type App = Awaited<ReturnType<typeof fixture>>;
 const hello = 'Рады видеть в лесу! [id999|чужой]';
 const action = '/анкета';
-const invitations = (app: App) => app.sends.filter(({ text }) => text.endsWith(action));
+const instruction = 'Ваши ответы увидят все участники этой беседы.';
+const defaultList = legacyQuestionnaire.questions.map(({ text }) => text).join('\n');
+const invitations = (app: App) => app.sends.filter(({ text }) => text.includes(instruction));
 const welcomes = (app: App) =>
-  app.sends.filter(({ text }) => text === hello || text.endsWith(action));
+  app.sends.filter(({ text }) => text === hello || text.includes(instruction));
 const states = (app: App) =>
   app.db
     .prepare('SELECT state,invitation_state AS invitation FROM greeting_windows ORDER BY id')
     .all();
 const open = (app: App, count = 1) => until(() => expect(states(app)).toHaveLength(count));
 
+const form = (app: App, user = 101) =>
+  app.db
+    .prepare(
+      'SELECT attempt,state,shown_at,shown_message_id FROM questionnaire_progress WHERE chat_id=? AND user_id=?',
+    )
+    .get(app.scope.chatId, 'vk:' + user);
+
+function modelAnswers(app: App, answers: Record<string, string | null>) {
+  app.complete.mockResolvedValueOnce({
+    kind: 'complete',
+    text: JSON.stringify(answers),
+    usage: { input: 20, output: 10 },
+  });
+}
+
+async function replaceQuestions(app: App, questions: readonly string[], enable = false) {
+  const before = app.sends.length;
+  app.submit(enable ? '/приглашение вкл' : '/анкета вопросы изменить', 73);
+  const find = () =>
+    app.sends.slice(before).find(({ text }) => text.includes('по одному вопросу на строку'));
+  await until(() => expect(find()).toBeDefined());
+  app.submit(questions.join('\n'), 73, find()!);
+  if (questions.length === 1) {
+    const proposal = () =>
+      app.sends.slice(before).find(({ text }) => text.includes('останется 1.'));
+    await until(() => expect(proposal()).toBeDefined());
+    app.submit('Заменить', 73, proposal()!);
+  }
+  await until(() =>
+    expect(
+      questionnaireStore(app.storage)
+        .current(app.scope)
+        ?.questions.map(({ text }) => text),
+    ).toEqual(questions),
+  );
+}
+
 function engine() {
   const completed = new Set<string>();
-  const source: QuestionnaireInvitationSource = {
-    action: () => action,
+  const source: Pick<QuestionnaireInvitationSource, 'state'> = {
     state: (scope, user) => (completed.has(scope.chatId + '/' + user) ? 'completed' : 'available'),
   };
   return {
@@ -260,7 +308,7 @@ test('перезапуск между отправками, неизвестны
     expect(states(app)).toEqual([{ state: 'delivered', invitation: 'waiting' }]);
     await app.restart(true);
     await until(() => expect(app.holds).toHaveLength(3));
-    app.failSend((text) => (text.endsWith(action) ? 'unknownAfterDelivery' : undefined));
+    app.failSend((text) => (text.includes(instruction) ? 'unknownAfterDelivery' : undefined));
     app.holds[2]!.release();
     await until(() => expect(states(app)).toEqual([{ state: 'delivered', invitation: 'unknown' }]));
     expect(welcomes(app)).toHaveLength(2);
@@ -380,7 +428,8 @@ test.each([false, true])(
         expect(welcomes(app).map(({ text }) => text)).toEqual([hello]);
         confirmation.release();
       }
-      await until(() => expect(invitations(app)).toHaveLength(1));
+      await until(() => expect(states(app)[0]).toMatchObject({ invitation: 'delivered' }));
+      expect(invitations(app)).toHaveLength(1);
       const invite = invitations(app)[0]!;
       expect(invite.text).toContain('[id101|Саша Иванов]');
       expect(invite.text).not.toContain('[id102|');
@@ -393,14 +442,7 @@ test.each([false, true])(
           .prepare('SELECT state FROM questionnaire_progress WHERE chat_id=? AND user_id=?')
           .get(app.scope.chatId, 'vk:101');
       expect(progress()).toBeUndefined();
-      app.at(32_000);
-      const command = invite.text.split(' ').at(-1)!;
-      expect(command).toBe(action);
-      app.submit(command, 101);
-      await until(() => expect(progress()).toMatchObject({ state: 'active' }));
-      const list = legacyQuestionnaire.questions.map(({ text }) => text).join('\n');
-      const shown = app.sends.find(({ text }) => text.startsWith('Ваш ответ увидят участники'));
-      expect(shown?.text.endsWith(list)).toBe(true);
+      expect(invite.text.endsWith(defaultList)).toBe(true);
       app.complete.mockResolvedValueOnce({
         kind: 'complete',
         text: JSON.stringify(
@@ -411,7 +453,7 @@ test.each([false, true])(
         usage: { input: 20, output: 10 },
       });
       app.at(33_000);
-      const answerId = app.submit('Пенёк, я Аня. Остальное пропущу.', 101);
+      const answerId = app.submit('Я Аня. Остальное пропущу.', 101, invite);
       await until(() =>
         expect(app.sends.some((s) => s.text.startsWith('Спасибо! Анкета заполнена.'))).toBe(true),
       );
@@ -497,13 +539,20 @@ test.each(['стартовая редакция прежней группы', '�
       profileNotice: 'Обработка анкеты и профиля.',
       greetings: { members: [73] },
       ...(reason === 'стартовая редакция прежней группы'
-        ? { existingChat: (path: string) => seedBeforeQuestionnaires(path, [chat]) }
+        ? { existingChat: (path: string) => seedBeforeQuestionnaires(path, [chat], true) }
         : {}),
     });
     try {
-      await configure(app, false, true);
-      if (reason === 'участник отказался от профилирования')
+      if (reason === 'стартовая редакция прежней группы') {
+        await until(() =>
+          expect(participantRegistryStore(app.storage).read(app.scope).lastAttemptComplete).toBe(
+            true,
+          ),
+        );
+      } else {
+        await configure(app, false, true);
         personalDataStore(app.storage).disable(app.scope, 'vk:101', Date.now());
+      }
       enter(app);
       await open(app);
       app.at(31_000);
@@ -512,12 +561,320 @@ test.each(['стартовая редакция прежней группы', '�
           expect(states(app)).toEqual([{ state: 'skipped', invitation: 'delivered' }]),
         );
         expect(invitations(app)).toHaveLength(1);
+        expect(invitations(app)[0]?.text.endsWith(defaultList)).toBe(true);
       } else {
         await until(() =>
           expect(states(app)).toEqual([{ state: 'skipped', invitation: 'skipped' }]),
         );
         expect(invitations(app)).toEqual([]);
       }
+    } finally {
+      await app.close();
+    }
+  },
+);
+
+test('двое отвечают на одну редакцию после полуночи, замены вопросов, отключения и рестарта', async () => {
+  const app = await fixture({
+    startAt: Date.UTC(2026, 10, 25, 23, 59, 40),
+    profileNotice: 'Обработка анкеты и профиля.',
+    greetings: { members: [73, 105] },
+  });
+  try {
+    await until(() =>
+      expect(participantRegistryStore(app.storage).read(app.scope).lastAttemptComplete).toBe(true),
+    );
+    const original = ['Как тебя зовут?', 'Какая игра нравится?'];
+    await replaceQuestions(app, original, true);
+    const firstEntry = enter(app, 101, [73, 105, 101]);
+    await open(app);
+    enter(app, 102, [73, 105, 101, 102], 2_000);
+    await until(() =>
+      expect(app.db.prepare('SELECT count(*) FROM greeting_members').pluck().get()).toBe(2),
+    );
+    app.at(31_000);
+    await until(() => expect(states(app)[0]).toMatchObject({ invitation: 'delivered' }));
+    const [list] = invitations(app);
+    expect(list?.text).toContain('[id101|');
+    expect(list?.text).toContain('[id102|');
+    expect(list?.text.endsWith(original.join('\n'))).toBe(true);
+    expect([form(app, 101), form(app, 102)]).toEqual([undefined, undefined]);
+    app.replay(firstEntry);
+    await app.journaled(app.submit('Поболтаем о погоде', 101));
+    await app.journaled(app.submit('Я не адресат', 105, list));
+    expect(app.complete).not.toHaveBeenCalled();
+    expect(form(app, 105)).toBeUndefined();
+
+    app.at(32_000);
+    await replaceQuestions(app, ['Назови город', 'Любимый фильм?']);
+    app.submit('/приглашение выкл', 73);
+    await until(() =>
+      expect(chatControlStore(app.storage).read(app.scope).invitationEnabledAt).toBeNull(),
+    );
+    modelAnswers(app, { 1: 'Аня', 2: null });
+    const first = app.submit('Аня', 101, list);
+    await app.published(first);
+    await app.restart(true);
+    app.at(33_000);
+    app.replay(first);
+    modelAnswers(app, { 1: null, 2: 'Шахматы' });
+    await app.published(app.submit('Шахматы', 102, list));
+    expect(app.complete).toHaveBeenCalledTimes(2);
+    expect(
+      app.db
+        .prepare(
+          'SELECT a.user_id,a.question,f.value FROM questionnaire_answer_facts a JOIN profile_facts f ON f.id=a.fact_id ORDER BY a.user_id',
+        )
+        .all(),
+    ).toEqual([
+      { user_id: 'vk:101', question: original[0], value: 'Аня' },
+      { user_id: 'vk:102', question: original[1], value: 'Шахматы' },
+    ]);
+    app.submit('/анкета [id101|Аня]', 105);
+    await until(() => expect(app.sends.at(-1)?.text).toContain(original[0] + '\nАня'));
+    app.submit('/анкета', 105);
+    await until(() => expect(form(app, 105)).toMatchObject({ state: 'active' }));
+    expect(app.sends.at(-1)?.text).toContain('Назови город\nЛюбимый фильм?');
+  } finally {
+    await app.close();
+  }
+});
+
+test.each(['warning', 'questions'] as const)(
+  'поздняя квитанция части %s переживает рестарт с тем же ID',
+  async (stage) => {
+    const vkSends: Record<string, string | number>[] = [];
+    const app = await fixture({
+      profileNotice: 'Обработка анкеты и профиля.',
+      greetings: { members: [73] },
+      beforeVkRequest: async (method, args) => {
+        if (method === 'messages.send') vkSends.push(args);
+      },
+    });
+    const sample = '[id999|Имя] https://example.test ';
+    const base =
+      sample + 'я'.repeat(Math.floor((vkMessageLength.value - Buffer.byteLength(sample)) / 2));
+    const question = Buffer.byteLength(base) === vkMessageLength.value ? base : base + '?';
+    const withheld = app.holdReceipt(
+      stage === 'warning' ? (t) => t.includes(instruction) : (t) => t === question,
+    );
+    try {
+      await configure(app, false, true);
+      await replaceQuestions(app, [question]);
+      enter(app);
+      await open(app);
+      app.at(31_000);
+      await withheld.entered;
+      const saved = app.db.prepare(
+        'SELECT send_id,receipt,state FROM questionnaire_invitation_parts WHERE stage=?',
+      );
+      const pending = saved.get(stage);
+      expect(pending).toMatchObject({ state: 'sending', receipt: expect.any(Number) });
+      await app.restart(true, [], { retainReceipt: true });
+      expect(saved.get(stage)).toMatchObject({ ...(pending as object), state: 'unknown' });
+      app.at(32_000);
+      withheld.release();
+      await until(() => expect(states(app)[0]).toMatchObject({ invitation: 'delivered' }));
+
+      const warning = invitations(app)[0]!;
+      const list = app.sends.find(({ text }) => text === question)!;
+      expect(
+        app.sends.filter(({ text }) => text.includes(instruction) || text === question),
+      ).toEqual([warning, list]);
+      expect(warning.disableMentions).toBe(0);
+      expect(warning.text).not.toContain('[id999|');
+      expect(vkSends.find(({ message }) => message === question)).toMatchObject({
+        dont_parse_links: 1,
+        disable_mentions: 1,
+        peer_ids: String(peer),
+      });
+      expect(list.sendId).not.toBe(warning.sendId);
+      expect(saved.get(stage)).toMatchObject({ ...(pending as object), state: 'delivered' });
+      const confirmed = app.db
+        .prepare("SELECT confirmed_at FROM questionnaire_invitation_parts WHERE stage='questions'")
+        .pluck()
+        .get() as number;
+      expect(confirmed).toBe(app.start + 32_000);
+      const before = app.sends.length;
+      await app.journaled(app.submit('Ответ на пояснение', 101, warning));
+      await until(() =>
+        expect(
+          app.sends
+            .slice(before)
+            .some(({ text }) => text.includes('Ответьте на сообщение с вопросами или')),
+        ).toBe(true),
+      );
+      expect(form(app)).toBeUndefined();
+
+      app.at(confirmed - app.start + questionnaireHour);
+      const stale = app.submit('Поздний ответ', 101, list);
+      await until(() =>
+        expect(app.sends.at(-1)?.text).toContain('Список больше не принимает ответы.'),
+      );
+      app.replay(stale);
+      expect(form(app)).toBeUndefined();
+      expect(app.complete).not.toHaveBeenCalled();
+    } finally {
+      withheld.release();
+      await app.close();
+    }
+  },
+);
+
+test('переполнение очереди не занимает попытку, повтор использует редакцию полученного списка', async () => {
+  const app = await fixture({
+    profileNotice: 'Обработка анкеты и профиля.',
+    greetings: { members: [73] },
+  });
+  const release = Promise.withResolvers<void>();
+  try {
+    await configure(app, false, true);
+    await replaceQuestions(app, ['Имя?', 'Город?']);
+    enter(app);
+    await open(app);
+    app.at(31_000);
+    await until(() => expect(states(app)[0]).toMatchObject({ invitation: 'delivered' }));
+    const list = invitations(app)[0]!;
+    app.complete.mockImplementationOnce(async () => {
+      await release.promise;
+      return answer;
+    });
+    app.at(32_000);
+    app.submit(mention + ' 1', 73);
+    await until(() => expect(app.complete).toHaveBeenCalledTimes(1));
+    app.submit(mention + ' 2', 73);
+    app.submit(mention + ' 3', 73);
+    const queued = () =>
+      app.db.prepare("SELECT count(*) FROM queue_jobs WHERE state='queued'").pluck().get();
+    await until(() => expect(queued()).toBe(2));
+    const rejected = app.submit('Я Аня', 101, list);
+    await app.published(rejected);
+    expect(form(app)).toBeUndefined();
+    expect(app.db.prepare('SELECT count(*) FROM questionnaire_inputs').pluck().get()).toBe(0);
+    release.resolve();
+    await until(() => expect(app.complete).toHaveBeenCalledTimes(3));
+    await until(() => expect(queued()).toBe(0));
+
+    app.at(93_000);
+    modelAnswers(app, { 1: 'Аня', 2: null });
+    await app.published(app.submit('Я Аня', 101, list));
+    expect(form(app)).toMatchObject({ state: 'completed' });
+    expect(app.db.prepare('SELECT count(*) FROM questionnaire_inputs').pluck().get()).toBe(1);
+  } finally {
+    release.resolve();
+    await app.close();
+  }
+});
+
+test('ручное заполнение использует одну попытку, отмена и новое поколение закрывают старую квитанцию', async () => {
+  const app = await fixture({
+    profileNotice: 'Обработка анкеты и профиля.',
+    greetings: { members: [73] },
+  });
+  try {
+    await configure(app, false, true);
+    await replaceQuestions(app, ['Имя?', 'Город?']);
+    enter(app);
+    await open(app);
+    enter(app, 102, [73, 101, 102], 2_000);
+    await until(() =>
+      expect(app.db.prepare('SELECT count(*) FROM greeting_members').pluck().get()).toBe(2),
+    );
+    app.at(31_000);
+    await until(() => expect(states(app)[0]).toMatchObject({ invitation: 'delivered' }));
+    const list = invitations(app)[0]!;
+    app.at(32_000);
+    app.submit('/анкета', 101);
+    app.submit('/анкета', 102);
+    await until(() =>
+      expect([form(app, 101), form(app, 102)]).toEqual([
+        expect.objectContaining({ state: 'active' }),
+        expect.objectContaining({ state: 'active' }),
+      ]),
+    );
+    const first = form(app, 101) as { attempt: string };
+    const cancelled = form(app, 102) as { attempt: string };
+    modelAnswers(app, { 1: 'Аня', 2: null });
+    await app.published(app.submit('Аня', 101, list));
+    expect(form(app, 101)).toMatchObject({ attempt: first.attempt, state: 'completed' });
+    app.submit('/анкета отмена', 102);
+    await until(() => expect(form(app, 102)).toBeUndefined());
+    app.submit('/анкета', 102);
+    await until(() => expect(form(app, 102)).toMatchObject({ state: 'active' }));
+    const fresh = form(app, 102);
+    expect(fresh).not.toMatchObject({ attempt: cancelled.attempt });
+    app.submit('По старому списку', 102, list);
+    await until(() =>
+      expect(app.sends.at(-1)?.text).toContain('Список больше не принимает ответы.'),
+    );
+    expect(form(app, 102)).toEqual(fresh);
+    expect(app.complete).toHaveBeenCalledOnce();
+
+    const replacement = await app.connectGroup(peer);
+    expect(replacement.generation).not.toBe(app.scope.generation);
+    const stale = app.submit('Со старой квитанцией', 102, list);
+    await until(() =>
+      expect(
+        app.db
+          .prepare('SELECT purpose FROM messages WHERE chat_id=? AND platform_message_id=?')
+          .pluck()
+          .get(chat, String(stale)),
+      ).toBe('service_notice'),
+    );
+    expect(form(app, 102)).toBeUndefined();
+    expect(app.complete).toHaveBeenCalledOnce();
+  } finally {
+    await app.close();
+  }
+});
+
+test.each([901, 'unknownAfterDelivery'] as const)(
+  'отказ списка %s сохраняет подтверждённое пояснение и не открывает час',
+  async (failure) => {
+    const app = await fixture({
+      profileNotice: 'Обработка анкеты и профиля.',
+      greetings: { members: [73] },
+    });
+    const questions = ['[id999|Имя] https://example.test', 'Второй вопрос?'];
+    const list = questions.join('\n');
+    try {
+      await configure(app, false, true);
+      await replaceQuestions(app, questions);
+      app.failSend((text) => (text === list ? failure : undefined));
+      const joined = enter(app);
+      await open(app);
+      app.at(31_000);
+      const definite = failure === 901;
+      await until(() =>
+        expect(states(app)[0]).toMatchObject({ invitation: definite ? 'skipped' : 'unknown' }),
+      );
+      const parts = () =>
+        app.db
+          .prepare(
+            'SELECT stage,state,send_id,confirmed_at FROM questionnaire_invitation_parts ORDER BY stage DESC',
+          )
+          .all();
+      const saved = parts();
+      expect(saved).toEqual([
+        expect.objectContaining({
+          stage: 'warning',
+          state: 'delivered',
+          confirmed_at: app.start + 31_000,
+        }),
+        expect.objectContaining({
+          stage: 'questions',
+          state: definite ? 'failed' : 'unknown',
+          confirmed_at: null,
+        }),
+      ]);
+      await app.restart(true);
+      app.at(32_000);
+      app.replay(joined);
+      expect(invitations(app)).toHaveLength(1);
+      expect(app.sends.filter(({ text }) => text === list)).toHaveLength(definite ? 0 : 1);
+      expect(parts()).toEqual(saved);
+      expect(form(app)).toBeUndefined();
+      expect(app.complete).not.toHaveBeenCalled();
     } finally {
       await app.close();
     }

@@ -72,7 +72,7 @@ export async function fixture(
     greetings?: {
       readonly members?: readonly number[];
       readonly rules?: string;
-      readonly questionnaire?: QuestionnaireInvitationSource;
+      readonly questionnaire?: Pick<QuestionnaireInvitationSource, 'state'>;
     };
     quotas?: Partial<ChatLimits>;
   } = {},

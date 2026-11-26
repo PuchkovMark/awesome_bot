@@ -35,6 +35,7 @@ interface VkInvitationRequest extends VkRequestGuard {
   readonly sendId: number;
   readonly prepare: () => QuestionnaireInvitationDispatch | null;
   readonly onOmitted: (count: number) => void;
+  readonly receivedId?: (messageId: string) => void;
   readonly confirmPart: VkSendRequest['confirmPart'];
 }
 
@@ -178,9 +179,9 @@ export function createVkOutbound(options: {
             const prepared = invitation.prepare();
             if (!prepared) return false;
             const content = formatQuestionnaireInvitation(prepared);
-            if (!content || !prepared.reserve()) return false;
+            if (!content || !prepared.reserve(content.stage, content.text)) return false;
             params.message = content.text;
-            params.disable_mentions = 0;
+            params.disable_mentions = content.notify ? 0 : 1;
             invitation.onOmitted(content.omitted);
             return true;
           },
@@ -350,6 +351,25 @@ export function createVkOutbound(options: {
     },
     sendInvitation(input: VkInvitationRequest) {
       return send({ ...input, kind: 'service', text: '' }, input);
+    },
+    async invitationReceipt(
+      chatId: VkSendRequest['chatId'],
+      receipt: string,
+      guard: VkRequestGuard,
+    ) {
+      const peer = vkLocalId(chatId);
+      const cmid = localMessageId(receipt);
+      if (peer === undefined || !isVkGroupChat(peer) || cmid === undefined) return null;
+      const row = await lookupConfirmed(peer, cmid, guard);
+      return row?.author === -groupId && row.reply === undefined
+        ? {
+            messageId: receipt,
+            userId: `vk:${row.author}` as const,
+            authorName: '',
+            text: row.text,
+            timestamp: row.date * 1000,
+          }
+        : null;
     },
     async sendTyping(chatId: VkSendRequest['chatId'], guard: VkRequestGuard): Promise<void> {
       const peer = vkLocalId(chatId);

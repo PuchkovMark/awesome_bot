@@ -113,6 +113,7 @@ export function createPublicationService(options: {
       readonly recapReply?: QueueCompletion['recapReply'];
       readonly subjectIds?: readonly import('../../contracts/index').UserId[];
       readonly withoutJob?: boolean;
+      readonly queueFull?: true;
       readonly flood?: FloodNotice;
       readonly authorLabels?: readonly string[];
       readonly addressPreference?: AddressPreferenceReference;
@@ -298,6 +299,7 @@ export function createPublicationService(options: {
             interval,
             Date.now(),
             decision.template ?? 'generic',
+            details.queueFull,
           ) ?? undefined;
         if (!permit) return suppressed('notice_period');
       }
@@ -625,7 +627,7 @@ export function createPublicationService(options: {
       await publish(
         { scope, messageId, route, signal, isCurrent: () => !signal.aborted && guard.isCurrent() },
         { kind: 'queue_full' },
-        { withoutJob: true },
+        { withoutJob: true, queueFull: true },
       );
     },
   });

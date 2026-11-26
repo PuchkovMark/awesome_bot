@@ -13,10 +13,8 @@ import type { createLifecycleService } from '../core/lifecycle/service';
 import type { createQuestionnaireProgress } from '../core/questionnaire/progress';
 import { chatControlStore } from '../storage/chat-control-store';
 import { StorageError } from '../storage/errors';
-import {
-  legacyQuestionnairePrompts,
-  questionnaireMessageSequence,
-} from '../storage/questionnaire-access-store';
+import { legacyQuestionnairePrompts } from '../storage/questionnaire-access-store';
+import { questionnaireMessageSequence } from '../storage/questionnaire-types';
 import type { QuestionnaireCommand } from '../storage/questionnaire-progress-store';
 import { questionnaireManagementStore } from '../storage/questionnaire-management-store';
 import {

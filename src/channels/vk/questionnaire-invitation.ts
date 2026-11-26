@@ -1,19 +1,23 @@
 import type { QuestionnaireInvitationDispatch } from '../../core/greetings/invitation';
+import { questionnaireInvitationWarning } from '../../core/questionnaire/text';
 import { isVkGroupChat, vkId } from './normalize';
 import { vkMessageLength } from './outbound-text';
 
-const question = 'Хотите заполнить анкету знакомства?';
-const others = '\nОстальные новички тоже могут заполнить анкету.';
+const others = '\nОстальные новички тоже могут ответить на список.';
 const fallback = 'новичок';
 
 export function formatQuestionnaireInvitation(
-  invitation: Pick<QuestionnaireInvitationDispatch, 'action' | 'recipients'>,
+  invitation: Pick<
+    QuestionnaireInvitationDispatch,
+    'questions' | 'recipients' | 'warningDelivered'
+  >,
   limit: number = vkMessageLength.value,
 ) {
-  const action = invitation.action.trim();
-  if (!/^\/[\p{L}\p{N}][\p{L}\p{N}\p{M} .:_-]*$/u.test(action) || !invitation.recipients.length)
+  const { questions } = invitation;
+  if (!questions.trim() || Buffer.byteLength(questions) > limit || !invitation.recipients.length)
     return null;
-  const suffix = '\nЧтобы открыть анкету, отправьте ' + action;
+  if (invitation.warningDelivered)
+    return { stage: 'questions' as const, text: questions, notify: false, omitted: 0 };
   const mentions = new Map<number, { name: string; confirmedAt: number }>();
   for (const { user, name, confirmedAt } of invitation.recipients) {
     const id = vkId(Number(user.slice(3)));
@@ -30,22 +34,31 @@ export function formatQuestionnaireInvitation(
     ([leftId, left], [rightId, right]) => left.confirmedAt - right.confirmedAt || leftId - rightId,
   );
   const named = ordered.map(([id, { name }]) => mention(id, name)).join(', ');
-  const ending = ', ' + question + suffix;
-  if (Buffer.byteLength(named + ending) <= limit) return { text: named + ending, omitted: 0 };
+  const ending = '\n' + questionnaireInvitationWarning;
+  const combined = named + ending + '\n\n' + questions;
+  if (Buffer.byteLength(combined) <= limit && !/\[(?:id|club|public)\d+\||@\p{L}/iu.test(questions))
+    return { stage: 'questions' as const, text: combined, notify: true, omitted: 0 };
+  const warning = (text: string, omitted: number) => ({
+    stage: 'warning' as const,
+    text,
+    notify: true,
+    omitted,
+  });
+  if (Buffer.byteLength(named + ending) <= limit) return warning(named + ending, 0);
   const short = ordered.map(([id]) => mention(id, fallback));
   if (Buffer.byteLength(short.join(', ') + ending) <= limit)
-    return { text: short.join(', ') + ending, omitted: 0 };
+    return warning(short.join(', ') + ending, 0);
 
-  const remainder = question + others + suffix;
+  const remainder = questionnaireInvitationWarning + others;
   const budget = limit - Buffer.byteLength(remainder);
   if (budget < 0) return null;
   const kept: string[] = [];
   let bytes = 0;
   for (const part of short) {
-    bytes += Buffer.byteLength(part) + 2;
+    bytes += Buffer.byteLength(part) + (kept.length ? 2 : 1);
     if (bytes > budget) break;
     kept.push(part);
   }
-  const text = (kept.length ? kept.join(', ') + ', ' : '') + remainder;
-  return { text, omitted: short.length - kept.length };
+  const text = (kept.length ? kept.join(', ') + '\n' : '') + remainder;
+  return warning(text, short.length - kept.length);
 }

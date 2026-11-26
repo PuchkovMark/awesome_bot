@@ -5,7 +5,11 @@ import type { ConnectionScope, UserId } from '../../src/contracts/index';
 import { privateQuestionnaire } from '../../src/core/questionnaires/private-template';
 import { recordQuestionnaireFacts } from '../../src/storage/profile-fact-store';
 
-export function seedBeforeQuestionnaires(path: string, chats: readonly string[]) {
+export function seedBeforeQuestionnaires(
+  path: string,
+  chats: readonly string[],
+  invitations = false,
+) {
   const db = new Database(path);
   try {
     db.pragma('foreign_keys=ON');
@@ -17,6 +21,9 @@ export function seedBeforeQuestionnaires(path: string, chats: readonly string[])
       "INSERT INTO chat_connections(chat_id,generation,revision,state) VALUES(?,?,0,'active')",
     );
     for (const [index, chat] of chats.entries()) insert.run(chat, index + 1);
+    if (invitations)
+      db.exec(`INSERT INTO chat_controls(chat_id,generation,invitation_enabled_at)
+        SELECT chat_id,generation,1 FROM chat_connections`);
     db.prepare('UPDATE lifecycle_clock SET value=? WHERE singleton=1').run(chats.length);
   } finally {
     db.close();
@@ -64,13 +71,15 @@ export function seedLegacyPrivateForm(
         answers,
         now,
       );
-    if (sourceId)
+    if (sourceId) {
       db.prepare('INSERT INTO questionnaire_inputs VALUES(?,?,?,?)').run(
         sourceId,
         scope.chatId,
         scope.generation,
         attempt,
       );
+      db.prepare("UPDATE messages SET purpose='service_notice' WHERE id=?").run(sourceId);
+    }
   })();
 }
 

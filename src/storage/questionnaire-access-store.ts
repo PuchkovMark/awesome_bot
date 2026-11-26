@@ -1,13 +1,7 @@
 import type { ConnectionScope } from '../contracts/index';
 import { lifecycleBackend } from './lifecycle-store';
 import type { Storage } from './types';
-
-export function questionnaireMessageSequence(id: string): number | null {
-  const sequence = Number(id);
-  return Number.isSafeInteger(sequence) && sequence > 0 && String(sequence) === id
-    ? sequence
-    : null;
-}
+import { questionnaireMessageSequence } from './questionnaire-types';
 
 export function legacyQuestionnairePrompts(storage: Storage) {
   const lifecycle = lifecycleBackend(storage);

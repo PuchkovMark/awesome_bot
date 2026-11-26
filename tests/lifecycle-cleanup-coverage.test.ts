@@ -38,6 +38,7 @@ const tables = [
   'greeting_candidates',
   'greeting_windows',
   'greeting_members',
+  'questionnaire_invitation_parts',
   'address_preferences',
   'participant_sync',
   'participant_events',
@@ -110,6 +111,9 @@ const tables = [
   'sqlite_sequence',
 ];
 const others = [
+  'questionnaire_invitation_receipt',
+  'questionnaire_invitation_confirmations',
+  'questionnaire_invitation_attempt_removed',
   'verified_reminders',
   'reminder_inputs_by_reminder',
   'personal_dispute_reports_by_code',

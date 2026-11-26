@@ -3,6 +3,7 @@ import { personalDataStore } from '../src/storage/personal-data-store';
 import { participantRegistryStore } from '../src/storage/participant-registry';
 import { tokenBudgetStore } from '../src/storage/token-budget-store';
 import { greetingStore } from '../src/storage/greeting-store';
+import { questionnaireStore } from '../src/storage/questionnaire-store';
 import { migrate } from '../src/storage/migrate';
 import { migrations } from '../src/storage/migrations/index';
 import { profileFixture } from './helpers/profile-fact-fixture';
@@ -247,7 +248,19 @@ test('новые настройки действуют на последующи
     ).toEqual(['vk:12']);
     const inviteId = reopened.allocate();
     expect(
-      reopened.start(restored, window.id, inviteId, start + 30_000, 6, () => true, ['vk:12']),
+      reopened.invitations.reserve(
+        restored,
+        window.id,
+        inviteId,
+        'questions',
+        'Список',
+        questionnaireStore(f.storage).current(restored)!,
+        reopened.prepareInvitation(restored, window.id, start + 30_000)!.disclosure,
+        [{ user: 'vk:12', participationRevision: 0 }],
+        start + 30_000,
+        6,
+        () => true,
+      ),
     ).toBe(true);
     reopened.recover();
     expect(reopened.due(start + 30_000)).toBeNull();

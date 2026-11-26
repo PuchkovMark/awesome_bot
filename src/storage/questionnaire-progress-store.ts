@@ -17,7 +17,8 @@ import { claimControlMessage, readChatControl } from './chat-control-store';
 import { requireInput, timestamp } from './validation';
 import { appendMessage } from './messages';
 import { recordQuestionnaireFacts } from './profile-fact-store';
-import { questionnaireMessageSequence } from './questionnaire-access-store';
+import { questionnaireMessageSequence } from './questionnaire-types';
+import { questionnaireInvitationReply } from './questionnaire-invitation-input';
 
 const subject = 'chat_id=? AND generation=? AND user_id=?';
 
@@ -332,6 +333,17 @@ export function questionnaireProgressStore(storage: Storage) {
       return lifecycle.transaction(
         scope,
         (db) => answerableAttempt(db, scope, user, messageId, receivedAt) !== null,
+      );
+    },
+    invitationReply(
+      scope: ConnectionScope,
+      user: UserId,
+      receipt: string,
+      messageId: number,
+      receivedAt: number,
+    ) {
+      return lifecycle.transaction(scope, (db) =>
+        questionnaireInvitationReply(db, scope, user, receipt, messageId, receivedAt),
       );
     },
     participating(scope: ConnectionScope, user: UserId) {

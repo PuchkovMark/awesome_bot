@@ -538,37 +538,43 @@ describe('публикация VK через очередь и журнал', ()
 });
 
 describe('служебное приглашение к анкете', () => {
-  it('сохраняет действие на границе длины и отмечает только полные упоминания по порядку', async () => {
+  it('отделяет полный список и сохраняет порядок упоминаний у границы длины', async () => {
     const { formatQuestionnaireInvitation } =
       await import('../src/channels/vk/questionnaire-invitation');
-    const action = '/анкета';
-    const users = Array.from({ length: 50 }, (_, i) => ({
+    const users = Array.from({ length: 500 }, (_, i) => ({
       user: `vk:${100 + i}` as const,
       name: null,
       confirmedAt: 1,
     }));
-    const whole = formatQuestionnaireInvitation({ action, recipients: users.slice(0, 2) })!;
-    const length = Buffer.byteLength(whole.text);
-    expect(
-      formatQuestionnaireInvitation({ action, recipients: users.slice(0, 2) }, length),
-    ).toEqual(whole);
-    const extra = Buffer.byteLength('\nОстальные новички тоже могут заполнить анкету.');
-    const limit = length + extra;
-    const exact = formatQuestionnaireInvitation(
-      { action, recipients: [...users].reverse() },
+    const template = { questions: 'Ваш интерес?', warningDelivered: false };
+    const greeting = formatQuestionnaireInvitation({ ...template, recipients: users.slice(0, 2) })!;
+    expect(greeting).toMatchObject({ stage: 'questions', notify: true, omitted: 0 });
+    const limit = Buffer.byteLength(
+      greeting.text + '\nОстальные новички тоже могут ответить на список.',
+    );
+    const reduced = formatQuestionnaireInvitation(
+      { ...template, recipients: [...users].reverse() },
       limit,
     )!;
-    const smaller = formatQuestionnaireInvitation({ action, recipients: users }, limit - 1)!;
-    expect(Buffer.byteLength(exact.text)).toBe(limit);
-    expect(exact.text.match(/\[id\d+\|/gu)).toEqual(['[id100|', '[id101|']);
-    expect(exact.omitted).toBe(48);
-    expect(smaller.text.match(/\[id\d+\|/gu)).toEqual(['[id100|']);
-    expect(smaller.omitted).toBe(49);
-    expect(exact.text.endsWith(action)).toBe(true);
-    expect(smaller.text.endsWith(action)).toBe(true);
+    expect(reduced).toMatchObject({ stage: 'warning', notify: true });
+    expect(reduced.text.match(/\[id\d+\|/gu)?.slice(0, 2)).toEqual(['[id100|', '[id101|']);
+    expect(Buffer.byteLength(reduced.text)).toBeLessThanOrEqual(limit);
+    expect(reduced.text.match(/\[id\d+\|/gu)!.length + reduced.omitted).toBe(users.length);
+    const questions = '[id999|Имя] https://example.test';
     expect(
-      formatQuestionnaireInvitation({ action: '/анкета [id999|подмена]', recipients: users }),
-    ).toBeNull();
+      formatQuestionnaireInvitation({
+        questions,
+        warningDelivered: false,
+        recipients: users.slice(0, 1),
+      }),
+    ).toMatchObject({ stage: 'warning', notify: true });
+    expect(
+      formatQuestionnaireInvitation({
+        questions,
+        warningDelivered: true,
+        recipients: users.slice(0, 1),
+      }),
+    ).toEqual({ stage: 'questions', notify: false, text: questions, omitted: 0 });
   });
 
   it('проверяет адрес самой отправки и включает только сформированные каналом упоминания', async () => {
@@ -604,7 +610,8 @@ describe('служебное приглашение к анкете', () => {
     const invitation = {
       sendId: 213,
       prepare: () => ({
-        action: '/анкета',
+        questions: 'Ваш интерес?',
+        warningDelivered: false,
         recipients: [{ user: 'vk:52' as const, name: 'Имя][id999|подмена @id888', confirmedAt: 1 }],
         reserve,
       }),

@@ -132,8 +132,12 @@ export function confirmDeletion(
     `INSERT OR IGNORE INTO personal_hidden_messages
     SELECT w.invitation_message_id,?,0 FROM greeting_windows w JOIN greeting_members g ON g.window_id=w.id
     WHERE w.chat_id=? AND w.generation=? AND g.user_id=? AND g.invited=1 AND w.invitation_message_id IS NOT NULL
+    UNION ALL
+    SELECT p.message_id,?,0 FROM questionnaire_invitation_parts p
+    JOIN greeting_windows w ON w.id=p.window_id JOIN greeting_members g ON g.window_id=w.id
+    WHERE w.chat_id=? AND w.generation=? AND g.user_id=? AND g.invited=1 AND p.stage='warning' AND p.message_id IS NOT NULL
     ON CONFLICT(message_id,code) DO UPDATE SET disputed=0`,
-  ).run(code, chat, scope.generation, user);
+  ).run(code, chat, scope.generation, user, code, chat, scope.generation, user);
   db.prepare('DELETE FROM greeting_candidates WHERE chat_id=? AND generation=? AND user_id=?').run(
     chat,
     scope.generation,

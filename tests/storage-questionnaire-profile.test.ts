@@ -49,6 +49,27 @@ function own(f: Fixture, scope: ConnectionScope, user: UserId = alice) {
   );
 }
 
+test('прежнее личное задание сохраняет служебное происхождение и не записывает ответ', async () => {
+  const f = await profileFixture();
+  try {
+    const direct = await f.chat(alice, [alice]);
+    f.deliver(direct);
+    const message = await f.message(direct, alice, '200', 120, false, 'Я Аня');
+    lifecycleBackend(f.storage).transaction(direct, (db) =>
+      seedLegacyPrivateForm(db, direct, 100, undefined, message),
+    );
+    await f.reopen();
+    const scope = scopeFor(f.storage, alice);
+    const store = questionnaireProgressStore(f.storage);
+    expect(store.owns(scope, message)).toBe(true);
+    expect(store.pending(scope, message, 125)).toBeNull();
+    expect(store.finish(scope, message, 130, { 1: 'Аня' }, () => true)).toBe(false);
+    expect(own(f, scope)).toEqual([]);
+  } finally {
+    await f.close();
+  }
+});
+
 test('позиции одинаковых вопросов, источник и изоляция беседы и лички сохраняются после перезапуска', async () => {
   const f = await profileFixture();
   try {
@@ -180,6 +201,14 @@ test('обновление переносит только проверяемы�
         DROP TABLE llm_recovery;
         DROP TABLE questionnaire_presentations;
         DROP TABLE questionnaire_answer_facts;
+        DROP TRIGGER questionnaire_invitation_attempt_removed;
+        DROP TABLE questionnaire_invitation_parts;
+        ALTER TABLE greeting_windows DROP COLUMN invitation_template;
+        ALTER TABLE greeting_windows DROP COLUMN invitation_disclosure;
+        ALTER TABLE greeting_windows DROP COLUMN invitation_enabled_at;
+        ALTER TABLE greeting_windows DROP COLUMN invitation_enabled_from;
+        ALTER TABLE greeting_members DROP COLUMN invitation_attempt;
+        ALTER TABLE greeting_members DROP COLUMN invitation_participation;
         ALTER TABLE profile_facts DROP COLUMN questionnaire_public_attempt;
         ALTER TABLE queue_jobs DROP COLUMN recap_prompt_id;
         DROP TRIGGER recap_hide_source;
@@ -381,8 +410,16 @@ test('схема 60 сохраняет публичное, личное и не�
       seedLegacyPrivateForm(legacy, direct, 130, { '1': 'Имя из лички' });
       seedLegacyQuestionnaireRestriction(legacy, target, alice, 3, 145);
       seedLegacyQuestionnaireRestriction(legacy, other, alice, 1, 145, 'unknown');
-      legacy.exec(`ALTER TABLE profile_facts DROP COLUMN questionnaire_public_attempt;
-        DELETE FROM schema_migrations WHERE version=61;`);
+      legacy.exec(`DROP TRIGGER questionnaire_invitation_attempt_removed;
+        DROP TABLE questionnaire_invitation_parts;
+        ALTER TABLE greeting_windows DROP COLUMN invitation_template;
+        ALTER TABLE greeting_windows DROP COLUMN invitation_disclosure;
+        ALTER TABLE greeting_windows DROP COLUMN invitation_enabled_at;
+        ALTER TABLE greeting_windows DROP COLUMN invitation_enabled_from;
+        ALTER TABLE greeting_members DROP COLUMN invitation_attempt;
+        ALTER TABLE greeting_members DROP COLUMN invitation_participation;
+        ALTER TABLE profile_facts DROP COLUMN questionnaire_public_attempt;
+        DELETE FROM schema_migrations WHERE version>=61;`);
     } finally {
       legacy.close();
     }

@@ -1,5 +1,6 @@
 import { claimRecapInput } from './recap-clarifications';
 import { acceptQuestionnaireInput, answerableAttempt } from './questionnaire-input';
+import { acceptInvitationInput } from './questionnaire-invitation-input';
 import { createLlmRecoveryStore } from './llm-recovery-store';
 import {
   addChatMetrics,
@@ -316,7 +317,12 @@ export function createQueueBackend(
                     routed.reason === 'not_addressed' &&
                     ['help', 'free_mention', 'unanswered'].includes(routed.initiative),
                 );
-              if (serviceInput || routed.privateCommand === true) {
+              const invitation = routed.questionnaireInvitation;
+              if (
+                serviceInput ||
+                routed.privateCommand === true ||
+                (invitation && routed.route === null)
+              ) {
                 requireInput(
                   routed.route === null && (serviceInput || routed.reason === 'service'),
                 );
@@ -333,6 +339,7 @@ export function createQueueBackend(
                 addChatMetrics(db, scope, snapshot.receivedAt, 'requests', { requests: 1 });
               if (
                 routed.profileUpdate &&
+                !invitation &&
                 !(
                   route &&
                   !routed.skipQuestionnaire &&
@@ -376,6 +383,9 @@ export function createQueueBackend(
                 reason: result.reason,
                 route: route === null ? null : Object.freeze({ ...route }),
                 ...(result.skipQuestionnaire ? { skipQuestionnaire: true as const } : {}),
+                ...(gate?.ordinary !== false && result.questionnaireInvitation
+                  ? { questionnaireInvitation: result.questionnaireInvitation }
+                  : {}),
                 ...(gate?.ordinary !== false && result.initiative
                   ? { initiative: result.initiative }
                   : {}),
@@ -402,10 +412,27 @@ export function createQueueBackend(
           );
           const routed = chosen as import('./queue-types').RoutedQueueDecision | null;
           const route = routed?.route;
-          if (admission.status === 'queue_full' && route)
+          if (admission.status === 'queue_full' && route) {
             addChatMetrics(db, scope, receivedAt, 'requests', { queue_full: 1 });
+            if (routed?.questionnaireInvitation?.status === 'answer')
+              db.prepare("UPDATE messages SET purpose='service_notice' WHERE id=?").run(
+                admission.messageId,
+              );
+          }
           if (admission.status === 'queued' && route) {
-            if (!routed?.skipQuestionnaire) {
+            const invitation = routed?.questionnaireInvitation;
+            if (invitation?.status === 'answer') {
+              requireInput(
+                acceptInvitationInput(
+                  db,
+                  scope,
+                  message.userId,
+                  invitation.receipt,
+                  admission.messageId,
+                  receivedAt,
+                ),
+              );
+            } else if (!routed?.skipQuestionnaire) {
               const recap =
                 message.replyToMessageId &&
                 claimRecapInput(

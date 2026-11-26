@@ -60,6 +60,10 @@ export function restrictPreviousSources(db: Database, scope: RecoveryVersion) {
     "UPDATE greeting_windows SET invitation_state=CASE invitation_state WHEN 'waiting' THEN 'skipped' ELSE 'unknown' END WHERE chat_id=? AND invitation_state IN ('waiting','dispatching')",
   ).run(chat);
   db.prepare(
+    `UPDATE questionnaire_invitation_parts SET state='unknown',next_check_at=NULL
+    WHERE state IN ('sending','unknown') AND window_id IN (SELECT id FROM greeting_windows WHERE chat_id=?)`,
+  ).run(chat);
+  db.prepare(
     "UPDATE questionnaire_progress SET state='paused',source_id=NULL WHERE chat_id=? AND state IN ('showing','dispatching','active','processing')",
   ).run(chat);
   db.prepare(

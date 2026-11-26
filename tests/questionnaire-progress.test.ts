@@ -203,7 +203,7 @@ test('только один своевременный ответ заверша
     expect(restored.finish(current, id, Date.now(), answers, () => true)).toBe(false);
     const invitations = createQuestionnaireProgress(f.storage).invitations();
     expect(invitations.state(current, alice)).toBe('completed');
-    expect(invitations.action(current)).toBeNull();
+    expect(invitations.revision(current)?.questions).toHaveLength(16);
     const privacy = personalDataStore(f.storage);
     expect(privacy.export(current, alice, Date.now()).questionnaire).toMatchObject({
       questions: [
