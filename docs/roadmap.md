@@ -52,6 +52,7 @@
 | 097 | [Напоминания, пересказ до полудня и правка по подсказкам в VK](tasks/completed/097-vk-reminders-recap-and-editors.md) · [План фичи](plans/completed/097-vk-reminders-recap-and-editors.md) · [План реализации и приёмка](impl-plans/completed/097-vk-reminders-recap-and-editors.md#результаты-приёмки) | — | выполнено |
 | 098 | [Доступная личка и восстановление бесед VK после обрыва](tasks/completed/098-vk-automatic-reconnection.md) · [План фичи](plans/completed/098-vk-automatic-reconnection.md) · [План реализации и приёмка](impl-plans/completed/098-vk-automatic-reconnection.md#результаты-приёмки) | — | выполнено |
 | 099 | [Общий бюджет токенов по размеру беседы](tasks/completed/099-group-token-budget-steps.md) · [План фичи](plans/completed/099-group-token-budget-steps.md) · [План реализации и приёмка](impl-plans/completed/099-group-token-budget-steps.md#результаты-приёмки) | — | выполнено |
+| 100 | [Публичная анкета для знакомства в беседе](tasks/100-public-chat-questionnaire.md) · [Утверждённый план фичи](plans/100-public-chat-questionnaire.md) · [Утверждённый план реализации](impl-plans/100-public-chat-questionnaire.md) | — | в работе |
 
 ## Веха 0. Процесс и документация
 
