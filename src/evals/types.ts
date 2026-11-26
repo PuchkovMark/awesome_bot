@@ -14,7 +14,7 @@ export interface Observation {
   readonly historyTruncated: boolean;
   readonly publicationReason?: import('../storage/trace-types').TracePublication['reason'];
   readonly route?: import('../storage/queue-types').RouteMetadata | null;
-  readonly initiativeCandidate?: boolean;
+  readonly groupReply?: GroupReplyObservation;
   readonly grantsUnchanged?: boolean;
   readonly personaVersion?: VersionRef;
   readonly modelAttempts?: number;
@@ -33,9 +33,11 @@ export interface Scenario {
   readonly title: string;
   readonly prompt: string;
   readonly promptKey?: string;
-  readonly initiative?: {
+  readonly groupReply?: {
     readonly mode: 'active' | 'normal' | 'silent';
-    readonly due?: boolean;
+    readonly expected: GroupReplyChoice;
+    readonly after?: readonly MessageInput[];
+    readonly comparison?: 'direct' | 'name';
   };
   readonly address?: {
     readonly preference?: {
@@ -81,8 +83,31 @@ type TechnicalReason =
   | 'deadline_exceeded'
   | 'cancelled'
   | 'processing_failed'
+  | 'group_reply_failed'
   | NonNullable<QueueCompletion['preparationFailure']>
   | Extract<LoopResult, { kind: 'error' }>['code'];
+
+export type GroupReplyChoice = 'none' | 'answer' | 'silence';
+export interface GroupReplyObservation {
+  readonly expected: GroupReplyChoice;
+  readonly decision: GroupReplyChoice | 'failed';
+  readonly instruction: string;
+  readonly comparison?: 'direct' | 'name';
+  readonly mainStartMs: number | null;
+  readonly gate: ModelSample;
+  readonly main: ModelSample;
+  readonly delivered: boolean;
+}
+
+interface ModelSample {
+  readonly model: string;
+  readonly attempts: number;
+  readonly latencyMs: number;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly unknownInput: number;
+  readonly unknownOutput: number;
+}
 
 export interface EvaluationResult {
   readonly scenarioId: string;
@@ -90,6 +115,7 @@ export interface EvaluationResult {
   readonly model: string | null;
   readonly prompt: GlobalVersionRef | null;
   readonly persona?: VersionRef | null;
+  readonly groupReply?: GroupReplyObservation;
   readonly extraction?: {
     readonly requestRevision: number;
     readonly inputEstimate: number;

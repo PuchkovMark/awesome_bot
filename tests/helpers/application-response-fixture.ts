@@ -3,6 +3,10 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { expect, vi } from 'vitest';
 import { runApplication } from '../../src/app/service';
+import {
+  addressesRecapByName,
+  directlyAddressesName,
+} from '../../src/core/message-router/name-address';
 import { initializePrompt, resolveApplicationChat } from '../../src/app/setup';
 import { createVkApi, createVkApiCall } from '../../src/channels/vk/api';
 import type { VkApiCall } from '../../src/channels/vk/api';
@@ -53,6 +57,7 @@ export async function fixture(
     auxiliaryModel?: string;
     llmEnv?: Partial<Record<`LLM_${string}`, string>>;
     modelClients?: { client?: LlmClient; auxiliaryClient?: LlmClient };
+    groupReplyClient?: LlmClient;
     logger?: SafeLogger;
     upload?: (peer: number, data: Buffer) => Promise<string>;
     loseFileReceipt?: () => boolean;
@@ -305,6 +310,17 @@ export async function fixture(
   );
   let stop = new AbortController();
   const complete = vi.fn<(request: LlmRequest) => Promise<LlmResult>>(async () => answer);
+  const assess = vi.fn<LlmClient['complete']>(async (request) => {
+    const data = JSON.parse(request.messages[0]!.text!);
+    const text = data.исходная.текст as string;
+    const addressed =
+      directlyAddressesName(text) || (!data.пересылка && addressesRecapByName(text));
+    return {
+      kind: 'complete',
+      text: addressed ? 'ответить' : 'промолчать',
+      usage: { input: 0, output: 0 },
+    };
+  });
   const launch = () =>
     runApplication(config, options.logger ?? logger, stop.signal, {
       vk: {
@@ -323,6 +339,7 @@ export async function fixture(
         transport,
       },
       ...(options.modelClients ?? { client: { complete }, auxiliaryClient: { complete } }),
+      groupReplyClient: options.groupReplyClient ?? { complete: assess },
       onboardingIntervalMs: 5,
       ...(options.stopTimeoutMs === undefined ? {} : { stopTimeoutMs: options.stopTimeoutMs }),
       ...(options.administrationIntervalMs === undefined
@@ -453,6 +470,7 @@ export async function fixture(
       filesSent,
       holds,
       complete,
+      assess,
       db,
       storage,
       scope,

@@ -1,6 +1,7 @@
 import { randomInt } from 'node:crypto';
 import type { Database } from 'better-sqlite3';
 import type { ConnectionScope } from '../contracts/index';
+import { activeGroupReplyDisclosure } from '../core/chat-onboarding/introduction-text';
 import type { Connection } from './connection';
 import type { LifecycleBackend } from './lifecycle-store';
 import type { Storage } from './types';
@@ -82,6 +83,21 @@ export function readDisclosureGate(db: Database, scope: ConnectionScope): Disclo
     version: compatible ? delivered.version : null,
     provider: compatible ? delivered.provider : null,
   };
+}
+
+export function groupInitiativeDisclosed(db: Database, scope: ConnectionScope) {
+  const { version, journal } = readDisclosureGate(db, scope);
+  return (
+    journal &&
+    version !== null &&
+    !!db
+      .prepare(
+        `
+    SELECT 1 FROM disclosure_publications WHERE chat_id=? AND generation=? AND version=?
+      AND kind IN ('introduction','update') AND state='delivered' AND instr(text,?)>0`,
+      )
+      .get(scope.chatId, scope.generation, version, activeGroupReplyDisclosure)
+  );
 }
 
 function validateDisclosure(input: DisclosureInput) {

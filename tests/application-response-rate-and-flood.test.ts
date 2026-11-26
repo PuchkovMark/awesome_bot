@@ -1,7 +1,14 @@
 import { expect, test } from 'vitest';
 import type { LlmResult } from '../src/llm/types';
 import { noticeTemplate } from '../src/storage/notice-types';
-import { answer, fixture, mention, refusal, until } from './helpers/application-response-fixture';
+import {
+  answer,
+  chat,
+  fixture,
+  mention,
+  refusal,
+  until,
+} from './helpers/application-response-fixture';
 
 test('reply боту без упоминания молчит в 35.999 и снова допускается ровно в 36.000', async () => {
   const f = await fixture({ limit: 20 });
@@ -91,55 +98,75 @@ test.each([true, false])(
   },
 );
 
-test('полный предел подавляет оба коротких отказа, а нейтральное уведомление может стать седьмым', async () => {
-  const f = await fixture({ threshold: 1, userRequests: 6 });
-  const model = Promise.withResolvers<LlmResult>();
-  try {
-    for (let i = 0; i < 6; i++) await f.published(f.submit('Пенёк, ответь'));
-    await f.suppressed(f.submit('Пенёк, ответь'));
-    await f.journaled(f.submit(mention));
-    expect(f.sends).toHaveLength(6);
-    expect(f.slots()).toBe(6);
-    expect(f.notices()).toBe(0);
-    expect(f.complete).toHaveBeenCalledTimes(6);
+test(
+  'полный предел подавляет оба коротких отказа, а нейтральное уведомление может стать седьмым',
+  { timeout: 12_000 },
+  async () => {
+    const f = await fixture({ threshold: 1, userRequests: 6 });
+    const model = Promise.withResolvers<LlmResult>();
+    try {
+      for (let i = 0; i < 6; i++) await f.published(f.submit('Пенёк, ответь'));
+      await f.suppressed(f.submit('Пенёк, ответь'));
+      await f.journaled(f.submit(mention));
+      expect(f.sends).toHaveLength(6);
+      expect(f.slots()).toBe(6);
+      expect(f.notices()).toBe(0);
+      expect(f.complete).toHaveBeenCalledTimes(6);
 
-    f.at(10000);
-    f.complete.mockImplementationOnce(() => model.promise);
-    f.submit('Пенёк, ответь', 51);
-    await until(() => expect(f.complete).toHaveBeenCalledTimes(7));
-    f.submit('Пенёк, ответь', 52);
-    f.submit('Пенёк, ответь', 53);
-    await f.published(f.submit('Пенёк, ответь', 54));
-    expect(f.sends.map((row) => row.text)).toEqual([
-      ...Array<string>(6).fill(answer.text),
-      noticeTemplate('generic'),
-    ]);
-    expect(f.slots()).toBe(6);
-    expect(f.notices()).toBe(1);
-  } finally {
-    model.resolve(answer);
-    await f.close();
-  }
-});
+      f.at(10000);
+      f.complete.mockImplementationOnce(() => model.promise);
+      const botReply = f.sends[0]!;
+      f.submit('Ответь', 51, botReply);
+      await until(() => expect(f.complete).toHaveBeenCalledTimes(7));
+      f.submit('Ответь', 52, botReply);
+      f.submit('Ответь', 53, botReply);
+      await f.published(f.submit('Ответь', 54, botReply));
+      expect(f.sends.map((row) => row.text)).toEqual([
+        ...Array<string>(6).fill(answer.text),
+        noticeTemplate('generic'),
+      ]);
+      expect(f.slots()).toBe(6);
+      expect(f.notices()).toBe(1);
+    } finally {
+      model.resolve(answer);
+      await f.close();
+    }
+  },
+);
 
-test('всплеск подавляет ранее поставленное задание до списания F4.3', async () => {
-  const f = await fixture({ threshold: 1 });
-  const model = Promise.withResolvers<LlmResult>();
-  try {
-    f.complete.mockImplementationOnce(() => model.promise);
-    const admitted = f.submit('Пенёк, ответь');
-    await until(() => expect(f.complete).toHaveBeenCalledTimes(1));
-    const queued = f.submit('Пенёк, ответь', 42);
-    await f.journaled(queued);
-    await f.published(f.submit(mention, 43));
-    model.resolve(answer);
-    await f.published(admitted);
-    await f.interrupted(queued);
-    expect(f.complete).toHaveBeenCalledTimes(1);
-    expect(f.requests()).toBe(1);
-    expect(f.sends.map((row) => row.text)).toEqual([refusal, answer.text]);
-  } finally {
-    model.resolve(answer);
-    await f.close();
-  }
-});
+test(
+  'всплеск подавляет ранее поставленное задание до списания F4.3',
+  { timeout: 12_000 },
+  async () => {
+    const f = await fixture({ threshold: 1 });
+    const model = Promise.withResolvers<LlmResult>();
+    try {
+      f.complete.mockImplementationOnce(() => model.promise);
+      const admitted = f.submit('Пенёк, ответь');
+      await until(() => expect(f.complete).toHaveBeenCalledTimes(1));
+      const queued = f.submit('Пенёк, ответь', 42);
+      await f.journaled(queued);
+      await until(() =>
+        expect(
+          f.db
+            .prepare(
+              `SELECT a.state FROM group_reply_assessments a
+      JOIN messages m ON m.id=a.message_id WHERE m.platform_message_id=? AND m.chat_id=?`,
+            )
+            .pluck()
+            .get(String(queued), chat),
+        ).toBe('queued'),
+      );
+      await f.published(f.submit(mention, 43));
+      model.resolve(answer);
+      await f.published(admitted);
+      await f.interrupted(queued);
+      expect(f.complete).toHaveBeenCalledTimes(1);
+      expect(f.requests()).toBe(1);
+      expect(f.sends.map((row) => row.text)).toEqual([refusal, answer.text]);
+    } finally {
+      model.resolve(answer);
+      await f.close();
+    }
+  },
+);

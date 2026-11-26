@@ -18,6 +18,102 @@ export const incoming: IncomingMessage = {
   timestamp: 0,
   attachments: [],
 };
+
+test.each(['пенек', 'пенёк', 'пнечек', 'пенёчек', 'пеньчик', 'пеньку', 'пнечке'])(
+  'отбор для Haiku узнаёт форму «%s» внутри целого слова',
+  (name) => {
+    for (const text of [
+      name + ' сделай мне тест на язык любви',
+      'Как ты ' + name.toUpperCase() + ' решишь эту задачу?',
+      'Сколько будет дважды два ' + name[0]!.toUpperCase() + name.slice(1),
+    ])
+      expect(
+        routeMessage({
+          message: { ...incoming, text },
+          settings: { enabled: true, responseMode: 'normal' },
+          replyGate: { allowInitiative: false },
+        }),
+      ).toEqual({ kind: 'assessment', reason: 'assessment', assessment: { kind: 'name' } });
+  },
+);
+
+test('отбор для Haiku различает явную адресацию, оценку имени, инициативу и журнал', () => {
+  function select(
+    text: string,
+    responseMode: 'normal' | 'active' | 'silent' = 'normal',
+    flags: Partial<IncomingMessage> = {},
+    allowInitiative = true,
+  ) {
+    return routeMessage({
+      message: { ...incoming, ...flags, text },
+      settings: { enabled: true, responseMode },
+      replyGate: { allowInitiative },
+    });
+  }
+  const name = 'Маша, там написано «ПнЕчЕк сделай мне тест»';
+  expect(select(name)).toMatchObject({ assessment: { kind: 'name' } });
+  expect(select('Обсуждали, как работает Пнечек')).toMatchObject({ assessment: { kind: 'name' } });
+  expect(select('В лесу у тропинки стоит пенёк')).toMatchObject({ assessment: { kind: 'name' } });
+  for (const text of [
+    'Маша, сколько будет дважды два?',
+    'Пенал у Маши',
+    'суперпеньчик',
+    'Дядя Пень, ответь',
+  ])
+    expect(select(text)).toEqual({ kind: 'silence', reason: 'not_addressed' });
+  expect(select('На столе три настолки', 'active')).toMatchObject({
+    assessment: { kind: 'initiative' },
+  });
+  const attachments = [{ kind: 'photo' }];
+  expect(select('На столе три настолки', 'active', { attachments })).toMatchObject({
+    reason: 'not_addressed',
+  });
+  expect(select('Пенёк, взгляни на снимок', 'active', { attachments })).toMatchObject({
+    assessment: { kind: 'name' },
+  });
+  expect(select(name, 'active', {}, false)).toMatchObject({ assessment: { kind: 'name' } });
+  expect(select('На столе три настолки', 'active', {}, false)).toMatchObject({ kind: 'silence' });
+  expect(select(name, 'silent')).toMatchObject({ reason: 'silent' });
+  expect(select(name, 'active', { replyAddress: 'unknown' })).toMatchObject({
+    reason: 'reply_unknown',
+  });
+  expect(select(name, 'active', { replyAddress: 'other' })).toMatchObject({
+    reason: 'reply_other',
+  });
+  expect(
+    select(name, 'active', { replyAddress: 'other', isMentioned: true, soleBotMention: true }),
+  ).toMatchObject({ kind: 'ordinary', reason: 'mention' });
+  expect(select(name, 'normal', { isMentioned: true })).toMatchObject({ reason: 'mention' });
+  expect(select(name, 'normal', { isReplyToBot: true, replyAddress: 'bot' })).toMatchObject({
+    reason: 'reply',
+  });
+  expect(select(name, 'active', { isGroupChat: false })).toMatchObject({
+    reason: 'direct_message',
+  });
+});
+
+test('служебный ответ и ввод открытой анкеты предшествуют оценке Haiku', () => {
+  const message = { ...incoming, text: 'Пенёк, вот мой ответ' };
+  const flags = {
+    message,
+    settings: { enabled: true, responseMode: 'active' },
+    replyGate: { allowInitiative: true },
+  } as const;
+  expect(
+    routeMessage({
+      ...flags,
+      service: {
+        allowed: true,
+        role: 'member',
+        command: { action: 'commands.read', minimumRole: 'member' },
+      },
+    }),
+  ).toEqual({ kind: 'service', reason: 'service' });
+  expect(routeMessage({ ...flags, questionnaireName: true })).toMatchObject({
+    kind: 'ordinary',
+    reason: 'name',
+  });
+});
 test('прямой вход предшествует трём закрытым поводам; неоднозначные реплики молчат', () => {
   const detect = (
     text: string,

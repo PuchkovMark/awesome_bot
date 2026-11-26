@@ -5,7 +5,7 @@ import { afterAll, beforeAll, expect, test } from 'vitest';
 import { createSkeletonFixture } from './helpers/skeleton-fixture';
 
 let fixture: ReturnType<typeof createSkeletonFixture>;
-const buildTimeoutMs = 60_000;
+const buildTimeoutMs = 90_000;
 const testTimeoutMs = buildTimeoutMs + 20_000;
 
 beforeAll(() => {

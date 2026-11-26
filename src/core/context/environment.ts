@@ -45,7 +45,7 @@ export function formatEnvironment(input: {
     (!r.isGroupChat ||
       r.mode !== 'active' ||
       !r.cause ||
-      !['help', 'free_mention', 'unanswered'].includes(r.cause))
+      !['help', 'free_mention', 'unanswered', 'group_reply_gate'].includes(r.cause))
   )
     throw new TypeError('Context: invalid_environment');
   const formats = c.textFormats.filter((f) => ['plain', 'markdown', 'html'].includes(f));

@@ -4,6 +4,7 @@ import { runScenario } from '../src/evals/runner';
 import { historySearchScenarios, scenarios, yesterdayScenario } from '../src/evals/scenarios';
 import { starterPersonas } from '../src/core/personas/catalog';
 import { personaScenarios } from '../src/evals/personas';
+import { groupReplyScenarios } from '../src/evals/group-reply-gate';
 
 test('сценарии имеют уникальные ключи сравнения и шаги проверки в VK', () => {
   expect(scenarios.map((scenario) => scenario.id)).toEqual([
@@ -32,17 +33,7 @@ test('сценарии имеют уникальные ключи сравнен
     'address-hidden',
     'address-literal',
     'conversation-address-style',
-    'initiative-help',
-    'initiative-mention',
-    'initiative-question',
-    'initiative-other-address',
-    'initiative-other-reply',
-    'initiative-quoted-name',
-    'initiative-sensitive',
-    'initiative-bot',
-    'initiative-unknown',
-    'initiative-normal',
-    'initiative-silent',
+    ...groupReplyScenarios.map(({ id }) => id),
     'passport-local-glossary',
     'passport-untrusted-grant',
     'history-yesterday',
@@ -59,7 +50,7 @@ test('сценарии имеют уникальные ключи сравнен
     'persona-boundaries',
   ]);
   for (const scenario of scenarios) {
-    expect(scenario.id).toMatch(/^[a-z]+(?:-[a-z]+)*$/);
+    expect(scenario.id).toMatch(/^[a-z]+(?:-[a-z0-9]+)*$/);
     expect(scenario.revision).toBeGreaterThan(0);
     expect(scenario.vkSteps.join('\n')).toContain(scenario.input.text);
     expect(new Set(scenario.criteria.map((criterion) => criterion.id)).size).toBe(
@@ -111,28 +102,22 @@ test('исходы поиска сравниваются на одном воп�
 });
 
 test('оценки самостоятельных реплик отделяют лишнее вступление от пропуска', () => {
-  const selected = scenarios.filter(({ initiative }) => initiative);
-  const positive = selected.filter(({ criteria }) =>
-    criteria.some(({ id }) => id === 'initiative-start'),
+  const first = groupReplyScenarios.find(({ id }) => id === 'group-reply-open-meeting')!;
+  const second = groupReplyScenarios.find(({ id }) => id === 'group-reply-settled-meeting')!;
+  expect(first.input.text).toBe(second.input.text);
+  expect(first.history).toEqual(second.history);
+  expect(first.groupReply?.expected).toBe('answer');
+  expect(second.groupReply).toMatchObject({
+    expected: 'silence',
+    after: [expect.objectContaining({ role: 'user' })],
+  });
+  expect(new Set(groupReplyScenarios.map(({ id }) => id)).size).toBe(groupReplyScenarios.length);
+  const [direct, name] = ['direct', 'name'].map((path) =>
+    groupReplyScenarios.find(({ groupReply }) => groupReply?.comparison === path)!,
   );
-  const negative = selected.filter(({ criteria }) =>
-    criteria.some(({ id }) => id === 'initiative-silence'),
-  );
-  expect(positive).toHaveLength(3);
-  expect(negative.length).toBeGreaterThan(positive.length);
-  for (const scenario of positive)
-    expect(
-      scenario.criteria[0]!.check({ request: null, answer: null, historyTruncated: false }),
-    ).toBe(false);
-  for (const scenario of negative)
-    expect(
-      scenario.criteria[0]!.check({
-        request: null,
-        answer: null,
-        historyTruncated: false,
-        initiativeCandidate: true,
-      }),
-    ).toBe(false);
+  expect(direct?.input.text).toBe(name?.input.text);
+  expect(direct?.input.isMentioned).toBe(true);
+  expect(name?.input.isMentioned).toBe(false);
 });
 
 test('сценарии тёзок используют одну версию инструкции и проверяют разные предложения', () => {

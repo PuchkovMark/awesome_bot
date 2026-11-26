@@ -23,7 +23,8 @@ const maxStoredPeople = 600_479_950_316;
 
 export interface TokenReservation {
   readonly key: string;
-  readonly purpose: 'direct' | 'initiative' | 'profile_update' | 'summary';
+  readonly purpose:
+    'direct' | 'initiative' | 'profile_update' | 'summary' | 'gate_name' | 'gate_initiative';
   readonly input: number;
   readonly output: number;
 }
@@ -110,22 +111,23 @@ function readBudget(
     )
     .iterate(scope.chatId, scope.generation, now - tokenBudgetWindowMs, now) as Iterable<Attempt>) {
     addUsage(total, attempt);
-    if (attempt.purpose === 'initiative') addUsage(initiative, attempt);
+    if (attempt.purpose === 'initiative' || attempt.purpose === 'gate_initiative')
+      addUsage(initiative, attempt);
     if (attempt.purpose === 'profile_update') addUsage(profileUpdate, attempt);
   }
   for (const hold of db
     .prepare(
-      `SELECT id,route_kind,final_budget FROM queue_jobs
+      `SELECT id,initiative_cause IS NOT NULL OR group_reply_assessment IS 'initiative' AS initiative,final_budget FROM queue_jobs
     WHERE chat_id=? AND generation=? AND state='running' AND final_budget>0`,
     )
     .iterate(scope.chatId, scope.generation) as Iterable<{
     id: number;
-    route_kind: string;
+    initiative: number;
     final_budget: number;
   }>) {
     if (hold.id === omitJob) continue;
     total.reserved += BigInt(hold.final_budget);
-    if (hold.route_kind === 'initiative') initiative.reserved += BigInt(hold.final_budget);
+    if (hold.initiative === 1) initiative.reserved += BigInt(hold.final_budget);
   }
   const people = group ? settings.people : null;
   const totalLimit =
@@ -165,7 +167,11 @@ export function canReserveTokens(
   requireInput(
     typeof attempt.key === 'string' && attempt.key.length > 0 && attempt.key.length <= 256,
   );
-  requireInput(['direct', 'initiative', 'profile_update', 'summary'].includes(attempt.purpose));
+  requireInput(
+    ['direct', 'initiative', 'profile_update', 'summary', 'gate_name', 'gate_initiative'].includes(
+      attempt.purpose,
+    ),
+  );
   timestamp(attempt.input);
   timestamp(attempt.output);
   const current = readBudget(db, scope, group, now, final?.jobId);
@@ -186,7 +192,7 @@ export function canReserveTokens(
   if (current.total.confirmed + current.total.reserved + requested > BigInt(current.total.limit))
     return false;
   if (
-    attempt.purpose === 'initiative' &&
+    (attempt.purpose === 'initiative' || attempt.purpose === 'gate_initiative') &&
     (!current.initiative ||
       current.initiative.confirmed + current.initiative.reserved + requested >
         BigInt(current.initiative.limit))
@@ -244,7 +250,7 @@ export function reconcileTokenReservation(
     .immediate();
 }
 
-export function deleteUnsentTokenReservation(db: Database, scope: ConnectionScope, key: string) {
+export function deleteUnsentTokenReservation(db: Database, scope: BudgetScope, key: string) {
   return (
     db
       .prepare(

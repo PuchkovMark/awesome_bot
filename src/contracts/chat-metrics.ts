@@ -8,6 +8,8 @@ export type MetricsSeries =
   | 'subagent'
   | 'initiative_main'
   | 'initiative_subagent'
+  | 'gate_name'
+  | 'gate_initiative'
   | 'summary'
   | 'profile_update';
 

@@ -1,10 +1,42 @@
 import { isRecapRequest } from '../chat-summaries/recap-intent';
 import { unquotedText as ownNameText } from '../author-text';
+import type { PassportEntry } from '../../contracts/chat-passport';
 
 export { unquotedText as ownNameText } from '../author-text';
 
 const name = 'пенек';
 const wordsIn = (text: string): string[] => text.match(/[\p{L}\p{N}_]+/gu) ?? [];
+const gateWords = (text: string) =>
+  text
+    .normalize('NFC')
+    .toLowerCase()
+    .replaceAll('ё', 'е')
+    .match(/[\p{L}\p{M}\p{N}_]+/gu) ?? [];
+const botName =
+  /^(?:пенек|пнек|пеньк(?:а|у|ом|е|и|ов|ам|ами|ах)|п(?:ен|н)еч(?:ек|к(?:а|у|ом|е|и|ам|ами|ах))|пеньчик(?:а|у|ом|е|и|ов|ам|ами|ах)?)$/u;
+
+export function glossaryBotNames(entry: Pick<PassportEntry, 'text' | 'revision'>) {
+  const aliases = (entry.text ?? '')
+    .split(/\r?\n/u)
+    .map((line) => /^\s*имена\s+бота\s*[—–-]\s*(.+?)\s*$/iu.exec(line)?.[1])
+    .find((list) => list !== undefined);
+  return {
+    revision: entry.revision,
+    names:
+      aliases
+        ?.split(',')
+        .map((alias) => gateWords(alias).join(' '))
+        .filter(Boolean) ?? [],
+  };
+}
+
+export function matchGroupBotName(text: string, glossary?: ReturnType<typeof glossaryBotNames>) {
+  const words = gateWords(text);
+  const sequence = ' ' + words.join(' ') + ' ';
+  if (glossary?.names.some((alias) => sequence.includes(' ' + alias + ' ')))
+    return { glossaryRevision: glossary.revision };
+  return words.some((word) => botName.test(word)) ? {} : null;
+}
 const requests = new Set([
   'помоги',
   'подскажи',

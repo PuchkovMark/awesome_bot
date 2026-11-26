@@ -128,9 +128,11 @@ export function writeQuietHours(db: Database, chatId: ChatId, hours: QuietHours 
       ) && hours.start !== hours.end,
     );
   db.prepare(
-    `INSERT INTO chat_controls(chat_id,generation,quiet_start,quiet_end)
-    SELECT chat_id,generation,?,? FROM chat_connections WHERE chat_id=?
-    ON CONFLICT(chat_id,generation) DO UPDATE SET quiet_start=excluded.quiet_start,quiet_end=excluded.quiet_end`,
+    `INSERT INTO chat_controls(chat_id,generation,quiet_start,quiet_end,initiative_control_revision)
+    SELECT chat_id,generation,?,?,1 FROM chat_connections WHERE chat_id=?
+    ON CONFLICT(chat_id,generation) DO UPDATE SET quiet_start=excluded.quiet_start,quiet_end=excluded.quiet_end,
+      initiative_control_revision=initiative_control_revision+1
+    WHERE quiet_start IS NOT excluded.quiet_start OR quiet_end IS NOT excluded.quiet_end`,
   ).run(hours?.start ?? null, hours?.end ?? null, chatId);
 }
 
@@ -170,10 +172,12 @@ export function writeChatPause(db: Database, chatId: ChatId, pause: ChatPause) {
   if (pause.pausedUntil !== null) timestamp(pause.pausedUntil);
   if (pause.nextParticipantPause !== null) timestamp(pause.nextParticipantPause);
   db.prepare(
-    `INSERT INTO chat_controls(chat_id,generation,paused_until,next_participant_pause,autonomous_disabled)
-    SELECT chat_id,generation,?,?,? FROM chat_connections WHERE chat_id=?
+    `INSERT INTO chat_controls(chat_id,generation,paused_until,next_participant_pause,autonomous_disabled,initiative_control_revision)
+    SELECT chat_id,generation,?,?,?,1 FROM chat_connections WHERE chat_id=?
     ON CONFLICT(chat_id,generation) DO UPDATE SET paused_until=excluded.paused_until,
-      next_participant_pause=excluded.next_participant_pause,autonomous_disabled=excluded.autonomous_disabled`,
+      next_participant_pause=excluded.next_participant_pause,autonomous_disabled=excluded.autonomous_disabled,
+      initiative_control_revision=initiative_control_revision+
+        (paused_until IS NOT excluded.paused_until OR autonomous_disabled IS NOT excluded.autonomous_disabled)`,
   ).run(pause.pausedUntil, pause.nextParticipantPause, Number(pause.autonomousDisabled), chatId);
 }
 

@@ -21,6 +21,8 @@ import { questionnaireAnswerHandler } from '../core/questionnaire/answer';
 import { questionnaireProgressStore } from '../storage/questionnaire-progress-store';
 import { createProfileCommands } from './profile-commands';
 import { createProfileUpdates } from '../core/profile-updates/service';
+import { createGroupReplyGate } from '../core/message-router/group-reply-gate';
+import { createGroupReplyClient } from './group-reply-client';
 import { applicationSummaries } from './chat-summaries';
 import { applicationTools } from './model-tools';
 import { contextParticipantCards } from './context-participant-cards';
@@ -69,7 +71,7 @@ import { createBotAdminCommands } from './bot-admin-commands';
 import { createChatPassport } from './chat-passport';
 import { chatPassportStore } from '../storage/chat-passport-store';
 import { createHistoryHandlers } from './history-retention';
-import type { ChatLimits } from '../core/chat-limits/config';
+import { chatLimits, type ChatLimits } from '../core/chat-limits/config';
 import { createTokenBudgetMembership } from '../core/chat-limits/token-budget-membership';
 import { createUsageCommand, isUsageCommand } from './token-budget';
 import { createPausedChatCommands } from './paused-chats';
@@ -82,6 +84,7 @@ interface ApplicationDependencies {
   readonly vk?: Parameters<typeof createVkChannel>[1];
   readonly client?: LlmClient;
   readonly auxiliaryClient?: LlmClient;
+  readonly groupReplyClient?: LlmClient;
   readonly readyTimeoutMs?: number;
   readonly stopTimeoutMs?: number;
   readonly onboardingIntervalMs?: number;
@@ -119,6 +122,7 @@ export async function runApplication(
   let reminderWork: Promise<void> | undefined;
   let summaryWork: Promise<void> | undefined;
   let profileUpdateWork: Promise<void> | undefined;
+  let groupReplyWork: Promise<void> | undefined;
   let readyTimer: ReturnType<typeof setTimeout> | undefined;
   let stopTimer: ReturnType<typeof setTimeout> | undefined;
   const typing = new Set<Promise<void>>();
@@ -266,6 +270,7 @@ export async function runApplication(
             reminderWork = deliverReminders().catch(() => stop('storage_failed'));
             summaryWork = summaries.run().catch(() => stop('storage_failed'));
             profileUpdateWork = profileUpdates.run().catch(() => stop('storage_failed'));
+            groupReplyWork = groupReplyGate.run().catch(() => stop('storage_failed'));
           },
         },
         dependencies.vk,
@@ -537,6 +542,7 @@ export async function runApplication(
         limits: dependencies.chatLimits ?? {},
         tokenBudget: true,
         autonomousReplies: true,
+        groupReplyGate: true,
         responseRate: config.responseRate,
         client: modelClient,
         disclosure: checkDisclosure,
@@ -558,6 +564,20 @@ export async function runApplication(
       queue.signal.addEventListener('abort', () => stop('queue_failed'), { once: true });
       await queue.start();
       if (signal.aborted) return;
+      const groupReplyGate = createGroupReplyGate({
+        storage,
+        client:
+          dependencies.groupReplyClient ??
+          createGroupReplyClient(config.llm, config.auxiliaryModel, auxiliaryClient),
+        admission: llmAdmission,
+        current: () => !signal.aborted && (queue?.isRunning() ?? false),
+        policy: { limits: chatLimits(dependencies.chatLimits), responseRate: config.responseRate },
+        platform: channel.platform,
+        scope: lifecycle.admissionScope,
+        sessionId: createLlmSessionId('group-reply:' + config.sessionSecret, historyRevision),
+        promote: (scope, id) => queue?.promoteGroupReply?.(scope, id) ?? 'closed',
+        signal,
+      });
 
       startupFailure = 'vk_failed';
       const commandAuthorization = authorization;
@@ -679,6 +699,7 @@ export async function runApplication(
         storage,
         queue,
         logger,
+        groupReplyGate: groupReplyGate.allowInitiative,
         authorization,
         canAnswerQuestionnaire: questionnaireAttempts.canAnswer,
         invitationReply: questionnaireAttempts.invitationReply,
@@ -705,7 +726,10 @@ export async function runApplication(
         onQueueFull(scope, messageId, route, guard) {
           trackPublication(publication.queueFull(scope, messageId, route, guard));
         },
-        onDecision: profileUpdates.wake,
+        onDecision(decision) {
+          profileUpdates.wake();
+          if (decision.kind === 'assessment') groupReplyGate.wake();
+        },
         onFlood(scope, candidate, isCurrent) {
           trackPublication(publication.flood(scope, candidate, { signal, isCurrent }));
         },
@@ -947,6 +971,7 @@ export async function runApplication(
       reminderWork,
       greetingWork,
       profileUpdateWork,
+      groupReplyWork,
       summaryWork,
       ...typing,
     ]);

@@ -100,6 +100,7 @@ export interface ChatQueueOptions {
   readonly tokenBudget?: boolean;
   readonly llmRecovery?: LlmRecoverySettings;
   readonly autonomousReplies?: boolean;
+  readonly groupReplyGate?: boolean;
   /** У привязанного к платформе воркера проверка непрерывности предшествует выдаче работы. */
   readonly platform?: string;
 }
@@ -113,6 +114,7 @@ export interface ChatQueue {
   readonly llmRecovery?: LlmRecovery;
   readonly signal: AbortSignal;
   isRunning(): boolean;
+  promoteGroupReply?(scope: ConnectionScope, messageId: number): 'queued' | 'full' | 'closed';
   readonly responseBudget?: import('../../storage/queue-types').ResponsePublicationBudget;
   wakeHistoryMaintenance?(): void;
   start(): Promise<void>;

@@ -447,7 +447,8 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
         const expired = backend.expire(token);
         counters.expired = add(counters.expired, expired.length);
         expired.forEach(wait);
-        if (options.autonomousReplies) backend.promoteQuestions(token, config, platform);
+        if (options.autonomousReplies && !options.groupReplyGate)
+          backend.promoteQuestions(token, config, platform);
         while (tasks.size < config.maxConcurrentChats) {
           const work = backend.take(
             token,
@@ -594,6 +595,12 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
       } catch {
         return false;
       }
+    },
+    promoteGroupReply(scope, messageId) {
+      if (phase !== 'running') return 'closed';
+      const result = backend.promoteGroupReply(token, scope, messageId, config);
+      if (result === 'queued') schedule();
+      return result;
     },
     async start() {
       if (phase !== 'idle') throw new QueueError('stopped');

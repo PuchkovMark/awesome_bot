@@ -1,9 +1,9 @@
 import type { IncomingMessage } from '../../contracts/index';
 import type { RoutingInput, RoutingDecision } from './types';
-import { directlyAddressesName, addressesRecapByName } from './name-address';
+import { directlyAddressesName, addressesRecapByName, matchGroupBotName } from './name-address';
 import { validIncoming } from './validation';
 import { autonomousCause } from './autonomous-rules';
-export function ordinaryGroupRoute(message: IncomingMessage, questionnaireName = false) {
+function platformGroupRoute(message: IncomingMessage) {
   const address =
     message.replyAddress ??
     (message.isReplyToBot ? 'bot' : message.replyToMessageId !== undefined ? 'unknown' : undefined);
@@ -12,6 +12,12 @@ export function ordinaryGroupRoute(message: IncomingMessage, questionnaireName =
     return 'reply_other';
   if (message.isMentioned) return 'mention';
   if (message.isReplyToBot) return 'reply';
+  return null;
+}
+
+export function ordinaryGroupRoute(message: IncomingMessage, questionnaireName = false) {
+  const platform = platformGroupRoute(message);
+  if (platform) return platform;
   return questionnaireName ||
     (!message.hasForwarded && addressesRecapByName(message.text)) ||
     directlyAddressesName(message.text)
@@ -76,11 +82,33 @@ export function routeMessage(input: RoutingInput): RoutingDecision {
   if (message.isBot === 'unknown') return silent('sender_unknown');
   if (message.isBot) return silent('sender_bot');
   if (settings.responseMode === 'silent') return silent('silent');
+  const gate = message.isGroupChat ? input.replyGate : undefined;
   const kind = message.isGroupChat
-    ? ordinaryGroupRoute(message, input.questionnaireName)
+    ? gate
+      ? (platformGroupRoute(message) ?? (input.questionnaireName ? 'name' : null))
+      : ordinaryGroupRoute(message, input.questionnaireName)
     : 'direct_message';
   if (kind === 'reply_unknown' || kind === 'reply_other') return silent(kind);
   if (!kind) {
+    if (gate) {
+      if (!message.text.trim()) return silent('not_addressed');
+      const name = matchGroupBotName(message.literalText ?? message.text, gate.glossary);
+      const initiative =
+        settings.responseMode === 'active' &&
+        gate.allowInitiative &&
+        message.attachments.length === 0;
+      return initiative || name
+        ? {
+            kind: 'assessment',
+            reason: 'assessment',
+            assessment: {
+              kind: initiative ? 'initiative' : 'name',
+              ...name,
+              ...(initiative && name ? { matchedName: true as const } : {}),
+            },
+          }
+        : silent('not_addressed');
+    }
     const initiative =
       input.considerInitiative && settings.responseMode === 'active'
         ? autonomousCause(message)

@@ -195,6 +195,11 @@ async function setupControlApplication(
   const run = runApplication(config, logger, stop.signal, {
     vk: { api, transport },
     client: { complete: model },
+    groupReplyClient: {
+      async complete() {
+        return answer('ответить');
+      },
+    },
     onboardingIntervalMs: 5,
   });
   return {

@@ -89,6 +89,8 @@ export function checkCatalogBoundary(root = process.cwd()) {
             bindings.elements.every((element) => {
               const imported = (element.propertyName ?? element.name).text;
               return (
+                (file === resolve(root, 'src/storage/group-reply-gate-store.ts') &&
+                  imported === 'initiativeDenial') ||
                 (file === resolve(root, 'src/storage/queue-store.ts') &&
                   [
                     'dueQuestions',
@@ -174,6 +176,19 @@ export function checkCatalogBoundary(root = process.cwd()) {
                   'FinalBudget',
                 ].includes((e.propertyName ?? e.name).text),
               );
+            const groupReplyBudget =
+              moduleName === 'token-budget-store.ts' &&
+              file === resolve(root, 'src/storage/group-reply-gate-store.ts') &&
+              bindings &&
+              ts.isNamedImports(bindings) &&
+              bindings.elements.every((e) =>
+                [
+                  'canReserveTokens',
+                  'insertTokenReservation',
+                  'deleteUnsentTokenReservation',
+                  'reconcileTokenReservation',
+                ].includes((e.propertyName ?? e.name).text),
+              );
             const membership =
               moduleName === 'participant-registry.ts' &&
               bindings &&
@@ -201,7 +216,14 @@ export function checkCatalogBoundary(root = process.cwd()) {
                   'reconcileTokenReservation',
                 ].includes((e.propertyName ?? e.name).text),
               );
-            if (!storageFactory && !registryType && !queueBudget && !membership && !profileBudget)
+            if (
+              !storageFactory &&
+              !registryType &&
+              !queueBudget &&
+              !membership &&
+              !profileBudget &&
+              !groupReplyBudget
+            )
               result.privileged = true;
           }
         }

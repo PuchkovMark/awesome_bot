@@ -10,20 +10,36 @@ export type RestoreAdmission = {
   closed: number;
 };
 
+export function matchingColumns(staged: Database, newer: Database, table: string) {
+  const columns = (db: Database) =>
+    db.prepare('SELECT name FROM pragma_table_info(?)').pluck().all(table) as string[];
+  const present = new Set(columns(newer));
+  return columns(staged)
+    .filter((name) => present.has(name))
+    .map((name) => '"' + name.replaceAll('"', '""') + '"');
+}
+
 // Both databases have the application's known schema. Table names below are fixed by the caller.
 function copyRows(staged: Database, newer: Database, table: string, chat?: ChatId) {
+  const columns = matchingColumns(staged, newer, table);
   const select = newer
-    .prepare('SELECT * FROM ' + table + (chat === undefined ? '' : ' WHERE chat_id=?'))
+    .prepare(
+      'SELECT ' +
+        columns.join(',') +
+        ' FROM ' +
+        table +
+        (chat === undefined ? '' : ' WHERE chat_id=?'),
+    )
     .raw();
-  const values = select
-    .columns()
-    .map(() => '?')
-    .join(',');
+  const values = columns.map(() => '?').join(',');
   const insert = staged.prepare(
     'INSERT ' +
       (chat === undefined ? 'OR IGNORE ' : '') +
       'INTO ' +
       table +
+      '(' +
+      columns.join(',') +
+      ')' +
       ' VALUES (' +
       values +
       ')',

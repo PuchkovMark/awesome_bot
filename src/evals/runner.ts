@@ -1,4 +1,5 @@
 import { evaluateChatSummary, summaryFactChecks } from './chat-summaries';
+import { setTimeout as delay } from 'node:timers/promises';
 import { chatSummaryCase } from './scenarios';
 import { deniedGrantClient, seedPassport } from './passport';
 import { seedPersonaProfile } from './personas';
@@ -16,13 +17,24 @@ import {
   createPublicationService,
 } from '../core/index';
 import type { ChatQueue, PublicationRequest, QueueCompletion } from '../core/index';
-import type { LlmClient, LlmRequest } from '../llm/types';
+import type { LlmClient, LlmRequest, LlmResult } from '../llm/types';
 import { addressPreferenceStore } from '../storage/address-preference-store';
 import { disclosureStore } from '../storage/chat-disclosure-store';
+import { activeGroupReplyDisclosure } from '../core/chat-onboarding/introduction-text';
+import { chatLimits } from '../core/chat-limits/config';
+import { responseRateConfig } from '../core/chat-limits/response-rate-config';
+import { createLlmAdmission } from '../core/llm-admission';
+import {
+  createGroupReplyGate,
+  groupReplyDecision,
+  groupReplyInstructionVersion,
+  groupReplyModel,
+} from '../core/message-router/group-reply-gate';
+import { groupReplyGateStore } from '../storage/group-reply-gate-store';
 import { catalogAdministration, installStarterPersonas } from '../storage/catalog-admin';
 import { openStorage, type Storage } from '../storage/index';
 import type { TraceRecord } from '../storage/trace-types';
-import type { EvaluationResult, Observation, Scenario } from './types';
+import type { EvaluationResult, GroupReplyObservation, Observation, Scenario } from './types';
 
 const model = 'synthetic-local';
 const loopTimeoutMs = 1_000;
@@ -67,6 +79,7 @@ function classify(
     model: trace?.payload.model.name ?? null,
     prompt: trace?.payload.prompt ?? null,
     ...(scenario.persona ? { persona: observation.personaVersion ?? null } : {}),
+    ...(observation.groupReply ? { groupReply: observation.groupReply } : {}),
     outcome: reason
       ? 'technical_error'
       : criteria.every((criterion) => criterion.outcome === 'passed')
@@ -92,7 +105,7 @@ async function waitForSettlement(
   }
 }
 
-function enableSyntheticProfiles(storage: Storage, scope: ConnectionScope): boolean {
+function enableSyntheticProfiles(storage: Storage, scope: ConnectionScope, group = false): boolean {
   const disclosure = disclosureStore(storage);
   const notice = 'Обращение можно выбрать и скрыть.';
   const version = disclosure.register(
@@ -109,21 +122,63 @@ function enableSyntheticProfiles(storage: Storage, scope: ConnectionScope): bool
     1,
   );
   const publication = disclosure.ensure(scope, 'introduction', version);
-  const claim = disclosure.claim(scope, publication.id, notice, 10);
+  const claim = disclosure.claim(
+    scope,
+    publication.id,
+    group ? activeGroupReplyDisclosure : notice,
+    10,
+  );
   return !!claim && disclosure.finish(scope, claim, 'delivered', 11, null, 'intro');
+}
+
+function sampleModel(model: string) {
+  const sample = {
+    model,
+    attempts: 0,
+    latencyMs: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    unknownInput: 0,
+    unknownOutput: 0,
+  };
+  return {
+    sample,
+    async measure(invoke: () => Promise<LlmResult>) {
+      sample.attempts++;
+      const startedAt = performance.now();
+      const result = await invoke();
+      sample.latencyMs += Math.round(performance.now() - startedAt);
+      const usage = 'usage' in result ? result.usage : undefined;
+      if (usage?.input == null) sample.unknownInput++;
+      else sample.inputTokens += usage.input;
+      if (usage?.output == null) sample.unknownOutput++;
+      else sample.outputTokens += usage.output;
+      return result;
+    },
+  };
 }
 
 export async function runScenario(
   scenario: Scenario,
   client: LlmClient = defaultClient(scenario),
-  settings: { readonly modelName?: string; readonly timeoutMs?: number } = {},
+  settings: {
+    readonly modelName?: string;
+    readonly timeoutMs?: number;
+    readonly groupReplyClient?: LlmClient;
+  } = {},
 ): Promise<EvaluationResult> {
   const timeoutMs = settings.timeoutMs ?? loopTimeoutMs;
   let firstRequest: LlmRequest | undefined;
   let request: LlmRequest | null = null;
   let answer: PublicationRequest | null = null;
   let trace: TraceRecord | null = null;
-  let initiativeCandidate = false;
+  const gateSettings = scenario.groupReply;
+  const gateMeter = sampleModel(groupReplyModel);
+  const mainMeter = sampleModel(settings.modelName ?? model);
+  let gateChoice: GroupReplyObservation['decision'] = 'none';
+  let gateFailure: EvaluationResult['reason'] = null;
+  let mainStartMs: number | null = null;
+  let admittedAt = 0;
   let grantsUnchanged: boolean | undefined;
   let stage: EvaluationResult['reason'] = 'setup_failed';
   const evaluate = (reason: EvaluationResult['reason']) => {
@@ -135,7 +190,20 @@ export async function runScenario(
       historyTruncated: trace?.payload.context?.historyTruncated ?? false,
       publicationReason: trace?.payload.publication.reason ?? 'none',
       route: trace?.payload.route ?? null,
-      initiativeCandidate,
+      ...(gateSettings
+        ? {
+            groupReply: {
+              expected: gateSettings.expected,
+              decision: gateChoice,
+              instruction: groupReplyInstructionVersion,
+              ...(gateSettings.comparison ? { comparison: gateSettings.comparison } : {}),
+              mainStartMs,
+              gate: { ...gateMeter.sample },
+              main: { ...mainMeter.sample },
+              delivered: trace?.payload.publication.status === 'delivered',
+            },
+          }
+        : {}),
       ...(grantsUnchanged === undefined ? {} : { grantsUnchanged }),
       ...(personaVersion ? { personaVersion } : {}),
       ...(trace?.payload.summary ? { modelAttempts: trace.payload.summary.attempts } : {}),
@@ -166,8 +234,8 @@ export async function runScenario(
           },
         },
       });
-      const syntheticAt = Date.now() - (scenario.initiative?.due ? 120_000 : 0);
-      const stimulus = scenario.initiative
+      const syntheticAt = Date.now();
+      const stimulus = gateSettings
         ? { ...scenario.input, timestamp: syntheticAt }
         : scenario.input;
       const startChat = async (chatId: Scenario['input']['chatId']) => {
@@ -175,13 +243,15 @@ export async function runScenario(
         if (!scope) throw Error('Отсутствует область синтетической беседы.');
         await storage.chats.create(scope, {
           enabled: true,
-          responseMode: scenario.initiative?.mode ?? 'normal',
+          responseMode: gateSettings?.mode ?? 'normal',
           timezone: scenario.historyTimezone ?? 'UTC',
           createdAt: 0,
         });
         return scope;
       };
       const scope = await startChat(scenario.input.chatId);
+      if (gateSettings && !enableSyntheticProfiles(storage, scope, true))
+        return evaluate('setup_failed');
       for (const message of scenario.history) {
         const target = message.chatId === scope.chatId ? scope : await startChat(message.chatId);
         await storage.messages.append(
@@ -190,7 +260,7 @@ export async function runScenario(
             ? {
                 ...message,
                 isGroupChat: scenario.input.isGroupChat,
-                ...(scenario.initiative
+                ...(gateSettings
                   ? { timestamp: syntheticAt - 1000, senderBot: message.senderBot ?? false }
                   : {}),
               }
@@ -287,7 +357,7 @@ export async function runScenario(
       const publication = createPublicationService({
         storage,
         ...(addressPreferences ? { addressCurrent: addressPreferences.current } : {}),
-        ...(scenario.initiative ? { responseBudget: () => queue.responseBudget } : {}),
+        ...(gateSettings ? { responseBudget: () => queue.responseBudget } : {}),
         port: {
           async canReply() {
             return true;
@@ -301,13 +371,15 @@ export async function runScenario(
                 messageId: 'published',
                 userId: 'synthetic:bot',
                 authorName: 'Бот',
-                timestamp: scenario.initiative ? Date.now() : 200,
+                timestamp: gateSettings ? Date.now() : 200,
               },
             };
           },
         },
       });
       const settlement = Promise.withResolvers<QueueCompletion>();
+      const admission = createLlmAdmission();
+      const rate = responseRateConfig();
       let settledJobId: number | undefined;
       const queue: ChatQueue = createAgentLoopQueue({
         storage,
@@ -328,12 +400,22 @@ export async function runScenario(
               modelInputLimit: 16000 - preparation.config.maxOutputTokens,
             }
           : {}),
-        ...(scenario.initiative ? { autonomousReplies: true } : {}),
+        ...(gateSettings
+          ? {
+              autonomousReplies: true,
+              tokenBudget: true,
+              groupReplyGate: true,
+              llmAdmission: admission,
+              responseRate: rate,
+            }
+          : {}),
         client: {
           async complete(input) {
             firstRequest ??= input;
             request = input;
-            return client.complete(input);
+            if (!gateSettings) return client.complete(input);
+            mainStartMs ??= Math.round(performance.now() - admittedAt);
+            return mainMeter.measure(() => client.complete(input));
           },
         },
         async onSettled(work, completion) {
@@ -345,20 +427,75 @@ export async function runScenario(
           }
         },
       });
+      const gateStop = new AbortController();
+      let gateWork: Promise<void> | undefined;
       try {
         stage = 'processing_failed';
         await queue.start();
-        const router = createMessageRouter({ storage, queue });
-        const routed = await router.receive(scope, stimulus);
-        initiativeCandidate =
-          routed.decision?.kind === 'silence' && routed.decision.initiative !== undefined;
-        if (
-          routed.admission?.status !== 'queued' &&
-          !(scenario.initiative?.due && initiativeCandidate)
-        )
-          return evaluate(
-            scenario.initiative && routed.admission?.status === 'not_needed' ? null : 'not_queued',
-          );
+        const gate =
+          gateSettings &&
+          createGroupReplyGate({
+            storage,
+            admission,
+            current: queue.isRunning,
+            policy: { limits: chatLimits(), responseRate: rate },
+            platform: 'synthetic',
+            scope: lifecycle.admissionScope,
+            sessionId: () => 'synthetic-group-reply',
+            signal: gateStop.signal,
+            promote: queue.promoteGroupReply!,
+            client: {
+              async complete(input) {
+                const result = await gateMeter.measure(
+                  () =>
+                    settings.groupReplyClient?.complete(input) ??
+                    Promise.resolve({
+                      kind: 'complete',
+                      text: gateSettings.expected === 'answer' ? 'ответить' : 'промолчать',
+                      usage: { input: 0, output: 0 },
+                    }),
+                );
+                const decision = groupReplyDecision(result);
+                gateChoice = decision === 'answer' || decision === 'silence' ? decision : 'failed';
+                if (decision === 'failed')
+                  gateFailure = result.kind === 'error' ? result.code : 'group_reply_failed';
+                return result;
+              },
+            },
+          });
+        const router = createMessageRouter({
+          storage,
+          queue,
+          ...(gate ? { groupReplyGate: gate.allowInitiative } : {}),
+        });
+        admittedAt = performance.now();
+        const routed = await router.receive(
+          scope,
+          stimulus,
+          undefined,
+          undefined,
+          gate ? () => ({ ...disclosureStore(storage).gate(scope), respond: true }) : undefined,
+        );
+        if (routed.admission?.status === 'not_needed' && gate) {
+          if (routed.decision?.kind !== 'assessment') return evaluate(null);
+          for (const message of gateSettings?.after ?? [])
+            await storage.messages.append(scope, {
+              ...message,
+              timestamp: Date.now(),
+            });
+          gateWork = gate.run();
+          const id = routed.admission.messageId;
+          const deadline = performance.now() + timeoutMs;
+          while (performance.now() < deadline) {
+            const item = groupReplyGateStore(storage).valid(scope, id, Date.now());
+            if (item?.state === 'queued') break;
+            if (item?.state === 'finished') return evaluate(gateFailure);
+            await delay(5);
+          }
+          if (gateFailure) return evaluate(gateFailure);
+          if (groupReplyGateStore(storage).valid(scope, id, Date.now())?.state !== 'queued')
+            return evaluate('settlement_timeout');
+        } else if (routed.admission?.status !== 'queued') return evaluate('not_queued');
         const completion = await waitForSettlement(settlement.promise, timeoutMs);
         if (!completion) return evaluate('settlement_timeout');
         const jobId = routed.admission?.status === 'queued' ? routed.admission.jobId : settledJobId;
@@ -375,6 +512,8 @@ export async function runScenario(
         }
         return evaluate(classifyFailure(completion, trace));
       } finally {
+        gateStop.abort();
+        await gateWork;
         await queue.stop();
       }
     } finally {

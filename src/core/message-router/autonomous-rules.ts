@@ -1,7 +1,7 @@
 import type { IncomingMessage } from '../../contracts/index';
 import { unquotedText } from '../author-text';
 
-export type InitiativeCause = 'help' | 'free_mention' | 'unanswered';
+export type InitiativeCause = 'help' | 'free_mention' | 'unanswered' | 'group_reply_gate';
 
 const danger =
   /(?:^|[^\p{L}])(?:суицид\p{L}*|самоубий\p{L}*|умереть|убь[ею]\p{L}*|уби[тй]\p{L}*|угрожа\p{L}*|оружи\p{L}*|насили\p{L}*|кризис\p{L}*|паник\p{L}*|оскорб\p{L}*|дра[кч]\p{L}*|конфликт\p{L}*|ненавижу|травл\p{L}*)(?!\p{L})/iu;
