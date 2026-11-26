@@ -2,6 +2,7 @@ import { tokenBudgetStore } from '../src/storage/token-budget-store';
 import { expect, test } from 'vitest';
 import type { LlmToolCall } from '../src/llm/types';
 import { estimateRequestInput } from '../src/core/context/budget';
+import { noticeTemplate } from '../src/storage/notice-types';
 import {
   answer,
   chat,
@@ -39,6 +40,136 @@ async function seed(app: App, lastText = 'Маяк вечером') {
   return { first: first.id, last: last.id };
 }
 const lookup = call('history_search', 'read', { query: 'Маяк', limit: 1 });
+
+test('после поиска четырём участникам хватает автоматического бюджета для продолжения', async () => {
+  const spent = 49_317;
+  const previousLimit = 60_000;
+  const oldRemaining = previousLimit - spent;
+  const startAt = Date.UTC(2026, 10, 25, 22, 52, 44);
+  const searchUsage = { input: 700, output: 10 };
+  const replyUsage = { input: 901, output: 27 };
+  const historyText = 'Маяк вечером. ' + 'Запись о маршруте. '.repeat(55);
+  const replyText = 'Встреча у маяка вечером.';
+
+  async function run(override: number | null) {
+    const app = await fixture({ startAt, greetings: { members: [41, 42, 73, 74] } });
+    try {
+      const store = tokenBudgetStore(app.storage);
+      const group = app.scope;
+      const budget = () => store.read(group, true, startAt);
+      await until(() => expect(budget().people).toBe(4));
+      await seed(app, historyText);
+      store.update(group, true, { total: override }, startAt);
+      expect(
+        store.reserve(
+          group,
+          true,
+          { key: 'previous', purpose: 'direct', input: spent, output: 0 },
+          startAt,
+        ),
+      ).toBe(true);
+      expect(store.reconcile(group, 'previous', { input: spent, output: 0 })).toBe(true);
+      const limit = override ?? 500_000;
+      expect(budget().total).toMatchObject({
+        limit,
+        confirmed: 49_317n,
+        remaining: limit - spent,
+        reserved: 0n,
+      });
+
+      app.submit('Показать расход', 73, undefined, 73);
+      await until(() =>
+        expect(
+          app.sends.some(
+            ({ peer_id, text }) =>
+              peer_id === 73 &&
+              text.includes(
+                chat +
+                  ' — подтверждено 49317 из ' +
+                  limit +
+                  ', удержано 0, попыток без полного usage 0.',
+              ),
+          ),
+        ).toBe(true),
+      );
+      expect(app.complete).not.toHaveBeenCalled();
+
+      const probe = { key: 'probe', purpose: 'direct', input: 11_000, output: 1000 } as const;
+      expect(store.reserve(group, true, probe, startAt)).toBe(override === null);
+      if (override === null) {
+        expect(budget().total).toMatchObject({ remaining: 438_683, reserved: 12_000n });
+        await store.meter(group, probe.key).cancelBeforeSend();
+        expect(budget().total).toMatchObject({ remaining: 450_683, reserved: 0n });
+      }
+
+      app.complete
+        .mockResolvedValueOnce({ ...calls(lookup), usage: searchUsage })
+        .mockResolvedValueOnce({ ...answer, text: replyText, usage: replyUsage });
+      const id = app.submit(mention);
+      const trace = (await app.trace(id)).payload;
+      expect(trace.tools).toContainEqual(
+        expect.objectContaining({ name: 'history_search', outcome: 'success' }),
+      );
+      expect(trace.publication.status).toBe('delivered');
+      const reply = app.sends
+        .filter((row) => row.peer_id === peer && row.reply_message?.conversation_message_id === id)
+        .map(({ text }) => text);
+      const requests = app.complete.mock.calls.map(([request]) => request);
+      const [initial, continued] = requests;
+      expect(initial?.tools?.map(({ name }) => name)).toContain('history_search');
+      expect(JSON.stringify(initial?.messages)).not.toContain('Маяк');
+      const charges = [searchUsage];
+      if (override === null) {
+        expect(requests).toHaveLength(2);
+        expect(trace.resultKind).toBe('complete');
+        const result = continued?.messages.find((message) => message.role === 'tool');
+        expect(JSON.parse(result?.text ?? '{}')).toMatchObject({
+          found: 2,
+          shown: 1,
+          messages: [{ text: expect.stringContaining('Маяк вечером.') }],
+        });
+        expect(reply).toEqual([replyText]);
+        charges.push(replyUsage);
+      } else {
+        expect(requests).toHaveLength(1);
+        expect(trace.resultKind).toBe('token_budget_exhausted');
+        expect(reply).toEqual([noticeTemplate('token_budget_exhausted')]);
+      }
+      expect(
+        app.db
+          .prepare(
+            `SELECT input_reserve AS inputReserve,output_reserve AS outputReserve,
+            input_tokens AS input,output_tokens AS output
+            FROM token_budget_attempts WHERE chat_id=? AND generation=? AND attempt_key LIKE 'job:%'
+            ORDER BY rowid`,
+          )
+          .all(group.chatId, group.generation),
+      ).toEqual(
+        requests.map((request, i) => ({
+          inputReserve: estimateRequestInput(request),
+          outputReserve: request.maxOutputTokens,
+          ...charges[i],
+        })),
+      );
+      const paid = charges.reduce((sum, { input, output }) => sum + input + output, spent);
+      expect(budget().total).toMatchObject({
+        limit,
+        confirmed: BigInt(paid),
+        reserved: 0n,
+        incompleteAttempts: 0,
+      });
+      return requests.map((request) => estimateRequestInput(request) + request.maxOutputTokens);
+    } finally {
+      await app.close();
+    }
+  }
+
+  const [first, afterSearch] = await run(null);
+  expect(first).toBeLessThanOrEqual(oldRemaining);
+  expect(afterSearch).toBeGreaterThan(oldRemaining - searchUsage.input - searchUsage.output);
+  expect(afterSearch).toBeLessThanOrEqual(450_683 - searchUsage.input - searchUsage.output);
+  expect(await run(previousLimit)).toEqual([first]);
+}, 10_000);
 
 test('поиск, чтение периода и поиск по показанной метке работают через штатный маршрут', async () => {
   const app = await fixture();

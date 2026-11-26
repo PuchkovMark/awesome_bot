@@ -84,60 +84,90 @@ test('потеря доступа и отмена после первой стр
   expect(api).toHaveBeenCalledOnce();
 });
 
-test('полные снимки входа, выхода и повтора меняют лимит без сброса расхода', async () => {
+test('сверка VK пересекает порог 19 → 20 → 19 с сохранением списаний и резерва', async () => {
   const storage = await openStorage(':memory:');
+  const now = Date.parse('2026-11-23T12:00:00Z');
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
   try {
     const scope = scopeFor(storage, 'vk:2000000001');
     const personal = scopeFor(storage, 'vk:1');
     const other = scopeFor(storage, 'vk:2');
     const store = tokenBudgetStore(storage);
-    const now = Date.parse('2026-11-23T12:00:00Z');
-    const snapshot = () => store.read(scope, true, now);
-    const read = vi.fn<() => Promise<HumanMembership>>();
-    const refresh = createTokenBudgetMembership(storage, read);
+    const snapshot = () =>
+      store
+        .overview((id) => id === scope.chatId, now)
+        .chats.find(({ chatId }) => chatId === scope.chatId)!;
+    const nineteen = [...Array.from({ length: 19 }, (_, i) => i + 1), -99];
+    const twenty = [...nineteen, 20];
+    const api = vi.fn<Parameters<typeof readVkHumanMembership>[0]>();
+    const refresh = createTokenBudgetMembership(storage, (_scope, signal) =>
+      readVkHumanMembership(api, peer, { signal }),
+    );
     const observe = () => refresh(scope, guard.signal, guard.isCurrent);
-    expect(snapshot()).toMatchObject({ total: { limit: 15000 }, initiative: { limit: 10000 } });
-    read.mockResolvedValueOnce(full(50));
-    await observe();
-    expect(
-      store.reserve(scope, true, { key: 'one', input: 1000, output: 100, purpose: 'direct' }, now),
-    ).toBe(true);
-    store.reconcile(scope, 'one', { input: 180000, output: 0 });
-    expect(snapshot().total).toMatchObject({ limit: 750000, remaining: 570000 });
-    read.mockResolvedValueOnce(full(51));
-    await observe();
-    expect(snapshot().total).toMatchObject({ limit: 765000, remaining: 585000 });
-    read.mockResolvedValueOnce(full(51));
-    await observe();
-    expect(snapshot().total.remaining).toBe(585000);
-    read.mockResolvedValueOnce({ complete: false });
-    await observe();
-    expect(snapshot().total.remaining).toBe(585000);
+    const reserve = (key: string, input: number) =>
+      store.reserve(scope, true, { key, input, output: 0, purpose: 'direct' }, now);
+    expect(snapshot()).toMatchObject({
+      people: null,
+      total: { limit: 500_000 },
+      initiative: { limit: 10_000 },
+    });
+    api.mockResolvedValueOnce(page(nineteen));
+    expect(await observe()).toBe(true);
+    expect(snapshot()).toMatchObject({ people: 19, total: { limit: 500_000 } });
+    expect(reserve('paid', 480_000)).toBe(true);
+    expect(store.reconcile(scope, 'paid', { input: 480_000, output: 0 })).toBe(true);
+    expect(reserve('held', 30_000)).toBe(false);
 
-    const late = Promise.withResolvers<HumanMembership>();
-    read.mockReturnValueOnce(late.promise).mockResolvedValueOnce(full(10));
+    api.mockResolvedValueOnce(page(twenty));
+    expect(await observe()).toBe(true);
+    expect(reserve('held', 30_000)).toBe(true);
+    const spending = { confirmed: 480_000n, reserved: 30_000n, incompleteAttempts: 1 };
+    const raised = snapshot();
+    expect(raised).toMatchObject({
+      people: 20,
+      total: { limit: 800_000, remaining: 290_000, ...spending },
+    });
+    expect(reserve('fits', 290_001)).toBe(false);
+    expect(reserve('fits', 290_000)).toBe(true);
+    await store.meter(scope, 'fits').cancelBeforeSend();
+    api.mockResolvedValueOnce(page(twenty));
+    expect(await observe()).toBe(true);
+    expect(snapshot()).toEqual(raised);
+    // Первая страница обещает больше строк, следующая ничего не возвращает.
+    api
+      .mockResolvedValueOnce(page(nineteen, twenty.length))
+      .mockResolvedValueOnce(page([], twenty.length));
+    expect(await observe()).toBe(false);
+    expect(snapshot()).toEqual(raised);
+
+    const late = Promise.withResolvers<ReturnType<typeof page>>();
+    api.mockReturnValueOnce(late.promise).mockResolvedValueOnce(page(nineteen));
     const pending = observe();
     expect(await observe()).toBe(true);
-    late.resolve(full(55));
+    late.resolve(page(twenty));
     expect(await pending).toBe(false);
-    expect(snapshot().total).toMatchObject({ limit: 150000, remaining: 0 });
+    expect(snapshot()).toMatchObject({
+      people: 19,
+      total: { limit: 500_000, remaining: 0, ...spending },
+    });
+    expect(reserve('later', 1)).toBe(false);
 
     store.update(scope, true, { total: 700000, initiative: 9000 }, now);
-    read.mockResolvedValueOnce(full(70));
-    await observe();
+    api.mockResolvedValueOnce(page(twenty));
+    expect(await observe()).toBe(true);
     expect(snapshot()).toMatchObject({
-      total: { limit: 700000, remaining: 520000 },
+      total: { limit: 700_000, remaining: 190_000, ...spending },
       initiative: { limit: 9000 },
     });
     store.update(scope, true, { total: null }, now);
-    expect(snapshot().total.limit).toBe(1050000);
+    expect(snapshot().total.limit).toBe(800_000);
 
-    const replacement = Promise.withResolvers<HumanMembership>();
-    read.mockReturnValueOnce(replacement.promise);
+    const replacement = Promise.withResolvers<ReturnType<typeof page>>();
+    api.mockReturnValueOnce(replacement.promise);
     const stale = observe();
     const lifecycle = lifecycleBackend(storage);
     const next = lifecycle.ownerDecision(lifecycle.begin(scope.chatId), 'new');
-    replacement.resolve(full(95));
+    replacement.resolve(page(twenty));
     await expect(stale).rejects.toThrow('stale_scope');
     expect(store.read(next, true, now).people).toBeNull();
 
@@ -155,6 +185,7 @@ test('полные снимки входа, выхода и повтора ме�
     ).toBe(true);
     expect(store.read(other, false, now).total.remaining).toBe(500000);
   } finally {
+    clock.mockRestore();
     await storage.close();
   }
 });
