@@ -10,11 +10,19 @@ import type { personalDataStore } from '../storage/personal-data-store';
 
 const personalRequest =
   /^\/(мои-данные|отключить-профиль|удалить-мои-данные|статус-удаления)(?:\s+(vk:[1-9]\d*))?$/iu;
+const separateMessage = 'Отправьте команду отдельным сообщением без пересылки';
+
+function parsePersonalRequest(text: string, hasForwarded: boolean | undefined) {
+  const match = personalRequest.exec(text.trim());
+  if (!match) return;
+  return hasForwarded ? ({ kind: 'separate' } as const) : ({ kind: 'request', match } as const);
+}
+
 export function groupPersonalCommand(message: import('../contracts/index').IncomingMessage) {
   return message.isGroupChat &&
     message.isBot === false &&
     !message.replyToMessageId &&
-    personalRequest.test(message.text.trim())
+    parsePersonalRequest(message.text, message.hasForwarded)
     ? ({ action: 'profile.self.manage', minimumRole: 'member' } as const)
     : null;
 }
@@ -44,8 +52,9 @@ export function createPersonalCommands(options: {
       !isVkGroupChat(message.authorId);
     if (message.authorId <= 0 || (!direct && !isVkGroupChat(message.peerId))) return;
     const sender = vkChatId(message.authorId);
-    const match =
-      !message.reply && !message.hasForwarded && personalRequest.exec(message.text.trim());
+    const request = !message.reply
+      ? parsePersonalRequest(message.text, message.hasForwarded)
+      : undefined;
     const confirmation =
       direct &&
       !message.reply &&
@@ -70,8 +79,32 @@ export function createPersonalCommands(options: {
       !message.reply &&
       !message.hasForwarded &&
       /^\/текст-уведомления ([\s\S]+)$/u.exec(message.text.trim());
-    if (!match && !confirmation && !review && !report && !edit) return;
+    if (!request && !confirmation && !review && !report && !edit) return;
     return (async () => {
+      const inputCurrent = () => current() && !signal.aborted;
+      function replyInSourceGroup(text: string) {
+        const source = lifecycle.admissionScope(vkChatId(message.peerId));
+        const isCurrent = () => inputCurrent() && lifecycle.isAdmissionCurrent(source);
+        options.track(
+          channel.replyGroupControl(source, text, {
+            signal,
+            isCurrent,
+            allow: async () => isCurrent(),
+          }),
+        );
+      }
+      if (request?.kind === 'separate') {
+        if (!inputCurrent()) return;
+        if (direct)
+          await channel.replyPrivateControl(sender, separateMessage, {
+            signal,
+            isCurrent: inputCurrent,
+            allow: async () => inputCurrent(),
+          });
+        else replyInSourceGroup(separateMessage);
+        return;
+      }
+      const match = request?.match;
       let privateScope;
       if (direct && (edit || onboarding.configuredForProfiles())) {
         try {
@@ -180,18 +213,9 @@ export function createPersonalCommands(options: {
         );
         return;
       }
-      if (!match || !current() || signal.aborted) return;
+      if (!match || !inputCurrent()) return;
       if (!direct && match[2] && match[2] !== vkChatId(message.peerId)) {
-        const source = lifecycle.admissionScope(vkChatId(message.peerId));
-        const isCurrent = () =>
-          current() && !signal.aborted && lifecycle.isAdmissionCurrent(source);
-        options.track(
-          channel.replyGroupControl(
-            source,
-            `Для другой беседы отправьте в личку сообщества ${match[0]}`,
-            { signal, isCurrent, allow: async () => isCurrent() },
-          ),
-        );
+        replyInSourceGroup(`Для другой беседы отправьте в личку сообщества ${match[0]}`);
         return;
       }
       const target = direct ? (match[2] ?? sender) : vkChatId(message.peerId);

@@ -9,6 +9,34 @@ import {
   answer,
 } from './helpers/application-response-fixture';
 
+const separateMessage = 'Отправьте команду отдельным сообщением без пересылки';
+
+test.each([peer, 41])(
+  'команда отключения с пересылкой даёт подсказку в диалоге %i',
+  async (destination) => {
+    const app = await fixture({ profileNotice: 'Синтетическое уведомление профиля' });
+    try {
+      await app.journaled(app.submit('Запись автора в беседе.'));
+      app.submit('/помощь', 41, undefined, 41);
+      await until(() =>
+        expect(
+          app.sends.some(({ peer_id, text }) => peer_id === 41 && text.includes('/мои-данные')),
+        ).toBe(true),
+      );
+      const before = app.sends.length;
+      const command = destination === peer ? '/отключить-профиль' : `/отключить-профиль ${chat}`;
+      app.submit(command, 41, undefined, destination, true);
+      await until(() => expect(app.sends.length).toBeGreaterThan(before));
+      expect(app.sends.slice(before).map(({ peer_id, text }) => [peer_id, text])).toEqual([
+        [destination, separateMessage],
+      ]);
+      expect(app.db.prepare('SELECT disabled_at FROM personal_profile_choices').all()).toEqual([]);
+    } finally {
+      await app.close();
+    }
+  },
+);
+
 test('в группе файл получает только автор, подтверждение из чужой лички не удаляет историю', async () => {
   const upload = vi.fn<(peer: number, data: Buffer) => Promise<string>>();
   let copied = '';
