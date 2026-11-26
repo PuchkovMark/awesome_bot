@@ -68,6 +68,60 @@ test('день и часы могут стоять по разные сторо�
   }
 });
 
+test('день с названием месяца проверяется как календарная дата', () => {
+  const origin = '2026-11-25T12:00:00Z';
+  for (const input of [
+    '27 ноября в 18:00 по Москве забрать посылку',
+    '27 ноября 2026 года 18:00 по Москве забрать посылку',
+    'в 18:00 забрать посылку 27 ноября по Москве',
+  ]) {
+    expect(extractReminderTime(input).content).toBe('забрать посылку');
+    expect(resolve(input, origin)).toEqual({
+      kind: 'scheduled',
+      dueAt: Date.UTC(2026, 10, 27, 15),
+      timezone: 'Europe/Moscow',
+    });
+  }
+  expect(extractReminderTime('27 ноября забрать посылку')).toMatchObject({
+    date: '27.11',
+    content: 'забрать посылку',
+    schedule: undefined,
+  });
+  expect(resolve('31 ноября в 18:00 по Москве забрать посылку', origin)).toEqual({
+    kind: 'time',
+  });
+});
+
+test.each([
+  ['UTC+3', '+03:00', Date.UTC(2026, 10, 26, 15)],
+  ['UTC-3:30', '-03:30', Date.UTC(2026, 10, 26, 21, 30)],
+])('смещение %s действует на конкретный срок', (zone, timezone, dueAt) => {
+  const input = 'завтра в 18:00 ' + zone + ' забрать документы';
+  expect(extractReminderTime(input).content).toBe('забрать документы');
+  expect(resolve(input, '2026-11-25T12:00:00Z', 'Asia/Tokyo')).toEqual({
+    kind: 'scheduled',
+    dueAt,
+    timezone,
+  });
+});
+
+test('неверное смещение требует уточнения, а URL целиком остаётся поручением', () => {
+  const origin = '2026-11-25T12:00:00Z';
+  for (const zone of ['UTC+25', 'UTC+3:80', 'UTC+']) {
+    const input = 'завтра в 18:00 ' + zone + ' забрать документы';
+    expect(extractReminderTime(input).content).toBe('забрать документы');
+    expect(resolve(input, origin, 'Europe/Moscow')).toEqual({ kind: 'zone' });
+  }
+  const content = 'отправить ссылку https://example.org/Europe/Moscow/27.11/?ref=UTC+3-';
+  const input = 'через 20 минут ' + content;
+  expect(extractReminderTime(input).content).toBe(content);
+  expect(resolve(input, origin)).toEqual({
+    kind: 'scheduled',
+    dueAt: Date.UTC(2026, 10, 25, 12, 20),
+    timezone: 'UTC',
+  });
+});
+
 test('составная длительность и взаимоисключающие варианты', () => {
   expect(extractReminderTime('через 1 час 30 минут забрать 2 посылки')).toMatchObject({
     schedule: { kind: 'relative', minutes: 90 },

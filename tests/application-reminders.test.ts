@@ -503,6 +503,93 @@ test('личный выбор отмены показывает реальные
 });
 
 test.each([
+  {
+    input: '27 ноября в 18:00 по Москве забрать посылку',
+    task: 'забрать посылку',
+    timezone: 'Europe/Moscow',
+    label: '27 ноября 2026 г. в 18:00 (Europe/Moscow)',
+    dueAt: Date.UTC(2026, 10, 27, 15),
+    before: Date.UTC(2026, 10, 25, 15),
+  },
+  {
+    input: 'завтра в 18:00 UTC+3 забрать документы',
+    task: 'забрать документы',
+    timezone: '+03:00',
+    label: '26 ноября 2026 г. в 18:00 (+03:00)',
+    dueAt: Date.UTC(2026, 10, 26, 15),
+    after: Date.UTC(2026, 10, 26, 18),
+  },
+  {
+    input: 'через 20 минут отправить ссылку https://example.org/docs',
+    task: 'отправить ссылку https://example.org/docs',
+    timezone: 'UTC',
+    label: '25 ноября 2026 г. в 12:20 (UTC)',
+    dueAt: Date.UTC(2026, 10, 25, 12, 20),
+  },
+])('личное напоминание «$input» приходит в срок с полным поручением', async (scenario) => {
+  const f = await remindersFixture(Date.UTC(2026, 10, 25, 12));
+  const deliveries = () =>
+    f.sends
+      .filter(({ text }) => text.startsWith('Напоминание.\n'))
+      .map(({ peer_id, text }) => [peer_id, text]);
+  async function showList(at: number) {
+    f.at(at);
+    const since = f.sends.length;
+    f.send('Мои напоминания');
+    await until(() =>
+      expect(f.sends.slice(since).some(({ text }) => text.includes(scenario.label))).toBe(true),
+    );
+  }
+  try {
+    f.send('Напомни мне ' + scenario.input);
+    await until(() => expect(f.sends.at(-1)?.text).toContain('Напомню вам'));
+    expect(f.sends.at(-1)).toMatchObject({
+      peer_id: 41,
+      text: 'Напомню вам в этой личке ' + scenario.label + '.\n' + scenario.task,
+    });
+    expect(f.pending()).toEqual([
+      expect.objectContaining({
+        state: 'pending',
+        dueAt: scenario.dueAt,
+        text: scenario.task,
+        timezone: scenario.timezone,
+      }),
+    ]);
+    await showList(scenario.before ?? scenario.dueAt - 1);
+    expect(deliveries()).toEqual([]);
+    f.at(scenario.dueAt);
+    await until(() => expect(f.pending()[0]?.state).toBe('delivered'));
+    await showList(scenario.after ?? scenario.dueAt + minute);
+    expect(deliveries()).toEqual([[41, 'Напоминание.\n' + scenario.task]]);
+    expect(f.complete).not.toHaveBeenCalled();
+  } finally {
+    await f.close();
+  }
+});
+
+test('уточнение времени сохраняет известную дату и поручение со ссылкой', async () => {
+  const f = await remindersFixture(Date.UTC(2026, 10, 25, 12));
+  const task = 'отправить ссылку https://example.org/docs';
+  try {
+    f.send('Напомни мне 27 ноября по Москве ' + task);
+    await until(() => expect(f.pending()[0]).toMatchObject({ state: 'draft', text: task }));
+    const id = f.pending()[0]!.id;
+    await until(() =>
+      expect(f.sends.at(-1)?.text).toContain('уточни напоминание #' + id + ' 18:00»'),
+    );
+    f.send('Уточни напоминание #' + id + ' 18:00');
+    await until(() => expect(f.sends.at(-1)?.text).toContain('Напомню вам'));
+    expect(f.pending()[0]).toMatchObject({
+      state: 'pending',
+      dueAt: Date.UTC(2026, 10, 27, 15),
+      text: task,
+    });
+  } finally {
+    await f.close();
+  }
+});
+
+test.each([
   ['завтра забрать посылку в 18:00 по Москве', Date.UTC(2026, 10, 26, 15)],
   ['завтра в 18:00 по Москве забрать посылку', Date.UTC(2026, 10, 26, 15)],
   ['27.11.2026 забрать посылку в 18:00 по Москве', Date.UTC(2026, 10, 27, 15)],

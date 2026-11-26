@@ -60,9 +60,8 @@ function fields(input: string, originAt: number, timezone?: string, edited?: Rem
   const suppliedZone = parsed.explicitTimezone ?? (reminderTimezone(timeInput) || undefined);
   const explicitTimezone = suppliedZone ?? draft?.explicitTimezone;
   const date = parsed.date ?? draft?.date;
-  const found = parsed.schedule;
-  const schedule =
-    found?.kind === 'local' && date ? { ...found, date } : (found ?? draft?.schedule);
+  const found = parsed.schedule ?? draft?.schedule;
+  const schedule = found?.kind === 'local' && date ? { ...found, date } : found;
   const chosenAt = forContent
     ? draft.chosenAt
     : choice && draft?.choices
@@ -132,6 +131,8 @@ function prompt(item: Reminder, proposedZone: string | undefined) {
           lead +
           `выберите один срок и укажите его полностью. Например, ${command} ${item.draft.timeExample}».`
         );
+      if (item.draft.date && !item.draft.schedule)
+        return lead + `укажите точное время по выбранной дате. Например, ${command} 18:00».`;
       return lead + `укажите точное время в будущем. Например, ${command} завтра в 18:00».`;
     default:
       return missing;
