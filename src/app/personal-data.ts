@@ -1,3 +1,4 @@
+import type { UserId } from '../contracts/index';
 import { StorageError } from '../storage/errors';
 import type { createAuthorizationService } from '../core/authorization/service';
 import type { Storage } from '../storage/index';
@@ -20,7 +21,7 @@ export function groupPersonalCommand(message: import('../contracts/index').Incom
 }
 
 export function createPersonalCommands(options: {
-  ownerId: import('../contracts/index').UserId;
+  ownerId: UserId;
   storage: Storage;
   authorization: Awaited<ReturnType<typeof createAuthorizationService>>;
   privacy: ReturnType<typeof personalDataStore>;
@@ -34,6 +35,32 @@ export function createPersonalCommands(options: {
   track: import('./control-publications').TrackPublication;
 }) {
   const { privacy, channel, lifecycle, onboarding, signal } = options;
+
+  function confirmOwnDeletion(sender: UserId, code: string) {
+    const target = privacy.deletionScope(sender, code);
+    if (!target) return;
+    try {
+      const scope = lifecycle.admissionScope(target.chatId);
+      if (scope.generation !== target.generation) return;
+      const accepted = privacy.confirmDeletion(scope, sender, code, Date.now());
+      const text = accepted
+        ? 'Удаление принято. Данные скрыты. Статус: /статус-удаления ' + scope.chatId
+        : [
+            'Код истёк или уже использован. Чтобы проверить статус, отправьте',
+            '/статус-удаления ' + scope.chatId,
+            'Чтобы получить новый код, отправьте',
+            '/удалить-мои-данные ' + scope.chatId,
+          ].join('\n');
+      return { scope, text };
+    } catch (error) {
+      if (
+        !(error instanceof StorageError) ||
+        (error.code !== 'stale_scope' && error.code !== 'uncertain_connection')
+      )
+        throw error;
+    }
+  }
+
   return function personalCommand(
     message: Pick<VkIncoming, 'authorId' | 'peerId' | 'text' | 'cmid' | 'reply' | 'hasForwarded'>,
     current: () => boolean,
@@ -164,18 +191,13 @@ export function createPersonalCommands(options: {
         return;
       }
       if (confirmation && current() && !signal.aborted) {
-        const code = confirmation[1]!;
-        const target = privacy.deletionScope(sender, code);
-        if (!target) return;
-        const scope = lifecycle.admissionScope(target.chatId);
-        const isCurrent = () => current() && !signal.aborted && lifecycle.isAdmissionCurrent(scope);
-        if (scope.generation !== target.generation || !isCurrent()) return;
-        const accepted = privacy.confirmDeletion(scope, sender, code, Date.now());
+        const result = confirmOwnDeletion(sender, confirmation[1]!);
+        const isCurrent = () =>
+          current() && !signal.aborted && (!result || lifecycle.isAdmissionCurrent(result.scope));
         await channel.replyPrivateControl(
           sender,
-          accepted
-            ? 'Удаление принято. Данные скрыты. Статус: /статус-удаления ' + scope.chatId
-            : 'Подтверждение истекло или уже использовано.',
+          result?.text ??
+            'По этому коду подтвердить удаление не удалось. В нужной беседе отправьте /статус-удаления, чтобы проверить статус, или /удалить-мои-данные, чтобы получить новый код. Ответ придёт в вашу личку.',
           { signal, isCurrent, allow: async () => isCurrent() },
         );
         return;

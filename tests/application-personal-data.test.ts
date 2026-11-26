@@ -9,6 +9,105 @@ import {
   answer,
 } from './helpers/application-response-fixture';
 
+async function askInPrivate(
+  app: Awaited<ReturnType<typeof fixture>>,
+  author: number,
+  command: string,
+) {
+  const before = app.sends.length;
+  app.submit(command, author, undefined, author);
+  const replies = () => app.sends.slice(before).filter((sent) => sent.peer_id === author);
+  await until(() => expect(replies()).toHaveLength(1));
+  return replies()[0]!.text;
+}
+
+function confirmationCommand(text: string) {
+  const command = text.match(/\/подтверждаю-удаление [a-f0-9]{24}/u);
+  expect(command).not.toBeNull();
+  return command![0];
+}
+
+test('после истечения и повтора кода автор может продолжить удаление в выбранной беседе', async () => {
+  const app = await fixture({ active: true });
+  try {
+    const neighbor = await app.connectGroup(peer + 1);
+    const source = 'Материалы к встрече';
+    const visible = async (scope: typeof app.scope) =>
+      (await app.storage.messages.list(scope, { limit: 100 })).some((row) => row.text === source);
+    const confirmations = () =>
+      app.db
+        .prepare(
+          'SELECT confirmed_at FROM personal_deletions WHERE chat_id=? AND user_id=? ORDER BY rowid',
+        )
+        .pluck()
+        .all(chat, 'vk:41');
+    await app.journaled(app.submit(source));
+    app.submit(source, 41, undefined, peer + 1);
+    await until(async () => expect(await visible(neighbor)).toBe(true));
+
+    const first = confirmationCommand(await askInPrivate(app, 41, '/удалить-мои-данные ' + chat));
+    app.at(15 * 60_000);
+    const expired = await askInPrivate(app, 41, first);
+    const commands = expired.split('\n').filter((line) => line.startsWith('/'));
+    expect(commands).toEqual(['/статус-удаления ' + chat, '/удалить-мои-данные ' + chat]);
+    expect(await askInPrivate(app, 41, commands[0]!)).toBe('Подтверждённого удаления пока нет.');
+    expect(confirmations()).toEqual([null]);
+
+    const renewed = confirmationCommand(await askInPrivate(app, 41, commands[1]!));
+    expect(renewed).not.toBe(first);
+    expect(confirmations()).toEqual([null, null]);
+    expect(await visible(app.scope)).toBe(true);
+    expect(await visible(neighbor)).toBe(true);
+    expect(await askInPrivate(app, 41, renewed)).toContain('Удаление принято.');
+
+    const used = await askInPrivate(app, 41, renewed);
+    const usedCommands = used.split('\n').filter((line) => line.startsWith('/'));
+    expect(usedCommands).toEqual(commands);
+    expect(await askInPrivate(app, 41, usedCommands[0]!)).toBe(
+      personalDataStore(app.storage).status(app.scope, 'vk:41', Date.now()),
+    );
+    expect(confirmations()).toEqual([app.start + 15 * 60_000]);
+    expect(await visible(app.scope)).toBe(false);
+    expect(await visible(neighbor)).toBe(true);
+  } finally {
+    await app.close();
+  }
+});
+
+test('неизвестный код, чужой код и недоступная беседа дают одинаковую личную подсказку', async () => {
+  const app = await fixture();
+  try {
+    await app.journaled(app.submit('Запись первого автора', 41));
+    await app.journaled(app.submit('Запись второго автора', 42));
+    const request = '/удалить-мои-данные ' + chat;
+    const own = confirmationCommand(await askInPrivate(app, 41, request));
+    const foreign = confirmationCommand(await askInPrivate(app, 42, request));
+    const confirmations = () =>
+      app.db.prepare('SELECT confirmed_at FROM personal_deletions').pluck().all();
+
+    const before = app.sends.length;
+    const unknown = await askInPrivate(app, 41, '/подтверждаю-удаление ' + '0'.repeat(24));
+    expect(unknown).toContain('/статус-удаления');
+    expect(unknown).toContain('/удалить-мои-данные');
+    expect(unknown).toContain('беседе');
+    expect(unknown).not.toMatch(/vk:\d+|[a-f0-9]{24}|Запись (первого|второго)|Удаление принято/u);
+    expect(await askInPrivate(app, 41, foreign)).toBe(unknown);
+    expect(confirmations()).toEqual([null, null]);
+    const visible = await app.storage.messages.list(app.scope, { limit: 100 });
+    expect(visible.map((row) => row.text)).toEqual(
+      expect.arrayContaining(['Запись первого автора', 'Запись второго автора']),
+    );
+
+    app.setGroupAllowed(peer, false);
+    await app.loseObservation();
+    expect(await askInPrivate(app, 41, own)).toBe(unknown);
+    expect(confirmations()).toEqual([null, null]);
+    expect(app.sends.slice(before).map((sent) => sent.peer_id)).toEqual([41, 41, 41]);
+  } finally {
+    await app.close();
+  }
+});
+
 test('в группе файл получает только автор, подтверждение из чужой лички не удаляет историю', async () => {
   const upload = vi.fn<(peer: number, data: Buffer) => Promise<string>>();
   let copied = '';
