@@ -102,6 +102,15 @@ export function createChatStore(connection: Connection): SyncStore<ChatStore> {
               `UPDATE chats SET ${keys.map((key) => `${mapping[key]} = ?`).join(', ')} WHERE chat_id = ?`,
             ).run(...values, chatId);
             if (
+              (patch.timezone !== undefined && patch.timezone !== before.timezone) ||
+              (patch.responseMode !== undefined && patch.responseMode !== before.responseMode)
+            )
+              db.prepare(
+                `INSERT INTO chat_controls(chat_id,generation,initiative_control_revision)
+                SELECT chat_id,generation,1 FROM chat_connections WHERE chat_id=?
+                ON CONFLICT(chat_id,generation) DO UPDATE SET initiative_control_revision=initiative_control_revision+1`,
+              ).run(chatId);
+            if (
               (patch.enabled === false && before.enabled) ||
               (before.responseMode === 'active' &&
                 patch.responseMode !== undefined &&

@@ -26,6 +26,7 @@ export interface RoutingInput {
 }
 export interface GroupReplyAssessment {
   readonly kind: 'name' | 'initiative';
+  readonly matchedName?: true;
   readonly glossaryRevision?: number;
 }
 export type RoutingDecision =

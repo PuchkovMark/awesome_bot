@@ -447,7 +447,8 @@ export function createChatQueue(options: ChatQueueOptions): ChatQueue {
         const expired = backend.expire(token);
         counters.expired = add(counters.expired, expired.length);
         expired.forEach(wait);
-        if (options.autonomousReplies) backend.promoteQuestions(token, config, platform);
+        if (options.autonomousReplies && !options.groupReplyGate)
+          backend.promoteQuestions(token, config, platform);
         while (tasks.size < config.maxConcurrentChats) {
           const work = backend.take(
             token,

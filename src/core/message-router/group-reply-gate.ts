@@ -1,4 +1,5 @@
 import { setTimeout as delay } from 'node:timers/promises';
+import { randomUUID } from 'node:crypto';
 import type { ChatId, ConnectionScope } from '../../contracts/index';
 import type { LlmClient, LlmRequest, LlmResult } from '../../llm/types';
 import { StorageError } from '../../storage/errors';
@@ -6,6 +7,7 @@ import {
   groupReplyGateStore,
   type GateOutcome,
   type GroupReplyContext,
+  type GroupReplyPolicy,
   type GroupReplySource,
   type StoredGroupReplyAssessment,
 } from '../../storage/group-reply-gate-store';
@@ -106,6 +108,8 @@ export function createGroupReplyGate(options: {
   readonly storage: Storage;
   readonly platform: string;
   readonly client: LlmClient;
+  readonly current: () => boolean;
+  readonly policy: GroupReplyPolicy;
   readonly admission: LlmAdmission;
   readonly scope: (chatId: ChatId) => ConnectionScope;
   readonly sessionId: (scope: ConnectionScope) => string;
@@ -121,41 +125,48 @@ export function createGroupReplyGate(options: {
     const now = Date.now();
     const limit = Math.max(1, Math.min(attemptTimeoutMs, row.expiresAt - now));
     const callSignal = AbortSignal.any([signal, AbortSignal.timeout(limit)]);
-    const key = `group-reply:${row.messageId}`;
+    const key = `group-reply:${row.messageId}:${randomUUID()}`;
     const startedAt = performance.now();
     const scheduled = await scheduleLlmCall(
       options.admission,
       {
         signal: callSignal,
-        current: () => !signal.aborted,
+        current: options.current,
       },
       (send) => {
         const at = Date.now();
-        const context = store.context(scope, row.messageId, at);
-        if (!context) {
+        function reserve(selected: StoredGroupReplyAssessment) {
+          const context = store.context(scope, row.messageId, at);
+          if (!context) return;
+          return groupReplyRequests(selected, context, options.sessionId(scope), callSignal).find(
+            ({ input, sources }) =>
+              store.reserve(
+                scope,
+                row.messageId,
+                key,
+                sources,
+                Math.max(row.messageId, ...sources),
+                at,
+                { input, output: maxOutput },
+                options.policy,
+              ),
+          );
+        }
+        let candidate = reserve(row);
+        if (!candidate && row.kind === 'initiative' && row.matchedName === 1) {
+          const renamed = store.useName(scope, row.messageId, at);
+          if (renamed) candidate = reserve(renamed);
+        }
+        if (!candidate) {
           store.cancel(scope, row.messageId);
           return;
         }
-        const candidate = groupReplyRequests(
-          row,
-          context,
-          options.sessionId(scope),
-          callSignal,
-        ).find(({ input, sources }) =>
-          store.reserve(scope, row.messageId, key, sources, context.frontier, at, {
-            input,
-            output: maxOutput,
-          }),
-        );
-        if (!candidate) {
-          store.cancel(scope, row.messageId, 'failed');
-          return;
-        }
-        const cancel = () => store.cancel(scope, row.messageId);
+        const cancel = () => store.cancel(scope, row.messageId, key);
+        const request = candidate.request;
         const pending = send(async () => {
           let sent: boolean;
           try {
-            sent = store.sent(scope, row.messageId, key, Date.now());
+            sent = store.sent(scope, row.messageId, key, Date.now(), options.policy);
           } catch (error) {
             if (!connectionChanged(error)) throw error;
             sent = false;
@@ -166,7 +177,7 @@ export function createGroupReplyGate(options: {
           }
           let result: LlmResult;
           try {
-            result = await options.client.complete(candidate.request);
+            result = await options.client.complete(request);
           } catch {
             result = { kind: 'error', code: 'network', message: '' };
           }
@@ -200,11 +211,14 @@ export function createGroupReplyGate(options: {
 
   return {
     wake,
+    allowInitiative: (scope: ConnectionScope, id: number, now: number) =>
+      store.allowInitiative(scope, id, now, options.policy),
     async run() {
+      if (!options.current()) return;
       store.recover(options.platform);
       const unsubscribe = options.admission.onRelease(wake);
       try {
-        while (!signal.aborted) {
+        while (!signal.aborted && options.current()) {
           const tried: number[] = [];
           while (!signal.aborted) {
             const row = store.next(options.platform, Date.now(), tried);

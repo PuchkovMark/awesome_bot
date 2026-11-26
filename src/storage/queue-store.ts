@@ -3,6 +3,8 @@ import { acceptQuestionnaireInput, answerableAttempt } from './questionnaire-inp
 import { acceptInvitationInput } from './questionnaire-invitation-input';
 import {
   groupReplyAssessmentCurrent,
+  groupInitiativeDenial,
+  groupReplyInitiativeCurrent,
   readGroupReplyAssessment,
   rememberGroupReplyAssessment,
 } from './group-reply-gate-store';
@@ -179,6 +181,12 @@ export function createQueueBackend(
   function initiativeRoute(cause: InitiativeCause): RouteMetadata {
     return { kind: 'initiative', mode: 'active', isGroupChat: true, cause };
   }
+  function currentGroupReply(db: Database, work: QueueWork, now: number) {
+    const row = readGroupReplyAssessment(db, work.scope, work.messageId);
+    return row?.state === 'queued' && groupReplyAssessmentCurrent(db, work.scope, row, now)
+      ? row
+      : null;
+  }
   function currentInitiative(
     db: Database,
     work: QueueWork,
@@ -186,6 +194,15 @@ export function createQueueBackend(
   ): InitiativeDenial | undefined {
     if (work.route?.kind !== 'initiative') return undefined;
     if (!currentWork(db, work)) return 'initiative_mode';
+    if (work.groupReplyAssessment === 'initiative') {
+      if (work.expiresAt !== undefined && work.expiresAt <= now) return 'initiative_expired';
+      const row = currentGroupReply(db, work, now);
+      if (!row) return 'initiative_source';
+      return (
+        groupInitiativeDenial(db, work.scope, work.messageId, row.frontier, now) ??
+        (groupReplyInitiativeCurrent(db, work.scope, row) ? undefined : 'initiative_mode')
+      );
+    }
     const revision = db
       .prepare('SELECT initiative_revision AS revision FROM queue_jobs WHERE id=?')
       .get(work.id) as { revision: number | null } | undefined;
@@ -229,6 +246,7 @@ export function createQueueBackend(
   function running(db: Database, token: string, work: QueueWork): boolean {
     return (
       currentWork(db, work) &&
+      (work.groupReplyAssessment !== 'name' || currentGroupReply(db, work, Date.now()) !== null) &&
       historySourcesVisible(db, work.scope.chatId, sources.get(work) ?? [work.messageId]) &&
       !!db
         .prepare(
@@ -853,7 +871,12 @@ export function createQueueBackend(
         const row = readGroupReplyAssessment(db, scope, messageId);
         if (row?.state !== 'approved') return 'closed';
         const current = groupReplyAssessmentCurrent(db, scope, row, now);
-        if (!current) {
+        if (
+          !current ||
+          (row.kind === 'initiative' &&
+            (!groupReplyInitiativeCurrent(db, scope, row) ||
+              groupInitiativeDenial(db, scope, messageId, row.frontier, now)))
+        ) {
           db.prepare(
             `UPDATE group_reply_assessments SET state='finished',outcome=?
             WHERE message_id=? AND state='approved'`,
@@ -945,6 +968,7 @@ export function createQueueBackend(
           controlRevision: row.controlRevision,
           expiresAt: row.expiresAt,
           ...(row.evidenceId === null ? {} : { initiativeEvidenceId: row.evidenceId }),
+          ...(row.assessment === null ? {} : { groupReplyAssessment: row.assessment }),
           ...(row.disclosureVersion === null ? {} : { disclosureVersion: row.disclosureVersion }),
         });
         runningRevisions.set(work, lifecycle.assertScope(db, scope).revision);
@@ -1246,6 +1270,8 @@ export function createQueueBackend(
       return transaction(token, (db) => {
         return (
           currentWork(db, work) &&
+          (work.groupReplyAssessment !== 'name' ||
+            currentGroupReply(db, work, Date.now()) !== null) &&
           !currentInitiative(db, work, Date.now()) &&
           historySourcesVisible(db, work.scope.chatId, sources.get(work) ?? [work.messageId]) &&
           !!db

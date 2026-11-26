@@ -1,7 +1,14 @@
 import { expect, test } from 'vitest';
 import type { LlmResult } from '../src/llm/types';
 import { noticeTemplate } from '../src/storage/notice-types';
-import { answer, fixture, mention, refusal, until } from './helpers/application-response-fixture';
+import {
+  answer,
+  chat,
+  fixture,
+  mention,
+  refusal,
+  until,
+} from './helpers/application-response-fixture';
 
 test('reply боту без упоминания молчит в 35.999 и снова допускается ровно в 36.000', async () => {
   const f = await fixture({ limit: 20 });
@@ -105,11 +112,12 @@ test('полный предел подавляет оба коротких от�
 
     f.at(10000);
     f.complete.mockImplementationOnce(() => model.promise);
-    f.submit('Пенёк, ответь', 51);
+    const botReply = f.sends[0]!;
+    f.submit('Ответь', 51, botReply);
     await until(() => expect(f.complete).toHaveBeenCalledTimes(7));
-    f.submit('Пенёк, ответь', 52);
-    f.submit('Пенёк, ответь', 53);
-    await f.published(f.submit('Пенёк, ответь', 54));
+    f.submit('Ответь', 52, botReply);
+    f.submit('Ответь', 53, botReply);
+    await f.published(f.submit('Ответь', 54, botReply));
     expect(f.sends.map((row) => row.text)).toEqual([
       ...Array<string>(6).fill(answer.text),
       noticeTemplate('generic'),
@@ -131,6 +139,17 @@ test('всплеск подавляет ранее поставленное за
     await until(() => expect(f.complete).toHaveBeenCalledTimes(1));
     const queued = f.submit('Пенёк, ответь', 42);
     await f.journaled(queued);
+    await until(() =>
+      expect(
+        f.db
+          .prepare(
+            `SELECT a.state FROM group_reply_assessments a
+      JOIN messages m ON m.id=a.message_id WHERE m.platform_message_id=? AND m.chat_id=?`,
+          )
+          .pluck()
+          .get(String(queued), chat),
+      ).toBe('queued'),
+    );
     await f.published(f.submit(mention, 43));
     model.resolve(answer);
     await f.published(admitted);

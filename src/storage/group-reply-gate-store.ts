@@ -1,13 +1,20 @@
 import type { Database } from 'better-sqlite3';
 import type { ChatId, ConnectionScope, UserId } from '../contracts/index';
 import type { GroupReplyAssessment } from '../core/message-router/types';
+import type { ChatLimits } from '../core/chat-limits/config';
+import type { ResponseRateConfig } from '../core/chat-limits/response-rate-config';
 import type { LlmUsage } from '../llm/types';
+import { initiativeDenial } from './autonomous-questions';
+import { autonomousQuotaState } from './autonomous-quota-store';
 import { readChatControl } from './chat-control-store';
-import { readDisclosureGate } from './chat-disclosure-store';
+import { groupInitiativeDisclosed, readDisclosureGate } from './chat-disclosure-store';
 import { recordFailedModelAttempt, recordSentModelAttempt } from './chat-request-metrics-store';
 import type { Connection } from './connection';
 import { historyBounds, historySourcesVisible } from './history-retention-store';
 import type { LifecycleBackend } from './lifecycle-store';
+import { activeMentionFlood } from './mention-flood-store';
+import type { InitiativeDenial } from './queue-types';
+import { responseSlotAvailable } from './response-rate-store';
 import {
   canReserveTokens,
   deleteUnsentTokenReservation,
@@ -24,7 +31,9 @@ const unfinished = "state IN ('waiting','reserved','sent','approved')";
 const key = 'message_id=@messageId AND (chat_id,generation)=(@chatId,@generation)';
 const columns = `message_id AS messageId,chat_id AS chatId,generation,kind,mode,
   received_at AS receivedAt,expires_at AS expiresAt,revision,control_revision AS controlRevision,
+  initiative_control_revision AS initiativeControlRevision,
   disclosure_version AS disclosureVersion,glossary_revision AS glossaryRevision,
+  matched_name AS matchedName,
   reply_author_id AS replyAuthorId,other_address AS otherAddress,forwarded,state,resume_allowed AS resumeAllowed,
   attempt_key AS attemptKey,source_ids AS sourceIds,frontier,outcome,latency_ms AS latencyMs`;
 
@@ -48,6 +57,11 @@ export interface GroupReplyContext {
   readonly glossary?: { readonly text: string | null; readonly revision: number };
 }
 
+export interface GroupReplyPolicy {
+  readonly limits: ChatLimits;
+  readonly responseRate: ResponseRateConfig;
+}
+
 export interface GroupReplyCandidate extends GroupReplyAssessment {
   readonly mode: 'normal' | 'active';
   readonly replyAuthorId?: UserId;
@@ -65,8 +79,10 @@ export interface StoredGroupReplyAssessment {
   readonly expiresAt: number;
   readonly revision: number;
   readonly controlRevision: number;
+  readonly initiativeControlRevision: number;
   readonly disclosureVersion: number;
   readonly glossaryRevision: number | null;
+  readonly matchedName: number;
   readonly replyAuthorId: UserId | null;
   readonly otherAddress: number;
   readonly forwarded: number;
@@ -77,6 +93,17 @@ export interface StoredGroupReplyAssessment {
   readonly frontier: number | null;
   readonly outcome: GateOutcome | null;
   readonly latencyMs: number | null;
+}
+
+function initiativeControlRevision(db: Database, scope: ConnectionScope) {
+  return (
+    (db
+      .prepare(
+        `SELECT initiative_control_revision FROM chat_controls WHERE chat_id=? AND generation=?`,
+      )
+      .pluck()
+      .get(scope.chatId, scope.generation) as number | undefined) ?? 0
+  );
 }
 
 export function rememberGroupReplyAssessment(
@@ -102,9 +129,9 @@ export function rememberGroupReplyAssessment(
     db
       .prepare(
         `INSERT INTO group_reply_assessments(
-    message_id,chat_id,generation,kind,mode,received_at,expires_at,revision,control_revision,
-    disclosure_version,glossary_revision,reply_author_id,other_address,forwarded,state
-  ) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,'waiting'
+    message_id,chat_id,generation,kind,mode,received_at,expires_at,revision,control_revision,initiative_control_revision,
+    disclosure_version,glossary_revision,matched_name,reply_author_id,other_address,forwarded,state
+  ) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'waiting'
   WHERE EXISTS(SELECT 1 FROM messages WHERE id=? AND chat_id=?
     AND role='user' AND purpose='conversation' AND sender_bot=0)
   ON CONFLICT DO NOTHING`,
@@ -119,8 +146,10 @@ export function rememberGroupReplyAssessment(
         now + lifetimeMs,
         revision,
         readChatControl(db, scope.chatId).responseRevision,
+        initiativeControlRevision(db, scope),
         disclosureVersion,
         candidate.glossaryRevision ?? null,
+        Number(candidate.matchedName === true),
         candidate.replyAuthorId ?? null,
         Number(candidate.otherAddress),
         Number(candidate.forwarded),
@@ -149,16 +178,21 @@ export function groupReplyAssessmentCurrent(
     WHERE c.chat_id=? AND c.generation=? AND c.state='active'`,
     )
     .get(scope.chatId, scope.generation) as { revision: number; floor: number } | undefined;
-  const control = readChatControl(db, scope.chatId);
   if (
     !chat ||
     row.chatId !== scope.chatId ||
     row.generation !== scope.generation ||
-    (row.revision !== chat.revision && row.resumeAllowed !== 1) ||
+    (row.revision !== chat.revision && row.resumeAllowed !== 1)
+  )
+    return null;
+  const control = readChatControl(db, scope.chatId);
+  const disclosure = readDisclosureGate(db, scope);
+  if (
     !control.enabled ||
     control.mode !== row.mode ||
     control.responseRevision !== row.controlRevision ||
-    readDisclosureGate(db, scope).version !== row.disclosureVersion ||
+    !disclosure.journal ||
+    disclosure.version !== row.disclosureVersion ||
     row.expiresAt <= now
   )
     return null;
@@ -178,6 +212,63 @@ export function groupReplyAssessmentCurrent(
     historySourcesVisible(db, scope.chatId, sources, now)
     ? chat
     : null;
+}
+
+export function groupReplyInitiativeCurrent(
+  db: Database,
+  scope: ConnectionScope,
+  row: StoredGroupReplyAssessment,
+) {
+  return row.initiativeControlRevision === initiativeControlRevision(db, scope);
+}
+
+export function groupInitiativeDenial(
+  db: Database,
+  scope: ConnectionScope,
+  id: number,
+  frontier: number | null,
+  now: number,
+): InitiativeDenial | undefined {
+  if (!groupInitiativeDisclosed(db, scope)) return 'initiative_source';
+  const denial = initiativeDenial(db, scope.chatId, id, undefined, false, now);
+  if (denial) return denial;
+  if (activeMentionFlood(db, scope, now) !== null) return 'initiative_flood';
+  const bounds = historyBounds(db, scope.chatId, now);
+  if (
+    db
+      .prepare(
+        `SELECT 1 FROM personal_visible_messages
+      WHERE chat_id=? AND id>? AND timestamp>? AND purpose='conversation'
+        AND role='user' AND sender_bot=0
+        AND (id>? OR reply_to_message_id=(SELECT platform_message_id FROM messages WHERE id=? AND chat_id=?))
+      LIMIT 1`,
+      )
+      .get(
+        scope.chatId,
+        Math.max(id, bounds.clearedThrough),
+        bounds.expiredThrough,
+        frontier ?? Number.MAX_SAFE_INTEGER,
+        id,
+        scope.chatId,
+      )
+  )
+    return 'initiative_answered';
+  return undefined;
+}
+
+function groupInitiativeAvailable(
+  db: Database,
+  scope: ConnectionScope,
+  id: number,
+  now: number,
+  policy: GroupReplyPolicy,
+  frontier: number | null = null,
+) {
+  return (
+    !groupInitiativeDenial(db, scope, id, frontier, now) &&
+    autonomousQuotaState(db, scope, policy.limits, now, true).allowed &&
+    responseSlotAvailable(db, scope, policy.responseRate.responsesPerMinute, now)
+  );
 }
 
 export function reconcileGroupReplyAssessments(staged: Database, newer: Database) {
@@ -231,6 +322,42 @@ export function reconcileGroupReplyAssessments(staged: Database, newer: Database
 
 export function createGroupReplyGateStore(connection: Connection, lifecycle: LifecycleBackend) {
   return {
+    allowInitiative(
+      scope: ConnectionScope,
+      messageId: number,
+      now: number,
+      policy: GroupReplyPolicy,
+    ) {
+      return lifecycle.transaction(
+        scope,
+        (db) =>
+          groupInitiativeAvailable(db, scope, messageId, now, policy) &&
+          canReserveTokens(
+            db,
+            scope,
+            true,
+            { key: `eligibility:${messageId}`, purpose: 'gate_initiative', input: 1, output: 0 },
+            now,
+          ),
+      );
+    },
+    useName(scope: ConnectionScope, messageId: number, now: number) {
+      return lifecycle.transaction(scope, (db) => {
+        const row = readGroupReplyAssessment(db, scope, messageId);
+        if (
+          row?.kind !== 'initiative' ||
+          row.state !== 'waiting' ||
+          row.matchedName !== 1 ||
+          !groupReplyAssessmentCurrent(db, scope, row, now)
+        )
+          return null;
+        db.prepare(`UPDATE group_reply_assessments SET kind='name' WHERE ${key}`).run({
+          ...scope,
+          messageId,
+        });
+        return { ...row, kind: 'name' as const };
+      });
+    },
     recover(platform: string) {
       const prefix = platform + ':';
       connection.run((db) =>
@@ -367,6 +494,7 @@ export function createGroupReplyGateStore(connection: Connection, lifecycle: Lif
       frontier: number,
       now: number,
       tokens: { readonly input: number; readonly output: number },
+      policy?: GroupReplyPolicy,
     ) {
       return lifecycle.transaction(scope, (db) => {
         const row = readGroupReplyAssessment(db, scope, messageId);
@@ -380,6 +508,11 @@ export function createGroupReplyGateStore(connection: Connection, lifecycle: Lif
         };
         if (
           !current ||
+          (row.kind === 'initiative' &&
+            (!policy ||
+              !groupReplyInitiativeCurrent(db, scope, row) ||
+              !groupInitiativeAvailable(db, scope, messageId, now, policy, frontier))) ||
+          (row.kind === 'name' && activeMentionFlood(db, scope, now) !== null) ||
           ids.some((id) => id <= current.floor) ||
           !historySourcesVisible(db, scope.chatId, ids, now) ||
           !canReserveTokens(db, scope, true, attempt, now)
@@ -403,10 +536,24 @@ export function createGroupReplyGateStore(connection: Connection, lifecycle: Lif
         );
       });
     },
-    sent(scope: ConnectionScope, messageId: number, attemptKey: string, now: number) {
+    sent(
+      scope: ConnectionScope,
+      messageId: number,
+      attemptKey: string,
+      now: number,
+      policy?: GroupReplyPolicy,
+    ) {
       return lifecycle.transaction(scope, (db) => {
         const row = readGroupReplyAssessment(db, scope, messageId);
-        if (row?.state !== 'reserved' || !groupReplyAssessmentCurrent(db, scope, row, now))
+        if (
+          row?.state !== 'reserved' ||
+          !groupReplyAssessmentCurrent(db, scope, row, now) ||
+          (row.kind === 'initiative' &&
+            (!policy ||
+              !groupReplyInitiativeCurrent(db, scope, row) ||
+              !groupInitiativeAvailable(db, scope, messageId, now, policy, row.frontier))) ||
+          (row.kind === 'name' && activeMentionFlood(db, scope, now) !== null)
+        )
           return false;
         const sent =
           db
@@ -435,48 +582,52 @@ export function createGroupReplyGateStore(connection: Connection, lifecycle: Lif
       latencyMs: number,
       now: number,
     ) {
-      return lifecycle.transaction(scope, (db) => {
-        const row = readGroupReplyAssessment(db, scope, messageId);
-        if (row?.state !== 'sent' || row.attemptKey !== attemptKey) return false;
-        const selected =
-          outcome === 'answer' && !groupReplyAssessmentCurrent(db, scope, row, now)
-            ? 'cancelled'
-            : outcome;
-        return (
-          db
-            .prepare(
-              `UPDATE group_reply_assessments SET state=@state,outcome=@outcome,latency_ms=@latency
-          WHERE ${key} AND state='sent' AND attempt_key=@attemptKey`,
-            )
-            .run({
-              ...scope,
-              messageId,
-              attemptKey,
-              outcome: selected,
-              state: selected === 'answer' ? 'approved' : 'finished',
-              latency: latencyMs,
-            }).changes === 1
-        );
-      });
-    },
-    cancel(
-      scope: ConnectionScope,
-      messageId: number,
-      outcome: 'cancelled' | 'failed' = 'cancelled',
-    ) {
       return connection.run((db) =>
         db
           .transaction(() => {
             const row = readGroupReplyAssessment(db, scope, messageId);
-            if (row?.state === 'reserved' && row.attemptKey)
-              deleteUnsentTokenReservation(db, scope, row.attemptKey);
+            if (row?.state !== 'sent' || row.attemptKey !== attemptKey) return false;
+            const selected =
+              outcome === 'answer' &&
+              (!groupReplyAssessmentCurrent(db, scope, row, now) ||
+                (row.kind === 'initiative' &&
+                  (!groupReplyInitiativeCurrent(db, scope, row) ||
+                    groupInitiativeDenial(db, scope, messageId, row.frontier, now))))
+                ? 'cancelled'
+                : outcome;
             return (
               db
                 .prepare(
-                  `UPDATE group_reply_assessments SET state='finished',outcome=@outcome
-          WHERE ${key} AND state IN ('waiting','reserved','approved')`,
+                  `UPDATE group_reply_assessments SET state=@state,outcome=@outcome,latency_ms=@latency
+          WHERE ${key} AND state='sent' AND attempt_key=@attemptKey`,
                 )
-                .run({ ...scope, messageId, outcome }).changes === 1
+                .run({
+                  ...scope,
+                  messageId,
+                  attemptKey,
+                  outcome: selected,
+                  state: selected === 'answer' ? 'approved' : 'finished',
+                  latency: latencyMs,
+                }).changes === 1
+            );
+          })
+          .immediate(),
+      );
+    },
+    cancel(scope: ConnectionScope, messageId: number, attemptKey?: string) {
+      return connection.run((db) =>
+        db
+          .transaction(() => {
+            const row = readGroupReplyAssessment(db, scope, messageId);
+            if (attemptKey && (!row || (row.state === 'reserved' && row.attemptKey === attemptKey)))
+              deleteUnsentTokenReservation(db, scope, attemptKey);
+            return (
+              db
+                .prepare(
+                  `UPDATE group_reply_assessments SET state='finished',outcome='cancelled'
+          WHERE ${key} AND ((state='waiting' AND @attemptKey IS NULL) OR (state='reserved' AND attempt_key=@attemptKey))`,
+                )
+                .run({ ...scope, messageId, attemptKey: attemptKey ?? null }).changes === 1
             );
           })
           .immediate(),

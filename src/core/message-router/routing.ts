@@ -98,7 +98,11 @@ export function routeMessage(input: RoutingInput): RoutingDecision {
         ? {
             kind: 'assessment',
             reason: 'assessment',
-            assessment: { kind: initiative ? 'initiative' : 'name', ...name },
+            assessment: {
+              kind: initiative ? 'initiative' : 'name',
+              ...name,
+              ...(initiative && name ? { matchedName: true as const } : {}),
+            },
           }
         : silent('not_addressed');
     }

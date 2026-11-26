@@ -208,7 +208,7 @@ export function beginMeasuredPublication(db: Database, scope: MetricsScope, jobI
          THEN 'initiative_main' ELSE 'requests' END
      FROM queue_jobs j JOIN chat_metrics_collection c USING(chat_id,generation)
      WHERE j.id=? AND j.chat_id=? AND j.generation=? AND j.state='terminal' AND j.outcome='completed'
-       AND (j.route_kind IS NOT NULL OR j.initiative_cause IS NOT NULL)
+       AND (j.route_kind IS NOT NULL OR j.initiative_cause IS NOT NULL OR j.group_reply_assessment='initiative')
        AND j.received_at>=c.started_at AND j.received_at>=?
      ON CONFLICT DO NOTHING`,
   ).run(jobId, scope.chatId, scope.generation, metricsRetention(Date.now()).day);

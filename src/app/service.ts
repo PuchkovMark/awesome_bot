@@ -71,7 +71,7 @@ import { createBotAdminCommands } from './bot-admin-commands';
 import { createChatPassport } from './chat-passport';
 import { chatPassportStore } from '../storage/chat-passport-store';
 import { createHistoryHandlers } from './history-retention';
-import type { ChatLimits } from '../core/chat-limits/config';
+import { chatLimits, type ChatLimits } from '../core/chat-limits/config';
 import { createTokenBudgetMembership } from '../core/chat-limits/token-budget-membership';
 import { createUsageCommand, isUsageCommand } from './token-budget';
 import { createPausedChatCommands } from './paused-chats';
@@ -542,6 +542,7 @@ export async function runApplication(
         limits: dependencies.chatLimits ?? {},
         tokenBudget: true,
         autonomousReplies: true,
+        groupReplyGate: true,
         responseRate: config.responseRate,
         client: modelClient,
         disclosure: checkDisclosure,
@@ -569,6 +570,8 @@ export async function runApplication(
           dependencies.groupReplyClient ??
           createGroupReplyClient(config.llm, config.auxiliaryModel, auxiliaryClient),
         admission: llmAdmission,
+        current: () => !signal.aborted && (queue?.isRunning() ?? false),
+        policy: { limits: chatLimits(dependencies.chatLimits), responseRate: config.responseRate },
         platform: channel.platform,
         scope: lifecycle.admissionScope,
         sessionId: createLlmSessionId('group-reply:' + config.sessionSecret, historyRevision),
@@ -696,7 +699,7 @@ export async function runApplication(
         storage,
         queue,
         logger,
-        groupReplyGate: true,
+        groupReplyGate: groupReplyGate.allowInitiative,
         authorization,
         canAnswerQuestionnaire: questionnaireAttempts.canAnswer,
         invitationReply: questionnaireAttempts.invitationReply,

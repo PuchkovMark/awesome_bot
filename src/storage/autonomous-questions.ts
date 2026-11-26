@@ -172,7 +172,7 @@ export function cancelInitiatives(db: Database, chatId: ChatId) {
   db.prepare('DELETE FROM autonomous_questions WHERE chat_id=?').run(chatId);
   db.prepare(
     `UPDATE queue_jobs SET initiative_revision=NULL
-    WHERE chat_id=? AND initiative_cause IS NOT NULL AND initiative_revision IS NOT NULL
+    WHERE chat_id=? AND (initiative_cause IS NOT NULL OR group_reply_assessment='initiative') AND initiative_revision IS NOT NULL
     AND (state!='terminal' OR EXISTS (
       SELECT 1 FROM response_traces WHERE job_id=queue_jobs.id
       AND json_extract(payload,'$.publication.status') IN ('pending_checks','allowed')

@@ -4,17 +4,41 @@ import { chatRequestMetricsStore } from '../src/storage/chat-request-metrics-sto
 import { answer, chat, fixture, mention, until } from './helpers/application-response-fixture';
 
 const help = 'Кто-нибудь, помогите разобраться с расписанием';
-const free = 'Обсуждали, как работает Пенёк';
+const free = 'На столе три настолки, всё никак не выберем первую';
 const question = 'Во сколько встречаемся у фонтана?';
 const fact = 'Встречаемся у фонтана в 18:30.';
 
-test.each([
-  [help, 'help'],
-  [free, 'free_mention'],
-] as const)(
+async function activeFixture(options: Parameters<typeof fixture>[0] = {}) {
+  const f = await fixture({ ...options, active: true });
+  const defaultAssessment = f.assess.getMockImplementation()!;
+  f.assess.mockImplementation(async (request) => {
+    const data = JSON.parse(request.messages[0]!.text!);
+    if (data.режим === 'имя') return defaultAssessment(request);
+    return {
+      ...answer,
+      text: [help, free, question].includes(data.исходная.текст) ? 'ответить' : 'промолчать',
+      usage: { input: 0, output: 0 },
+    };
+  });
+  return f;
+}
+async function onlyJournal(f: Awaited<ReturnType<typeof fixture>>, text: string) {
+  const id = f.submit(text);
+  await f.journaled(id);
+  expect(
+    f.db
+      .prepare(
+        `SELECT 1 FROM group_reply_assessments a JOIN messages m ON m.id=a.message_id
+    WHERE m.chat_id=? AND m.platform_message_id=?`,
+      )
+      .get(chat, String(id)),
+  ).toBeUndefined();
+}
+
+test.each([help, free])(
   'приложение проводит инициативу %s через бюджет и публикует один ответ',
-  async (text, cause) => {
-    const f = await fixture({ active: true });
+  async (text) => {
+    const f = await activeFixture();
     try {
       const id = f.submit(text);
       const trace = await f.trace(id);
@@ -22,7 +46,7 @@ test.each([
         kind: 'initiative',
         isGroupChat: true,
         mode: 'active',
-        cause,
+        cause: 'group_reply_gate',
       });
       expect(trace.payload.publication.status).toBe('delivered');
       expect(f.sends).toHaveLength(1);
@@ -50,8 +74,7 @@ test.each([
   'flood',
   'other_bot',
 ] as const)('известный запрет %s останавливает инициативу до модели', async (which) => {
-  const f = await fixture({
-    active: true,
+  const f = await activeFixture({
     limit: which === 'rate' ? 1 : 6,
     threshold: which === 'flood' ? 1 : 5,
   });
@@ -83,9 +106,7 @@ test.each([
     }
     if (which === 'other_bot') await f.journaled(f.submit('Бот рядом', -1000));
     const before = f.sends.length;
-    const trace = await f.trace(f.submit(help));
-    expect(trace.payload.publication.status).toBe('suppressed');
-    if (which === 'rate') expect(trace.payload.publication.reason).toBe('initiative_rate');
+    await onlyJournal(f, help);
     expect(f.complete).not.toHaveBeenCalled();
     expect(f.sends).toHaveLength(before);
     expect(f.db.prepare('SELECT * FROM autonomous_quota_reservations').all()).toEqual([]);
@@ -104,19 +125,26 @@ test.each([
 test.each(['ответ', 'источник', 'режим'] as const)(
   'изменение %s во время генерации сохраняет расход и отменяет публикацию',
   async (which) => {
-    const f = await fixture({ active: true });
+    const f = await activeFixture();
     const result = Promise.withResolvers<typeof answer>();
     f.complete.mockImplementationOnce(() => result.promise);
     try {
       const source = f.submit(fact);
       await f.journaled(source);
+      await until(() =>
+        expect(
+          f.db
+            .prepare('SELECT state FROM group_reply_assessments ORDER BY message_id DESC LIMIT 1')
+            .pluck()
+            .get(),
+        ).toBe('finished'),
+      );
       f.at(1000);
       const id = f.submit(question);
       await f.journaled(id);
-      f.at(121000);
       await until(() => expect(f.complete).toHaveBeenCalledOnce());
       const request = f.complete.mock.calls[0]![0];
-      expect(JSON.parse(request.messages[0]!.text!).initiativeEvidence.text).toBe(fact);
+      expect(JSON.stringify(request.messages)).toContain(fact);
       if (which === 'ответ') await f.journaled(f.submit('В 18:30.'));
       if (which === 'источник')
         f.db
@@ -150,12 +178,11 @@ test.each(['ответ', 'источник', 'режим'] as const)(
 );
 
 test('два повода за одно исходящее место вызывают модель один раз', async () => {
-  const f = await fixture({ active: true, limit: 1 });
+  const f = await activeFixture({ limit: 1 });
   try {
     const first = f.submit(help);
-    const second = f.submit(free);
     expect((await f.trace(first)).payload.publication.status).toBe('delivered');
-    expect((await f.trace(second)).payload.publication.status).toBe('suppressed');
+    await onlyJournal(f, free);
     expect(f.complete).toHaveBeenCalledOnce();
     expect(f.sends).toHaveLength(1);
     expect(f.slots()).toBe(1);
@@ -167,7 +194,7 @@ test('два повода за одно исходящее место вызыв
 test.each(['упоминание', 'имя', 'reply'] as const)(
   'прямой маршрут %s работает через минуту после инициативы',
   async (kind) => {
-    const f = await fixture({ active: true });
+    const f = await activeFixture();
     try {
       expect((await f.trace(f.submit(help))).payload.publication.status).toBe('delivered');
       const bot = f.sends[0]!;
@@ -195,7 +222,7 @@ test.each(['упоминание', 'имя', 'reply'] as const)(
 test.each([true, false])(
   'реакция на любую подтверждённую часть сокращает интервал, подходящая часть=%s',
   async (react) => {
-    const f = await fixture({ active: true });
+    const f = await activeFixture();
     try {
       f.complete.mockResolvedValueOnce({ ...answer, text: '🙂'.repeat(1100) });
       expect((await f.trace(f.submit(help))).payload.publication.status).toBe('delivered');
@@ -212,10 +239,11 @@ test.each([true, false])(
         .get();
       expect(reaction).toEqual({ at: react ? f.start + 5 * 60_000 : null });
       f.at(20 * 60_000 - 1);
-      expect((await f.trace(f.submit(help))).payload.publication.reason).toBe('initiative_quota');
+      await onlyJournal(f, help);
       f.at(20 * 60_000);
-      const next = await f.trace(f.submit(free));
-      expect(next.payload.publication.status).toBe(react ? 'delivered' : 'suppressed');
+      if (react)
+        expect((await f.trace(f.submit(free))).payload.publication.status).toBe('delivered');
+      else await onlyJournal(f, free);
       expect(f.complete).toHaveBeenCalledTimes(react ? 4 : 3);
     } finally {
       await f.close();
@@ -226,7 +254,7 @@ test.each([true, false])(
 test.each(['delivered', 'unknown'] as const)(
   'без реакции от %s применяется точный порог 30 минут',
   async (outcome) => {
-    const f = await fixture({ active: true });
+    const f = await activeFixture();
     try {
       if (outcome === 'unknown')
         f.failSend((text) => (text === answer.text ? 'unknown' : undefined));
@@ -247,7 +275,7 @@ test.each(['delivered', 'unknown'] as const)(
       });
       f.failSend(undefined);
       f.at(30 * 60_000 - 1);
-      expect((await f.trace(f.submit(free))).payload.publication.reason).toBe('initiative_quota');
+      await onlyJournal(f, free);
       expect(f.complete).toHaveBeenCalledOnce();
       f.at(30 * 60_000);
       expect((await f.trace(f.submit(free))).payload.publication.status).toBe('delivered');
@@ -259,7 +287,7 @@ test.each(['delivered', 'unknown'] as const)(
 );
 
 test('частично доставленный ответ составляет одну инициативу и одно исходящее место', async () => {
-  const f = await fixture({ active: true });
+  const f = await activeFixture();
   try {
     const long = { ...answer, text: '🙂'.repeat(1100) };
     f.complete.mockResolvedValueOnce(long);

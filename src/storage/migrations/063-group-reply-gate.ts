@@ -11,8 +11,10 @@ CREATE TABLE group_reply_assessments (
   expires_at INTEGER NOT NULL CHECK(expires_at>received_at),
   revision INTEGER NOT NULL CHECK(revision>=0),
   control_revision INTEGER NOT NULL CHECK(control_revision>=0),
+  initiative_control_revision INTEGER NOT NULL CHECK(initiative_control_revision>=0),
   disclosure_version INTEGER NOT NULL CHECK(disclosure_version>0),
   glossary_revision INTEGER CHECK(glossary_revision>0),
+  matched_name INTEGER NOT NULL DEFAULT 0 CHECK(matched_name IN (0,1)),
   reply_author_id TEXT,
   other_address INTEGER NOT NULL CHECK(other_address IN (0,1)),
   forwarded INTEGER NOT NULL CHECK(forwarded IN (0,1)),
@@ -30,6 +32,7 @@ CREATE TABLE group_reply_assessments (
 CREATE INDEX group_reply_waiting ON group_reply_assessments(state,received_at,message_id);
 CREATE INDEX group_reply_scope ON group_reply_assessments(chat_id,generation,state,expires_at);
 ALTER TABLE queue_jobs ADD COLUMN group_reply_assessment TEXT CHECK(group_reply_assessment IN ('name','initiative'));
+ALTER TABLE chat_controls ADD COLUMN initiative_control_revision INTEGER NOT NULL DEFAULT 0 CHECK(initiative_control_revision>=0);
 
 DELETE FROM autonomous_questions;
 UPDATE queue_jobs SET state='terminal',outcome='interrupted',owner=NULL

@@ -75,6 +75,7 @@ export interface QueueWork {
   readonly disclosureVersion?: number;
   readonly controlRevision?: number;
   readonly initiativeEvidenceId?: number;
+  readonly groupReplyAssessment?: 'name' | 'initiative';
   readonly expiresAt?: number;
 }
 export type QueueMessage = MessageInput;

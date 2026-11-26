@@ -101,6 +101,7 @@ export function createAgentLoopQueue(options: AgentLoopQueueOptions) {
     ...(options.tokenBudget ? { tokenBudget: true } : {}),
     ...(options.llmRecovery ? { llmRecovery: options.llmRecovery } : {}),
     ...(options.autonomousReplies ? { autonomousReplies: true } : {}),
+    ...(options.groupReplyGate ? { groupReplyGate: true } : {}),
     handler: async (work) => {
       const zero = createAttemptSummary().snapshot(0);
       work.recordTrace({ summary: zero });

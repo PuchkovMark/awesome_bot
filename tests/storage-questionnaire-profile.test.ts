@@ -196,6 +196,7 @@ test('обновление переносит только проверяемы�
         DROP TABLE chat_metrics_publications;
         DROP TABLE group_reply_assessments;
         ALTER TABLE queue_jobs DROP COLUMN group_reply_assessment;
+        ALTER TABLE chat_controls DROP COLUMN initiative_control_revision;
         DROP TABLE chat_metrics_attempts;
         DROP TABLE chat_metrics_job_events;
         DROP TABLE chat_metrics_buckets;
@@ -414,6 +415,7 @@ test('схема 60 сохраняет публичное, личное и не�
       seedLegacyQuestionnaireRestriction(legacy, other, alice, 1, 145, 'unknown');
       legacy.exec(`DROP TABLE group_reply_assessments;
         ALTER TABLE queue_jobs DROP COLUMN group_reply_assessment;
+        ALTER TABLE chat_controls DROP COLUMN initiative_control_revision;
         DROP TRIGGER questionnaire_invitation_attempt_removed;
         DROP TABLE questionnaire_invitation_parts;
         ALTER TABLE greeting_windows DROP COLUMN invitation_template;

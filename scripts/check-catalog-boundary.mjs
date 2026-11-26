@@ -89,6 +89,8 @@ export function checkCatalogBoundary(root = process.cwd()) {
             bindings.elements.every((element) => {
               const imported = (element.propertyName ?? element.name).text;
               return (
+                (file === resolve(root, 'src/storage/group-reply-gate-store.ts') &&
+                  imported === 'initiativeDenial') ||
                 (file === resolve(root, 'src/storage/queue-store.ts') &&
                   [
                     'dueQuestions',

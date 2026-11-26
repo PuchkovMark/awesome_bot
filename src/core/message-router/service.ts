@@ -38,7 +38,7 @@ export interface RouterOptions {
   readonly logger?: SafeLogger;
   readonly storage: Storage;
   readonly queue: ChatQueue;
-  readonly groupReplyGate?: boolean;
+  readonly groupReplyGate?: (scope: ConnectionScope, id: number, now: number) => boolean;
   readonly authorization?: RouterAuthorization;
   readonly canAnswerQuestionnaire?: (
     scope: ConnectionScope,
@@ -172,20 +172,29 @@ export function createMessageRouter(options: RouterOptions) {
             ) ??
               (isQuestionnaireInvitationWarning(message.botReplyText) ? 'ignore' : undefined));
           const glossary =
-            !service && message.isGroupChat && snapshot.settings.responseMode === 'normal'
+            !service && message.isGroupChat && snapshot.settings.responseMode !== 'silent'
               ? passport?.read(scope).find(({ section }) => section === 'glossary')
               : undefined;
           const decision = routeMessage({
             message,
             settings: snapshot.settings,
             considerInitiative: options.queue.autonomousReplies === true,
-            ...(passport &&
-              snapshot.settings.responseMode === 'normal' && {
-                replyGate: {
-                  allowInitiative: false,
-                  ...(glossary ? { glossary: glossaryBotNames(glossary) } : {}),
-                },
-              }),
+            ...(passport && {
+              replyGate: {
+                allowInitiative:
+                  !service &&
+                  message.isGroupChat &&
+                  message.isBot === false &&
+                  !message.isMentioned &&
+                  !message.isReplyToBot &&
+                  !message.replyToMessageId &&
+                  !message.hasOtherAddress &&
+                  snapshot.settings.responseMode === 'active' &&
+                  options.groupReplyGate?.(scope, snapshot.message.id, snapshot.receivedAt) ===
+                    true,
+                ...(glossary ? { glossary: glossaryBotNames(glossary) } : {}),
+              },
+            }),
             questionnaireName:
               !service &&
               answerForm &&

@@ -100,6 +100,7 @@ export interface ChatQueueOptions {
   readonly tokenBudget?: boolean;
   readonly llmRecovery?: LlmRecoverySettings;
   readonly autonomousReplies?: boolean;
+  readonly groupReplyGate?: boolean;
   /** У привязанного к платформе воркера проверка непрерывности предшествует выдаче работы. */
   readonly platform?: string;
 }
