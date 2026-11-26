@@ -51,6 +51,7 @@
 | 096 | [Продолжение запроса после ошибки кода удаления](tasks/completed/096-vk-deletion-confirmation-feedback.md) · [План фичи](plans/completed/096-vk-deletion-confirmation-feedback.md) · [План реализации и приёмка](impl-plans/completed/096-vk-deletion-confirmation-feedback.md#результаты-приёмки) | P3 | выполнено |
 | 097 | [Напоминания, пересказ до полудня и правка по подсказкам в VK](tasks/completed/097-vk-reminders-recap-and-editors.md) · [План фичи](plans/completed/097-vk-reminders-recap-and-editors.md) · [План реализации и приёмка](impl-plans/completed/097-vk-reminders-recap-and-editors.md#результаты-приёмки) | — | выполнено |
 | 098 | [Доступная личка и восстановление бесед VK после обрыва](tasks/completed/098-vk-automatic-reconnection.md) · [План фичи](plans/completed/098-vk-automatic-reconnection.md) · [План реализации и приёмка](impl-plans/completed/098-vk-automatic-reconnection.md#результаты-приёмки) | — | выполнено |
+| 099 | [Общий бюджет токенов по размеру беседы](tasks/099-group-token-budget-steps.md) · [Утверждённый план фичи](plans/099-group-token-budget-steps.md) · [Утверждённый план реализации](impl-plans/099-group-token-budget-steps.md) | — | в работе |
 
 ## Веха 0. Процесс и документация
 
