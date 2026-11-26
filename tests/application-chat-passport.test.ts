@@ -20,9 +20,10 @@ async function delivered(
   command: string,
   text: string,
   destination = peer,
+  parent?: App['sends'][number],
 ) {
   const start = app.sends.length;
-  app.submit(command, from, undefined, destination);
+  app.submit(command, from, parent, destination);
   await until(() => {
     const part = app.sends
       .slice(start)
@@ -127,6 +128,41 @@ test('команда в ответ на просмотр открывает сп
     expect(
       await app.storage.authorization.transaction(app.scope, (tx) => tx.bases('vk:42')),
     ).toEqual([]);
+    expect(app.complete).not.toHaveBeenCalled();
+  } finally {
+    await app.close();
+  }
+});
+
+test('ответ на показ правил открывает редактор для действующего администратора', async () => {
+  const app = await fixture();
+  try {
+    await app.storage.authorization.transaction(app.scope, (tx) =>
+      tx.grant({ userId: 'vk:41', basis: 'explicit', grantedAt: app.start, grantedBy: 'vk:73' }),
+    );
+    const ruleView = 'Для правки отправьте /правила изменить.';
+    const view = await delivered(app, admin, '/правила', ruleView);
+    const another = await delivered(
+      app,
+      admin,
+      '/традиции',
+      'Для правки отправьте /традиции изменить.',
+    );
+    const start = app.sends.length;
+    const before = read(app, 'rules');
+    await app.journaled(app.submit('/правила изменить', member, view));
+    await app.journaled(app.submit('/правила изменить', admin, another));
+    app.hideVkMessage(view.conversation_message_id);
+    await app.journaled(app.submit('/правила изменить', admin, view));
+
+    const fresh = await delivered(app, admin, '/правила', ruleView);
+    expect(app.sends.slice(start).some(({ text }) => text.endsWith(editor))).toBe(false);
+    const prompt = await delivered(app, admin, '/правила изменить', editor, peer, fresh);
+    expect(read(app, 'rules')).toEqual(before);
+    expect(app.sends.slice(start).filter(({ text }) => text.endsWith(editor))).toEqual([prompt]);
+    expect(app.db.prepare('SELECT count(*) FROM chat_passport_prompts').pluck().get()).toBe(1);
+    await apply(app, admin, prompt, 'Согласовываем время заранее.');
+    expect(read(app, 'rules')).toMatchObject({ text: 'Согласовываем время заранее.', revision: 1 });
     expect(app.complete).not.toHaveBeenCalled();
   } finally {
     await app.close();
