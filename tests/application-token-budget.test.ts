@@ -25,6 +25,7 @@ import { authConfig } from './helpers/authorization-fixture';
 import { storageFixture } from './helpers/storage-fixture';
 import { scopeFor } from './helpers/connection-scope';
 import { queueMessage } from './helpers/chat-queue';
+import { chat, fixture, until } from './helpers/application-response-fixture';
 
 const at = Date.parse('2026-11-23T12:00:00Z');
 const owner = 73;
@@ -36,6 +37,27 @@ const answer = {
   usage: { input: 77, output: 3 },
 } as const;
 const refusal = noticeTemplate('token_budget_exhausted');
+
+test('отчёт владельца показывает базовый лимит группы до первого полного снимка', async () => {
+  const app = await fixture({ startAt: at });
+  try {
+    const store = tokenBudgetStore(app.storage);
+    expect(store.read(app.scope, true, at).people).toBeNull();
+    app.submit('Показать расход', owner, undefined, owner);
+    const report = () =>
+      app.sends.find(
+        ({ peer_id, text }) => peer_id === owner && text.startsWith('Расход за 24 часа'),
+      );
+    await until(() => expect(report()).toBeDefined());
+    expect(report()!.text).toContain(
+      chat + ' — подтверждено 0 из 500000, удержано 0, попыток без полного usage 0.',
+    );
+    expect(report()!.text).toContain('Обновление профилей — подтверждено 0 из 25000');
+    expect(app.complete).not.toHaveBeenCalled();
+  } finally {
+    await app.close();
+  }
+});
 
 test('прямой отказ делит период уведомлений, а личная сводка доступна только владельцу после перезапуска', async () => {
   const files = storageFixture();
@@ -321,7 +343,7 @@ test('изменение обоих лимитов доступно владел
       await reopened.update(owner, { total: null, initiative: null }, () => true),
     ).toMatchObject({
       allowed: true,
-      value: { total: { limit: 75000 }, initiative: { limit: 10000 } },
+      value: { total: { limit: 500_000 }, initiative: { limit: 10_000 } },
     });
     const lifecycle = lifecycleBackend(storage);
     lifecycle.ownerDecision(lifecycle.begin(scope.chatId), 'new');
@@ -402,7 +424,7 @@ test('исчерпание инициативы сохраняет прямой 
         { kind: 'initiative_budget_exhausted' },
       ),
     ).toEqual({ kind: 'silence' });
-    expect(budget.read(scope, true, now).total.remaining).toBe(5000);
+    expect(budget.read(scope, true, now).total.remaining).toBe(490_000);
     await queue.start();
     const send = (id: string) =>
       queue.admitRouted(scope, queueMessage(scope.chatId, id), () => ({

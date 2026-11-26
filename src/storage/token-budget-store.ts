@@ -16,7 +16,10 @@ import { createChatStore } from './chats';
 import { applyParticipantSnapshot, participantSync } from './participant-registry';
 
 export const tokenBudgetWindowMs = 86_400_000;
-const tokensPerPerson = 15_000;
+const baseTokenLimit = 500_000n;
+const peoplePerStep = 20n;
+const tokensPerStep = 300_000n;
+const maxStoredPeople = 600_479_950_316;
 
 export interface TokenReservation {
   readonly key: string;
@@ -74,9 +77,17 @@ function addUsage(spending: Spending, attempt: Attempt) {
   if (attempt.inputTokens === null || attempt.outputTokens === null) spending.incompleteAttempts++;
 }
 
-function balance(limit: number, spending: Spending) {
-  const remaining = BigInt(limit) - spending.confirmed - spending.reserved;
-  return { limit, remaining: remaining > 0n ? Number(remaining) : 0, ...spending };
+function tokenAmount(value: bigint) {
+  return value <= Number.MAX_SAFE_INTEGER ? Number(value) : value;
+}
+
+function balance(limit: bigint, spending: Spending) {
+  const remaining = limit - spending.confirmed - spending.reserved;
+  return {
+    limit: tokenAmount(limit),
+    remaining: tokenAmount(remaining > 0n ? remaining : 0n),
+    ...spending,
+  };
 }
 
 function readBudget(
@@ -116,13 +127,17 @@ function readBudget(
     total.reserved += BigInt(hold.final_budget);
     if (hold.route_kind === 'initiative') initiative.reserved += BigInt(hold.final_budget);
   }
-  const totalLimit = settings.total ?? (group ? (settings.people ?? 1) * tokensPerPerson : 500_000);
+  const people = group ? settings.people : null;
+  const totalLimit =
+    settings.total === null
+      ? baseTokenLimit + (BigInt(people ?? 0) / peoplePerStep) * tokensPerStep
+      : BigInt(settings.total);
   return {
     period: { from: now - tokenBudgetWindowMs, through: now },
-    people: group ? settings.people : null,
+    people,
     total: balance(totalLimit, total),
-    profileUpdate: balance(Number(BigInt(totalLimit) / 20n), profileUpdate),
-    initiative: group ? balance(settings.initiative ?? 10_000, initiative) : null,
+    profileUpdate: balance(totalLimit / 20n, profileUpdate),
+    initiative: group ? balance(BigInt(settings.initiative ?? 10_000), initiative) : null,
   };
 }
 
@@ -133,7 +148,10 @@ export function profileUpdateAllowance(
   now: number,
 ) {
   const { total, profileUpdate } = readBudget(db, scope, group, now);
-  return Math.min(total.remaining, profileUpdate.remaining);
+  const available = BigInt(total.remaining);
+  const profile = BigInt(profileUpdate.remaining);
+  // Доля 5% помещается в безопасное целое при любом пределе из существующей схемы.
+  return Number(available < profile ? available : profile);
 }
 
 export function canReserveTokens(
@@ -349,7 +367,7 @@ export function createTokenBudgetStore(connection: Connection, lifecycle: Lifecy
       if (membership.complete) {
         const { people, members } = membership;
         timestamp(people);
-        requireInput(Number.isSafeInteger(people * tokensPerPerson) && people === members.length);
+        requireInput(people <= maxStoredPeople && people === members.length);
         const platform = scope.chatId.split(':')[0];
         const users = new Set(
           members.map(({ userId, role }) => {

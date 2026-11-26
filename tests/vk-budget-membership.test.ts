@@ -96,23 +96,23 @@ test('полные снимки входа, выхода и повтора ме�
     const read = vi.fn<() => Promise<HumanMembership>>();
     const refresh = createTokenBudgetMembership(storage, read);
     const observe = () => refresh(scope, guard.signal, guard.isCurrent);
-    expect(snapshot()).toMatchObject({ total: { limit: 15000 }, initiative: { limit: 10000 } });
+    expect(snapshot()).toMatchObject({ total: { limit: 500_000 }, initiative: { limit: 10_000 } });
     read.mockResolvedValueOnce(full(50));
     await observe();
     expect(
       store.reserve(scope, true, { key: 'one', input: 1000, output: 100, purpose: 'direct' }, now),
     ).toBe(true);
     store.reconcile(scope, 'one', { input: 180000, output: 0 });
-    expect(snapshot().total).toMatchObject({ limit: 750000, remaining: 570000 });
+    expect(snapshot().total).toMatchObject({ limit: 1_100_000, remaining: 920_000 });
     read.mockResolvedValueOnce(full(51));
     await observe();
-    expect(snapshot().total).toMatchObject({ limit: 765000, remaining: 585000 });
+    expect(snapshot().total).toMatchObject({ limit: 1_100_000, remaining: 920_000 });
     read.mockResolvedValueOnce(full(51));
     await observe();
-    expect(snapshot().total.remaining).toBe(585000);
+    expect(snapshot().total.remaining).toBe(920_000);
     read.mockResolvedValueOnce({ complete: false });
     await observe();
-    expect(snapshot().total.remaining).toBe(585000);
+    expect(snapshot().total.remaining).toBe(920_000);
 
     const late = Promise.withResolvers<HumanMembership>();
     read.mockReturnValueOnce(late.promise).mockResolvedValueOnce(full(10));
@@ -120,7 +120,7 @@ test('полные снимки входа, выхода и повтора ме�
     expect(await observe()).toBe(true);
     late.resolve(full(55));
     expect(await pending).toBe(false);
-    expect(snapshot().total).toMatchObject({ limit: 150000, remaining: 0 });
+    expect(snapshot().total).toMatchObject({ limit: 500_000, remaining: 320_000 });
 
     store.update(scope, true, { total: 700000, initiative: 9000 }, now);
     read.mockResolvedValueOnce(full(70));
@@ -130,7 +130,7 @@ test('полные снимки входа, выхода и повтора ме�
       initiative: { limit: 9000 },
     });
     store.update(scope, true, { total: null }, now);
-    expect(snapshot().total.limit).toBe(1050000);
+    expect(snapshot().total.limit).toBe(1_400_000);
 
     const replacement = Promise.withResolvers<HumanMembership>();
     read.mockReturnValueOnce(replacement.promise);

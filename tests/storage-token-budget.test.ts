@@ -3,7 +3,11 @@ import { expect, test } from 'vitest';
 import { openStorage } from '../src/storage/index';
 import { migrate } from '../src/storage/migrate';
 import { migrations } from '../src/storage/migrations/index';
-import { tokenBudgetStore, tokenBudgetWindowMs } from '../src/storage/token-budget-store';
+import {
+  profileUpdateAllowance,
+  tokenBudgetStore,
+  tokenBudgetWindowMs,
+} from '../src/storage/token-budget-store';
 import { lifecycleBackend } from '../src/storage/lifecycle-store';
 import { scopeFor } from './helpers/connection-scope';
 import { storageFixture } from './helpers/storage-fixture';
@@ -24,7 +28,7 @@ test('обновление с 019 и независимость расхода �
     try {
       const scope = scopeFor(storage, 'vk:budget');
       const store = tokenBudgetStore(storage);
-      expect(store.read(scope, true, noon).total.limit).toBe(15000);
+      expect(store.read(scope, true, noon).total.limit).toBe(500_000);
       store.update(scope, true, { total: 15000 }, noon);
       expect(store.reserve(scope, true, attempt, noon)).toBe(true);
       store.reconcile(scope, attempt.key, { input: 2000, output: 0 });
@@ -46,11 +50,11 @@ test('обновление с 019 и независимость расхода �
       });
       expect(reopened.read(current, true, noon + tokenBudgetWindowMs).total.remaining).toBe(15000);
       expect(reopened.read(scopeFor(storage, 'vk:neighbour'), true, noon).total.remaining).toBe(
-        15000,
+        500_000,
       );
       const life = lifecycleBackend(storage);
       const replacement = life.ownerDecision(life.begin(current.chatId), 'new');
-      expect(reopened.read(replacement, true, noon).total.remaining).toBe(15000);
+      expect(reopened.read(replacement, true, noon).total.remaining).toBe(500_000);
       expect(() => reopened.read(current, true, noon)).toThrow('stale_scope');
       expect(db.prepare('SELECT count(*) FROM token_budget_attempts').pluck().get()).toBe(0);
       expect(db.prepare('SELECT count(*) FROM chat_token_budgets').pluck().get()).toBe(0);
@@ -60,6 +64,96 @@ test('обновление с 019 и независимость расхода �
   } finally {
     db.close();
     fixture.cleanup();
+  }
+});
+
+test('отчёт и допуск одинаково применяют ступени до первого снимка и по числу людей', async () => {
+  const storage = await openStorage(':memory:');
+  try {
+    const store = tokenBudgetStore(storage);
+    const members = Array.from({ length: 100 }, (_, index) => ({
+      userId: `vk:${index + 1}` as const,
+      role: 'member' as const,
+    }));
+    const cases = [
+      [null, 500_000, 25_000],
+      [0, 500_000, 25_000],
+      [4, 500_000, 25_000],
+      [19, 500_000, 25_000],
+      [20, 800_000, 40_000],
+      [39, 800_000, 40_000],
+      [40, 1_100_000, 55_000],
+      [100, 2_000_000, 100_000],
+    ] as const;
+    for (const [index, [people, limit, profile]] of cases.entries()) {
+      const scope = scopeFor(storage, `vk:${2000000041 + index}`);
+      if (people !== null) {
+        expect(
+          store.finishObservation(
+            scope,
+            store.beginObservation(scope, noon),
+            { complete: true, people, members: members.slice(0, people) },
+            noon,
+          ),
+        ).toBe(true);
+      }
+      const row = store
+        .overview(() => true, noon)
+        .chats.find(({ chatId }) => chatId === scope.chatId);
+      expect(row).toMatchObject({
+        people,
+        total: { limit, remaining: limit },
+        initiative: { limit: 10_000 },
+        profileUpdate: { limit: profile },
+      });
+      expect(store.reserve(scope, true, { ...attempt, input: limit, output: 1 }, noon)).toBe(false);
+      expect(store.reserve(scope, true, { ...attempt, input: limit - 1, output: 1 }, noon)).toBe(
+        true,
+      );
+      expect(store.read(scope, true, noon).total).toMatchObject({
+        remaining: 0,
+        reserved: BigInt(limit),
+      });
+    }
+  } finally {
+    await storage.close();
+  }
+});
+
+test('предел, остаток и точный резерв сохраняют единицы токенов на верхней границе схемы', async () => {
+  const files = storageFixture();
+  const storage = await openStorage(files.path);
+  const db = new Database(files.path);
+  try {
+    const scope = scopeFor(storage, 'vk:2000000041');
+    const store = tokenBudgetStore(storage);
+    db.prepare('INSERT INTO chat_token_budgets(chat_id,generation,people) VALUES(?,?,?)').run(
+      scope.chatId,
+      scope.generation,
+      600_479_950_316,
+    );
+    expect(store.reserve(scope, true, { ...attempt, input: 1, output: 0 }, noon)).toBe(true);
+    expect(store.reconcile(scope, attempt.key, { input: 1, output: 0 })).toBe(true);
+    expect(store.read(scope, true, noon).total).toEqual({
+      limit: 9_007_199_255_000_000n,
+      remaining: 9_007_199_254_999_999n,
+      confirmed: 1n,
+      reserved: 0n,
+      incompleteAttempts: 0,
+    });
+    expect(profileUpdateAllowance(db, scope, true, noon)).toBe(450_359_962_750_000);
+    const rest = { ...attempt, key: 'rest', input: Number.MAX_SAFE_INTEGER, output: 259_008 };
+    expect(store.reserve(scope, true, { ...rest, output: rest.output + 1 }, noon)).toBe(false);
+    expect(store.reserve(scope, true, rest, noon)).toBe(true);
+    expect(store.read(scope, true, noon).total).toMatchObject({
+      reserved: 9_007_199_254_999_999n,
+      remaining: 0,
+    });
+    expect(profileUpdateAllowance(db, scope, true, noon)).toBe(0);
+  } finally {
+    db.close();
+    await storage.close();
+    files.cleanup();
   }
 });
 
@@ -115,15 +209,15 @@ test('фоновая доля 5% входит в общий остаток, пе
       );
     expect(refresh(20, noon)).toBe(true);
     const initial = store.read(scope, true, noon);
-    expect(initial.total.limit).toBe(300_000);
-    expect(initial.profileUpdate.limit).toBe(15_000);
+    expect(initial.total.limit).toBe(800_000);
+    expect(initial.profileUpdate.limit).toBe(40_000);
     const background = {
       key: 'profile-1',
       purpose: 'profile_update',
-      input: 14_900,
+      input: 39_900,
       output: 100,
     } as const;
-    expect(store.reserve(scope, true, { ...background, input: 14_901 }, noon)).toBe(false);
+    expect(store.reserve(scope, true, { ...background, input: 39_901 }, noon)).toBe(false);
     expect(store.reserve(scope, true, background, noon)).toBe(true);
     expect(
       tokenBudgetStore(second).reserve(
@@ -133,8 +227,8 @@ test('фоновая доля 5% входит в общий остаток, пе
         noon,
       ),
     ).toBe(false);
-    expect(store.reserve(scope, true, { ...attempt, input: 285_001, output: 0 }, noon)).toBe(false);
-    expect(store.reserve(scope, true, { ...attempt, input: 285_000, output: 0 }, noon)).toBe(true);
+    expect(store.reserve(scope, true, { ...attempt, input: 760_001, output: 0 }, noon)).toBe(false);
+    expect(store.reserve(scope, true, { ...attempt, input: 760_000, output: 0 }, noon)).toBe(true);
     expect(store.reconcile(scope, background.key, { input: null, output: 100 })).toBe(true);
     expect(store.read(scope, true, noon).initiative?.remaining).toBe(10_000);
     expect(refresh(19, noon + 10)).toBe(true);
@@ -143,14 +237,14 @@ test('фоновая доля 5% входит в общий остаток, пе
     scope = scopeFor(first, chat);
     store = tokenBudgetStore(first);
     expect(store.read(scope, true, noon + 10).profileUpdate).toEqual({
-      limit: 14_250,
+      limit: 25_000,
       remaining: 0,
       confirmed: 100n,
-      reserved: 14_900n,
+      reserved: 39_900n,
       incompleteAttempts: 1,
     });
     expect(store.read(scope, true, noon + tokenBudgetWindowMs).profileUpdate.remaining).toBe(
-      14_250,
+      25_000,
     );
     expect(
       store.update(scope, false, { total: 319 }, noon + tokenBudgetWindowMs).profileUpdate.limit,
