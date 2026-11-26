@@ -93,7 +93,10 @@ export function routeMessage(input: RoutingInput): RoutingDecision {
     if (gate) {
       if (!message.text.trim()) return silent('not_addressed');
       const name = matchGroupBotName(message.literalText ?? message.text, gate.glossary);
-      const initiative = settings.responseMode === 'active' && gate.allowInitiative;
+      const initiative =
+        settings.responseMode === 'active' &&
+        gate.allowInitiative &&
+        message.attachments.length === 0;
       return initiative || name
         ? {
             kind: 'assessment',

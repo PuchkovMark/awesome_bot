@@ -64,6 +64,13 @@ test('отбор для Haiku различает явную адресацию, 
   expect(select('На столе три настолки', 'active')).toMatchObject({
     assessment: { kind: 'initiative' },
   });
+  const attachments = [{ kind: 'photo' }];
+  expect(select('На столе три настолки', 'active', { attachments })).toMatchObject({
+    reason: 'not_addressed',
+  });
+  expect(select('Пенёк, взгляни на снимок', 'active', { attachments })).toMatchObject({
+    assessment: { kind: 'name' },
+  });
   expect(select(name, 'active', {}, false)).toMatchObject({ assessment: { kind: 'name' } });
   expect(select('На столе три настолки', 'active', {}, false)).toMatchObject({ kind: 'silence' });
   expect(select(name, 'silent')).toMatchObject({ reason: 'silent' });
