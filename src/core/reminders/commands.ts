@@ -1,4 +1,5 @@
 import type { IncomingMessage } from '../../contracts/index';
+import { startsWithNamedReminderDate } from './time';
 
 export type ReminderCommand =
   | { readonly kind: 'create'; readonly input: string }
@@ -44,13 +45,16 @@ export function parseReminderCommand(text: string, group: boolean): ReminderComm
   const cancel = /^отмени(?:ть)? напоминание\s+#?(\d+)[.!]?$/iu.exec(own);
   if (cancel && Number.isSafeInteger(Number(cancel[1])))
     return { kind: 'cancel', id: Number(cancel[1]) };
-  const clarify = /^уточни(?:ть)? напоминание(?:\s+#(\d+))?\s+([\s\S]+)$/iu.exec(own);
+  const clarify = /^уточни(?:ть)? напоминание\s+([\s\S]+)$/iu.exec(own);
   if (clarify) {
-    const input = clarify[2]!;
-    const id = clarify[1] === undefined ? undefined : Number(clarify[1]);
-    if (id === undefined || Number.isSafeInteger(id)) {
-      return { kind: 'clarify', input, ...(id === undefined ? {} : { id }) };
-    }
+    const input = clarify[1]!;
+    const numbered = /^(#?)(\d+)(?:\s+([\s\S]+)|$)/u.exec(input);
+    if (!numbered || (!numbered[1] && startsWithNamedReminderDate(input)))
+      return { kind: 'clarify', input };
+    const id = Number(numbered[2]);
+    if (Number.isSafeInteger(id) && id > 0)
+      return { kind: 'clarify', id, input: numbered[3] ?? '' };
+    return undefined;
   }
   const zone = /^\/пояс-напоминаний(?:\s+(.+))?$/iu.exec(own);
   if (zone) return { kind: 'timezone', input: zone[1] ?? '' };

@@ -420,28 +420,33 @@ export function createReminderHandlers(options: {
           return;
         }
       } else {
-        const drafts = store.list(target, now).filter(({ state }) => state === 'draft');
-        const selected =
-          command.id === undefined
-            ? drafts.length === 1
-              ? drafts[0]
-              : undefined
-            : drafts.find(({ id }) => id === command.id);
-        if (!selected) {
-          reply(
-            command.id === undefined && drafts.length > 1
-              ? `Укажите номер черновика: ${drafts.map(({ id }) => '#' + id).join(', ')}.`
-              : missing,
+        const candidates = store
+          .list(target, now)
+          .filter(({ id, state }) =>
+            command.id === undefined ? state === 'draft' : id === command.id,
           );
+        if (candidates.length > 1) {
+          reply(`Укажите номер черновика: ${candidates.map(({ id }) => '#' + id).join(', ')}.`);
           return;
         }
-        item = store.revise(
-          target,
-          origin,
-          selected.id,
-          fields(command.input, selected.originAt, store.timezone(target), selected),
-          now,
-        );
+        const [selected] = candidates;
+        if (!selected) {
+          reply(missing);
+          return;
+        }
+        if (selected.state !== 'draft') {
+          reply(`Напоминание #${selected.id} не ждёт уточнения.`);
+          return;
+        }
+        item = command.input
+          ? store.revise(
+              target,
+              origin,
+              selected.id,
+              fields(command.input, selected.originAt, store.timezone(target), selected),
+              now,
+            )
+          : selected;
       }
       if (!item || !isCurrent()) return;
       if (item.state === 'draft') {

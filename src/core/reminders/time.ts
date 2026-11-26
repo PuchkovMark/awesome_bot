@@ -39,6 +39,7 @@ const monthNames = [
   'декабря',
 ];
 const namedDateText = String.raw`\d{1,2}\s+(?:${monthNames.join('|')})(?:\s+\d{4}(?:\s+(?:года|г\.))?)?`;
+const namedDateStart = new RegExp(String.raw`^${namedDateText}(?![\p{L}\p{N}_/:]|\.\d)`, 'iu');
 const numericDateText = String.raw`\d{1,2}\.\d{1,2}(?:\.\d{4})?`;
 const calendarDate = new RegExp(
   String.raw`(?<![\p{L}\p{N}_./:])(${numericDateText}|${namedDateText})(?![\p{L}\p{N}_/:]|\.\d)`,
@@ -77,6 +78,10 @@ export type ReminderTime =
 export function reminderTimezone(value: string): string | null {
   const text = value.trim();
   return /^по\s+москве$/iu.test(text) ? 'Europe/Moscow' : canonicalTimezone(text);
+}
+
+export function startsWithNamedReminderDate(text: string) {
+  return namedDateStart.test(text);
 }
 
 function explicitReminderTimezone(value: string): string | null {
