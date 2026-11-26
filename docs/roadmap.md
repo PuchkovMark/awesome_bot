@@ -48,7 +48,7 @@
 | 093 | [Получение подтверждения уже назначенного напоминания](tasks/093-reminder-confirmation-recovery.md) · [Утверждённый план фичи](plans/093-reminder-confirmation-recovery.md) · [Черновик плана реализации](impl-plans/093-reminder-confirmation-recovery.md) | P2 | утверждено |
 | 094 | [Команды личных данных с пересылкой](tasks/094-vk-personal-data-forwarding.md) · [Утверждённый план фичи](plans/094-vk-personal-data-forwarding.md) · [Черновик плана реализации](impl-plans/094-vk-personal-data-forwarding.md) | P2 | утверждено |
 | 095 | [Переход от справки к диагностике беседы](tasks/095-vk-diagnostics-discovery.md) · [Утверждённый план фичи](plans/095-vk-diagnostics-discovery.md) · [Черновик плана реализации](impl-plans/095-vk-diagnostics-discovery.md) | P3 | утверждено |
-| 096 | [Продолжение запроса после ошибки кода удаления](tasks/096-vk-deletion-confirmation-feedback.md) · [Черновик плана фичи](plans/096-vk-deletion-confirmation-feedback.md) | P3 | утверждено |
+| 096 | [Продолжение запроса после ошибки кода удаления](tasks/096-vk-deletion-confirmation-feedback.md) · [Утверждённый план фичи](plans/096-vk-deletion-confirmation-feedback.md) · [Черновик плана реализации](impl-plans/096-vk-deletion-confirmation-feedback.md) | P3 | утверждено |
 | 097 | [Напоминания, пересказ до полудня и правка по подсказкам в VK](tasks/097-vk-reminders-recap-and-editors.md) | — | черновик |
 | 098 | [Доступная личка и восстановление бесед VK после обрыва](tasks/completed/098-vk-automatic-reconnection.md) · [План фичи](plans/completed/098-vk-automatic-reconnection.md) · [План реализации и приёмка](impl-plans/completed/098-vk-automatic-reconnection.md#результаты-приёмки) | — | выполнено |
 
