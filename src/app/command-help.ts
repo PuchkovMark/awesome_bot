@@ -1,4 +1,4 @@
-import type { BotRole, IncomingMessage } from '../contracts/index';
+import type { BotRole, ConnectionScope, IncomingMessage } from '../contracts/index';
 import { vkMentionCommand } from '../channels/vk/normalize';
 
 export const helpAction = {
@@ -30,14 +30,15 @@ export function isPrivateStart(message: IncomingMessage) {
 
 export function commandHelp(
   role: BotRole,
-  group: boolean,
+  groupScope: ConnectionScope | undefined,
   enabled: boolean,
   mode: 'normal' | 'active' | 'silent',
   actor: string,
   request = '/помощь',
 ) {
+  const group = groupScope !== undefined;
   const ordinary = enabled && mode !== 'silent';
-  const manage = enabled && group && role !== 'member';
+  const manage = enabled && groupScope !== undefined && role !== 'member';
   const topic = helpRequest.exec(request.trim())?.[1]?.toLowerCase();
   const topics: string[] = [];
   if (ordinary || manage) {
@@ -51,6 +52,7 @@ export function commandHelp(
       '/помощь профиль — посмотреть и исправить свои факты.',
       '/помощь напоминания — создать, посмотреть или отменить.',
     );
+  if (manage) topics.push('/помощь управление — продлить паузу или узнать, почему бот ответил.');
   if (topic === 'анкета' && (ordinary || manage)) {
     const lines = ['Анкета'];
     if (ordinary) {
@@ -91,6 +93,15 @@ export function commandHelp(
       'В личке: /пояс-напоминаний Europe/Moscow — выбрать часовой пояс.',
     ].join('\n');
   }
+  if (topic === 'управление' && manage)
+    return [
+      'Управление',
+      'Чтобы продлить действующую паузу самостоятельных реплик на пять минут, отправьте команду в беседу.',
+      '/продлить-паузу 5',
+      '',
+      'Чтобы узнать, почему бот ответил в этой беседе, скопируйте следующую строку в личку сообщества.',
+      `почему ты так ответил ${groupScope.chatId}@${groupScope.generation}`,
+    ].join('\n');
   if (topic)
     return topics.length
       ? ['Доступные темы', ...topics].join('\n')

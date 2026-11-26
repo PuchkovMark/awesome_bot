@@ -116,6 +116,9 @@ test('помощь и команды совпадают и учитывают п
     expect(member).toContain('/помощь анкета');
     expect(member).toContain('/помощь напоминания');
     expect(member).toContain('/помощь профиль');
+    expect(member).not.toContain('/помощь управление');
+    const memberTopics = await request('/помощь управление', 41, 'Доступные темы');
+    expect(memberTopics).not.toMatch(/продлить-паузу|почему ты так ответил|\/помощь управление/u);
     for (const destination of [peer, 41]) {
       for (const alias of ['/помощь', '/команды']) {
         const profile = await request(alias + ' профиль', 41, '/исправить 2 Казань', destination);
@@ -148,11 +151,25 @@ test('помощь и команды совпадают и учитывают п
     expect(admin).toContain('/режим');
     expect(admin).toContain('/назначить-админа · /снять-админа — ответом');
     expect(admin).not.toMatch(/\/(?:отозвать-админа|аудит-админа|отменить-отзыв)/u);
+    const managementTopic = '/помощь управление — продлить паузу или узнать, почему бот ответил.';
+    const diagnosticCommand = `почему ты так ответил ${app.scope.chatId}@${app.scope.generation}`;
+    for (const actor of [42, 73]) {
+      const help = await request('/помощь', actor, 'Доступные команды');
+      expect(help.split('\n')).toContain(managementTopic);
+      const topic = await request(managementTopic.split(' — ')[0]!, actor, 'Управление\n');
+      expect(topic.split('\n')).toContain('/продлить-паузу 5');
+      expect(topic.split('\n')).toContain(diagnosticCommand);
+      expect(topic).toContain('действующую паузу самостоятельных реплик на пять минут');
+      expect(topic).toContain('скопируйте следующую строку в личку сообщества');
+      expect(await request('/команды управление', actor, 'Управление\n')).toBe(topic);
+    }
     await request('/помощь анкета', 42, '/вопросы изменить');
     await request('/режим', 42, '/режим активный');
     await request('/режим молчаливый', 42, 'молчаливый');
     const quiet = await request('/помощь', 42, 'Доступные команды');
     expect(quiet).toContain('/помощь анкета — вопросы беседы.');
+    expect(quiet).toContain(managementTopic);
+    expect(await request('/помощь управление', 42, 'Управление\n')).toContain(diagnosticCommand);
     expect(quiet).not.toMatch(/заполнени|\/помощь профиль/u);
     for (const actor of [42, 73]) {
       for (const alias of ['/помощь', '/команды']) {
@@ -166,7 +183,7 @@ test('помощь и команды совпадают и учитывают п
     const settings = await request('/помощь анкета', 42, '/вопросы изменить');
     expect(settings).not.toMatch(/\/анкета|заполнени/u);
     expect(await request('/команды профль', 42, 'Доступные темы')).toBe(
-      'Доступные темы\n/помощь анкета — вопросы беседы.',
+      `Доступные темы\n/помощь анкета — вопросы беседы.\n${managementTopic}`,
     );
     await request('/вопросы', 42, 'Для правки отправьте /вопросы изменить.');
     await request('/вопросы изменить', 42, 'ответьте на это сообщение');
@@ -180,6 +197,10 @@ test('помощь и команды совпадают и учитывают п
     );
     const owner = await request('/помощь', 73, 'Приостановленные беседы', 73);
     expect(owner).toContain('ID беседы и поколение показывает /настройки');
+    expect(owner).not.toContain('/помощь управление');
+    expect(await request('/помощь управление', 73, 'Доступные темы', 73)).not.toContain(
+      diagnosticCommand,
+    );
     for (const command of [
       '/назначить-админа',
       '/снять-админа',
@@ -190,6 +211,39 @@ test('помощь и команды совпадают и учитывают п
       expect(owner).toContain(`${command} vk:2000000041@7 vk:42`);
     expect(await request('/команды', 73, 'Приостановленные беседы', 73)).toBe(owner);
     await request('Приостановленные беседы', 73, 'бесед', 73);
+    expect(app.complete).not.toHaveBeenCalled();
+  } finally {
+    await app.close();
+  }
+});
+
+test('открытие темы сохраняет паузу, а скопированная команда продлевает её прежний срок', async () => {
+  const app = await fixture({ active: true });
+  try {
+    const storedPause = app.db
+      .prepare('SELECT paused_until FROM chat_controls WHERE chat_id=?')
+      .pluck();
+    const pausedUntil = () => storedPause.get(app.scope.chatId) as number | null | undefined;
+    const response = async (text: string, prefix: string, actor: number) => {
+      const start = app.sends.length;
+      app.submit(text, actor);
+      const reply = () =>
+        app.sends.slice(start).find((row) => row.peer_id === peer && row.text.startsWith(prefix));
+      await until(() => expect(reply()).toBeDefined());
+      return reply()!.text;
+    };
+    app.at(1000);
+    await response('Помолчи', 'Самостоятельные реплики на паузе', 41);
+    const original = pausedUntil()!;
+    expect(original).toBeGreaterThan(app.start + 2000);
+    app.at(2000);
+    const topic = await response('/помощь управление', 'Управление\n', 73);
+    expect(pausedUntil()).toBe(original);
+    const command = topic.split('\n').find((line) => line.startsWith('/продлить-паузу '));
+    expect(command).toBe('/продлить-паузу 5');
+    const extended = await response(command!, `${app.scope.chatId}@${app.scope.generation}`, 73);
+    expect(extended).toContain('Самостоятельные реплики: пауза до');
+    expect(pausedUntil()).toBe(original + 5 * 60_000);
     expect(app.complete).not.toHaveBeenCalled();
   } finally {
     await app.close();
