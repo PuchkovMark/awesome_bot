@@ -41,11 +41,13 @@ export function parseReminderCommand(text: string, group: boolean): ReminderComm
 }
 
 export function incomingReminderCommand(message: IncomingMessage) {
+  const replyToOther = message.replyAddress === 'other';
   if (
     message.isBot !== false ||
     message.hasOtherAddress ||
-    message.replyAddress === 'other' ||
     message.replyAddress === 'unknown' ||
+    (replyToOther &&
+      (!message.isGroupChat || message.isMentioned !== true || message.soleBotMention !== true)) ||
     (!message.isGroupChat && message.chatId !== message.userId) ||
     (message.isGroupChat &&
       !message.isMentioned &&
@@ -54,5 +56,6 @@ export function incomingReminderCommand(message: IncomingMessage) {
   ) {
     return undefined;
   }
-  return parseReminderCommand(message.text, message.isGroupChat);
+  const command = parseReminderCommand(message.text, message.isGroupChat);
+  return replyToOther && command?.kind !== 'create' ? undefined : command;
 }

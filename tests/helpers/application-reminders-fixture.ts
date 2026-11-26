@@ -228,13 +228,14 @@ export async function remindersFixture(origin = Date.UTC(2026, 10, 23, 20, 55)) 
         ).run(value + 30_000);
         now = value;
       },
-      send(text: string, from = 41, destination = from, timestamp = now) {
+      send(text: string, from = 41, destination = from, timestamp = now, reply?: Message) {
         const row: Message = {
           from_id: from,
           peer_id: destination,
           text,
           date: Math.floor(timestamp / 1000),
           conversation_message_id: ++serial,
+          ...(reply ? { reply_message: reply } : {}),
         };
         messages.set(row.conversation_message_id, row);
         deliver(row);
@@ -250,6 +251,9 @@ export async function remindersFixture(origin = Date.UTC(2026, 10, 23, 20, 55)) 
       },
       hide(text: string) {
         hideText = text;
+      },
+      hideMessage(messageId: number) {
+        hidden.add(messageId);
       },
       reveal() {
         hidden.clear();
