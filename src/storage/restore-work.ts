@@ -1,4 +1,5 @@
 import type { Database } from 'better-sqlite3';
+import { reconcileGroupReplyAssessments } from './group-reply-gate-store';
 
 function matchingColumns(staged: Database, newer: Database, table: string) {
   const columns = (db: Database) =>
@@ -104,4 +105,5 @@ export function reconcileRestoredWork(staged: Database, newer: Database, now: nu
     UPDATE history_clear_requests SET state='invalidated' WHERE state='pending';`);
   reconcileReminders(staged, newer);
   reconcileInvitationAuthors(staged, newer);
+  reconcileGroupReplyAssessments(staged, newer);
 }

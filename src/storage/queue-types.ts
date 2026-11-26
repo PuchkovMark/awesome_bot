@@ -2,6 +2,7 @@ import type { ConnectionScope } from '../contracts/index';
 import type { MessageInput, StoredMessage } from './types';
 import type { InitiativeCause } from '../core/message-router/autonomous-rules';
 import type { InvitationReplyStatus } from './questionnaire-invitation-input';
+import type { GroupReplyCandidate } from './group-reply-gate-store';
 export type InitiativeDenial =
   | 'initiative_mode'
   | 'initiative_pause'
@@ -93,6 +94,7 @@ export type RouteMetadata =
     };
 
 export interface RoutedQueueDecision {
+  readonly assessment?: GroupReplyCandidate;
   readonly questionnaireInvitation?: {
     readonly receipt: string;
     readonly status: InvitationReplyStatus;
@@ -106,6 +108,7 @@ export interface RoutedQueueDecision {
     | 'direct_message'
     | 'mention'
     | 'reply'
+    | 'assessment'
     | 'name'
     | 'service'
     | 'disabled'

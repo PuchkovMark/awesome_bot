@@ -5,6 +5,7 @@ import { createQuestionnaireStore, registerQuestionnaires } from './questionnair
 import { createChatPassportStore, registerChatPassport } from './chat-passport-store';
 import { createProfileCommandStore, registerProfileCommands } from './profile-command-store';
 import { createGreetingStore, registerGreetings } from './greeting-store';
+import { createGroupReplyGateStore, registerGroupReplyGate } from './group-reply-gate-store';
 import { createProfileFactStore, registerProfileInference } from './profile-fact-store';
 import { createProfileUpdateStore, registerProfileUpdates } from './profile-update-store';
 import {
@@ -113,6 +114,7 @@ export async function openStorage(
     registerDisclosureStore(storage, createDisclosureStore(connection, backend));
     registerAdminRecovery(storage, createAdminRecoveryStore(connection, backend));
     registerGreetings(storage, createGreetingStore(connection, backend, versions));
+    registerGroupReplyGate(storage, createGroupReplyGateStore(connection, backend));
     registerChatControl(storage, createChatControlStore(connection, backend));
     registerTraces(storage, traces);
     registerTokenBudgets(storage, createTokenBudgetStore(connection, backend));

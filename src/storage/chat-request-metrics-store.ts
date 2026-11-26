@@ -117,7 +117,12 @@ export function recordSentModelAttempt(
       'SELECT admitted_at AS at,purpose FROM token_budget_attempts WHERE chat_id=? AND generation=? AND attempt_key=?',
     )
     .get(scope.chatId, scope.generation, key) as
-    { at: number; purpose: 'direct' | 'initiative' | 'summary' | 'profile_update' } | undefined;
+    | {
+        at: number;
+        purpose:
+          'direct' | 'initiative' | 'summary' | 'profile_update' | 'gate_name' | 'gate_initiative';
+      }
+    | undefined;
   if (!reservation || !collected(db, scope, reservation.at, now)) return;
   const { at, purpose } = reservation;
   const step = job?.step;
@@ -199,7 +204,8 @@ export function beginMeasuredPublication(db: Database, scope: MetricsScope, jobI
   db.prepare(
     `INSERT INTO chat_metrics_publications(job_id,chat_id,generation,received_at,series)
      SELECT j.id,j.chat_id,j.generation,j.received_at,
-       CASE WHEN j.initiative_cause IS NULL THEN 'requests' ELSE 'initiative_main' END
+       CASE WHEN j.initiative_cause IS NOT NULL OR j.group_reply_assessment='initiative'
+         THEN 'initiative_main' ELSE 'requests' END
      FROM queue_jobs j JOIN chat_metrics_collection c USING(chat_id,generation)
      WHERE j.id=? AND j.chat_id=? AND j.generation=? AND j.state='terminal' AND j.outcome='completed'
        AND (j.route_kind IS NOT NULL OR j.initiative_cause IS NOT NULL)

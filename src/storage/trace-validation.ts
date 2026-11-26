@@ -164,7 +164,7 @@ export function validateTrace(value: unknown): asserts value is TracePayload {
     requireInput(typeof r.isGroupChat === 'boolean');
     if (r.kind === 'initiative') {
       requireInput(r.mode === 'active' && r.isGroupChat === true);
-      one(r.cause, ['help', 'free_mention', 'unanswered']);
+      one(r.cause, ['help', 'free_mention', 'unanswered', 'group_reply_gate']);
     } else requireInput(!Object.hasOwn(r, 'cause'));
   }
   if (p.prompt !== null) {

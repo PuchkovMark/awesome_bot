@@ -25,6 +25,8 @@ import type {
 function fromDecision(value: RoutedQueueDecision): RoutingDecision {
   if (value.route) return { kind: 'ordinary', reason: value.route.kind, route: value.route };
   if (value.reason === 'service') return { kind: 'service', reason: 'service' };
+  if (value.reason === 'assessment' && value.assessment)
+    return { kind: 'assessment', reason: 'assessment', assessment: value.assessment };
   return {
     kind: 'silence',
     reason: value.reason as Extract<RoutingDecision, { kind: 'silence' }>['reason'],
@@ -192,7 +194,17 @@ export function createMessageRouter(options: RouterOptions) {
             };
           }
           return {
-            reason: decision.kind === 'assessment' ? 'not_addressed' : decision.reason,
+            reason: decision.reason,
+            ...(decision.kind === 'assessment' &&
+              snapshot.settings.responseMode !== 'silent' && {
+                assessment: {
+                  ...decision.assessment,
+                  mode: snapshot.settings.responseMode,
+                  ...(message.replyAuthorId ? { replyAuthorId: message.replyAuthorId } : {}),
+                  otherAddress: message.hasOtherAddress === true,
+                  forwarded: message.hasForwarded === true,
+                },
+              }),
             ...(!command &&
             message.isBot === false &&
             !message.hasForwarded &&

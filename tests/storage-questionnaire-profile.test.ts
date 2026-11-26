@@ -194,6 +194,8 @@ test('обновление переносит только проверяемы�
         DROP TABLE personal_dispute_reports;
         DROP TABLE personal_dispute_cases;
         DROP TABLE chat_metrics_publications;
+        DROP TABLE group_reply_assessments;
+        ALTER TABLE queue_jobs DROP COLUMN group_reply_assessment;
         DROP TABLE chat_metrics_attempts;
         DROP TABLE chat_metrics_job_events;
         DROP TABLE chat_metrics_buckets;
@@ -410,7 +412,9 @@ test('схема 60 сохраняет публичное, личное и не�
       seedLegacyPrivateForm(legacy, direct, 130, { '1': 'Имя из лички' });
       seedLegacyQuestionnaireRestriction(legacy, target, alice, 3, 145);
       seedLegacyQuestionnaireRestriction(legacy, other, alice, 1, 145, 'unknown');
-      legacy.exec(`DROP TRIGGER questionnaire_invitation_attempt_removed;
+      legacy.exec(`DROP TABLE group_reply_assessments;
+        ALTER TABLE queue_jobs DROP COLUMN group_reply_assessment;
+        DROP TRIGGER questionnaire_invitation_attempt_removed;
         DROP TABLE questionnaire_invitation_parts;
         ALTER TABLE greeting_windows DROP COLUMN invitation_template;
         ALTER TABLE greeting_windows DROP COLUMN invitation_disclosure;

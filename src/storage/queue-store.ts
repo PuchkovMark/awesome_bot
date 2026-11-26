@@ -1,6 +1,11 @@
 import { claimRecapInput } from './recap-clarifications';
 import { acceptQuestionnaireInput, answerableAttempt } from './questionnaire-input';
 import { acceptInvitationInput } from './questionnaire-invitation-input';
+import {
+  groupReplyAssessmentCurrent,
+  readGroupReplyAssessment,
+  rememberGroupReplyAssessment,
+} from './group-reply-gate-store';
 import { createLlmRecoveryStore } from './llm-recovery-store';
 import {
   addChatMetrics,
@@ -289,6 +294,7 @@ export function createQueueBackend(
                   'direct_message',
                   'mention',
                   'reply',
+                  'assessment',
                   'name',
                   'service',
                   'disabled',
@@ -316,6 +322,17 @@ export function createQueueBackend(
                   routed.route === null &&
                     routed.reason === 'not_addressed' &&
                     ['help', 'free_mention', 'unanswered'].includes(routed.initiative),
+                );
+              if (routed.assessment)
+                requireInput(
+                  routed.route === null &&
+                    routed.reason === 'assessment' &&
+                    routed.assessment.mode === settings.responseMode &&
+                    message.isGroupChat === true &&
+                    message.senderBot === false &&
+                    ['name', 'initiative'].includes(routed.assessment.kind) &&
+                    (routed.assessment.kind !== 'initiative' ||
+                      routed.assessment.mode === 'active'),
                 );
               const invitation = routed.questionnaireInvitation;
               if (
@@ -379,9 +396,23 @@ export function createQueueBackend(
                   return false;
                 }
               }
+              const assessment = result.assessment;
+              const saved =
+                assessment &&
+                gate?.ordinary !== false &&
+                rememberGroupReplyAssessment(
+                  db,
+                  scope,
+                  snapshot.message.id,
+                  assessment,
+                  snapshot.receivedAt,
+                  lifecycle.assertScope(db, scope).revision,
+                  gate?.version ?? null,
+                );
               chosen = Object.freeze({
-                reason: result.reason,
+                reason: result.reason === 'assessment' && !saved ? 'not_addressed' : result.reason,
                 route: route === null ? null : Object.freeze({ ...route }),
+                ...(saved ? { assessment } : {}),
                 ...(result.skipQuestionnaire ? { skipQuestionnaire: true as const } : {}),
                 ...(gate?.ordinary !== false && result.questionnaireInvitation
                   ? { questionnaireInvitation: result.questionnaireInvitation }
@@ -811,6 +842,53 @@ export function createQueueBackend(
         }
       });
     },
+    promoteGroupReply(
+      token: string,
+      scope: ConnectionScope,
+      messageId: number,
+      config: QueueConfig,
+      now = Date.now(),
+    ) {
+      return transaction(token, (db) => {
+        const row = readGroupReplyAssessment(db, scope, messageId);
+        if (row?.state !== 'approved') return 'closed';
+        const current = groupReplyAssessmentCurrent(db, scope, row, now);
+        if (!current) {
+          db.prepare(
+            `UPDATE group_reply_assessments SET state='finished',outcome=?
+            WHERE message_id=? AND state='approved'`,
+          ).run(row.expiresAt <= now ? 'expired' : 'cancelled', messageId);
+          return 'closed';
+        }
+        if (!canQueue(db, scope.chatId, config, now)) return 'full';
+        initializeTurn(db, scope);
+        const initiative = row.kind === 'initiative';
+        db.prepare(
+          `INSERT INTO queue_jobs(chat_id,generation,message_id,received_at,expires_at,state,
+          route_kind,route_mode,route_group,disclosure_version,control_revision,initiative_revision,group_reply_assessment)
+          VALUES(?,?,?,?,?,'queued',?,?,1,?,?,?,?)`,
+        ).run(
+          scope.chatId,
+          scope.generation,
+          messageId,
+          row.receivedAt,
+          Math.min(row.expiresAt, now + config.maxQueueAgeMs),
+          initiative ? null : 'name',
+          row.mode,
+          row.disclosureVersion,
+          row.controlRevision,
+          initiative ? current.revision : null,
+          row.kind,
+        );
+        db.prepare(
+          `UPDATE group_reply_assessments SET state='queued',revision=?,resume_allowed=0
+          WHERE message_id=? AND state='approved'`,
+        ).run(current.revision, messageId);
+        if (!initiative)
+          addChatMetrics(db, scope, row.receivedAt, 'requests', { requests: 1 }, now);
+        return 'queued';
+      });
+    },
     take(token: string, excluded: readonly string[] = [], platform?: string): QueueWork | null {
       return transaction(token, (db) => {
         const now = Date.now();
@@ -818,7 +896,8 @@ export function createQueueBackend(
         const row = db
           .prepare(
             `SELECT j.id,j.chat_id AS chatId,j.generation,j.message_id AS messageId,j.received_at AS receivedAt,j.route_kind AS routeKind,j.route_mode AS routeMode,j.route_group AS routeGroup,j.disclosure_version AS disclosureVersion,j.control_revision AS controlRevision,
-          j.initiative_cause AS initiativeCause,j.initiative_evidence AS evidenceId,j.expires_at AS expiresAt
+          j.initiative_cause AS initiativeCause,j.initiative_evidence AS evidenceId,j.expires_at AS expiresAt,
+          j.group_reply_assessment AS assessment
           FROM queue_jobs j JOIN chat_connections c ON c.chat_id=j.chat_id AND c.generation=j.generation
           LEFT JOIN chats s ON s.chat_id=j.chat_id LEFT JOIN queue_turns t ON t.chat_id=j.chat_id
           WHERE j.state='queued' AND j.expires_at>? AND c.state='active' AND coalesce(s.enabled,1)=1
@@ -840,6 +919,7 @@ export function createQueueBackend(
               messageId: number;
               receivedAt: number;
               initiativeCause: InitiativeCause | null;
+              assessment: 'name' | 'initiative' | null;
               evidenceId: number | null;
               expiresAt: number;
             }
@@ -852,15 +932,16 @@ export function createQueueBackend(
           scope,
           messageId: row.messageId,
           receivedAt: row.receivedAt,
-          route: row.initiativeCause
-            ? Object.freeze(initiativeRoute(row.initiativeCause))
-            : row.routeKind && row.routeMode && row.routeGroup !== null
-              ? Object.freeze({
-                  kind: row.routeKind,
-                  mode: row.routeMode,
-                  isGroupChat: row.routeGroup === 1,
-                })
-              : null,
+          route:
+            row.initiativeCause || row.assessment === 'initiative'
+              ? Object.freeze(initiativeRoute(row.initiativeCause ?? 'group_reply_gate'))
+              : row.routeKind && row.routeMode && row.routeGroup !== null
+                ? Object.freeze({
+                    kind: row.routeKind,
+                    mode: row.routeMode,
+                    isGroupChat: row.routeGroup === 1,
+                  })
+                : null,
           controlRevision: row.controlRevision,
           expiresAt: row.expiresAt,
           ...(row.evidenceId === null ? {} : { initiativeEvidenceId: row.evidenceId }),
