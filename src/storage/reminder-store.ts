@@ -97,6 +97,10 @@ interface ConfirmationReceipt {
   readonly receipt: string;
 }
 
+type ReminderAssignment =
+  | { readonly kind: 'created' | 'existing'; readonly item: ReturnType<typeof view> }
+  | { readonly kind: 'choose'; readonly items: readonly ReturnType<typeof view>[] };
+
 function record(db: Database, id: number) {
   return db.prepare(`SELECT ${reminderDetails} FROM personal_reminders r WHERE id=?`).get(id) as
     ReminderRecord | undefined;
@@ -288,6 +292,33 @@ export function createReminderStore(connection: Connection, lifecycle: Lifecycle
     insertParts(db, id, 'confirmation', fields.confirmation);
   }
 
+  function addReminder(
+    db: Database,
+    recipient: Recipient,
+    source: Source,
+    fields: ReminderFields,
+    now: number,
+  ) {
+    const expiresAt = now + reminderGraceMs;
+    const row = db
+      .prepare(
+        `INSERT INTO personal_reminders(chat_id,generation,origin_at,text,state,draft,expires_at)
+        VALUES(?,?,?,?,'draft','{}',?) RETURNING id`,
+      )
+      .get(
+        recipient.scope.chatId,
+        recipient.scope.generation,
+        source.originAt,
+        fields.text,
+        expiresAt,
+      ) as {
+      id: number;
+    };
+    save(db, row.id, fields, expiresAt);
+    rememberOrigin(db, recipient, source, row.id);
+    return view(record(db, row.id)!);
+  }
+
   return Object.freeze({
     replay(recipient: Recipient, source: Source, now: number) {
       return transaction((db) => {
@@ -296,35 +327,46 @@ export function createReminderStore(connection: Connection, lifecycle: Lifecycle
         maintain(db, now);
         const previous = pendingFromOrigin(db, recipient, source);
         if (!previous) return undefined;
-        const row = record(db, previous.id);
+        const row = recipientRecord(db, recipient, previous.id);
         return row ? view(row) : null;
       });
     },
-    create(recipient: Recipient, source: Source, fields: ReminderFields, now: number) {
+    create(
+      recipient: Recipient,
+      source: Source,
+      fields: ReminderFields,
+      now: number,
+    ): ReminderAssignment | null {
       return transaction((db) => {
         assertRecipient(db, recipient);
         lifecycle.assertScope(db, source.scope);
         maintain(db, now);
         const previous = pendingFromOrigin(db, recipient, source);
         if (previous) {
-          const row = record(db, previous.id);
-          return row ? view(row) : null;
+          const row = recipientRecord(db, recipient, previous.id);
+          return row ? { kind: 'existing', item: view(row) } : null;
         }
-        const row = db
-          .prepare(
-            `INSERT INTO personal_reminders(chat_id,generation,origin_at,text,state,draft,expires_at)
-          VALUES(?,?,?,?,'draft','{}',?) RETURNING id`,
-          )
-          .get(
-            recipient.scope.chatId,
-            recipient.scope.generation,
-            source.originAt,
-            fields.text,
-            now + reminderGraceMs,
-          ) as { id: number };
-        save(db, row.id, fields, now + reminderGraceMs);
-        rememberOrigin(db, recipient, source, row.id);
-        return view(record(db, row.id)!);
+        if (!('draft' in fields) && fields.scheduleKey !== undefined) {
+          const candidates = db
+            .prepare(
+              `SELECT ${reminderDetails} FROM personal_reminders r
+              WHERE r.chat_id=? AND r.generation=? AND r.state='pending' AND r.confirmation!='delivered'
+              AND r.text=? AND (r.schedule_key=? OR r.schedule_key IS NULL) ORDER BY r.id`,
+            )
+            .all(
+              recipient.scope.chatId,
+              recipient.scope.generation,
+              fields.text,
+              fields.scheduleKey,
+            ) as ReminderRecord[];
+          if (candidates.length === 1 && candidates[0]!.schedule_key === fields.scheduleKey) {
+            const row = candidates[0]!;
+            rememberOrigin(db, recipient, source, row.id);
+            return { kind: 'existing', item: view(row) };
+          }
+          if (candidates.length) return { kind: 'choose', items: candidates.map(view) };
+        }
+        return { kind: 'created', item: addReminder(db, recipient, source, fields, now) };
       });
     },
     revise(

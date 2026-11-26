@@ -168,6 +168,114 @@ test('при сверке первой части подтверждения г�
   }
 });
 
+test.each(['отказ', 'потеря ответа'] as const)(
+  'та же просьба после сбоя «%s» и перезапуска сохраняет номер и одну доставку в 12:01 UTC',
+  async (fault) => {
+    const f = await remindersFixture(Date.UTC(2026, 10, 25, 12));
+    const request = direct + 'Напомни мне через 1 минуту взять билет';
+    const dueAt = f.origin + minute;
+    const confirmations = () => f.sends.filter(({ text }) => text.startsWith('Напомню вам'));
+    try {
+      if (fault === 'отказ') f.refuseOnce('взять билет');
+      else f.lost('Напомню вам');
+      const original = f.send(request, 41, peer);
+      await until(() =>
+        expect(f.sends.find((row) => row.peer_id === peer)?.text).toBe(recoveryHint),
+      );
+      const item = f.pending()[0]!;
+      expect(item).toMatchObject({ dueAt, chatId: 'vk:41', text: 'взять билет' });
+      expect(confirmations()).toHaveLength(fault === 'отказ' ? 0 : 1);
+
+      f.at(f.origin + 20_000);
+      const repeated = f.send(request, 41, peer);
+      await until(() =>
+        expect(f.sends.at(-1)).toMatchObject({
+          peer_id: 41,
+          text: expect.stringContaining(
+            `Напоминание #${item.id} назначено на 25 ноября 2026 г. в 12:01 (UTC).`,
+          ),
+        }),
+      );
+      expect(f.pending()).toEqual([item]);
+      expect(
+        f.db
+          .prepare(
+            'SELECT event_id AS event,reminder_id AS id FROM personal_reminder_inputs ORDER BY CAST(event_id AS INTEGER)',
+          )
+          .all(),
+      ).toEqual(
+        [original, repeated].map(({ conversation_message_id }) => ({
+          event: String(conversation_message_id),
+          id: item.id,
+        })),
+      );
+      expect(confirmations()).toHaveLength(fault === 'отказ' ? 0 : 1);
+
+      await f.halt();
+      await f.launch();
+      await f.resolve('vk:41');
+      await f.resolve(`vk:${peer}`);
+      f.repeat(original);
+      f.repeat(repeated);
+      f.send('Мои напоминания');
+      const action = fault === 'отказ' ? 'Повтори подтверждение' : 'Проверь напоминание';
+      await until(() => expect(f.sends.at(-1)?.text).toContain(`${action} #${item.id}`));
+      f.send(`${action} #${item.id}`);
+      await until(() =>
+        expect(f.sends.at(-1)?.text).toContain(
+          fault === 'отказ' ? 'Напомню вам' : 'Доставка подтверждения неизвестна.',
+        ),
+      );
+      expect(f.pending()).toEqual([item]);
+      f.at(dueAt);
+      await until(() =>
+        expect(f.pending()[0]).toMatchObject({ id: item.id, state: 'delivered', dueAt }),
+      );
+      expect(confirmations()).toEqual([expect.objectContaining({ peer_id: 41 })]);
+      expect(f.sends.filter(({ text }) => text === 'Напоминание.\nвзять билет')).toEqual([
+        expect.objectContaining({ peer_id: 41, date: dueAt / 1_000 }),
+      ]);
+      expect(f.sends.filter(({ peer_id }) => peer_id === peer).map(({ text }) => text)).toEqual([
+        recoveryHint,
+      ]);
+      expect(f.complete).not.toHaveBeenCalled();
+    } finally {
+      await f.close();
+    }
+  },
+);
+
+test('календарная просьба совпадает по дню, времени и поясу, а другой срок создаёт свою запись', async () => {
+  const f = await remindersFixture(Date.UTC(2026, 10, 25, 12));
+  const dueAt = Date.UTC(2026, 10, 26, 15);
+  try {
+    f.refuseOnce('взять билет');
+    f.send(direct + 'Напомни мне завтра в 18:00 по Москве взять билет', 41, peer);
+    await until(() => expect(f.sends.at(-1)?.text).toBe(recoveryHint));
+    const item = f.pending()[0]!;
+    f.at(f.origin + 20_000);
+    f.send('Напомни мне 26.11.2026 в 18:00 Europe/Moscow взять билет');
+    await until(() => expect(f.sends.at(-1)?.text).toContain(`Повтори подтверждение #${item.id}`));
+    expect(f.pending()).toEqual([item]);
+
+    f.send('Напомни мне 26.11.2026 в 18:00 Asia/Riyadh взять билет');
+    f.send('Напомни мне 26.11.2026 в 18:01 Europe/Moscow взять билет');
+    f.send('Напомни мне 27.11.2026 в 18:00 Europe/Moscow взять билет');
+    await until(() =>
+      expect(f.sends.filter(({ text }) => text.startsWith('Напомню вам'))).toHaveLength(3),
+    );
+    expect(f.pending()).toEqual([
+      expect.objectContaining({ id: item.id, dueAt, timezone: 'Europe/Moscow' }),
+      expect.objectContaining({ dueAt, timezone: 'Asia/Riyadh' }),
+      expect.objectContaining({ dueAt: dueAt + minute, timezone: 'Europe/Moscow' }),
+      expect.objectContaining({ dueAt: dueAt + 24 * 60 * minute, timezone: 'Europe/Moscow' }),
+    ]);
+    expect(f.complete).not.toHaveBeenCalled();
+  } finally {
+    await f.close();
+  }
+});
+
 test('личный выбор отмены показывает реальные номера и ждёт команды даже при одном задании', async () => {
   const f = await remindersFixture();
   async function ask(text: string, user = 41) {

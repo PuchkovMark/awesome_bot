@@ -16,6 +16,11 @@ const fields = {
 };
 const source = { messageId: '1', originAt: now };
 
+function created(assignment: ReturnType<ReturnType<typeof reminderStore>['create']>) {
+  if (assignment?.kind !== 'created') throw Error('Ожидалось новое напоминание');
+  return assignment.item;
+}
+
 async function fixture(storage: Awaited<ReturnType<typeof openStorage>>) {
   const life = createLifecycleService({
     storage,
@@ -48,9 +53,9 @@ test('личные записи, отмена, срок статуса и дед
   try {
     let f = await fixture(storage);
     const input = { scope: f.group, ...source };
-    const first = f.store.create(f.one, input, fields, now)!;
-    expect(f.store.create(f.one, input, fields, now)?.id).toBe(first.id);
-    const second = f.store.create(f.one, { ...input, messageId: '2' }, fields, now)!;
+    const first = created(f.store.create(f.one, input, fields, now));
+    expect(f.store.create(f.one, input, fields, now)).toEqual({ kind: 'existing', item: first });
+    const second = created(f.store.create(f.one, { ...input, messageId: '2' }, fields, now));
     expect(second.id).not.toBe(first.id);
     expect(f.store.cancel(f.two, first.id, now)).toBe('missing');
     expect(f.store.list(f.two, now)).toEqual([]);
@@ -87,15 +92,20 @@ test('черновик закрывается на точной границе �
   try {
     const f = await fixture(storage);
     const input = { scope: f.one.scope, ...source };
-    const draft = f.store.create(
-      f.one,
-      input,
-      {
-        draft: { needs: 'zone', schedule: { kind: 'local', date: 'завтра', hour: 18, minute: 0 } },
-        text: fields.text,
-      },
-      now,
-    )!;
+    const draft = created(
+      f.store.create(
+        f.one,
+        input,
+        {
+          draft: {
+            needs: 'zone',
+            schedule: { kind: 'local', date: 'завтра', hour: 18, minute: 0 },
+          },
+          text: fields.text,
+        },
+        now,
+      ),
+    );
     expect(f.store.list(f.one, now + reminderGraceMs - 1)[0]?.id).toBe(draft.id);
     expect(f.store.list(f.one, now + reminderGraceMs - 1, 'cancellable')[0]?.id).toBe(draft.id);
     expect(f.store.list(f.one, now + reminderGraceMs, 'cancellable')).toEqual([]);
@@ -105,7 +115,7 @@ test('черновик закрывается на точной границе �
     expect(f.store.list(f.one, now + reminderGraceMs)).toEqual([]);
     expect(f.store.create(f.one, input, fields, now + reminderGraceMs)).toBeNull();
     f.store.timezone(f.one, 'UTC');
-    const item = f.store.create(f.one, { ...input, messageId: '3' }, fields, now)!;
+    const item = created(f.store.create(f.one, { ...input, messageId: '3' }, fields, now));
     expect(item.timezone).toBe('Europe/Moscow');
     expect(f.store.timezone(f.one)).toBe('UTC');
   } finally {
@@ -120,7 +130,7 @@ test('захват конкурирующими исполнителями, от
   try {
     const f = await fixture(a),
       rival = reminderStore(b);
-    const item = f.store.create(f.one, { scope: f.one.scope, ...source }, fields, now)!;
+    const item = created(f.store.create(f.one, { scope: f.one.scope, ...source }, fields, now));
     const chunks = () => ['Первая', 'Вторая'];
     const lease = f.store.claimDelivery(dueAt, chunks)!;
     expect(rival.claimDelivery(dueAt, chunks)).toBeUndefined();
@@ -156,12 +166,14 @@ test('отказ и неопределённость подтверждения 
   try {
     let f = await fixture(storage);
     const ids = (['failed', 'unknown'] as const).map((outcome, index) => {
-      const item = f.store.create(
-        f.one,
-        { ...source, scope: f.group, messageId: String(index + 1) },
-        { ...fields, scheduleKey: 'relative:1' },
-        now,
-      )!;
+      const item = created(
+        f.store.create(
+          f.one,
+          { ...source, scope: f.group, messageId: String(index + 1) },
+          { ...fields, scheduleKey: 'relative:1', text: fields.text + ' ' + index },
+          now,
+        ),
+      );
       const lease = f.store.claimConfirmation(f.one, item.id, now)!;
       const part = f.store.getPart(lease, now)!;
       expect(f.store.beginPart(lease, part, now)).toBe(true);
@@ -218,5 +230,74 @@ test('отказ и неопределённость подтверждения 
   } finally {
     await storage.close();
     files.cleanup();
+  }
+});
+
+test('новое событие привязывается к первому сроку в общей БД, сохраняются разные сроки и авторы', async () => {
+  const files = storageFixture();
+  const a = await openStorage(files.path),
+    b = await openStorage(files.path);
+  try {
+    const first = await fixture(a);
+    const second = await fixture(b);
+    const after = now + 20_000;
+    const schedule = { ...fields, scheduleKey: 'relative:1' };
+    const item = created(
+      first.store.create(first.one, { ...source, scope: first.group }, schedule, now),
+    );
+    const repeated = { scope: second.one.scope, messageId: '1', originAt: after };
+    expect(
+      second.store.create(second.one, repeated, { ...schedule, dueAt: after + 60_000 }, after),
+    ).toMatchObject({
+      kind: 'existing',
+      item: { id: item.id, dueAt },
+    });
+    expect(second.store.replay(second.one, repeated, after)?.id).toBe(item.id);
+    expect(second.store.list(second.one, after)).toEqual([item]);
+    expect(
+      created(
+        second.store.create(
+          second.one,
+          { ...repeated, messageId: '2' },
+          { ...fields, scheduleKey: 'relative:5', dueAt: after + 300_000 },
+          after,
+        ),
+      ),
+    ).toMatchObject({ dueAt: after + 300_000 });
+    expect(
+      created(
+        second.store.create(second.two, { ...repeated, scope: second.two.scope }, schedule, after),
+      ).id,
+    ).not.toBe(item.id);
+  } finally {
+    await a.close();
+    await b.close();
+    files.cleanup();
+  }
+});
+
+test('неполное условие старого задания оставляет выбор владельцу и сохраняет привязки прежних событий', async () => {
+  const storage = await openStorage(':memory:');
+  try {
+    const f = await fixture(storage);
+    const input = { scope: f.group, ...source };
+    const known = { ...fields, scheduleKey: 'relative:1' };
+    const modern = created(f.store.create(f.one, input, known, now));
+    const legacy = created(f.store.create(f.one, { ...input, messageId: '2' }, fields, now));
+    const newEvent = { ...input, messageId: '3' };
+    expect(f.store.create(f.one, newEvent, known, now)).toEqual({
+      kind: 'choose',
+      items: [modern, legacy],
+    });
+    expect(f.store.create(f.one, input, known, now)).toEqual({ kind: 'existing', item: modern });
+    expect(f.store.cancel(f.one, modern.id, now)).toBe('cancelled');
+    expect(f.store.create(f.one, newEvent, known, now)).toEqual({
+      kind: 'choose',
+      items: [legacy],
+    });
+    expect(f.store.replay(f.one, newEvent, now)).toBeUndefined();
+    expect(f.store.list(f.one, now).map(({ id }) => id)).toEqual([modern.id, legacy.id]);
+  } finally {
+    await storage.close();
   }
 });

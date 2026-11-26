@@ -369,12 +369,27 @@ export function createReminderHandlers(options: {
         item = store.replay(target, origin, now);
         if (item?.state !== 'draft') return;
       } else if (command.kind === 'create') {
-        item = store.create(
+        const assignment = store.create(
           target,
           origin,
           fields(command.input, event.timestamp, store.timezone(target)),
           now,
         );
+        if (!assignment) return;
+        if (assignment.kind === 'choose') {
+          const candidates = assignment.items.map(({ id }) => `#${id}`).join(', ');
+          reply(
+            `С этой просьбой могут совпадать напоминания ${candidates}. Откройте «Мои напоминания» и выберите нужное по номеру.`,
+          );
+          return;
+        }
+        item = assignment.item;
+        if (assignment.kind === 'existing' && item.state !== 'draft') {
+          const action =
+            item.state === 'pending' && !item.deliveryStarted && confirmationAction(item);
+          reply(recoveryStatus(item) + (action ? '\n' + action : ''));
+          return;
+        }
       } else {
         const drafts = store.list(target, now).filter(({ state }) => state === 'draft');
         const selected =
