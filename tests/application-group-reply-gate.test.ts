@@ -2,6 +2,7 @@ import { expect, test } from 'vitest';
 import type { LlmResult } from '../src/llm/types';
 import { activeGroupReplyDisclosure } from '../src/core/chat-onboarding/introduction-text';
 import { chatRequestMetricsStore } from '../src/storage/chat-request-metrics-store';
+import { chatPassportStore } from '../src/storage/chat-passport-store';
 import { tokenBudgetStore } from '../src/storage/token-budget-store';
 import { fixture, mention, peer, until } from './helpers/application-response-fixture';
 
@@ -84,23 +85,51 @@ test('обсуждение, цитата и ложный ответ Haiku ост
   }
 });
 
-test('допуск и прямой reply работают при задержке или отказе Haiku', async () => {
+test.each([false, true])(
+  'допуск и прямой reply работают при задержке или отказе Haiku, активный режим %s',
+  async (active) => {
+    const f = await fixture({ active });
+    const pending = Promise.withResolvers<LlmResult>();
+    f.assess.mockImplementationOnce(() => pending.promise);
+    try {
+      const id = f.submit(prompts[0]!);
+      await until(() => expect(f.assess).toHaveBeenCalledOnce());
+      await f.journaled(id);
+      expect(f.complete).not.toHaveBeenCalled();
+      const direct = f.submit(mention);
+      await f.published(direct);
+      pending.resolve({ kind: 'error', code: 'unsupported_response', message: '' });
+      await until(() => expect(evaluation(f, id)).toMatchObject({ outcome: 'failed' }));
+      await f.published(f.submit('Уточнение', 41, f.sends[0]!));
+      expect(f.assess).toHaveBeenCalledOnce();
+      expect(f.complete).toHaveBeenCalledTimes(2);
+      expect(f.sends).toHaveLength(2);
+    } finally {
+      pending.resolve(approve);
+      await f.close();
+    }
+  },
+);
+
+test('после перезапуска ожидание продолжается, отправленная оценка не повторяется', async () => {
   const f = await fixture();
   const pending = Promise.withResolvers<LlmResult>();
   f.assess.mockImplementationOnce(() => pending.promise);
   try {
-    const id = f.submit(prompts[0]!);
-    await until(() => expect(f.assess).toHaveBeenCalledOnce());
-    await f.journaled(id);
-    expect(f.complete).not.toHaveBeenCalled();
-    const direct = f.submit(mention);
-    await f.published(direct);
-    pending.resolve({ kind: 'error', code: 'unsupported_response', message: '' });
-    await until(() => expect(evaluation(f, id)).toMatchObject({ outcome: 'failed' }));
-    await f.published(f.submit('Уточнение', 41, f.sends[0]!));
-    expect(f.assess).toHaveBeenCalledOnce();
-    expect(f.complete).toHaveBeenCalledTimes(2);
-    expect(f.sends).toHaveLength(2);
+    const sent = f.submit(prompts[0]!);
+    await until(() => expect(evaluation(f, sent)).toMatchObject({ state: 'sent' }));
+    const waiting = f.submit('Пенёк, подскажи');
+    await until(() => expect(evaluation(f, waiting)).toMatchObject({ state: 'waiting' }));
+    await f.restart(true);
+    await f.published(waiting);
+    pending.resolve(approve);
+    f.replay(sent);
+    f.replay(waiting);
+    await f.journaled(f.submit('Продолжим завтра.'));
+    expect(evaluation(f, sent)).toMatchObject({ state: 'finished', outcome: 'uncertain' });
+    expect(f.assess).toHaveBeenCalledTimes(2);
+    expect(f.complete).toHaveBeenCalledOnce();
+    expect(f.sends.filter((row) => row.reply_message !== undefined)).toHaveLength(1);
   } finally {
     pending.resolve(approve);
     await f.close();
@@ -191,6 +220,72 @@ test('старая доставленная версия допускает им
     await f.close();
   }
 });
+
+test(
+  'псевдоним из глоссария и его редакция действуют только в выбранной беседе',
+  { timeout: 12_000 },
+  async () => {
+    const f = await fixture();
+    const pending = Promise.withResolvers<LlmResult>();
+    try {
+      await f.connectGroup(peer + 1);
+      async function edit(text: string, revision: number) {
+        const start = f.sends.length;
+        f.submit('/паспорт глоссарий изменить', 73);
+        const prompt = () =>
+          f.sends
+            .slice(start)
+            .find(({ text }) => text.endsWith('Раздел виден всем участникам беседы.'));
+        await until(() => {
+          expect(prompt()).toBeDefined();
+          expect(
+            f.db
+              .prepare('SELECT 1 FROM chat_passport_prompts WHERE receipt=?')
+              .get(String(prompt()!.conversation_message_id)),
+          ).toBeDefined();
+        });
+        f.submit(text, 73, prompt());
+        await until(() =>
+          expect(
+            chatPassportStore(f.storage)
+              .read(f.scope)
+              .find(({ section }) => section === 'glossary'),
+          ).toMatchObject({ revision, text }),
+        );
+      }
+      await edit('Имена бота — Лесовик, Дядя Пень', 1);
+      const request = 'Лесовик расскажи про игру';
+      const other = f.submit(request, 41, undefined, peer + 1);
+      await until(() =>
+        expect(
+          f.db
+            .prepare('SELECT 1 FROM messages WHERE chat_id=? AND platform_message_id=?')
+            .get(`vk:${peer + 1}`, String(other)),
+        ).toBeDefined(),
+      );
+      expect(evaluation(f, other, peer + 1)).toBeUndefined();
+      f.assess.mockImplementationOnce(() => pending.promise);
+      const selected = f.submit(request);
+      await until(() => expect(f.assess).toHaveBeenCalledOnce());
+      expect(JSON.parse(f.assess.mock.calls[0]![0].messages[0]!.text!).имена_из_настроек).toEqual([
+        'лесовик',
+        'дядя пень',
+      ]);
+
+      await edit('Имена бота — Клён', 2);
+      pending.resolve(approve);
+      await until(() => expect(evaluation(f, selected)).toMatchObject({ outcome: 'cancelled' }));
+      const obsolete = f.submit(request);
+      await f.journaled(obsolete);
+      expect(evaluation(f, obsolete)).toBeUndefined();
+      expect(f.assess).toHaveBeenCalledOnce();
+      expect(f.complete).not.toHaveBeenCalled();
+    } finally {
+      pending.resolve(approve);
+      await f.close();
+    }
+  },
+);
 
 test.each(['ответ человека', 'пауза и её снятие', 'бюджет'] as const)(
   'во время свободной оценки изменилось условие %s',

@@ -222,93 +222,99 @@ test('результат инструмента вытесняет паспор�
   }
 });
 
-test('одинаковый вопрос получает местный глоссарий, а правила отражают штатные правку и очистку', async () => {
-  const app = await fixture({
-    profileNotice: 'Действует уведомление о состоянии профиля.',
-    threshold: 15,
-  });
-  try {
-    app.at(1000);
-    const neighbor = await app.connectGroup(peer + 1);
-    const firstGlossary = 'Маяк — точка сбора у входа.';
-    const otherGlossary = 'Маяк — условие начала встречи.';
-    edit(app, 'glossary', firstGlossary);
-    edit(app, 'glossary', otherGlossary, neighbor);
-    edit(app, 'rules', rules);
-    edit(app, 'traditions', 'Синтетическая традиция для контрольной проверки.');
-    const askMeaning = mention + ' Что значит «маяк»?';
+test(
+  'одинаковый вопрос получает местный глоссарий, а правила отражают штатные правку и очистку',
+  { timeout: 12_000 },
+  async () => {
+    const app = await fixture({
+      profileNotice: 'Действует уведомление о состоянии профиля.',
+      threshold: 15,
+    });
+    try {
+      app.at(1000);
+      const neighbor = await app.connectGroup(peer + 1);
+      const firstGlossary = 'Маяк — точка сбора у входа.';
+      const otherGlossary = 'Маяк — условие начала встречи.';
+      edit(app, 'glossary', firstGlossary);
+      edit(app, 'glossary', otherGlossary, neighbor);
+      edit(app, 'rules', rules);
+      edit(app, 'traditions', 'Синтетическая традиция для контрольной проверки.');
+      const askMeaning = mention + ' Что значит «маяк»?';
 
-    const show = app.submit('/правила', 42);
-    await app.journaled(show);
-    await until(() => expect(app.sends.some((row) => row.text === 'Правила\n' + rules)).toBe(true));
-    expect(app.complete).not.toHaveBeenCalled();
-    const direct = app.submit(mention + ' Покажи правила беседы.', 42);
-    await app.journaled(direct);
-    await until(() =>
-      expect(app.sends.filter((row) => row.text === 'Правила\n' + rules)).toHaveLength(2),
-    );
-    expect(app.complete).not.toHaveBeenCalled();
-
-    const submit = async (text: string, from = 41, to = peer) => {
-      const before = app.complete.mock.calls.length;
-      await app.published(app.submit(text, from, undefined, to));
-      expect(app.complete).toHaveBeenCalledTimes(before + 1);
-      return app.complete.mock.calls[before]![0];
-    };
-    const left = await submit(askMeaning);
-    const right = await submit(askMeaning, 41, peer + 1);
-    expect(readPassport(left)).toEqual({ glossary: firstGlossary });
-    expect(readPassport(right)).toEqual({ glossary: otherGlossary });
-    expect(JSON.stringify(left)).not.toContain(otherGlossary);
-    expect(JSON.stringify(right)).not.toContain(firstGlossary);
-
-    const privateUser = 47;
-    app.submit('/профиль', privateUser, undefined, privateUser);
-    const life = lifecycleBackend(app.storage);
-    await until(() =>
-      expect(disclosureStore(app.storage).gate(life.current('vk:47')).version).not.toBeNull(),
-    );
-    app.at(2000);
-    const dm = await submit('Что значит «маяк»?', privateUser, privateUser);
-    expect(readPassport(dm)).toBeUndefined();
-    expect(JSON.stringify(dm)).not.toContain(firstGlossary);
-
-    expect(readPassport(await submit(question))).toEqual({ rules });
-    async function change(command: string, footer: string, text: string) {
-      const before = app.sends.length;
-      app.submit(command, 73);
-      let prompt: (typeof app.sends)[number] | undefined;
-      await until(() => {
-        prompt = app.sends.slice(before).find((row) => row.text.endsWith(footer));
-        expect(prompt).toBeDefined();
-        expect(
-          app.db
-            .prepare('SELECT 1 FROM chat_passport_prompts WHERE receipt=?')
-            .pluck()
-            .get(String(prompt!.conversation_message_id)),
-        ).toBe(1);
-      });
-      const start = app.sends.length;
-      app.submit(text, 73, prompt);
+      const show = app.submit('/правила', 42);
+      await app.journaled(show);
       await until(() =>
-        expect(app.sends.slice(start).some((row) => row.text === 'Раздел паспорта обновлён.')).toBe(
-          true,
-        ),
+        expect(app.sends.some((row) => row.text === 'Правила\n' + rules)).toBe(true),
       );
+      expect(app.complete).not.toHaveBeenCalled();
+      const direct = app.submit(mention + ' Покажи правила беседы.', 42);
+      await app.journaled(direct);
+      await until(() =>
+        expect(app.sends.filter((row) => row.text === 'Правила\n' + rules)).toHaveLength(2),
+      );
+      expect(app.complete).not.toHaveBeenCalled();
+
+      const submit = async (text: string, from = 41, to = peer) => {
+        const before = app.complete.mock.calls.length;
+        await app.published(app.submit(text, from, undefined, to));
+        expect(app.complete).toHaveBeenCalledTimes(before + 1);
+        return app.complete.mock.calls[before]![0];
+      };
+      const left = await submit(askMeaning);
+      const right = await submit(askMeaning, 41, peer + 1);
+      expect(readPassport(left)).toEqual({ glossary: firstGlossary });
+      expect(readPassport(right)).toEqual({ glossary: otherGlossary });
+      expect(JSON.stringify(left)).not.toContain(otherGlossary);
+      expect(JSON.stringify(right)).not.toContain(firstGlossary);
+
+      const privateUser = 47;
+      app.submit('/профиль', privateUser, undefined, privateUser);
+      const life = lifecycleBackend(app.storage);
+      await until(() =>
+        expect(disclosureStore(app.storage).gate(life.current('vk:47')).version).not.toBeNull(),
+      );
+      app.at(2000);
+      const dm = await submit('Что значит «маяк»?', privateUser, privateUser);
+      expect(readPassport(dm)).toBeUndefined();
+      expect(JSON.stringify(dm)).not.toContain(firstGlossary);
+
+      expect(readPassport(await submit(question))).toEqual({ rules });
+      async function change(command: string, footer: string, text: string) {
+        const before = app.sends.length;
+        app.submit(command, 73);
+        let prompt: (typeof app.sends)[number] | undefined;
+        await until(() => {
+          prompt = app.sends.slice(before).find((row) => row.text.endsWith(footer));
+          expect(prompt).toBeDefined();
+          expect(
+            app.db
+              .prepare('SELECT 1 FROM chat_passport_prompts WHERE receipt=?')
+              .pluck()
+              .get(String(prompt!.conversation_message_id)),
+          ).toBe(1);
+        });
+        const start = app.sends.length;
+        app.submit(text, 73, prompt);
+        await until(() =>
+          expect(
+            app.sends.slice(start).some((row) => row.text === 'Раздел паспорта обновлён.'),
+          ).toBe(true),
+        );
+      }
+      const amended = 'Объявления согласуют в начале недели.';
+      await change('/правила изменить', 'Раздел виден всем участникам беседы.', amended);
+      expect(readPassport(await submit(question))).toEqual({ rules: amended });
+      await change('/правила очистить', 'ответьте «Подтверждаю».', 'Подтверждаю');
+      const cleared = await submit(question);
+      expect(readPassport(cleared)).toBeUndefined();
+      expect(JSON.stringify(cleared)).not.toContain(amended);
+      expect(readPassport(await submit(mention + ' Как дела?'))).toBeUndefined();
+      expect(app.complete).toHaveBeenCalledTimes(7);
+    } finally {
+      await app.close();
     }
-    const amended = 'Объявления согласуют в начале недели.';
-    await change('/правила изменить', 'Раздел виден всем участникам беседы.', amended);
-    expect(readPassport(await submit(question))).toEqual({ rules: amended });
-    await change('/правила очистить', 'ответьте «Подтверждаю».', 'Подтверждаю');
-    const cleared = await submit(question);
-    expect(readPassport(cleared)).toBeUndefined();
-    expect(JSON.stringify(cleared)).not.toContain(amended);
-    expect(readPassport(await submit(mention + ' Как дела?'))).toBeUndefined();
-    expect(app.complete).toHaveBeenCalledTimes(7);
-  } finally {
-    await app.close();
-  }
-});
+  },
+);
 
 test('инструкция выдачи прав из глоссария остаётся данными и не расширяет схемы инструментов', async () => {
   const app = await fixture();

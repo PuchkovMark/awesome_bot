@@ -7,6 +7,8 @@ import { queueBackend } from '../../src/storage/queue-registry';
 import { scopeFor } from '../helpers/connection-scope';
 import { queueMessage, flushQueue } from '../helpers/chat-queue';
 import { storageFixture } from '../helpers/storage-fixture';
+import type { LlmResult } from '../../src/llm/types';
+import { answer, fixture, mention, peer, until } from '../helpers/application-response-fixture';
 test('расчётная модель: 4 слота, 130 секунд, 8 ожидающих, тихий чат при полном допуске', async () => {
   vi.useFakeTimers();
   vi.setSystemTime(10000);
@@ -111,5 +113,59 @@ test('реальная SQLite: всплеск, ограниченная вмес
     await q.stop();
     await storage.close();
     f.cleanup();
+  }
+});
+
+test('медленная оценка под всплеском освобождает просроченные ожидания и пропускает VK-упоминание', async () => {
+  const f = await fixture({ active: true });
+  const slow = Promise.withResolvers<LlmResult>();
+  f.assess.mockImplementationOnce(() => slow.promise);
+  try {
+    const other = await f.connectGroup(peer + 1);
+    const pending = f.submit('На столе три настолки, всё никак не выберем первую');
+    await until(() => expect(f.assess).toHaveBeenCalledOnce());
+    for (let i = 0; i < 24; i++)
+      f.submit(`Пенёк, помоги с задачей ${i}`, 41, undefined, peer + (i % 2));
+    const direct = f.submit(mention, 41, undefined, peer + 1);
+    await f.published(direct);
+    await f.journaled(f.submit('Контрольная отметка в журнале', -1));
+    expect(
+      f.db
+        .prepare(`SELECT count(*) FROM group_reply_assessments WHERE state IN ('waiting','sent')`)
+        .pluck()
+        .get(),
+    ).toBe(4);
+    expect(
+      f.db
+        .prepare(
+          "SELECT count(*) FROM messages WHERE role='user' AND text LIKE '%помоги с задачей%'",
+        )
+        .pluck()
+        .get(),
+    ).toBe(24);
+    expect(f.complete).toHaveBeenCalledOnce();
+    expect(f.sends.at(-1)?.peer_id).toBe(peer + 1);
+    f.at(120_001);
+    slow.resolve({ ...answer, text: 'ответить' });
+    await until(() =>
+      expect(
+        f.db
+          .prepare("SELECT count(*) FROM group_reply_assessments WHERE outcome='expired'")
+          .pluck()
+          .get(),
+      ).toBe(3),
+    );
+    expect(f.assess).toHaveBeenCalledOnce();
+    expect(f.sends.some((row) => row.reply_message?.conversation_message_id === pending)).toBe(
+      false,
+    );
+    await f.published(f.submit('Пенёк, подскажи', 41, undefined, peer + 1));
+    expect(f.assess).toHaveBeenCalledTimes(2);
+    expect(f.complete).toHaveBeenCalledTimes(2);
+    expect(f.sends.at(-1)?.peer_id).toBe(peer + 1);
+    expect((await f.storage.messages.list(other, { limit: 30 })).length).toBeGreaterThan(12);
+  } finally {
+    slow.resolve(answer);
+    await f.close();
   }
 });

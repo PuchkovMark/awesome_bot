@@ -1,14 +1,6 @@
 import type { Database } from 'better-sqlite3';
 import { reconcileGroupReplyAssessments } from './group-reply-gate-store';
-
-function matchingColumns(staged: Database, newer: Database, table: string) {
-  const columns = (db: Database) =>
-    db.prepare('SELECT name FROM pragma_table_info(?)').pluck().all(table) as string[];
-  const present = new Set(columns(newer));
-  return columns(staged)
-    .filter((name) => present.has(name))
-    .map((name) => '"' + name.replaceAll('"', '""') + '"');
-}
+import { matchingColumns } from './database-restore';
 
 function reconcileReminders(staged: Database, newer: Database) {
   const reminderColumns = matchingColumns(staged, newer, 'personal_reminders');

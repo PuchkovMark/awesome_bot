@@ -1,5 +1,9 @@
 import { assessQuestionnaire, questionnaireCases } from './questionnaire';
+import { lstat, stat } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { createLlmClient } from '../llm/index';
+import { groupReplyModel } from '../core/message-router/group-reply-gate';
+import { groupReplyScenarios } from './group-reply-gate';
 import { runProfileUpdateMocks, runProfileUpdateModel } from './profile-updates';
 import { formatVkChecklist } from './checklist';
 import { writeLocalReport } from './report';
@@ -14,14 +18,31 @@ async function main(args: readonly string[]): Promise<number> {
   }
   const profileModel = args[0] === '--profile-model';
   const historyModel = args[0] === '--history-model';
-  const modelRun = profileModel || historyModel;
+  const groupReplyRun = args[0] === '--group-reply-gate-model';
+  const modelRun = profileModel || historyModel || groupReplyRun;
   const single = profileModel && args[1] === '--case';
   const caseId = single ? args[2] : undefined;
   const [flag, output, ...extra] = modelRun ? args.slice(single ? 3 : 1) : args;
   if (extra.length || flag !== '--out' || !output?.trim() || output.startsWith('--')) {
     process.stderr.write(
-      'Укажите --out <новый файл JSON>, --profile-model [--case <сценарий>] --out <новый файл JSON>, --history-model --out <новый файл JSON> или --checklist.\n',
+      'Укажите --out <новый файл JSON>, --profile-model [--case <сценарий>] --out <новый файл JSON>, --history-model --out <новый файл JSON>, --group-reply-gate-model --out <новый файл JSON> или --checklist.\n',
     );
+    return 1;
+  }
+  try {
+    await lstat(output);
+    process.stderr.write('Файл отчёта уже существует.\n');
+    return 1;
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) {
+      process.stderr.write('Не удалось сохранить отчёт по указанному пути.\n');
+      return 1;
+    }
+  }
+  try {
+    if (!(await stat(dirname(output))).isDirectory()) throw Error('report_directory');
+  } catch {
+    process.stderr.write('Не удалось сохранить отчёт по указанному пути.\n');
     return 1;
   }
 
@@ -32,7 +53,21 @@ async function main(args: readonly string[]): Promise<number> {
       if (!model || !apiKey) throw Error('model_eval_config');
       const client = createLlmClient({ provider: 'opencode', apiKey, model });
       if (profileModel) results = await runProfileUpdateModel(client, model, caseId);
-      else
+      else if (groupReplyRun) {
+        const groupReplyClient = createLlmClient({
+          provider: 'opencode',
+          apiKey,
+          model: groupReplyModel,
+        });
+        for (const scenario of groupReplyScenarios)
+          results.push(
+            await runScenario(scenario, client, {
+              modelName: model,
+              timeoutMs: 60_000,
+              groupReplyClient,
+            }),
+          );
+      } else
         for (const scenario of historySearchScenarios)
           results.push(
             await runScenario(scenario, client, { modelName: model, timeoutMs: 60_000 }),

@@ -27,7 +27,6 @@ test('исходная реплика передаётся целиком, а ц
       current: source(9, text),
       quote: source(3, quote),
       nearby: [source(7, 'а'.repeat(4096))],
-      frontier: 9,
     },
     'test',
     new AbortController().signal,

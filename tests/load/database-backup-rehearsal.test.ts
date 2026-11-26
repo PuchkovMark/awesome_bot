@@ -4,7 +4,7 @@ import { performance } from 'node:perf_hooks';
 import { expect, test } from 'vitest';
 import { runBackup } from '../../src/app/database-backup';
 import { runApplication } from '../../src/app/service';
-import { initializePrompt } from '../../src/app/setup';
+import { initializePrompt, resolveApplicationChat } from '../../src/app/setup';
 import { loadApplicationConfig } from '../../src/config/application';
 import { createVkApi, createVkApiCall } from '../../src/channels/vk/api';
 import { openStorage } from '../../src/storage/index';
@@ -12,6 +12,8 @@ import { openExisting } from '../../src/storage/database-backup';
 import { personalDataStore } from '../../src/storage/personal-data-store';
 import { scopeFor } from '../helpers/connection-scope';
 import { storageFixture } from '../helpers/storage-fixture';
+import type { LlmResult } from '../../src/llm/types';
+import { answer, fixture, ownerId, peer, until } from '../helpers/application-response-fixture';
 
 async function startTestBot(config: ReturnType<typeof loadApplicationConfig>['config']) {
   const controller = new AbortController(),
@@ -198,3 +200,78 @@ test('восстановление двух бесед до application_ready с
     }
   }
 }, 300000);
+
+test('восстановление двух бесед сверяет доставленный ответ и прерванную оценку', async () => {
+  const files = storageFixture();
+  const options = { databasePath: files.path, messageRetentionDays: 30, ownerId } as const;
+  let f: Awaited<ReturnType<typeof fixture>> | undefined;
+  const first = Promise.withResolvers<LlmResult>(),
+    second = Promise.withResolvers<LlmResult>();
+  const question = 'Пенёк, подскажи';
+  const approval = { ...answer, text: 'ответить' };
+  const rows = (app: NonNullable<typeof f>) =>
+    app.db
+      .prepare(
+        `SELECT a.chat_id AS chat,a.state,a.outcome
+    FROM group_reply_assessments a ORDER BY a.message_id`,
+      )
+      .all();
+  try {
+    const app = (f = await fixture({ files }));
+    const neighbor = await app.connectGroup(peer + 1);
+    app.assess
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise);
+    const left = app.submit(question);
+    await until(() => expect(app.assess).toHaveBeenCalledOnce());
+    const right = app.submit(question, 41, undefined, peer + 1);
+    await until(() =>
+      expect(rows(app)).toMatchObject([
+        { chat: app.scope.chatId, state: 'sent' },
+        { chat: neighbor.chatId, state: 'waiting' },
+      ]),
+    );
+    expect(await runBackup(options, 'create')).toMatchObject({ ok: true, outcome: 'created' });
+
+    first.resolve(approval);
+    await app.published(left);
+    await until(() => expect(app.assess).toHaveBeenCalledTimes(2));
+    expect(app.sends.some((row) => row.reply_message?.conversation_message_id === right)).toBe(
+      false,
+    );
+    await app.close();
+    f = undefined;
+    expect(await runBackup(options, 'restore')).toMatchObject({ ok: true, outcome: 'restored' });
+
+    const restored = (f = await fixture({ files, resume: true }));
+    await resolveApplicationChat(options, `vk:${peer + 1}`, 'continue');
+    expect(rows(restored)).toMatchObject([
+      { chat: app.scope.chatId, state: 'finished', outcome: 'answer' },
+      { chat: neighbor.chatId, state: 'finished', outcome: 'uncertain' },
+    ]);
+    restored.submit(question, 41, undefined, peer, false, left);
+    restored.submit(question, 41, undefined, peer + 1, false, right);
+    await restored.published(
+      restored.submit('[club314|Пенёк] Контроль после восстановления', 41, undefined, peer + 1),
+    );
+    expect(restored.assess).not.toHaveBeenCalled();
+    expect(restored.complete).toHaveBeenCalledOnce();
+    expect(rows(restored)).toHaveLength(2);
+    expect(
+      restored.db
+        .prepare(
+          `SELECT chat_id AS chat,input_tokens AS tokens FROM token_budget_attempts
+        WHERE purpose='gate_name' ORDER BY chat_id`,
+        )
+        .all(),
+    ).toEqual([
+      { chat: app.scope.chatId, tokens: 1 },
+      { chat: neighbor.chatId, tokens: null },
+    ]);
+  } finally {
+    first.resolve(approval);
+    second.resolve(approval);
+    await f?.close();
+    files.cleanup();
+  }
+});

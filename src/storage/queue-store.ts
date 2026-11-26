@@ -1100,7 +1100,11 @@ export function createQueueBackend(
         return {
           sent(step?: ModelStep) {
             transaction(token, (database) => {
-              if (!running(database, token, work)) throw new StorageError('stale_scope');
+              if (
+                !running(database, token, work) ||
+                beforeInitiative(database, work, limits, responseRate, now())
+              )
+                throw new StorageError('stale_scope');
               recordSentModelAttempt(database, work.scope, key, { id: work.id, step });
             });
           },

@@ -53,7 +53,6 @@ export interface GroupReplyContext {
   readonly current: GroupReplySource;
   readonly quote?: GroupReplySource;
   readonly nearby: readonly GroupReplySource[];
-  readonly frontier: number;
   readonly glossary?: { readonly text: string | null; readonly revision: number };
 }
 
@@ -281,8 +280,18 @@ export function reconcileGroupReplyAssessments(staged: Database, newer: Database
       WHERE a.chat_id=@chatId AND a.generation=@generation AND a.message_id=@messageId
         AND m.platform_message_id=@platformId`)
     : undefined;
+  if (present) {
+    const unsent = newer.prepare(`SELECT chat_id AS chatId,generation,attempt_key AS attemptKey
+      FROM group_reply_assessments WHERE state='reserved' AND attempt_key IS NOT NULL`);
+    for (const row of unsent.iterate() as Iterable<
+      Pick<StoredGroupReplyAssessment, 'chatId' | 'generation'> & { attemptKey: string }
+    >)
+      deleteUnsentTokenReservation(staged, row, row.attemptKey);
+  }
   const close = staged.prepare(`UPDATE group_reply_assessments SET state='finished',outcome=@outcome
     WHERE ${key} AND ${unfinished}`);
+  const reset = staged.prepare(`UPDATE group_reply_assessments SET state='waiting',attempt_key=NULL,
+    source_ids=NULL,frontier=NULL WHERE ${key}`);
   const rows = staged
     .prepare(
       `SELECT a.message_id AS messageId,a.chat_id AS chatId,a.generation,
@@ -302,13 +311,24 @@ export function reconcileGroupReplyAssessments(staged: Database, newer: Database
         >
       | undefined;
     if (
-      (row.state === 'waiting' &&
-        (current?.state === 'waiting' || current?.state === 'reserved')) ||
-      (row.state === 'approved' &&
-        current?.state === 'approved' &&
-        row.attemptKey === current.attemptKey &&
-        row.sourceIds === current.sourceIds &&
-        row.frontier === current.frontier)
+      row.state === 'reserved' &&
+      row.attemptKey &&
+      (!current || current.state === 'waiting' || current.state === 'reserved')
+    )
+      deleteUnsentTokenReservation(staged, row, row.attemptKey);
+    if (
+      (row.state === 'waiting' || row.state === 'reserved') &&
+      (current?.state === 'waiting' || current?.state === 'reserved')
+    ) {
+      reset.run(row);
+      continue;
+    }
+    if (
+      row.state === 'approved' &&
+      current?.state === 'approved' &&
+      row.attemptKey === current.attemptKey &&
+      row.sourceIds === current.sourceIds &&
+      row.frontier === current.frontier
     )
       continue;
     close.run({
@@ -379,7 +399,10 @@ export function createGroupReplyGateStore(connection: Connection, lifecycle: Lif
             ).run(params);
             db.prepare(
               `UPDATE group_reply_assessments SET resume_allowed=1
-          WHERE state IN ('waiting','approved') AND substr(chat_id,1,length(@prefix))=@prefix`,
+          WHERE substr(chat_id,1,length(@prefix))=@prefix AND (state IN ('waiting','approved')
+            OR (state='queued' AND EXISTS(SELECT 1 FROM queue_jobs j
+              WHERE j.message_id=group_reply_assessments.message_id
+                AND j.group_reply_assessment IS NOT NULL AND j.state='queued')))`,
             ).run(params);
           })
           .immediate(),
@@ -481,7 +504,6 @@ export function createGroupReplyGateStore(connection: Connection, lifecycle: Lif
           current: input,
           ...(quote && quote.text !== null ? { quote } : {}),
           nearby: nearby.filter(({ text }) => text !== null),
-          frontier: Math.max(messageId, nearby[0]?.id ?? 0),
           ...(glossary ? { glossary } : {}),
         };
       });
@@ -581,6 +603,7 @@ export function createGroupReplyGateStore(connection: Connection, lifecycle: Lif
       outcome: GateOutcome,
       latencyMs: number,
       now: number,
+      promote?: () => void,
     ) {
       return connection.run((db) =>
         db
@@ -595,7 +618,7 @@ export function createGroupReplyGateStore(connection: Connection, lifecycle: Lif
                     groupInitiativeDenial(db, scope, messageId, row.frontier, now))))
                 ? 'cancelled'
                 : outcome;
-            return (
+            const updated =
               db
                 .prepare(
                   `UPDATE group_reply_assessments SET state=@state,outcome=@outcome,latency_ms=@latency
@@ -608,8 +631,9 @@ export function createGroupReplyGateStore(connection: Connection, lifecycle: Lif
                   outcome: selected,
                   state: selected === 'answer' ? 'approved' : 'finished',
                   latency: latencyMs,
-                }).changes === 1
-            );
+                }).changes === 1;
+            if (updated && selected === 'answer') promote?.();
+            return updated;
           })
           .immediate(),
       );

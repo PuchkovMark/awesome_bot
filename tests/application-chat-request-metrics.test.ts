@@ -445,6 +445,11 @@ test(
         usage: { input: 6, output: 4 },
       });
       app.at(2_000);
+      app.assess.mockResolvedValueOnce({
+        ...answer,
+        text: 'ответить',
+        usage: { input: 0, output: 0 },
+      });
       const replied = await app.trace(app.submit('Кто-нибудь, помогите разобраться с расписанием'));
       expect(replied.payload.route?.kind).toBe('initiative');
       expect(replied.payload.publication.status).toBe('delivered');

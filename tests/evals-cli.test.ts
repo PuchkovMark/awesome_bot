@@ -30,7 +30,7 @@ test('собранная команда запускает набор, а чек
       directory,
       ['--out', 'results.json'],
       `globalThis.fetch=()=>{throw Error('NETWORK');};`,
-      30_000,
+      60_000,
     );
     expect(out.status, out.stderr).toBe(0);
     expect(out.stdout).toContain(

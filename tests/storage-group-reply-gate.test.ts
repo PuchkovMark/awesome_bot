@@ -8,6 +8,7 @@ import { migrate } from '../src/storage/migrate';
 import { migrations } from '../src/storage/migrations/index';
 import { queueBackend } from '../src/storage/queue-registry';
 import { reconcileRestoredWork } from '../src/storage/restore-work';
+import { tokenBudgetStore } from '../src/storage/token-budget-store';
 import { openStorage, scopeFor } from './helpers/connection-scope';
 import { alice, group, neighbor, profileFixture } from './helpers/profile-fact-fixture';
 
@@ -88,6 +89,27 @@ test('ожидание связано с записанной репликой �
     ).toBe(false);
     expect(store.sent(scope, selected.messageId, 'try-one', Date.now())).toBe(true);
     expect(store.finish(scope, selected.messageId, 'try-one', 'answer', 20, Date.now())).toBe(true);
+    const full = queueConfig({ maxQueuedTotal: 1, maxQueuedPerChat: 1 });
+    expect(
+      queue.admit(
+        lease,
+        other,
+        {
+          chatId: other.chatId,
+          userId: alice,
+          messageId: '202',
+          authorName: 'Участник',
+          role: 'user',
+          text: 'Прямое задание другой беседы',
+          timestamp: Date.now(),
+        },
+        () => true,
+        full,
+      ).status,
+    ).toBe('queued');
+    expect(queue.promoteGroupReply(lease, scope, selected.messageId, full)).toBe('full');
+    expect(store.valid(scope, selected.messageId, Date.now())?.state).toBe('approved');
+    expect(queue.take(lease)?.scope.chatId).toBe(other.chatId);
     expect(queue.promoteGroupReply(lease, scope, selected.messageId, config)).toBe('queued');
     expect(queue.promoteGroupReply(lease, scope, selected.messageId, config)).toBe('closed');
     expect(queue.take(lease)).toMatchObject({
@@ -142,6 +164,12 @@ test('неотправленная оценка восстанавливаетс
       messageId: second.messageId,
       state: 'waiting',
       attemptKey: null,
+    });
+    expect(tokenBudgetStore(f.storage).read(restored, true, now).total.reserved).toBe(15n);
+    expect(store.reconcile(restored, 'a', { input: 3, output: 1 })).toBe(true);
+    expect(tokenBudgetStore(f.storage).read(restored, true, now).total).toMatchObject({
+      reserved: 0n,
+      confirmed: 4n,
     });
     expect(store.next('vk', second.expiresAt)).toBeUndefined();
   } finally {

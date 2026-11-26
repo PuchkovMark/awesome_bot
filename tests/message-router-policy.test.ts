@@ -54,7 +54,12 @@ test('отбор для Haiku различает явную адресацию, 
   expect(select(name)).toMatchObject({ assessment: { kind: 'name' } });
   expect(select('Обсуждали, как работает Пнечек')).toMatchObject({ assessment: { kind: 'name' } });
   expect(select('В лесу у тропинки стоит пенёк')).toMatchObject({ assessment: { kind: 'name' } });
-  for (const text of ['Маша, сколько будет дважды два?', 'Пенал у Маши', 'суперпеньчик'])
+  for (const text of [
+    'Маша, сколько будет дважды два?',
+    'Пенал у Маши',
+    'суперпеньчик',
+    'Дядя Пень, ответь',
+  ])
     expect(select(text)).toEqual({ kind: 'silence', reason: 'not_addressed' });
   expect(select('На столе три настолки', 'active')).toMatchObject({
     assessment: { kind: 'initiative' },
