@@ -9,7 +9,12 @@ import { participantRegistryStore } from '../src/storage/participant-registry';
 import { profileCommandStore } from '../src/storage/profile-command-store';
 import { selectOwnProfile } from '../src/storage/profile-fact-selection';
 import { questionnaireManagementStore } from '../src/storage/questionnaire-management-store';
-import { seedLegacyPrivateForm } from './helpers/questionnaire-upgrade';
+import {
+  seedLegacyPrivateForm,
+  seedLegacyQuestionnaireRestriction,
+} from './helpers/questionnaire-upgrade';
+import { editQuestionnaireAnswer } from '../src/storage/profile-fact-store';
+import { questionnaireViewStore } from '../src/storage/questionnaire-view-store';
 import { questionnaireProgressStore } from '../src/storage/questionnaire-progress-store';
 import { questionnaireStore } from '../src/storage/questionnaire-store';
 import { questionnaireQuestions } from '../src/core/questionnaires/legacy-template';
@@ -175,6 +180,7 @@ test('обновление переносит только проверяемы�
         DROP TABLE llm_recovery;
         DROP TABLE questionnaire_presentations;
         DROP TABLE questionnaire_answer_facts;
+        ALTER TABLE profile_facts DROP COLUMN questionnaire_public_attempt;
         ALTER TABLE queue_jobs DROP COLUMN recap_prompt_id;
         DROP TRIGGER recap_hide_source;
         DROP TABLE recap_clarifications;
@@ -223,7 +229,7 @@ test('обновление переносит только проверяемы�
   }
 });
 
-test('личные правки анкеты и подтверждённое удаление сохраняются при восстановлении копии', async () => {
+test('восстановление сохраняет прежнее ограничение, публичную правку и подтверждённое удаление', async () => {
   const f = await profileFixture();
   const backup = f.path + '.backup';
   try {
@@ -257,8 +263,27 @@ test('личные правки анкеты и подтверждённое у�
         position: number,
         change: { kind: 'hide' } | { kind: 'correct'; value: string },
       ) => lists.edit(direct, alice, { messageId, position, change, at: 150, replyId: '301' }, 150);
-      expect(edit('302', 2, { kind: 'hide' })).toBe('applied');
-      expect(edit('303', 1, { kind: 'correct', value: 'Шашки' })).toBe('applied');
+      expect(edit('302', 2, { kind: 'hide' })).toBe('questionnaire');
+      expect(edit('303', 1, { kind: 'correct', value: 'Шашки' })).toBe('questionnaire');
+      lifecycleBackend(f.storage).transaction(target, (writer) => {
+        seedLegacyQuestionnaireRestriction(writer, target, alice, 3, 145);
+        const attempt = questionnaireProgressStore(f.storage)
+          .participant(target, alice)
+          .current(150)!.attempt;
+        expect(
+          editQuestionnaireAnswer(
+            writer,
+            target,
+            alice,
+            attempt,
+            revision(target),
+            1,
+            'Шашки',
+            { scope: target, messageId: '204', at: 149 },
+            150,
+          ),
+        ).toBe(true);
+      });
       lifecycleBackend(f.storage).transaction(target, (writer) =>
         writer
           .prepare(
@@ -300,6 +325,13 @@ test('личные правки анкеты и подтверждённое у�
               .get(),
           ).toEqual({ receipt: 202, expires_at: 0 });
           expect(restored.facts).toEqual(current.facts);
+          const scope = scopeFor(copy, group);
+          expect(questionnaireViewStore(copy).read(scope, scope, twin, alice, 151)?.pairs).toEqual([
+            { question, answer: 'Шашки' },
+          ]);
+          expect(copy.profileFacts.cardFacts(scope, alice)).toMatchObject([
+            { value: { value: 'Шашки' } },
+          ]);
         } finally {
           await copy.close();
         }
@@ -327,6 +359,54 @@ test('личные правки анкеты и подтверждённое у�
     } finally {
       db.close();
     }
+  } finally {
+    await f.close();
+  }
+});
+
+test('схема 60 сохраняет публичное, личное и неопределённое происхождение по каждой позиции', async () => {
+  const f = await profileFixture();
+  try {
+    const target = await f.chat();
+    const other = await f.chat(neighbor);
+    const direct = await f.chat(alice, [alice]);
+    for (const scope of [target, other]) {
+      f.deliver(scope);
+      const { store, id } = await pending(f, scope, alice, '200');
+      expect(store.finish(scope, id, 130, answers, () => true)).toBe(true);
+    }
+    f.deliver(direct);
+    const legacy = new Database(f.path);
+    try {
+      seedLegacyPrivateForm(legacy, direct, 130, { '1': 'Имя из лички' });
+      seedLegacyQuestionnaireRestriction(legacy, target, alice, 3, 145);
+      seedLegacyQuestionnaireRestriction(legacy, other, alice, 1, 145, 'unknown');
+      legacy.exec(`ALTER TABLE profile_facts DROP COLUMN questionnaire_public_attempt;
+        DELETE FROM schema_migrations WHERE version=61;`);
+    } finally {
+      legacy.close();
+    }
+    await f.reopen();
+    const first = scopeFor(f.storage, group);
+    const second = scopeFor(f.storage, neighbor);
+    const views = questionnaireViewStore(f.storage);
+    expect(views.read(first, first, twin, alice, 150)?.pairs).toEqual([
+      { question, answer: 'Шахматы' },
+    ]);
+    expect(views.read(second, second, twin, alice, 150)?.pairs).toEqual([
+      { question, answer: 'Го' },
+    ]);
+    expect(views.read(first, second, twin, alice, 150)).toBeNull();
+    expect(
+      personalDataStore(f.storage).export(scopeFor(f.storage, alice), alice, 150).questionnaire
+        ?.questions[0]?.answer,
+    ).toBe('Имя из лички');
+    expect(f.storage.profileFacts.read(first, alice).facts.map(({ value }) => value)).toEqual([
+      'Шахматы',
+    ]);
+    expect(f.storage.profileFacts.cardFacts(second, alice).map(({ value }) => value.value)).toEqual(
+      ['Го'],
+    );
   } finally {
     await f.close();
   }

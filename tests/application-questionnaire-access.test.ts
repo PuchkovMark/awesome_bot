@@ -1,4 +1,6 @@
 import { expect, test } from 'vitest';
+import { privateQuestionnaireViewHint } from '../src/core/questionnaire/text';
+import { seedLegacyQuestionnaireRestriction } from './helpers/questionnaire-upgrade';
 import {
   answer,
   chat,
@@ -15,7 +17,7 @@ const hidden = 'Какой факт скрыть?';
 const skipped = 'Что пропустить?';
 
 function setup(hold = false) {
-  return fixture({ profileNotice, active: true, hold, greetings: { members: [41, 42, 73] } });
+  return fixture({ profileNotice, active: true, hold, greetings: { members: [41, 42, 43, 73] } });
 }
 
 async function fill(app: App, { large = false, held = false } = {}) {
@@ -127,66 +129,63 @@ async function requestView(app: App, text: string, user: number, destination = p
 
 test('беседа и проверенная личка показывают только ответы анкеты, доступные получателю', async () => {
   const app = await setup();
-  const stranger = '/анкета показать [id41|Участник]';
+  const stranger = '/анкета [id41|Тёзка]';
   const fromGroup = `/анкета показать ${chat} [id41|Участник]`;
-  const expected = `Анкета\n\n${hobby}\nШахматы`;
+  const initial = `Анкета
+
+${hobby}
+Шахматы`;
+  const edited = `${initial}
+
+${hidden}
+Новый ответ`;
   try {
+    app.name(41, 'Саша', 'Иванов');
+    app.name(42, 'Саша', 'Иванов');
     const original = await fill(app);
     await completion(app);
     expect(await requestView(app, stranger, 42)).toContain('Шахматы');
+    expect(await requestView(app, '/анкета [id42|Тёзка]', 43)).toBe('Анкета не заполнена');
+    expect(await requestView(app, '/анкета показать [id41|Тёзка]', 43)).toContain('Шахматы');
     app.at(3_000);
-    const spoke = app.submit('Ещё я люблю велосипед.');
-    await app.journaled(spoke);
-    const messageId = app.db
-      .prepare('SELECT id FROM messages WHERE chat_id=? AND platform_message_id=?')
-      .pluck()
-      .get(chat, String(spoke)) as number;
-    await app.storage.authorization.transaction(app.scope, (tx) => {
-      expect(
-        tx.changeProfileFact('vk:41', {
-          subjectId: 'vk:41',
-          messageId,
-          change: {
-            kind: 'set',
-            fieldKey: 'transport',
-            value: 'велосипед',
-            reliability: 'confirmed',
-          },
-        }),
-      ).toBe('recorded');
-    });
-    app.at(4_000);
-    app.submit('/профиль', 41);
-    await until(() =>
-      expect(
-        app.sends.some(({ peer_id, text }) => peer_id === 41 && text.startsWith('Профиль в')),
-      ).toBe(true),
-    );
-    const list = app.sends.find(
-      ({ peer_id, text }) => peer_id === 41 && text.startsWith('Профиль в'),
-    )!;
-    expect(list.text).toContain(hidden);
+    const list = await ownProfile(app);
+    expect(list.text).toContain('/анкета изменить');
+    expect(list.text).not.toContain('/скрыть');
+    app.db
+      .prepare("UPDATE profile_command_positions SET visibility='unknown' WHERE position=2")
+      .run();
+    for (const command of ['/скрыть 2', '/исправить 2 Закрытый текст']) {
+      const before = app.sends.length;
+      app.submit(command, 41, list, 41);
+      await until(() =>
+        expect(app.sends.slice(before)).toContainEqual(
+          expect.objectContaining({
+            peer_id: 41,
+            text: 'Чтобы исправить ответ анкеты, отправьте /анкета изменить в беседе.',
+          }),
+        ),
+      );
+      expect(values(app)).toEqual(['Шахматы', 'Личный факт']);
+    }
+
     app.at(5_000);
-    app.submit('/скрыть 2', 41, list, 41);
-    await until(() =>
-      expect(app.sends.some(({ text }) => text === 'Профиль обновлён.')).toBe(true),
-    );
-    expect(await requestView(app, `/анкета показать ${chat}`, 41, 41)).toContain('Личный факт');
+    seedLegacyQuestionnaireRestriction(app.db, app.scope, 'vk:41', 3, app.start + 4_000);
+    expect(await requestView(app, `/анкета показать ${chat}`, 41, 41)).toBe(initial);
+    expect(await requestView(app, stranger, 42)).toBe(initial);
     app.submit('/анкета изменить');
     await until(() =>
       expect(app.sends.some((row) => row.text.includes('3. ' + hidden))).toBe(true),
     );
     const edit = app.sends.find((row) => row.text.includes('3. ' + hidden))!;
-    app.submit('3 Исправленный личный факт', 41, edit);
+    app.submit('3 Новый ответ', 41, edit);
     await until(() =>
       expect(app.sends.some((row) => row.text.includes('№ 3 сохранён'))).toBe(true),
     );
-    expect(await requestView(app, `/анкета показать ${chat}`, 41, 41)).toContain(
-      'Исправленный личный факт',
-    );
-    expect(await requestView(app, stranger, 42)).toBe(expected);
-    expect(await requestView(app, stranger, 73)).toBe(expected);
-    expect(await requestView(app, '/анкета показать', 41)).toBe(expected);
+    expect(await requestView(app, `/анкета показать ${chat}`, 41, 41)).toBe(edited);
+    expect(await requestView(app, stranger, 42)).toBe(edited);
+    expect(await requestView(app, stranger, 43)).toBe(edited);
+    app.submit('/анкета показать', 41, undefined, 41);
+    await until(() => expect(app.sends.at(-1)?.text).toBe(privateQuestionnaireViewHint));
     expect(await requestView(app, `/анкета показать vk:${peer + 1} @id41`, 41, 41)).toBe(
       'Анкета недоступна.',
     );
@@ -200,7 +199,7 @@ test('беседа и проверенная личка показывают т�
         ).toBe(true),
       );
       expect(await requestView(app, fromGroup, who, who)).toBe(
-        who === 52 ? 'Анкета недоступна.' : expected,
+        who === 52 ? 'Анкета недоступна.' : edited,
       );
     }
     expect(app.complete).toHaveBeenCalledTimes(1);
@@ -256,7 +255,7 @@ test('выход автора во время выдачи блокирует в
   }
 });
 
-test('скрытие одного из публичных полей защищает готовящийся ответ с карточкой', async () => {
+test('изменение публичного ответа защищает устаревшую карточку в готовящемся ответе модели', async () => {
   const app = await setup();
   const finishing = Promise.withResolvers<void>();
   const useCard = {
@@ -274,7 +273,6 @@ test('скрытие одного из публичных полей защищ�
   try {
     await fill(app);
     await completion(app);
-    const privateList = await ownProfile(app);
     app.at(4_000);
     app.complete.mockResolvedValueOnce(useCard).mockImplementationOnce(async (request) => {
       expect(request.messages.find((message) => message.role === 'tool')?.text).toContain(
@@ -285,7 +283,18 @@ test('скрытие одного из публичных полей защищ�
     });
     const event = app.submit(mention);
     await until(() => expect(app.complete).toHaveBeenCalledTimes(3));
-    await hideSecondFact(app, privateList);
+    app.submit('/анкета изменить');
+    await until(() =>
+      expect(app.sends.some(({ text }) => text.includes('3. ' + hidden))).toBe(true),
+    );
+    app.submit(
+      '1 Шашки',
+      41,
+      app.sends.find(({ text }) => text.includes('3. ' + hidden))!,
+    );
+    await until(() =>
+      expect(app.sends.some(({ text }) => text.includes('№ 1 сохранён'))).toBe(true),
+    );
     finishing.resolve();
     await app.trace(event);
     expect(app.sends.some(({ text }) => text === 'Прежняя карточка с шахматами')).toBe(false);
@@ -303,14 +312,6 @@ async function ownProfile(app: App) {
     expect(list).toBeDefined();
   });
   return list!;
-}
-
-async function hideSecondFact(app: App, list: App['sends'][number]) {
-  const before = app.sends.filter(({ text }) => text === 'Профиль обновлён.').length;
-  app.submit('/скрыть 2', 41, list, 41);
-  await until(() =>
-    expect(app.sends.filter(({ text }) => text === 'Профиль обновлён.')).toHaveLength(before + 1),
-  );
 }
 
 test('старые команда и квитанция о представлении не отправляют ответ и не заполняют новую анкету', async () => {

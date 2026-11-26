@@ -45,6 +45,7 @@ interface FactRow {
   readonly question: string | null;
   readonly questionPosition: number | null;
   readonly questionnaireAttempt: string | null;
+  readonly publicQuestionnaireAttempt: string | null;
   readonly authorPresent: number;
 }
 export const inferenceFreshnessMs = 90 * 86_400_000;
@@ -72,6 +73,7 @@ function selectSlots(db: Database, scope: ConnectionScope, query: ProfileQuery, 
       f.source_message_id AS sourceMessageId,f.source_at AS sourceAt,f.event_key AS eventKey,
       f.generation IS NULL AS legacy, r.fact_id IS NOT NULL AS rejected,
       q.question, q.position AS questionPosition, q.attempt AS questionnaireAttempt,
+      f.questionnaire_public_attempt AS publicQuestionnaireAttempt,
       (p.status='present') AS authorPresent,
       CASE WHEN f.source_kind<>'self' OR q.fact_id IS NOT NULL THEN (SELECT m.id FROM personal_visible_messages m
         WHERE m.chat_id=f.chat_id AND m.platform_message_id=f.source_message_id
@@ -132,7 +134,21 @@ function selectSlots(db: Database, scope: ConnectionScope, query: ProfileQuery, 
 }
 
 function slotVisibility(slot: Slot): FactVisibility {
-  return slot.restriction?.visibility ?? slot.legacyRestriction ?? slot.fact?.visibility ?? 'chat';
+  const { fact, restriction } = slot;
+  const visibility =
+    restriction?.visibility ?? slot.legacyRestriction ?? fact?.visibility ?? 'chat';
+  if (!fact?.questionnaireAttempt) return visibility;
+  if (
+    fact.publicQuestionnaireAttempt === fact.questionnaireAttempt &&
+    fact.visibility === 'chat' &&
+    (visibility === 'chat' ||
+      (restriction &&
+        fact.sourceAt !== null &&
+        restriction.sourceAt !== null &&
+        fact.sourceAt > restriction.sourceAt))
+  )
+    return 'chat';
+  return visibility === 'chat' ? 'unknown' : visibility;
 }
 
 export function selectCurrentFacts(

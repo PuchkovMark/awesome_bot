@@ -73,3 +73,30 @@ export function seedLegacyPrivateForm(
       );
   })();
 }
+
+export function seedLegacyQuestionnaireRestriction(
+  db: Database.Database,
+  scope: ConnectionScope,
+  user: UserId,
+  position: number,
+  now: number,
+  visibility: 'bot' | 'unknown' = 'bot',
+) {
+  db.prepare(
+    `INSERT INTO profile_facts(
+    chat_id,user_id,field_key,value,source_kind,source_user_id,reliability,visibility,
+    created_at,updated_at,generation,source_at,event_key,change_kind
+  ) SELECT chat_id,user_id,field_key,'','self',user_id,'unknown',?,?,?,?,?,'2:profile:legacy','visibility'
+   FROM questionnaire_answer_facts WHERE (chat_id,generation,user_id,position)=(?,?,?,?)`,
+  ).run(
+    visibility,
+    now,
+    now,
+    scope.generation,
+    now,
+    scope.chatId,
+    scope.generation,
+    user,
+    position,
+  );
+}

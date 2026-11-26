@@ -24,9 +24,12 @@ export function profileListText(list: ProfileCommandList) {
   const parts: (ProfileCommandPartRange & { readonly text: string })[] = [];
   if (!list.facts.length)
     return [{ first: 1, last: 1, text: titleLine + '\nВ профиле пока нет доступных фактов.' }];
-  let text =
-    titleLine +
-    '\nОтветьте на сообщение списка с командой /исправить N значение, /скрыть N или /отклонить N.';
+  let text = titleLine;
+  if (list.facts.some((fact) => fact.question === undefined))
+    text +=
+      '\nОтветьте на сообщение списка с командой /исправить N значение, /скрыть N или /отклонить N для фактов профиля.';
+  if (list.facts.some((fact) => fact.question !== undefined))
+    text += '\nОтветы анкеты можно исправить командой /анкета изменить в беседе.';
   let first = 1;
   let last = 0;
   const flush = () => {

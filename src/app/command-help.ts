@@ -1,6 +1,6 @@
 import type { BotRole, ConnectionScope, IncomingMessage } from '../contracts/index';
 import { vkMentionCommand } from '../channels/vk/normalize';
-import { privateQuestionnaireHint } from '../core/questionnaire/text';
+import { privateQuestionnaireHint, privateQuestionnaireViewHint } from '../core/questionnaire/text';
 
 export const helpAction = {
   action: 'commands.read',
@@ -62,12 +62,12 @@ export function commandHelp(
         '/анкета показать — посмотреть свою анкету.',
         '/анкета пауза · /анкета отмена — приостановить или отменить заполнение.',
         '/анкета вопросы — посмотреть действующий список вопросов.',
-        `/анкета показать @id${actor.slice(3)} — пример просмотра по упоминанию.`,
+        `/анкета @id${actor.slice(3)} — пример просмотра по упоминанию.`,
         '/анкета изменить — исправить свой ответ.',
         '/анкета удалить — удалить свою анкету с подтверждением.',
       );
     }
-    if (ordinary && !group) lines.push(privateQuestionnaireHint);
+    if (ordinary && !group) lines.push(privateQuestionnaireHint, privateQuestionnaireViewHint);
     if (manage)
       lines.push(
         '/анкета вопросы изменить — открыть редактор.',

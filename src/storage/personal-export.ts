@@ -68,23 +68,31 @@ export function readPersonalExport(
     facts: visible
       ? db
           .prepare(
-            `SELECT coalesce(q.question,f.field_key) AS field_key,value,source_kind,reliability,
-      coalesce((SELECT v.visibility FROM profile_facts v
-        WHERE (v.chat_id,v.generation,v.user_id,v.field_key)=(q.chat_id,q.generation,q.user_id,q.field_key)
-          AND v.change_kind='visibility'
-        ORDER BY v.source_at DESC,v.event_key DESC,v.id LIMIT 1),f.visibility) AS visibility,
-      created_at,updated_at,source_at,r.rejected_at,
-      change_kind,CASE WHEN change_kind<>'set' AND interest_key<>'' THEN interest_key END AS interest,
+            `SELECT coalesce(q.question,f.field_key) AS field_key,f.value,f.source_kind,f.reliability,
+      CASE WHEN q.attempt IS NULL THEN f.visibility
+        WHEN f.questionnaire_public_attempt=q.attempt AND f.visibility='chat'
+          AND (coalesce(v.visibility,'chat')='chat' OR f.source_at>v.source_at) THEN 'chat'
+        WHEN coalesce(v.visibility,f.visibility)='chat' THEN 'unknown'
+        ELSE coalesce(v.visibility,f.visibility) END AS visibility,
+      f.created_at,f.updated_at,f.source_at,r.rejected_at,
+      f.change_kind,CASE WHEN f.change_kind<>'set' AND f.interest_key<>'' THEN f.interest_key END AS interest,
       CASE WHEN f.source_user_id=f.user_id AND EXISTS(
         SELECT 1 FROM personal_visible_messages m
         WHERE m.chat_id=f.chat_id AND m.user_id=f.user_id AND m.platform_message_id=f.source_message_id
           AND m.id>? AND m.timestamp>?
-      ) THEN source_message_id END AS own_source_message
+      ) THEN f.source_message_id END AS own_source_message
       FROM profile_facts f LEFT JOIN profile_fact_rejections r ON r.fact_id=f.id
       LEFT JOIN questionnaire_answer_facts q
         ON (q.chat_id,q.generation,q.user_id,q.field_key)=(f.chat_id,f.generation,f.user_id,f.field_key)
+      LEFT JOIN profile_facts v ON v.id=(
+        SELECT restriction.id FROM profile_facts restriction
+        WHERE (restriction.chat_id,restriction.generation,restriction.user_id,restriction.field_key)=
+          (q.chat_id,q.generation,q.user_id,q.field_key) AND restriction.change_kind='visibility'
+          AND restriction.source_kind='self'
+        ORDER BY restriction.source_at DESC,restriction.event_key DESC,restriction.id LIMIT 1
+      )
       WHERE f.chat_id=? AND f.user_id=? AND (f.generation=? OR f.generation IS NULL)
-       AND (source_kind<>'inferred' OR f.generation IS NULL OR EXISTS(
+       AND (f.source_kind<>'inferred' OR f.generation IS NULL OR EXISTS(
         SELECT 1 FROM personal_visible_messages m WHERE m.chat_id=f.chat_id
         AND m.platform_message_id=f.source_message_id AND m.id>? AND m.timestamp>?
        ))

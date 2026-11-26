@@ -4,6 +4,9 @@ export const completedQuestionnaireActions =
 export const privateQuestionnaireHint =
   'Чтобы заполнить анкету, отправьте /анкета в нужной беседе.';
 
+export const privateQuestionnaireViewHint =
+  'Укажите ID беседы, например /анкета показать vk:2000000001. Добавьте упоминание, чтобы посмотреть анкету другого участника.';
+
 export const questionnairePresentationQuestion =
   'Опубликовать ваше представление в этой беседе? Ответьте «Представить» или «Не представлять» на это сообщение. Также можно отправить /анкета представить.';
 

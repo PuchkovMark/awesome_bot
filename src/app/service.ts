@@ -218,7 +218,7 @@ export async function runApplication(
               const command = (message.literalText ?? message.text).trim();
               const commandAllowed = !message.hasForwarded && !message.attachments.length;
               const filling = commandAllowed && parseQuestionnaireCommand(command);
-              const viewing = commandAllowed && parseQuestionnaireView(command);
+              const viewing = commandAllowed && parseQuestionnaireView(command) !== null;
               await onboarding.notifyPrivate(scope, current);
               if (filling || viewing) {
                 const isCurrent = () => current() && !onboarding.privatePending(scope);

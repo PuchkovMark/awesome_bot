@@ -32,6 +32,7 @@ import type { PublicationGuard } from '../core/message-router/publication-servic
 import {
   completedQuestionnaireActions,
   privateQuestionnaireHint,
+  privateQuestionnaireViewHint,
   questionnaireListText,
   questionnairePresentationQuestion,
 } from '../core/questionnaire/text';
@@ -60,7 +61,10 @@ export function parseQuestionnaireCommand(text: string): QuestionnaireCommand | 
 }
 
 export function parseQuestionnaireView(text: string) {
-  return /^\/анкета\s+показать(?:\s+([\s\S]+))?$/iu.exec(text.trim());
+  const view = /^\/анкета\s+(?:показать(?:\s+([\s\S]+))?|((?:@id|\[id)[\s\S]+))$/iu.exec(
+    text.trim(),
+  );
+  return view ? (view[1] ?? view[2] ?? '') : null;
 }
 
 const unavailable = 'Анкета недоступна.';
@@ -126,8 +130,7 @@ export function createQuestionnaireCommands(options: {
     if (isQuestionnaireQuestions(message)) return questionList;
     const raw = message.text.trim();
     const text =
-      raw.startsWith('/') &&
-      (!message.hasOtherAddress || /^\/анкета\s+показать(?:\s|$)/iu.test(raw))
+      raw.startsWith('/') && (!message.hasOtherAddress || parseQuestionnaireView(raw) !== null)
         ? raw
         : (message.literalText ?? message.text).trim();
     if (
@@ -140,7 +143,7 @@ export function createQuestionnaireCommands(options: {
     const progress = parseQuestionnaireCommand(text);
     if (progress) return progress;
     const view = parseQuestionnaireView(text);
-    if (view) return { view: view[1] ?? '' };
+    if (view !== null) return { view };
     if (receipt && questionLists.owns(scope, message)) return showingAnswer;
     if (!message.isGroupChat) return null;
     if (/^\/анкета\s+изменить$/iu.test(text)) return { manage: 'edit' as const };
@@ -163,6 +166,10 @@ export function createQuestionnaireCommands(options: {
   ) {
     let scope = delivery;
     const context = /^(vk:[1-9]\d*)(?:\s+([\s\S]+))?$/u.exec(args);
+    if (!message.isGroupChat && !context) {
+      await channel.deliverQuestionnairePart(delivery, privateQuestionnaireViewHint, guard);
+      return;
+    }
     if (context) {
       const chatId = context[1]! as ChatId;
       const local = vkLocalId(chatId);
