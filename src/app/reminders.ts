@@ -28,12 +28,18 @@ type Lifecycle = ReturnType<typeof createLifecycleService>;
 
 const missing = 'Напоминание не найдено.';
 const closed = 'Чтобы получить напоминание, разрешите сообщения от сообщества и повторите просьбу.';
+const recoveryHint = 'Проверить напоминание можно в личке по команде «Мои напоминания».';
 const display = {
   delivered: 'доставлено',
   cancelled: 'отменено',
   missed: 'срок пропущен',
   unknown: 'доставка не подтверждена',
   sending: 'отправка уже началась',
+} as const;
+const confirmationText = {
+  delivered: 'Подтверждение доставлено.',
+  failed: 'VK отклонил подтверждение.',
+  unknown: 'Доставка подтверждения неизвестна.',
 } as const;
 
 function fields(input: string, originAt: number, timezone?: string, edited?: Reminder) {
@@ -142,10 +148,28 @@ function summary(item: Reminder) {
     item.state === 'pending'
       ? item.deliveryUnknown
         ? display.unknown
-        : item.text!
+        : item.deliveryStarted
+          ? display.sending
+          : item.text!
       : display[item.state],
   );
+  if (item.state === 'pending' && !item.deliveryStarted) {
+    parts.push(confirmationText[item.confirmation]);
+    const action = confirmationAction(item);
+    if (action) return parts.join(' · ') + '\n' + action;
+  }
   return parts.join(' · ');
+}
+
+function confirmationAction(item: Reminder) {
+  if (item.confirmation === 'failed') return `Повтори подтверждение #${item.id}`;
+  if (item.confirmation === 'unknown') return `Проверь напоминание #${item.id}`;
+}
+
+function recoveryStatus(item: Reminder | undefined) {
+  if (!item) return missing;
+  if (item.state !== 'pending' || item.deliveryStarted) return summary(item);
+  return `Напоминание #${item.id} назначено на ${dueLabel(item)}. ${confirmationText[item.confirmation]}`;
 }
 
 export function createReminderHandlers(options: {
@@ -204,7 +228,7 @@ export function createReminderHandlers(options: {
       } else {
         outcome = 'unknown' as const;
       }
-      if (!store.settle(lease, part, outcome, Date.now())) return;
+      if (!store.settle(lease, part, outcome, Date.now())) return outcome;
     }
   }
 
@@ -254,14 +278,14 @@ export function createReminderHandlers(options: {
           );
         return;
       }
+      const recipientCurrent = () => isCurrent() && lifecycle.isAdmissionCurrent(target.scope);
+      const privateGuard = {
+        signal,
+        isCurrent: recipientCurrent,
+        allow: async () => recipientCurrent(),
+      };
       const reply = (text: string) =>
-        options.track(
-          channel.replyPrivateControl(target.userId, text, {
-            signal,
-            allow: async () => isCurrent(),
-            isCurrent: () => isCurrent() && lifecycle.isAdmissionCurrent(target.scope),
-          }),
-        );
+        options.track(channel.replyPrivateControl(target.userId, text, privateGuard));
       const now = Date.now();
       if (command.kind === 'cancel-options') {
         const items = store.list(target, now, 'cancellable');
@@ -280,6 +304,48 @@ export function createReminderHandlers(options: {
       if (command.kind === 'list') {
         const items = store.list(target, now);
         reply(items.length ? items.map(summary).join('\n') : 'Напоминаний пока нет.');
+        return;
+      }
+      if (command.kind === 'retry-confirmation') {
+        const lease = store.claimConfirmation(target, command.id, now, true);
+        if (!lease) {
+          reply(recoveryStatus(store.inspectConfirmation(target, command.id, now)?.item));
+          return;
+        }
+        options.track(
+          deliver(lease, target.scope, recipientCurrent).then((outcome) => {
+            if (outcome !== 'delivered' && recipientCurrent())
+              reply(
+                recoveryStatus(store.inspectConfirmation(target, command.id, Date.now())?.item),
+              );
+          }),
+        );
+        return;
+      }
+      if (command.kind === 'check-confirmation') {
+        const inspected = store.inspectConfirmation(target, command.id, now);
+        if (!inspected?.parts.length) {
+          reply(recoveryStatus(inspected?.item));
+          return;
+        }
+        const id = command.id;
+        const endpoint = channel.reminderDelivery(target.userId);
+        options.track(
+          (async () => {
+            for (const part of inspected.parts) {
+              if (!recipientCurrent()) return;
+              const found = await endpoint.confirm(
+                part.text,
+                part.receipt,
+                part.attempted_at,
+                privateGuard,
+              );
+              if (!recipientCurrent()) return;
+              if (found) store.confirmObservedPart(target, id, part, Date.now());
+            }
+            reply(recoveryStatus(store.inspectConfirmation(target, id, Date.now())?.item));
+          })(),
+        );
         return;
       }
       if (command.kind === 'cancel') {
@@ -301,6 +367,7 @@ export function createReminderHandlers(options: {
       let item: Reminder | null | undefined;
       if (replayOnly) {
         item = store.replay(target, origin, now);
+        if (item?.state !== 'draft') return;
       } else if (command.kind === 'create') {
         item = store.create(
           target,
@@ -340,7 +407,22 @@ export function createReminderHandlers(options: {
       }
       if (item.state === 'pending') {
         const lease = store.claimConfirmation(target, item.id, Date.now());
-        if (lease) options.track(deliver(lease, target.scope, isCurrent));
+        if (lease)
+          options.track(
+            deliver(lease, target.scope, recipientCurrent).then(async (outcome) => {
+              if (
+                event.isGroupChat &&
+                (outcome === 'failed' || outcome === 'unknown') &&
+                recipientCurrent() &&
+                store.claimRecoveryHint(target, origin, lease.id)
+              )
+                await channel.replyGroupControl(scope, recoveryHint, {
+                  signal,
+                  isCurrent: recipientCurrent,
+                  allow: async () => recipientCurrent(),
+                });
+            }),
+          );
       }
     },
     async due() {

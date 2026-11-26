@@ -81,6 +81,7 @@ export async function remindersFixture(origin = Date.UTC(2026, 10, 23, 20, 55)) 
   let tick = 0;
   let lostText: string | undefined;
   let hideText: string | undefined;
+  let refuseText: string | undefined;
   let holdNext = false;
   let listener: Parameters<VkPollTransport['run']>[0];
   let running: ReturnType<typeof runApplication> | undefined;
@@ -130,6 +131,10 @@ export async function remindersFixture(origin = Date.UTC(2026, 10, 23, 20, 55)) 
       case 'messages.setActivity':
         return { response: 1 };
       case 'messages.send': {
+        if (refuseText && String(args.message).includes(refuseText)) {
+          refuseText = undefined;
+          return { error: { error_code: 901 } };
+        }
         const parent = args.forward
           ? messages.get(
               (JSON.parse(String(args.forward)) as { conversation_message_ids: number[] })
@@ -248,6 +253,9 @@ export async function remindersFixture(origin = Date.UTC(2026, 10, 23, 20, 55)) 
       },
       lost(text: string) {
         lostText = text;
+      },
+      refuseOnce(text: string) {
+        refuseText = text;
       },
       hide(text: string) {
         hideText = text;

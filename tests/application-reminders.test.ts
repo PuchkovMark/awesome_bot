@@ -5,6 +5,168 @@ import { mention, peer, remindersFixture, until } from './helpers/application-re
 const direct = '[club314|Пенёк] ';
 const minute = 60_000;
 const future = Date.UTC(2026, 10, 24, 15);
+const recoveryHint = 'Проверить напоминание можно в личке по команде «Мои напоминания».';
+
+test('после отказа повтор по номеру отправляет только оставшуюся часть с прежним ключом', async () => {
+  const f = await remindersFixture();
+  const ending = 'уникальная концовка подтверждения';
+  const text = 'а'.repeat(2400) + ' ' + ending;
+  try {
+    f.refuseOnce(ending);
+    const original = f.send(direct + 'Напомни мне через 1 минуту ' + text, 41, peer);
+    await until(() => expect(f.sends.find((row) => row.peer_id === peer)?.text).toBe(recoveryHint));
+    const item = f.pending()[0]!;
+    const parts = f.db
+      .prepare(
+        `SELECT send_id AS sendId,state,definite_failure AS failed FROM personal_reminder_parts
+       WHERE reminder_id=? AND stage='confirmation' ORDER BY part`,
+      )
+      .all(item.id) as { sendId: number; state: string; failed: number }[];
+    const failed = parts.at(-1)!;
+    expect(parts.length).toBeGreaterThan(1);
+    expect(
+      parts.slice(0, -1).every(({ state, failed }) => state === 'confirmed' && failed === 0),
+    ).toBe(true);
+    expect(failed).toMatchObject({ state: 'ready', failed: 1 });
+    const requests = () =>
+      f.attempt.mock.calls
+        .filter(
+          ([method, args]) =>
+            method === 'messages.send' &&
+            parts.some((part) => part.sendId === Number(args.random_id)),
+        )
+        .map(([, args]) => Number(args.random_id));
+
+    f.repeat(original);
+    f.send('Мои напоминания');
+    await until(() =>
+      expect(
+        f.sends.some(
+          (row) => row.peer_id === 41 && row.text.includes(`Повтори подтверждение #${item.id}`),
+        ),
+      ).toBe(true),
+    );
+    expect(requests()).toEqual(parts.map(({ sendId }) => sendId));
+
+    const before = f.sends.length;
+    f.send(`Повтори подтверждение #${item.id}`);
+    await until(() =>
+      expect(
+        f.db.prepare('SELECT confirmation FROM personal_reminders WHERE id=?').pluck().get(item.id),
+      ).toBe('delivered'),
+    );
+    expect(requests()).toEqual([...parts.map(({ sendId }) => sendId), failed.sendId]);
+    expect(f.sends.slice(before)).toEqual([
+      expect.objectContaining({
+        peer_id: 41,
+        random_id: failed.sendId,
+        text: expect.stringContaining(ending),
+      }),
+    ]);
+    expect(f.sends.filter(({ peer_id }) => peer_id === peer).map(({ text }) => text)).toEqual([
+      recoveryHint,
+    ]);
+    expect(f.pending()).toEqual([item]);
+    expect(f.complete).not.toHaveBeenCalled();
+  } finally {
+    await f.close();
+  }
+});
+
+test.each(['скрытая квитанция', 'потеря ответа'] as const)(
+  'проверка после исхода «%s» не отправляет подтверждение снова',
+  async (fault) => {
+    const f = await remindersFixture();
+    const prefix = 'Напомню вам';
+    try {
+      if (fault === 'скрытая квитанция') f.hide(prefix);
+      else f.lost(prefix);
+      const original = f.send(direct + 'Напомни мне через 1 минуту взять билет', 41, peer);
+      await until(() =>
+        expect(f.sends.find((row) => row.peer_id === peer)?.text).toBe(recoveryHint),
+      );
+      const item = f.pending()[0]!;
+      const confirmation = f.sends.find(({ text }) => text.startsWith(prefix))!;
+      const requests = () =>
+        f.attempt.mock.calls.filter(
+          ([method, args]) => method === 'messages.send' && String(args.message).startsWith(prefix),
+        ).length;
+      const reads = () =>
+        f.attempt.mock.calls.filter(
+          ([method, args]) =>
+            method === 'messages.getByConversationMessageId' &&
+            args.peer_id === 41 &&
+            args.conversation_message_ids === String(confirmation.conversation_message_id),
+        ).length;
+      const beforeReads = reads();
+      let sentBefore = f.sends.length;
+      f.repeat(original);
+      f.send(`Проверь напоминание #${item.id}`);
+      await until(() =>
+        expect(f.sends.slice(sentBefore).at(-1)).toMatchObject({
+          peer_id: 41,
+          text: expect.stringMatching(
+            new RegExp(
+              `^Напоминание #${item.id} назначено на .*Доставка подтверждения неизвестна\\.$`,
+              'u',
+            ),
+          ),
+        }),
+      );
+      expect(requests()).toBe(1);
+      expect(reads()).toBeGreaterThanOrEqual(beforeReads);
+      if (fault === 'скрытая квитанция') {
+        expect(reads()).toBeGreaterThan(beforeReads);
+        f.reveal();
+        sentBefore = f.sends.length;
+        f.send(`Проверь напоминание #${item.id}`);
+        await until(() =>
+          expect(f.sends.slice(sentBefore).at(-1)).toMatchObject({
+            peer_id: 41,
+            text: expect.stringContaining('Подтверждение доставлено.'),
+          }),
+        );
+      } else {
+        expect(reads()).toBe(beforeReads);
+      }
+      expect(requests()).toBe(1);
+      expect(f.pending()).toEqual([item]);
+      expect(f.sends.filter(({ peer_id }) => peer_id === peer).map(({ text }) => text)).toEqual([
+        recoveryHint,
+      ]);
+      expect(f.complete).not.toHaveBeenCalled();
+    } finally {
+      await f.close();
+    }
+  },
+);
+
+test('при сверке первой части подтверждения готовая вторая часть остаётся без отправки', async () => {
+  const f = await remindersFixture();
+  const ending = 'конец второго фрагмента';
+  try {
+    f.hide('Напомню вам');
+    f.send(direct + 'Напомни мне через 1 минуту ' + 'а'.repeat(2400) + ' ' + ending, 41, peer);
+    await until(() => expect(f.sends.find((row) => row.peer_id === peer)?.text).toBe(recoveryHint));
+    const id = f.pending()[0]!.id;
+    f.reveal();
+    f.send(`Проверь напоминание #${id}`);
+    await until(() => expect(f.sends.at(-1)?.text).toContain('Доставка подтверждения неизвестна.'));
+    expect(f.sends.some(({ text }) => text.includes(ending))).toBe(false);
+    const states = f.db
+      .prepare(
+        "SELECT state FROM personal_reminder_parts WHERE reminder_id=? AND stage='confirmation' ORDER BY part",
+      )
+      .pluck()
+      .all(id);
+    expect(states.length).toBeGreaterThan(1);
+    expect(states[0]).toBe('confirmed');
+    expect(states.slice(1).every((state) => state === 'ready')).toBe(true);
+    expect(f.complete).not.toHaveBeenCalled();
+  } finally {
+    await f.close();
+  }
+});
 
 test('личный выбор отмены показывает реальные номера и ждёт команды даже при одном задании', async () => {
   const f = await remindersFixture();
