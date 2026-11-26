@@ -173,6 +173,58 @@ test('в прежней группе просмотр оставляет обр�
   }
 });
 
+test('полная копия просмотра сохраняет порядок вопросов при заполнении и точечном изменении', async () => {
+  const app = await fixture({ profileNotice: 'Тестовое уведомление об анкете и личном профиле.' });
+  try {
+    await app.storage.authorization.transaction(app.scope, (tx) =>
+      tx.grant({ userId: 'vk:41', basis: 'explicit', grantedAt: app.start, grantedBy: 'vk:73' }),
+    );
+    app.submit('/вопросы', admin);
+    const view = () =>
+      app.sends.find(
+        ({ peer_id, text }) =>
+          peer_id === peer && text.endsWith('Для правки отправьте /вопросы изменить.'),
+      );
+    await until(() => expect(view()).toBeDefined());
+    const copy = view()!.text;
+    expect(copy).toBe(
+      'Вопросы анкеты\n\n' + original.join('\n') + '\n\nДля правки отправьте /вопросы изменить.',
+    );
+    const first = await editor(app, admin);
+    const from = app.sends.length;
+    app.submit(copy, admin, first);
+    await until(() =>
+      expect(app.sends.slice(from).some(({ text }) => text === saved + '16.')).toBe(true),
+    );
+    expect(questions(app)).toEqual(original);
+
+    app.at(1000);
+    const beforeForm = app.sends.length;
+    app.submit('/анкета', member);
+    const list = () =>
+      app.sends.find(
+        ({ peer_id, text }) => peer_id === peer && text.startsWith('Ваш ответ увидят участники'),
+      );
+    await until(() =>
+      expect(
+        list(),
+        JSON.stringify(app.sends.slice(beforeForm).map(({ text }) => text)),
+      ).toBeDefined(),
+    );
+    expect(list()!.text.split('\n\n').slice(1).join('\n\n').split('\n')).toEqual(original);
+
+    const second = await editor(app, admin);
+    const changed = 'Как открыть https://example.org/docs командой /вопросы изменить?';
+    const expected = [original[0], changed, ...original.slice(2)];
+    const edited = copy.replace('\n' + original[1] + '\n', '\n' + changed + '\n');
+    app.submit(edited.replaceAll('\n', '\r\n'), admin, second);
+    await until(() => expect(questions(app)).toEqual(expected));
+    expect(app.complete).not.toHaveBeenCalled();
+  } finally {
+    await app.close();
+  }
+});
+
 test('длинный список полностью показывается до редактора, частичные и неподтверждённые ответы сохраняют прежнюю редакцию', async () => {
   const app = await fixture();
   try {

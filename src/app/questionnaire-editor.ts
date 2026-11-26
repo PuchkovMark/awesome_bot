@@ -14,6 +14,7 @@ import { pendingControlPrompts, type TrackPublication } from './control-publicat
 
 const heading = 'Вопросы анкеты';
 const sample = 'Стартовый образец анкеты\nСписок этой беседы пока не сохранён.';
+const viewInstruction = '\n\nДля правки отправьте /вопросы изменить.';
 const editorHeading = 'Редактор анкеты';
 const instruction =
   '\n\nЧтобы изменить анкету, ответьте на это сообщение полным списком, по одному вопросу на строку.';
@@ -35,6 +36,13 @@ function looksLikeEditor(text: string | undefined) {
       (text.endsWith(instruction) || text.endsWith(continuation))) ||
       (text.startsWith('В списке ') && text.endsWith(confirmation)))
   );
+}
+
+function viewedQuestions(text: string) {
+  const normalized = text.replace(/\r\n?/gu, '\n').trim();
+  if (!normalized.endsWith(viewInstruction)) return undefined;
+  const title = [heading, sample].find((part) => normalized.startsWith(part + '\n\n'));
+  if (title) return normalized.slice(title.length + 2, -viewInstruction.length);
 }
 
 function preview(title: string, lines: readonly string[]) {
@@ -164,7 +172,7 @@ export function createQuestionnaireEditor(options: {
       const title = chosen ? heading : sample;
       if (!editing) {
         const parts = splitVkText(
-          title + '\n\n' + list.join('\n') + '\n\nДля правки отправьте /вопросы изменить.',
+          title + '\n\n' + list.join('\n') + viewInstruction,
           vkMessageLength.value,
         );
         options.track(
@@ -212,11 +220,12 @@ export function createQuestionnaireEditor(options: {
       const id = Number(message.messageId);
       if (!Number.isSafeInteger(id) || id < 1 || String(id) !== message.messageId) return;
       const editor = message.replyToMessageId;
+      const text = viewedQuestions(raw) ?? raw;
       const apply = async () => {
         if (!guard.isCurrent()) return;
         const result = await authorization.applyQuestionnaireReply(
           context,
-          { receipt: editor, eventId: id, eventAt: message.timestamp, text: raw },
+          { receipt: editor, eventId: id, eventAt: message.timestamp, text },
           guard.isCurrent,
         );
         if (result.allowed && result.value.status === 'confirm') {
