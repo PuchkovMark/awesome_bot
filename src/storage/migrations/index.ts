@@ -57,6 +57,8 @@ import { explicitPassportEditors } from './056-explicit-passport-editors';
 import { personalDisputes } from './058-personal-disputes';
 import { connectionRecovery } from './059-connection-recovery';
 import { reminderConfirmationRecovery } from './060-reminder-confirmation-recovery';
+import { questionnairePublicAnswers } from './061-questionnaire-public-answers';
+import { questionnaireInvitationDelivery } from './062-questionnaire-invitation-delivery';
 import { controlCommandOrigin } from './057-control-command-origin';
 import { questionnaireReplacement } from './054-questionnaire-replacement';
 import { pausedResetRequests } from './053-paused-reset-requests';
@@ -125,4 +127,6 @@ export const migrations: readonly Migration[] = [
   personalDisputes,
   connectionRecovery,
   reminderConfirmationRecovery,
+  questionnairePublicAnswers,
+  questionnaireInvitationDelivery,
 ];

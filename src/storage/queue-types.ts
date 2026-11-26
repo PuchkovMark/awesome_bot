@@ -1,6 +1,7 @@
 import type { ConnectionScope } from '../contracts/index';
 import type { MessageInput, StoredMessage } from './types';
 import type { InitiativeCause } from '../core/message-router/autonomous-rules';
+import type { InvitationReplyStatus } from './questionnaire-invitation-input';
 export type InitiativeDenial =
   | 'initiative_mode'
   | 'initiative_pause'
@@ -92,6 +93,10 @@ export type RouteMetadata =
     };
 
 export interface RoutedQueueDecision {
+  readonly questionnaireInvitation?: {
+    readonly receipt: string;
+    readonly status: InvitationReplyStatus;
+  };
   readonly profileUpdate?: true;
   readonly privateCommand?: true;
   readonly skipQuestionnaire?: true;

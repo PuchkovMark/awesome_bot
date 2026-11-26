@@ -1,5 +1,6 @@
 import { expect, test } from 'vitest';
-import { questionnairePresentationQuestion } from '../src/core/questionnaire/text';
+import { privateQuestionnaireViewHint } from '../src/core/questionnaire/text';
+import { seedLegacyQuestionnaireRestriction } from './helpers/questionnaire-upgrade';
 import {
   answer,
   chat,
@@ -16,7 +17,7 @@ const hidden = 'Какой факт скрыть?';
 const skipped = 'Что пропустить?';
 
 function setup(hold = false) {
-  return fixture({ profileNotice, active: true, hold, greetings: { members: [41, 42, 73] } });
+  return fixture({ profileNotice, active: true, hold, greetings: { members: [41, 42, 43, 73] } });
 }
 
 async function fill(app: App, { large = false, held = false } = {}) {
@@ -56,32 +57,13 @@ async function fill(app: App, { large = false, held = false } = {}) {
   if (held) {
     await until(() => expect(app.holds).toHaveLength(2));
     app.holds[1]!.release();
-    await until(() => expect(app.holds).toHaveLength(3));
-    app.holds[2]!.release();
-    await presentationPrompt(app);
+    await completion(app);
   }
   return input;
 }
 
 function values(app: App) {
   return app.storage.profileFacts.read(app.scope, 'vk:41').facts.map(({ value }) => value);
-}
-
-function presentation(app: App) {
-  return app.db
-    .prepare(
-      `SELECT prompt_message_id AS receipt,event_id AS event,state,confirmed_parts AS parts
-    FROM questionnaire_presentations WHERE chat_id=? AND user_id='vk:41'`,
-    )
-    .get(chat) as
-    { receipt: number | null; event: number | null; state: string; parts: number } | undefined;
-}
-
-async function presentationPrompt(app: App) {
-  await until(() => expect(presentation(app)?.receipt).toBeGreaterThan(0));
-  const question = app.sends.find(({ text }) => text === questionnairePresentationQuestion)!;
-  expect(presentation(app)?.receipt).toBe(question.conversation_message_id);
-  return question;
 }
 
 function introductions(app: App) {
@@ -107,13 +89,14 @@ test('публичные ответы доступны сразу и после 
     );
     app.at(500);
     expect(await requestView(app, '/анкета показать @id41', 42)).toBe('Анкета не заполнена');
+    const sent = app.sends.length;
     await fill(app);
     await completion(app);
     expect(values(app)).toEqual(['Шахматы', 'Личный факт']);
-    expect(app.sends.some((row) => row.text.includes('Разрешить участникам этой беседы'))).toBe(
-      false,
-    );
-    await presentationPrompt(app);
+    expect(app.sends.slice(sent).map(({ text }) => text)).toEqual([
+      expect.stringContaining('Ваш ответ увидят участники этой беседы.'),
+      'Спасибо! Анкета заполнена.',
+    ]);
     const previous = await completion(app);
     app.db
       .prepare('UPDATE questionnaire_progress SET legacy_access_prompt_id=? WHERE chat_id=?')
@@ -146,66 +129,63 @@ async function requestView(app: App, text: string, user: number, destination = p
 
 test('беседа и проверенная личка показывают только ответы анкеты, доступные получателю', async () => {
   const app = await setup();
-  const stranger = '/анкета показать [id41|Участник]';
+  const stranger = '/анкета [id41|Тёзка]';
   const fromGroup = `/анкета показать ${chat} [id41|Участник]`;
-  const expected = `Анкета\n\n${hobby}\nШахматы`;
+  const initial = `Анкета
+
+${hobby}
+Шахматы`;
+  const edited = `${initial}
+
+${hidden}
+Новый ответ`;
   try {
+    app.name(41, 'Саша', 'Иванов');
+    app.name(42, 'Саша', 'Иванов');
     const original = await fill(app);
     await completion(app);
     expect(await requestView(app, stranger, 42)).toContain('Шахматы');
+    expect(await requestView(app, '/анкета [id42|Тёзка]', 43)).toBe('Анкета не заполнена');
+    expect(await requestView(app, '/анкета показать [id41|Тёзка]', 43)).toContain('Шахматы');
     app.at(3_000);
-    const spoke = app.submit('Ещё я люблю велосипед.');
-    await app.journaled(spoke);
-    const messageId = app.db
-      .prepare('SELECT id FROM messages WHERE chat_id=? AND platform_message_id=?')
-      .pluck()
-      .get(chat, String(spoke)) as number;
-    await app.storage.authorization.transaction(app.scope, (tx) => {
-      expect(
-        tx.changeProfileFact('vk:41', {
-          subjectId: 'vk:41',
-          messageId,
-          change: {
-            kind: 'set',
-            fieldKey: 'transport',
-            value: 'велосипед',
-            reliability: 'confirmed',
-          },
-        }),
-      ).toBe('recorded');
-    });
-    app.at(4_000);
-    app.submit('/профиль', 41);
-    await until(() =>
-      expect(
-        app.sends.some(({ peer_id, text }) => peer_id === 41 && text.startsWith('Профиль в')),
-      ).toBe(true),
-    );
-    const list = app.sends.find(
-      ({ peer_id, text }) => peer_id === 41 && text.startsWith('Профиль в'),
-    )!;
-    expect(list.text).toContain(hidden);
+    const list = await ownProfile(app);
+    expect(list.text).toContain('/анкета изменить');
+    expect(list.text).not.toContain('/скрыть');
+    app.db
+      .prepare("UPDATE profile_command_positions SET visibility='unknown' WHERE position=2")
+      .run();
+    for (const command of ['/скрыть 2', '/исправить 2 Закрытый текст']) {
+      const before = app.sends.length;
+      app.submit(command, 41, list, 41);
+      await until(() =>
+        expect(app.sends.slice(before)).toContainEqual(
+          expect.objectContaining({
+            peer_id: 41,
+            text: 'Чтобы исправить ответ анкеты, отправьте /анкета изменить в беседе.',
+          }),
+        ),
+      );
+      expect(values(app)).toEqual(['Шахматы', 'Личный факт']);
+    }
+
     app.at(5_000);
-    app.submit('/скрыть 2', 41, list, 41);
-    await until(() =>
-      expect(app.sends.some(({ text }) => text === 'Профиль обновлён.')).toBe(true),
-    );
-    expect(await requestView(app, `/анкета показать ${chat}`, 41, 41)).toContain('Личный факт');
+    seedLegacyQuestionnaireRestriction(app.db, app.scope, 'vk:41', 3, app.start + 4_000);
+    expect(await requestView(app, `/анкета показать ${chat}`, 41, 41)).toBe(initial);
+    expect(await requestView(app, stranger, 42)).toBe(initial);
     app.submit('/анкета изменить');
     await until(() =>
       expect(app.sends.some((row) => row.text.includes('3. ' + hidden))).toBe(true),
     );
     const edit = app.sends.find((row) => row.text.includes('3. ' + hidden))!;
-    app.submit('3 Исправленный личный факт', 41, edit);
+    app.submit('3 Новый ответ', 41, edit);
     await until(() =>
       expect(app.sends.some((row) => row.text.includes('№ 3 сохранён'))).toBe(true),
     );
-    expect(await requestView(app, `/анкета показать ${chat}`, 41, 41)).toContain(
-      'Исправленный личный факт',
-    );
-    expect(await requestView(app, stranger, 42)).toBe(expected);
-    expect(await requestView(app, stranger, 73)).toBe(expected);
-    expect(await requestView(app, '/анкета показать', 41)).toBe(expected);
+    expect(await requestView(app, `/анкета показать ${chat}`, 41, 41)).toBe(edited);
+    expect(await requestView(app, stranger, 42)).toBe(edited);
+    expect(await requestView(app, stranger, 43)).toBe(edited);
+    app.submit('/анкета показать', 41, undefined, 41);
+    await until(() => expect(app.sends.at(-1)?.text).toBe(privateQuestionnaireViewHint));
     expect(await requestView(app, `/анкета показать vk:${peer + 1} @id41`, 41, 41)).toBe(
       'Анкета недоступна.',
     );
@@ -219,7 +199,7 @@ test('беседа и проверенная личка показывают т�
         ).toBe(true),
       );
       expect(await requestView(app, fromGroup, who, who)).toBe(
-        who === 52 ? 'Анкета недоступна.' : expected,
+        who === 52 ? 'Анкета недоступна.' : edited,
       );
     }
     expect(app.complete).toHaveBeenCalledTimes(1);
@@ -258,24 +238,24 @@ test('выход автора во время выдачи блокирует в
     await completion(app);
     app.at(3_000);
     app.submit('/анкета показать @id41', 42);
+    await until(() => expect(app.holds).toHaveLength(3));
+    app.holds[2]!.release();
     await until(() => expect(app.holds).toHaveLength(4));
-    app.holds[3]!.release();
-    await until(() => expect(app.holds).toHaveLength(5));
     expect(
       app.sends.some(({ text }) => text.startsWith('Анкета\n') && text.includes('Шахматы')),
     ).toBe(true);
     app.setMembers([42, 73]);
     app.membership('chat_kick_user', 41, 41);
     await until(() => expect(values(app)).toEqual([]));
-    app.holds[4]!.release();
-    await app.holds[4]!.finished;
+    app.holds[3]!.release();
+    await app.holds[3]!.finished;
     expect(app.sends.filter(({ text }) => text.includes('Длинный ответ'))).toEqual([]);
   } finally {
     await app.close();
   }
 });
 
-test('скрытие одного из публичных полей защищает готовящийся ответ с карточкой', async () => {
+test('изменение публичного ответа защищает устаревшую карточку в готовящемся ответе модели', async () => {
   const app = await setup();
   const finishing = Promise.withResolvers<void>();
   const useCard = {
@@ -293,7 +273,6 @@ test('скрытие одного из публичных полей защищ�
   try {
     await fill(app);
     await completion(app);
-    const privateList = await ownProfile(app);
     app.at(4_000);
     app.complete.mockResolvedValueOnce(useCard).mockImplementationOnce(async (request) => {
       expect(request.messages.find((message) => message.role === 'tool')?.text).toContain(
@@ -304,7 +283,18 @@ test('скрытие одного из публичных полей защищ�
     });
     const event = app.submit(mention);
     await until(() => expect(app.complete).toHaveBeenCalledTimes(3));
-    await hideSecondFact(app, privateList);
+    app.submit('/анкета изменить');
+    await until(() =>
+      expect(app.sends.some(({ text }) => text.includes('3. ' + hidden))).toBe(true),
+    );
+    app.submit(
+      '1 Шашки',
+      41,
+      app.sends.find(({ text }) => text.includes('3. ' + hidden))!,
+    );
+    await until(() =>
+      expect(app.sends.some(({ text }) => text.includes('№ 1 сохранён'))).toBe(true),
+    );
     finishing.resolve();
     await app.trace(event);
     expect(app.sends.some(({ text }) => text === 'Прежняя карточка с шахматами')).toBe(false);
@@ -324,116 +314,37 @@ async function ownProfile(app: App) {
   return list!;
 }
 
-async function hideSecondFact(app: App, list: App['sends'][number]) {
-  const before = app.sends.filter(({ text }) => text === 'Профиль обновлён.').length;
-  app.submit('/скрыть 2', 41, list, 41);
-  await until(() =>
-    expect(app.sends.filter(({ text }) => text === 'Профиль обновлён.')).toHaveLength(before + 1),
-  );
-}
-
-test.each(['команда', 'ответ'] as const)(
-  'представление сохраняет отдельное согласие автора через %s и публикуется один раз',
-  async (mode) => {
-    const app = await setup();
-    try {
-      await fill(app);
-      const viewQuestion = await completion(app);
-      const question = await presentationPrompt(app);
-      expect(viewQuestion.conversation_message_id).not.toBe(question.conversation_message_id);
-      app.at(3_000);
-      for (const event of [
-        app.submit('Представить', 42, question),
-        app.submit('Да', 41, question),
-        app.submit('Представить', 41, viewQuestion),
-      ])
-        await app.journaled(event);
-      expect(presentation(app)).toMatchObject({ state: 'waiting', event: null });
-      const decline = app.submit('Не представлять', 41, question);
-      await until(() =>
-        expect(presentation(app)).toMatchObject({ state: 'declined', event: decline }),
-      );
-      expect(introductions(app)).toEqual([]);
-      const list = await ownProfile(app);
-      app.at(4_000);
-      await hideSecondFact(app, list);
-      const consent =
-        mode === 'команда'
-          ? app.submit('/анкета представить')
-          : app.submit('Представить', 41, question);
-      await until(() =>
-        expect(presentation(app)).toMatchObject({ state: 'delivered', event: consent, parts: 1 }),
-      );
-      expect(introductions(app)).toHaveLength(1);
-      expect(introductions(app)[0]?.text).toContain(hobby + '\nШахматы');
-      expect(introductions(app)[0]?.text).not.toMatch(/Личный факт|Что пропустить/u);
-      expect(values(app)).toEqual(['Шахматы']);
-      expect(app.complete).toHaveBeenCalledTimes(1);
-      await app.restart(true);
-      app.at(5_000);
-      app.replay(consent);
-      const repeated = app.submit('/анкета представить');
-      await app.journaled(repeated);
-      expect(presentation(app)).toMatchObject({ state: 'delivered', event: consent, parts: 1 });
-      expect(introductions(app)).toHaveLength(1);
-    } finally {
-      await app.close();
-    }
-  },
-);
-
-test.each(['скрытие поля', 'выход'] as const)(
-  'перед отправкой представления учитывается %s автора',
-  async (action) => {
-    const app = await setup(true);
-    try {
-      await fill(app, { held: true });
-      const list = action === 'скрытие поля' ? await ownProfile(app) : undefined;
-      app.at(4_000);
-      app.submit('/анкета представить');
-      await until(() => expect(app.holds).toHaveLength(4));
-      if (list) await hideSecondFact(app, list);
-      else {
-        app.setMembers([42, 73]);
-        app.membership('chat_kick_user', 41, 41);
-        await until(() =>
-          expect(
-            app.db
-              .prepare(
-                `SELECT returned_at FROM participant_departures
-          WHERE chat_id=? AND user_id='vk:41'`,
-              )
-              .get(chat),
-          ).toEqual({ returned_at: null }),
-        );
-      }
-      app.holds[3]!.release();
-      await until(() => expect(presentation(app)).toMatchObject({ state: 'failed', parts: 0 }));
-      expect(introductions(app)).toEqual([]);
-    } finally {
-      await app.close();
-    }
-  },
-);
-
-test('неизвестный исход публикации представления блокирует повтор после перезапуска', async () => {
+test('старые команда и квитанция о представлении не отправляют ответ и не заполняют новую анкету', async () => {
   const app = await setup();
   try {
     await fill(app);
-    await presentationPrompt(app);
-    app.failSend((text) => (text.startsWith('Знакомьтесь,') ? 'unknownAfterDelivery' : undefined));
-    app.at(3_000);
-    const event = app.submit('/анкета представить');
-    await until(() =>
-      expect(presentation(app)).toMatchObject({ state: 'unknown', event, parts: 0 }),
-    );
-    expect(introductions(app)).toHaveLength(1);
+    const old = await completion(app);
+    app.db
+      .prepare(
+        `INSERT INTO questionnaire_presentations(chat_id,generation,user_id,attempt,prompt_message_id)
+      SELECT chat_id,generation,user_id,attempt,? FROM questionnaire_progress WHERE chat_id=? AND user_id='vk:41'`,
+      )
+      .run(old.conversation_message_id, chat);
     await app.restart(true);
-    app.at(4_000);
-    const repeated = app.submit('/анкета представить');
-    await app.journaled(repeated);
-    expect(presentation(app)).toMatchObject({ state: 'unknown', event, parts: 0 });
-    expect(introductions(app)).toHaveLength(1);
+    app.at(3_000);
+    app.submit('/анкета', 42);
+    const status = () =>
+      app.db
+        .prepare("SELECT state FROM questionnaire_progress WHERE chat_id=? AND user_id='vk:42'")
+        .pluck()
+        .get(chat);
+    await until(() => expect(status()).toBe('active'));
+    const sent = app.sends.length;
+    for (const id of [
+      app.submit('/анкета представить', 41),
+      app.submit('Представить', 41, old),
+      app.submit('Не представлять', 42, old),
+    ])
+      await app.journaled(id);
+    expect(status()).toBe('active');
+    expect(app.sends).toHaveLength(sent);
+    expect(introductions(app)).toEqual([]);
+    expect(app.complete).toHaveBeenCalledTimes(1);
   } finally {
     await app.close();
   }

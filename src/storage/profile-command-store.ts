@@ -12,6 +12,7 @@ import type {
 import type { OwnProfileFact } from './participant-types';
 import { selectOwnProfile } from './profile-fact-selection';
 import { participantProfileAvailable, readDeparture } from './participant-departures';
+import { questionnaireFieldPrefix } from './questionnaire-types';
 import type { Storage } from './types';
 import { requireInput, timestamp } from './validation';
 
@@ -236,6 +237,16 @@ export function createProfileCommandStore(
         return lifecycle.transaction(target, (targetDb) => {
           if (!participantProfileAvailable(readDeparture(targetDb, target, actor), input.at))
             return 'stale';
+          if (
+            input.change.kind !== 'reject' &&
+            targetDb
+              .prepare(
+                `SELECT 1 FROM profile_facts WHERE id=? AND chat_id=? AND generation=?
+                AND user_id=? AND field_key GLOB '${questionnaireFieldPrefix}*'`,
+              )
+              .get(position.factId, target.chatId, target.generation, actor)
+          )
+            return 'questionnaire';
           const fact = selectOwnProfile(targetDb, target, actor, now).find((row) =>
             samePosition(position, row),
           );

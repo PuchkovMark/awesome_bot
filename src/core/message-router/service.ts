@@ -14,6 +14,8 @@ import { routeMessage } from './routing';
 import { addressesQuestionnaireByName } from './name-address';
 import { validIncoming } from './validation';
 import { commandAccess, type RouterAuthorization } from './command-boundary';
+import type { InvitationReplyStatus } from '../../storage/questionnaire-invitation-input';
+import { isQuestionnaireInvitationWarning } from '../questionnaire/text';
 import type {
   FloodNotice,
   RoutedQueueDecision,
@@ -40,6 +42,19 @@ export interface RouterOptions {
     messageId: number,
     receivedAt: number,
   ) => boolean;
+  readonly invitationReply?: (
+    scope: ConnectionScope,
+    user: UserId,
+    receipt: string,
+    messageId: number,
+    receivedAt: number,
+  ) => InvitationReplyStatus | undefined;
+  readonly onInvitationHint?: (
+    scope: ConnectionScope,
+    status: 'restart' | 'warning' | 'pending',
+    user: UserId,
+    isCurrent: () => boolean,
+  ) => void;
   readonly commandInput?: (message: IncomingMessage) => IncomingMessage;
   readonly recognizeCommand?: (
     message: IncomingMessage,
@@ -137,6 +152,20 @@ export function createMessageRouter(options: RouterOptions) {
             !message.hasForwarded &&
             message.replyAddress !== 'unknown' &&
             (message.isGroupChat || message.chatId === message.userId);
+          const receipt =
+            !command && message.isGroupChat && message.replyAddress === 'bot'
+              ? message.replyToMessageId
+              : undefined;
+          const invitation =
+            receipt &&
+            (options.invitationReply?.(
+              scope,
+              message.userId,
+              receipt,
+              snapshot.message.id,
+              snapshot.receivedAt,
+            ) ??
+              (isQuestionnaireInvitationWarning(message.botReplyText) ? 'ignore' : undefined));
           const decision = routeMessage({
             message,
             settings: snapshot.settings,
@@ -154,6 +183,14 @@ export function createMessageRouter(options: RouterOptions) {
               ) === true,
             ...(service ? { service } : {}),
           });
+          if (receipt && invitation && decision.kind === 'ordinary') {
+            const status = answerForm && !message.attachments.length ? invitation : 'ignore';
+            return {
+              questionnaireInvitation: { receipt, status },
+              reason: status === 'answer' ? decision.reason : 'service',
+              route: status === 'answer' ? decision.route : null,
+            };
+          }
           return {
             reason: decision.reason,
             ...(!command &&
@@ -209,6 +246,18 @@ export function createMessageRouter(options: RouterOptions) {
             const gate = disclosure?.();
             return !gate || (gate.respond && gate.ordinary !== false);
           },
+        });
+      const invitationStatus = result.decision?.questionnaireInvitation?.status;
+      if (
+        result.admission.status === 'not_needed' &&
+        (invitationStatus === 'restart' ||
+          invitationStatus === 'warning' ||
+          invitationStatus === 'pending')
+      )
+        options.onInvitationHint?.(scope, invitationStatus, message.userId, () => {
+          if (!options.queue.isRunning() || (isCurrent && !isCurrent())) return false;
+          const gate = disclosure?.();
+          return !gate || (gate.journal && gate.respond && gate.ordinary !== false);
         });
       const replayOnly = !!(
         command?.replayRequest &&

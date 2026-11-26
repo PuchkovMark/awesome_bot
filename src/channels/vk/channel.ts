@@ -412,18 +412,24 @@ export function createVkChannel(
     async sendQuestionnaireInvitation(
       ...args: Parameters<QuestionnaireInvitationPort['sendInvitation']>
     ) {
-      const [scope, sendId, guard, prepare, confirmPart] = args;
+      const [scope, sendId, guard, prepare, receivedId, confirmPart] = args;
       const result = await outbound.sendInvitation({
         ...guard,
         chatId: scope.chatId,
         sendId,
         prepare,
+        receivedId,
         confirmPart,
         onOmitted(count) {
           invitationMentionsOmitted += count;
         },
       });
       return result.kind;
+    },
+    confirmQuestionnaireInvitation(
+      ...[scope, receipt, guard]: Parameters<QuestionnaireInvitationPort['confirmInvitation']>
+    ) {
+      return outbound.invitationReceipt(scope.chatId, receipt, guard);
     },
     introduction: options.owner
       ? createVkIntroduction({ owner: options.owner, groupId: options.groupId, api, outbound })

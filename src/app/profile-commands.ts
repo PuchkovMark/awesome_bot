@@ -252,7 +252,9 @@ export function createProfileCommands(options: {
               ? 'Отклонить можно только действующий вывод бота.'
               : outcome === 'conflict'
                 ? 'Такой интерес уже есть в профиле.'
-                : retry;
+                : outcome === 'questionnaire'
+                  ? 'Чтобы исправить ответ анкеты, отправьте /анкета изменить в беседе.'
+                  : retry;
         await channel.replyPrivateControl(actor, response, guard(here));
       })();
     },

@@ -65,10 +65,6 @@ export type QueueHandler = (input: QueueHandlerInput) => Promise<QueueOutcome | 
 export interface QueueCompletion {
   readonly recapReply?: import('../../storage/recap-clarifications').RecapReply;
   readonly subjectIds?: readonly import('../../contracts/index').UserId[];
-  readonly questionnaireCompletion?: {
-    readonly user: import('../../contracts/index').UserId;
-    readonly attempt: string;
-  };
   readonly toolSourceIds?: readonly number[];
   readonly toolResultsCurrent?: () => boolean;
   readonly passportCurrent?: () => boolean;

@@ -1,5 +1,6 @@
 import type { BotRole, ConnectionScope, IncomingMessage } from '../contracts/index';
 import { vkMentionCommand } from '../channels/vk/normalize';
+import { privateQuestionnaireHint, privateQuestionnaireViewHint } from '../core/questionnaire/text';
 
 export const helpAction = {
   action: 'commands.read',
@@ -55,22 +56,23 @@ export function commandHelp(
   if (manage) topics.push('/помощь управление — продлить паузу или узнать, почему бот ответил.');
   if (topic === 'анкета' && (ordinary || manage)) {
     const lines = ['Анкета'];
-    if (ordinary) {
+    if (ordinary && group) {
       lines.push(
         '/анкета — начать или продолжить заполнение.',
         '/анкета показать — посмотреть свою анкету.',
         '/анкета пауза · /анкета отмена — приостановить или отменить заполнение.',
+        '/анкета вопросы — посмотреть действующий список вопросов.',
+        `/анкета @id${actor.slice(3)} — пример просмотра по упоминанию.`,
+        '/анкета изменить — исправить свой ответ.',
+        '/анкета удалить — удалить свою анкету с подтверждением.',
       );
-      if (group)
-        lines.push(
-          `/анкета показать @id${actor.slice(3)} — пример просмотра по упоминанию.`,
-          '/анкета изменить — исправить свой ответ.',
-          '/анкета удалить — удалить свою анкету с подтверждением.',
-          '/анкета представить — разрешить представление в беседе.',
-        );
     }
+    if (ordinary && !group) lines.push(privateQuestionnaireHint, privateQuestionnaireViewHint);
     if (manage)
-      lines.push('/вопросы — посмотреть общие вопросы. /вопросы изменить — открыть редактор.');
+      lines.push(
+        '/анкета вопросы изменить — открыть редактор.',
+        '/вопросы · /вопросы изменить — прежние команды просмотра и правки.',
+      );
     return lines.join('\n');
   }
   if (topic === 'профиль' && ordinary)

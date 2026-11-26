@@ -85,6 +85,15 @@ export function createChatControlHandlers(options: {
           const latest = controls.read(context.scope);
           return latest.enabled && latest.responseRevision === result.value.state.responseRevision;
         };
+        if (
+          command.kind === 'invitation' &&
+          command.enabled &&
+          result.value.state.invitationEnabledAt !== null
+        )
+          return questionnaire.confirmInvitation(
+            context,
+            () => current() && controls.read(context.scope).invitationEnabledAt !== null,
+          );
         options.track(
           channel.replyGroupControl(context.scope, reply, {
             signal,
@@ -183,7 +192,12 @@ export function createChatControlHandlers(options: {
           timestamp: message.timestamp,
         });
         if (!result.allowed) return;
-        const reply = formatChatControl(scope, command, result.value, Date.now(), true);
+        const reply =
+          command.kind === 'invitation' &&
+          command.enabled &&
+          result.value.state.invitationEnabledAt !== null
+            ? questionnaire.invitationPrivate(scope)
+            : formatChatControl(scope, command, result.value, Date.now(), true);
         if (reply)
           await channel.replyPrivateControl(sender, reply, {
             signal,

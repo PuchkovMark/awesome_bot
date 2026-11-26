@@ -45,12 +45,8 @@ export function createQuestionnaireStore(
       questions,
     });
   }
-  function defaultRevision(db: Database, scope: ConnectionScope) {
-    const floor = db
-      .prepare('SELECT generation FROM questionnaire_default_boundary WHERE singleton=1')
-      .pluck()
-      .get() as number;
-    return scope.generation > floor ? revision(scope, builtIn.revision, builtIn.questions) : null;
+  function defaultRevision(scope: ConnectionScope) {
+    return revision(scope, builtIn.revision, builtIn.questions);
   }
   function localRevision(scope: ConnectionScope, row: { revision: number; questions: string }) {
     return revision(
@@ -67,7 +63,7 @@ export function createQuestionnaireStore(
       WHERE ${inScope} ORDER BY revision DESC LIMIT 1`,
       )
       .get(scope.chatId, scope.generation) as { revision: number; questions: string } | undefined;
-    return local ? localRevision(scope, local) : defaultRevision(db, scope);
+    return local ? localRevision(scope, local) : defaultRevision(scope);
   }
   return {
     current(scope: ConnectionScope) {
@@ -82,7 +78,7 @@ export function createQuestionnaireStore(
           ref.key !== builtIn.key
         )
           return null;
-        if (ref.revision === builtIn.revision) return defaultRevision(db, scope);
+        if (ref.revision === builtIn.revision) return defaultRevision(scope);
         const row = db
           .prepare(
             `SELECT revision,questions FROM questionnaire_revisions

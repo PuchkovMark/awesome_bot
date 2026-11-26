@@ -40,6 +40,32 @@ function reconcileReminders(staged: Database, newer: Database) {
   }
 }
 
+function reconcileInvitationAuthors(staged: Database, newer: Database) {
+  const current = newer
+    .prepare("SELECT 1 FROM sqlite_schema WHERE name='questionnaire_invitation_parts'")
+    .get()
+    ? newer.prepare(`SELECT m.invitation_attempt AS attempt
+      FROM questionnaire_invitation_parts p JOIN greeting_windows w ON w.id=p.window_id
+      JOIN greeting_members m ON m.window_id=w.id
+      WHERE (p.send_id,p.receipt,w.chat_id,w.generation,m.user_id,m.invitation_participation)=
+        (@sendId,@receipt,@chat,@generation,@user,@participation) AND p.state='delivered'`)
+    : undefined;
+  const update = staged.prepare(`UPDATE greeting_members SET invitation_attempt=@attempt
+    WHERE window_id=@id AND user_id=@user`);
+  for (const saved of staged
+    .prepare(
+      `SELECT w.id,w.chat_id AS chat,w.generation,p.send_id AS sendId,
+    p.receipt,m.user_id AS user,m.invitation_participation AS participation
+    FROM questionnaire_invitation_parts p JOIN greeting_windows w ON w.id=p.window_id
+    JOIN greeting_members m ON m.window_id=w.id
+    WHERE p.stage='questions' AND p.state='delivered' AND m.invitation_participation IS NOT NULL`,
+    )
+    .all() as object[]) {
+    const live = current?.get(saved) as { attempt: string | null } | undefined;
+    update.run({ ...saved, attempt: live ? live.attempt : 'restored' });
+  }
+}
+
 // Copy only proven, unstarted work. Never restart a publication from an older delivery receipt.
 export function reconcileRestoredWork(staged: Database, newer: Database, now: number) {
   const waiting = newer
@@ -73,7 +99,9 @@ export function reconcileRestoredWork(staged: Database, newer: Database, now: nu
     UPDATE greeting_windows SET state='unknown' WHERE state='dispatching';
     UPDATE greeting_windows SET invitation_state='skipped' WHERE invitation_state='waiting';
     UPDATE greeting_windows SET invitation_state='unknown' WHERE invitation_state='dispatching';
+    UPDATE questionnaire_invitation_parts SET state='unknown',next_check_at=NULL WHERE state IN ('sending','unknown');
     DELETE FROM autonomous_questions;
     UPDATE history_clear_requests SET state='invalidated' WHERE state='pending';`);
   reconcileReminders(staged, newer);
+  reconcileInvitationAuthors(staged, newer);
 }

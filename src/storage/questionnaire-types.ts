@@ -20,3 +20,10 @@ export type QuestionnaireReplyResult =
         'kept' | 'choose' | 'closed' | 'stale' | 'empty' | 'too_long' | 'invalid' | 'duplicate';
     };
 export const questionnaireFieldPrefix = 'questionnaire:';
+
+export function questionnaireMessageSequence(id: string): number | null {
+  const sequence = Number(id);
+  return Number.isSafeInteger(sequence) && sequence > 0 && String(sequence) === id
+    ? sequence
+    : null;
+}

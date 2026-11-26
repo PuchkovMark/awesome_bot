@@ -1,4 +1,5 @@
 import type { Database } from 'better-sqlite3';
+import { legacyPublicQuestionnaireAnswers } from './migrations/061-questionnaire-public-answers';
 import { eraseQuestionnaireAttempt } from './questionnaire-management-store';
 
 const subject =
@@ -15,6 +16,10 @@ interface Attempt {
 interface Binding extends Attempt {
   readonly field_key: string;
   readonly fact_id: number;
+}
+interface FactVersion {
+  readonly id: number;
+  readonly questionnaire_public_attempt?: string | null;
 }
 
 export function reconcileStagedQuestionnaires(staged: Database, newer: Database) {
@@ -71,25 +76,46 @@ export function reconcileStagedQuestionnaires(staged: Database, newer: Database)
       if (replacing) adopt.run(replacing);
     }
   }
-  const latestBinding = newer.prepare(
-    `SELECT fact_id FROM questionnaire_answer_facts WHERE ${subject} AND field_key=@field_key`,
-  );
+  const legacyGrants = newer
+    .prepare(
+      "SELECT 1 FROM pragma_table_info('profile_facts') WHERE name='questionnaire_public_attempt'",
+    )
+    .get()
+    ? undefined
+    : new Map(
+        (
+          newer.prepare(legacyPublicQuestionnaireAnswers).all() as { id: number; attempt: string }[]
+        ).map(({ id, attempt }) => [id, attempt]),
+      );
+  const withGrant = <T extends FactVersion>(row: T) => ({
+    ...row,
+    questionnaire_public_attempt:
+      legacyGrants?.get(row.id) ?? row.questionnaire_public_attempt ?? null,
+  });
+  const latestBinding =
+    newer.prepare(`SELECT f.* FROM questionnaire_answer_facts b JOIN profile_facts f ON f.id=b.fact_id
+     WHERE (b.chat_id,b.generation,b.user_id,b.attempt,b.field_key)=(@chat_id,@generation,@user_id,@attempt,@field_key)`);
   const latestEdits = newer.prepare(`SELECT * FROM profile_facts WHERE ${field} AND id<>@fact_id
-    AND source_kind='self' AND source_user_id=@user_id AND (event_key GLOB '2:profile:*' OR event_key GLOB '2:questionnaire:*')
+    AND source_kind='self' AND source_user_id=@user_id
     ORDER BY id`);
   const clearEdits = staged.prepare(`DELETE FROM profile_facts WHERE ${field} AND id<>@fact_id`);
   const clearOriginal = staged.prepare('DELETE FROM profile_facts WHERE id=?');
+  const restoreGrant = staged.prepare(`UPDATE profile_facts SET visibility=@visibility,
+    questionnaire_public_attempt=CASE
+      WHEN value=@value AND event_key IS @event_key AND source_at IS @source_at
+        AND source_message_id IS @source_message_id THEN @questionnaire_public_attempt END
+    WHERE id=@saved`);
   const copyEdit = staged.prepare(`INSERT INTO profile_facts(
     chat_id,user_id,field_key,value,source_kind,source_user_id,source_message_id,source_note,
-    reliability,visibility,created_at,updated_at,generation,source_at,event_key,interest_key,change_kind
-  ) VALUES(@chat_id,@user_id,@field_key,@value,'self',@user_id,NULL,NULL,
-    @reliability,@visibility,@created_at,@updated_at,@generation,@source_at,@event_key,'',@change_kind)`);
+    reliability,visibility,created_at,updated_at,generation,source_at,event_key,interest_key,change_kind,questionnaire_public_attempt
+  ) VALUES(@chat_id,@user_id,@field_key,@value,'self',@user_id,@source_message_id,NULL,
+    @reliability,@visibility,@created_at,@updated_at,@generation,@source_at,@event_key,'',@change_kind,@questionnaire_public_attempt)`);
   const updateProfile =
     staged.prepare(`UPDATE participant_profiles SET updated_at=max(updated_at,@updated_at)
     WHERE chat_id=@chat_id AND user_id=@user_id`);
   // Пропуск мог получить первый ответ уже после создания копии.
   const additions =
-    newer.prepare(`SELECT b.*,f.value,f.source_message_id,f.visibility,f.created_at,f.updated_at,f.source_at,f.event_key
+    newer.prepare(`SELECT f.*, b.attempt,b.template_key,b.template_revision,b.position,b.question,b.fact_id
     FROM questionnaire_answer_facts b JOIN profile_facts f ON f.id=b.fact_id
     WHERE b.chat_id=@chat_id AND b.generation=@generation AND b.user_id=@user_id AND b.attempt=@attempt`);
   const known = staged.prepare(
@@ -97,16 +123,17 @@ export function reconcileStagedQuestionnaires(staged: Database, newer: Database)
   );
   const original =
     staged.prepare(`INSERT INTO profile_facts(chat_id,user_id,field_key,value,source_kind,
-    source_user_id,source_message_id,reliability,visibility,created_at,updated_at,generation,source_at,event_key)
+    source_user_id,source_message_id,reliability,visibility,created_at,updated_at,generation,source_at,event_key,
+    questionnaire_public_attempt)
     VALUES(@chat_id,@user_id,@field_key,@value,'self',@user_id,@source_message_id,'confirmed',@visibility,
-      @created_at,@updated_at,@generation,@source_at,@event_key)`);
+      @created_at,@updated_at,@generation,@source_at,@event_key,@questionnaire_public_attempt)`);
   const bind =
     staged.prepare(`INSERT INTO questionnaire_answer_facts VALUES(@chat_id,@generation,@user_id,@attempt,
     @template_key,@template_revision,@position,@question,@field_key,@fact_id)`);
   for (const attempt of staged
     .prepare("SELECT * FROM questionnaire_progress WHERE state='completed'")
     .all() as Attempt[]) {
-    for (const row of additions.iterate(attempt) as Iterable<Binding>) {
+    for (const row of additions.iterate(attempt) as Iterable<Binding & FactVersion>) {
       if (known.get(row)) continue;
       staged
         .prepare(
@@ -114,7 +141,7 @@ export function reconcileStagedQuestionnaires(staged: Database, newer: Database)
         VALUES(@chat_id,@user_id,@created_at,@updated_at) ON CONFLICT DO NOTHING`,
         )
         .run(row);
-      bind.run({ ...row, fact_id: original.run(row).lastInsertRowid });
+      bind.run({ ...row, fact_id: original.run(withGrant(row)).lastInsertRowid });
       updateProfile.run(row);
     }
   }
@@ -122,35 +149,25 @@ export function reconcileStagedQuestionnaires(staged: Database, newer: Database)
     .prepare('SELECT * FROM questionnaire_answer_facts')
     .all() as Binding[]) {
     clearEdits.run(saved);
-    const current = latestBinding.get(saved) as Pick<Binding, 'fact_id'> | undefined;
+    const current = latestBinding.get(saved) as FactVersion | undefined;
     if (!current) {
       clearOriginal.run(saved.fact_id);
       continue;
     }
-    for (const edit of latestEdits.iterate({ ...saved, ...current }) as Iterable<object>) {
-      copyEdit.run(edit);
+    restoreGrant.run({ ...withGrant(current), saved: saved.fact_id });
+    for (const edit of latestEdits.iterate({
+      ...saved,
+      fact_id: current.id,
+    }) as Iterable<FactVersion>) {
+      copyEdit.run(withGrant(edit));
       updateProfile.run(edit);
     }
   }
 
-  if (
-    newer
-      .prepare(
-        "SELECT 1 FROM sqlite_schema WHERE type='table' AND name='questionnaire_presentations'",
-      )
-      .get()
-  ) {
-    const copy = staged.prepare(`INSERT INTO questionnaire_presentations
-      SELECT chat_id,generation,user_id,attempt,@prompt_message_id,@event_id,
-        CASE WHEN @state='sending' THEN 'unknown' ELSE @state END,@confirmed_parts
-      FROM questionnaire_progress WHERE state='completed' AND ${subject}
-      ON CONFLICT(chat_id,generation,user_id,attempt) DO UPDATE SET
-        prompt_message_id=excluded.prompt_message_id,event_id=excluded.event_id,
-        state=excluded.state,confirmed_parts=excluded.confirmed_parts
-      WHERE coalesce(excluded.event_id,0)>=coalesce(questionnaire_presentations.event_id,0)`);
-    for (const row of newer
-      .prepare('SELECT * FROM questionnaire_presentations')
-      .iterate() as Iterable<object>)
-      copy.run(row);
-  }
+  const presentationReceipts =
+    'SELECT chat_id,generation,prompt_message_id AS receipt FROM questionnaire_presentations WHERE prompt_message_id IS NOT NULL';
+  for (const row of staged.prepare(presentationReceipts).all()) rememberReceipt.run(row);
+  if (newer.prepare("SELECT 1 FROM sqlite_schema WHERE name='questionnaire_presentations'").get())
+    ignoreReceipts(presentationReceipts);
+  staged.exec('DELETE FROM questionnaire_presentations');
 }

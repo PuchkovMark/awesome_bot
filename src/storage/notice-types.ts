@@ -47,6 +47,7 @@ export interface NoticeBackend {
     interval: number,
     now: number,
     kind?: NoticeKind,
+    queueFull?: true,
   ): NoticePermit | null;
   confirm(
     scope: ConnectionScope,

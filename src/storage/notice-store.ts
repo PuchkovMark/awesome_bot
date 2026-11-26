@@ -19,7 +19,7 @@ export function createNoticeBackend(
     sourceVisible(scope, id) {
       return lifecycle.transaction(scope, (db) => historySourcesVisible(db, scope.chatId, [id]));
     },
-    reserve(scope, messageId, route, interval, now, kind = 'generic') {
+    reserve(scope, messageId, route, interval, now, kind = 'generic', queueFull) {
       requireInput(
         kind === 'generic' ||
           kind === 'current_message_too_large' ||
@@ -48,6 +48,7 @@ export function createNoticeBackend(
         if (!source) return null;
         if (
           source.purpose !== 'conversation' &&
+          !(queueFull && source.role === 'user' && source.purpose === 'service_notice') &&
           (!isLlmAvailabilityNotice(kind) ||
             !db
               .prepare(

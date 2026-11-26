@@ -4,7 +4,6 @@ import { isVkGroupChat, vkChatId, type VkIncoming } from '../channels/vk/normali
 import { splitVkText, vkMessageLength } from '../channels/vk/outbound-text';
 import type { createAuthorizationService } from '../core/authorization/service';
 import type { createLifecycleService } from '../core/lifecycle/service';
-import { legacyQuestionnaire } from '../core/questionnaires/legacy-template';
 import { chatControlStore } from '../storage/chat-control-store';
 import { StorageError } from '../storage/errors';
 import { questionnaireStore } from '../storage/questionnaire-store';
@@ -26,6 +25,9 @@ const instruction =
 const continuation = '\n\nДля правки дождитесь сообщения редактора.';
 const reopen = 'Откройте /вопросы изменить и ответьте на сообщение редактора полным списком.';
 const confirmation = 'Ответьте на это сообщение «Заменить» или «Оставить».';
+const invitationPrefix = 'Приглашения к анкете включены. В анкете ';
+const invitationInstruction =
+  ' Чтобы заменить их, ответьте на это сообщение всем списком, по одному вопросу на строку.';
 const edit = {
   action: 'chat.onboarding.configure',
   minimumRole: 'admin',
@@ -35,12 +37,28 @@ const edit = {
 function looksLikeEditor(text: string | undefined) {
   return (
     !!text &&
-    (((text.startsWith(heading + '\n') ||
-      text.startsWith(sample) ||
-      text.startsWith(editorHeading + '\n')) &&
-      (text.endsWith(instruction) || text.endsWith(continuation))) ||
+    (invitationEditor(text) ||
+      ((text.startsWith(heading + '\n') ||
+        text.startsWith(sample) ||
+        text.startsWith(editorHeading + '\n')) &&
+        (text.endsWith(instruction) || text.endsWith(continuation))) ||
       (text.startsWith('В списке ') && text.endsWith(confirmation)))
   );
+}
+
+function invitationEditor(text: string | undefined) {
+  return !!text?.startsWith(invitationPrefix) && text.endsWith(invitationInstruction);
+}
+
+function serviceReply(text: string, parent: string | undefined) {
+  const command = text.trim();
+  return invitationEditor(parent) && /^\/[^\r\n]+$/u.test(command);
+}
+
+function invitationText(count: number) {
+  const form = new Intl.PluralRules('ru').select(count);
+  const noun = form === 'one' ? 'вопрос' : form === 'few' ? 'вопроса' : 'вопросов';
+  return invitationPrefix + count + ' ' + noun + '.';
 }
 
 function questionView(text: string) {
@@ -133,9 +151,52 @@ export function createQuestionnaireEditor(options: {
     };
   }
 
+  function sendEditor(
+    context: AuthorizationContext,
+    guard: ReturnType<typeof guardFor>,
+    revision: number,
+    editor: string,
+    display: readonly string[] = [],
+  ) {
+    const scope = context.scope;
+    const current = () =>
+      guard.isCurrent() && questionnaires.current(scope)?.ref.revision === revision;
+    const stillShown = { ...guard, isCurrent: current };
+    options.track(
+      prompts.send(scope, context.userId, editor, async (receivedId) => {
+        for (const chunk of display)
+          if (!(await channel.deliverGroupControl(scope, chunk, stillShown))) return;
+        const receipt = await channel.deliverGroupControl(scope, editor, {
+          ...stillShown,
+          receivedId,
+        });
+        if (receipt && current() && (await guard.allow()) && current())
+          questionnaires.recordPrompt(scope, context.userId, revision, receipt);
+      }),
+    );
+  }
+
   return {
+    confirmInvitation(context: AuthorizationContext, accepted: () => boolean) {
+      const shown = questionnaires.current(context.scope);
+      if (!shown) return;
+      sendEditor(
+        context,
+        guardFor(context, accepted),
+        shown.ref.revision,
+        invitationText(shown.questions.length) + invitationInstruction,
+      );
+    },
+    invitationPrivate(scope: ConnectionScope) {
+      const count = questionnaires.current(scope)?.questions.length ?? 0;
+      return (
+        invitationText(count) +
+        ' Чтобы заменить список, отправьте /анкета вопросы изменить в самой беседе.'
+      );
+    },
     beforePersonalCommands(message: VkIncoming) {
       if (!isVkGroupChat(message.peerId) || !message.reply) return false;
+      if (serviceReply(message.text, message.reply.text)) return false;
       if (looksLikeEditor(message.reply.text)) return true;
       try {
         return questionnaires.hasPrompt(
@@ -151,13 +212,14 @@ export function createQuestionnaireEditor(options: {
       return (
         message.replyAddress === 'bot' &&
         !message.hasForwarded &&
+        !serviceReply(message.text, message.botReplyText) &&
         !!message.replyToMessageId &&
         (prompts.owns(scope, message) ||
           questionnaires.ownsPrompt(scope, message.replyToMessageId, message.userId))
       );
     },
     recognizeReply(scope: ConnectionScope, message: IncomingMessage) {
-      if (!message.isGroupChat) return null;
+      if (!message.isGroupChat || serviceReply(message.text, message.botReplyText)) return null;
       const receipt = message.replyToMessageId ?? message.unverifiedReplyToMessageId;
       return receipt !== undefined &&
         (looksLikeEditor(message.botReplyText) ||
@@ -181,11 +243,10 @@ export function createQuestionnaireEditor(options: {
       if (!(await guard.allow())) return;
       const scope = context.scope;
       const chosen = questionnaires.current(scope);
-      const revision = chosen?.ref.revision ?? 0;
-      const list = (chosen?.questions ?? legacyQuestionnaire.questions).map(({ text }) => text);
-      const title = chosen ? heading : sample;
+      if (!chosen) return;
+      const list = chosen.questions.map(({ text }) => text);
       if (!editing) {
-        const parts = questionViewParts(title, list);
+        const parts = questionViewParts(heading, list);
         options.track(
           (async () => {
             for (const part of parts)
@@ -194,29 +255,14 @@ export function createQuestionnaireEditor(options: {
         );
         return;
       }
-      const { display, editor } = preview(title, list);
-      const stillShown = {
-        ...guard,
-        isCurrent: () =>
-          guard.isCurrent() && (questionnaires.current(scope)?.ref.revision ?? 0) === revision,
-      };
-      options.track(
-        prompts.send(scope, context.userId, editor, async (receivedId) => {
-          for (const chunk of display)
-            if (!(await channel.deliverGroupControl(scope, chunk, stillShown))) return;
-          const receipt = await channel.deliverGroupControl(scope, editor, {
-            ...stillShown,
-            receivedId,
-          });
-          if (receipt && stillShown.isCurrent() && (await guard.allow()))
-            questionnaires.recordPrompt(scope, context.userId, revision, receipt);
-        }),
-      );
+      const { display, editor } = preview(heading, list);
+      sendEditor(context, guard, chosen.ref.revision, editor, display);
     },
     async reply(context: AuthorizationContext, message: IncomingMessage, accepted: () => boolean) {
       if (
         message.isBot !== false ||
         message.hasForwarded ||
+        serviceReply(message.text, message.botReplyText) ||
         message.replyAddress !== 'bot' ||
         !message.replyToMessageId
       )

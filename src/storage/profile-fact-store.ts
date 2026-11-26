@@ -102,8 +102,8 @@ export function recordQuestionnaireFacts(
   ensureProfile(db, chatId, userId, at, now);
   const fact = db.prepare(
     `INSERT INTO profile_facts(chat_id,user_id,field_key,value,source_kind,source_user_id,
-    source_message_id,reliability,visibility,created_at,updated_at,generation,source_at,event_key)
-    VALUES(?,?,?,?,'self',?,?,'confirmed',?,?,?,?,?,?)`,
+    source_message_id,reliability,visibility,created_at,updated_at,generation,source_at,event_key,questionnaire_public_attempt)
+    VALUES(?,?,?,?,'self',?,?,'confirmed',?,?,?,?,?,?,?)`,
   );
   const bind = db.prepare('INSERT INTO questionnaire_answer_facts VALUES(?,?,?,?,?,?,?,?,?,?)');
   for (const { position, text } of template.questions) {
@@ -122,6 +122,7 @@ export function recordQuestionnaireFacts(
       generation,
       at,
       questionnaireFieldPrefix + attempt,
+      chatId === userId ? null : attempt,
     );
     bind.run(
       chatId,
@@ -174,7 +175,8 @@ function writePrivateFact(
   now: number,
 ): ProfileCommandEditResult {
   requireInput(event.scope.chatId === actor && db.inTransaction);
-  return writeProfileEdit(db, scope, actor, fact, change, event, now, 'profile');
+  if (change.kind !== 'reject' && fact.question !== undefined) return 'questionnaire';
+  return writeProfileEdit(db, scope, actor, fact, change, event, now);
 }
 
 function writeProfileEdit(
@@ -185,7 +187,7 @@ function writeProfileEdit(
   change: ProfileCommandChange,
   event: ProfileCommandEvent,
   now: number,
-  source: 'profile' | 'questionnaire',
+  publicAttempt?: string,
 ): ProfileCommandEditResult {
   if (change.kind === 'reject') {
     if (fact.sourceKind !== 'inferred') return 'not_inferred';
@@ -211,10 +213,10 @@ function writeProfileEdit(
     return 'conflict';
   const insert = db.prepare(`INSERT INTO profile_facts(
     chat_id,user_id,field_key,value,source_kind,source_user_id,source_message_id,source_note,
-    reliability,visibility,created_at,updated_at,generation,source_at,event_key,interest_key,change_kind
-  ) VALUES (?,?,?,?,'self',?,NULL,NULL,?,?,?,?,?,?,?,?,?)`);
+    reliability,visibility,created_at,updated_at,generation,source_at,event_key,interest_key,change_kind,questionnaire_public_attempt
+  ) VALUES (?,?,?,?,'self',?,?,NULL,?,?,?,?,?,?,?,?,?,?)`);
   const eventKey =
-    `2:${source}:` +
+    (publicAttempt ? '2:questionnaire:' : '2:profile:') +
     String(event.scope.generation).padStart(16, '0') +
     ':' +
     event.messageId.padStart(16, '0');
@@ -240,6 +242,7 @@ function writeProfileEdit(
       fact.fieldKey,
       value,
       actor,
+      publicAttempt ? event.messageId : null,
       kind === 'set' ? 'confirmed' : 'unknown',
       visibility,
       now,
@@ -249,6 +252,7 @@ function writeProfileEdit(
       eventKey,
       interest,
       kind,
+      publicAttempt ?? null,
     );
   if (change.kind === 'hide') write('visibility', fact.interest, '', 'bot');
   else {
@@ -263,7 +267,7 @@ function writeProfileEdit(
       write('withdraw', fact.interest, '', fact.visibility);
       write('visibility', nextInterest, '', visibility);
     }
-    write('set', nextInterest, change.value, fact.visibility);
+    write('set', nextInterest, change.value, publicAttempt ? 'chat' : fact.visibility);
   }
   db.prepare(
     'UPDATE participant_profiles SET updated_at=max(updated_at,?) WHERE chat_id=? AND user_id=?',
@@ -282,22 +286,19 @@ export function editQuestionnaireAnswer(
   event: ProfileCommandEvent,
   now: number,
 ) {
-  requireInput(db.inTransaction && event.scope.chatId === scope.chatId);
+  requireInput(
+    db.inTransaction &&
+      scope.chatId !== actor &&
+      event.scope.chatId === scope.chatId &&
+      event.scope.generation === scope.generation,
+  );
   const field =
     questionnaireFieldPrefix + JSON.stringify([template.ref.key, template.ref.revision, position]);
   const fact = selectOwnProfile(db, scope, actor, now).find((row) => row.fieldKey === field);
   if (fact)
     return (
-      writeProfileEdit(
-        db,
-        scope,
-        actor,
-        fact,
-        { kind: 'correct', value },
-        event,
-        now,
-        'questionnaire',
-      ) === 'applied'
+      writeProfileEdit(db, scope, actor, fact, { kind: 'correct', value }, event, now, attempt) ===
+      'applied'
     );
   recordQuestionnaireFacts(
     db,

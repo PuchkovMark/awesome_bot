@@ -84,18 +84,20 @@ async function setup(upgrade = false) {
   };
 }
 
-test('миграция отделяет новые VK-группы от прежних, локальная редакция переживает перезапуск', async () => {
+test('прежняя VK-группа получает стартовые вопросы, локальная редакция переживает перезапуск', async () => {
   const f = await setup(true);
   try {
     let old = scopeFor(f.storage, early);
     const modern = scopeFor(f.storage, fresh);
-    expect(f.store().current(old)).toBeNull();
-    expect(f.store().current(scopeFor(f.storage, neighbor))).toBeNull();
+    const start = f.store().current(old)!;
+    expect(start.questions).toEqual(legacyQuestionnaire.questions);
+    expect(f.store().get(old, start.ref)).toEqual(start);
+    expect(f.store().current(scopeFor(f.storage, neighbor))?.questions).toEqual(start.questions);
     expect(f.store().current(modern)?.questions).toEqual(legacyQuestionnaire.questions);
     expect(f.store().current(scopeFor(f.storage, 'vk:41'))).toBeNull();
     expect(f.store().current(scopeFor(f.storage, 'test:2000000041'))).toBeNull();
     f.prompt(old, 101);
-    expect(f.store().current(old)).toBeNull();
+    expect(f.store().current(old)).toEqual(start);
     expect(
       await f.replace(old, 101, 201, 'Местный вопрос?\r\n  https://example.test/abc  '),
     ).toEqual({
@@ -107,6 +109,7 @@ test('миграция отделяет новые VK-группы от преж
     await f.reopen();
     old = scopeFor(f.storage, early);
     expect(f.store().current(old)).toEqual(first);
+    expect(f.store().get(old, start.ref)).toEqual(start);
     expect(await f.replace(old, 102, 202, 'Другая редакция?')).toMatchObject({
       allowed: true,
       value: { status: 'confirm', before: 2, question: 'Другая редакция?' },
@@ -117,7 +120,7 @@ test('миграция отделяет новые VK-группы от преж
         .get(old, first.ref)
         ?.questions.map(({ text }) => text),
     ).toEqual(['Местный вопрос?', '  https://example.test/abc  ']);
-    expect(f.store().current(scopeFor(f.storage, neighbor))).toBeNull();
+    expect(f.store().current(scopeFor(f.storage, neighbor))?.questions).toEqual(start.questions);
     expect(f.store().get(scopeFor(f.storage, neighbor), first.ref)).toBeNull();
   } finally {
     await f.close();

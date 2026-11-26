@@ -44,14 +44,7 @@ async function fill(app: App, start = 1000) {
       app.db.prepare('SELECT state FROM questionnaire_progress WHERE chat_id=?').pluck().get(chat),
     ).toBe('completed'),
   );
-  await until(() =>
-    expect(
-      app.db
-        .prepare('SELECT prompt_message_id FROM questionnaire_presentations WHERE chat_id=?')
-        .pluck()
-        .get(chat),
-    ).toBeGreaterThan(0),
-  );
+  await until(() => expect(app.sends.at(-1)?.text).toBe('Спасибо! Анкета заполнена.'));
 }
 async function send(
   app: App,

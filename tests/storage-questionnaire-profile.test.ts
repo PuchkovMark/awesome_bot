@@ -9,7 +9,12 @@ import { participantRegistryStore } from '../src/storage/participant-registry';
 import { profileCommandStore } from '../src/storage/profile-command-store';
 import { selectOwnProfile } from '../src/storage/profile-fact-selection';
 import { questionnaireManagementStore } from '../src/storage/questionnaire-management-store';
-import { questionnairePresentationStore } from '../src/storage/questionnaire-presentation-store';
+import {
+  seedLegacyPrivateForm,
+  seedLegacyQuestionnaireRestriction,
+} from './helpers/questionnaire-upgrade';
+import { editQuestionnaireAnswer } from '../src/storage/profile-fact-store';
+import { questionnaireViewStore } from '../src/storage/questionnaire-view-store';
 import { questionnaireProgressStore } from '../src/storage/questionnaire-progress-store';
 import { questionnaireStore } from '../src/storage/questionnaire-store';
 import { questionnaireQuestions } from '../src/core/questionnaires/legacy-template';
@@ -44,6 +49,27 @@ function own(f: Fixture, scope: ConnectionScope, user: UserId = alice) {
   );
 }
 
+test('прежнее личное задание сохраняет служебное происхождение и не записывает ответ', async () => {
+  const f = await profileFixture();
+  try {
+    const direct = await f.chat(alice, [alice]);
+    f.deliver(direct);
+    const message = await f.message(direct, alice, '200', 120, false, 'Я Аня');
+    lifecycleBackend(f.storage).transaction(direct, (db) =>
+      seedLegacyPrivateForm(db, direct, 100, undefined, message),
+    );
+    await f.reopen();
+    const scope = scopeFor(f.storage, alice);
+    const store = questionnaireProgressStore(f.storage);
+    expect(store.owns(scope, message)).toBe(true);
+    expect(store.pending(scope, message, 125)).toBeNull();
+    expect(store.finish(scope, message, 130, { 1: 'Аня' }, () => true)).toBe(false);
+    expect(own(f, scope)).toEqual([]);
+  } finally {
+    await f.close();
+  }
+});
+
 test('позиции одинаковых вопросов, источник и изоляция беседы и лички сохраняются после перезапуска', async () => {
   const f = await profileFixture();
   try {
@@ -70,8 +96,11 @@ test('позиции одинаковых вопросов, источник и 
     ).toMatchObject({ status: 'applied' });
     expect(store.finish(scope, id, 130, answers, () => true)).toBe(true);
     expect(store.finish(scope, id, 131, answers, () => true)).toBe(false);
-    const privateAttempt = await pending(f, direct, alice, '203');
-    expect(store.finish(direct, privateAttempt.id, 130, { '3': 'Го' }, () => true)).toBe(true);
+    lifecycleBackend(f.storage).transaction(direct, (db) =>
+      seedLegacyPrivateForm(db, direct, 130, { '3': 'Го' }),
+    );
+    const privateAnswer = personalDataStore(f.storage).export(direct, alice, 130);
+    expect(privateAnswer.questionnaire?.questions[2]?.answer).toBe('Го');
     await f.reopen();
 
     const restored = scopeFor(f.storage, group);
@@ -87,7 +116,7 @@ test('позиции одинаковых вопросов, источник и 
     ]);
     expect(facts[0]?.fieldKey).not.toBe(facts[1]?.fieldKey);
     expect(own(f, scopeFor(f.storage, alice))).toMatchObject([
-      { question, value: 'Го', sourceKind: 'self', visibility: 'bot' },
+      { question: 'Чем увлекаешься?', value: 'Го', sourceKind: 'self', visibility: 'bot' },
     ]);
     expect(f.storage.profileFacts.read(restored, alice).facts).toHaveLength(2);
     expect(f.storage.profileFacts.cardFacts(restored, alice)).toHaveLength(2);
@@ -172,6 +201,15 @@ test('обновление переносит только проверяемы�
         DROP TABLE llm_recovery;
         DROP TABLE questionnaire_presentations;
         DROP TABLE questionnaire_answer_facts;
+        DROP TRIGGER questionnaire_invitation_attempt_removed;
+        DROP TABLE questionnaire_invitation_parts;
+        ALTER TABLE greeting_windows DROP COLUMN invitation_template;
+        ALTER TABLE greeting_windows DROP COLUMN invitation_disclosure;
+        ALTER TABLE greeting_windows DROP COLUMN invitation_enabled_at;
+        ALTER TABLE greeting_windows DROP COLUMN invitation_enabled_from;
+        ALTER TABLE greeting_members DROP COLUMN invitation_attempt;
+        ALTER TABLE greeting_members DROP COLUMN invitation_participation;
+        ALTER TABLE profile_facts DROP COLUMN questionnaire_public_attempt;
         ALTER TABLE queue_jobs DROP COLUMN recap_prompt_id;
         DROP TRIGGER recap_hide_source;
         DROP TABLE recap_clarifications;
@@ -220,18 +258,22 @@ test('обновление переносит только проверяемы�
   }
 });
 
-test('личные правки анкеты и подтверждённое удаление сохраняются при восстановлении копии', async () => {
+test('восстановление сохраняет прежнее ограничение, публичную правку и подтверждённое удаление', async () => {
   const f = await profileFixture();
   const backup = f.path + '.backup';
   try {
     const target = await f.chat();
     const direct = await f.chat(alice, [alice]);
     const other = await f.chat(neighbor);
-    for (const scope of [target, direct, other]) {
+    for (const scope of [target, other]) {
       f.deliver(scope);
       const { store, id } = await pending(f, scope, alice, '200');
       expect(store.finish(scope, id, 130, answers, () => true)).toBe(true);
     }
+    f.deliver(direct);
+    lifecycleBackend(f.storage).transaction(direct, (db) =>
+      seedLegacyPrivateForm(db, direct, 130, answers),
+    );
     const db = new Database(f.path, { readonly: true });
     try {
       await db.backup(backup);
@@ -250,29 +292,38 @@ test('личные правки анкеты и подтверждённое у�
         position: number,
         change: { kind: 'hide' } | { kind: 'correct'; value: string },
       ) => lists.edit(direct, alice, { messageId, position, change, at: 150, replyId: '301' }, 150);
-      expect(edit('302', 2, { kind: 'hide' })).toBe('applied');
-      expect(edit('303', 1, { kind: 'correct', value: 'Шашки' })).toBe('applied');
-      const presentations = questionnairePresentationStore(f.storage);
-      const decision = presentations.decide(target, alice, true, {
-        sequence: 201,
-        at: 151,
-        receipt: null,
+      expect(edit('302', 2, { kind: 'hide' })).toBe('questionnaire');
+      expect(edit('303', 1, { kind: 'correct', value: 'Шашки' })).toBe('questionnaire');
+      lifecycleBackend(f.storage).transaction(target, (writer) => {
+        seedLegacyQuestionnaireRestriction(writer, target, alice, 3, 145);
+        const attempt = questionnaireProgressStore(f.storage)
+          .participant(target, alice)
+          .current(150)!.attempt;
+        expect(
+          editQuestionnaireAnswer(
+            writer,
+            target,
+            alice,
+            attempt,
+            revision(target),
+            1,
+            'Шашки',
+            { scope: target, messageId: '204', at: 149 },
+            150,
+          ),
+        ).toBe(true);
       });
-      if (decision.kind !== 'approved') throw new Error('Согласие не сохранилось');
-      presentations.confirmPart(target, decision.grant, {
-        messageId: '202',
-        userId: 'vk:-314',
-        authorName: 'Пенёк',
-        text: 'Шашки',
-        timestamp: 151,
-      });
-      presentations.finish(target, decision.grant, 'delivered');
+      lifecycleBackend(f.storage).transaction(target, (writer) =>
+        writer
+          .prepare(
+            `INSERT INTO questionnaire_presentations(chat_id,generation,user_id,attempt,prompt_message_id,event_id,state)
+        SELECT chat_id,generation,user_id,attempt,202,203,'sending' FROM questionnaire_progress
+        WHERE chat_id=? AND user_id=?`,
+          )
+          .run(target.chatId, alice),
+      );
       const privacy = personalDataStore(f.storage);
       const current = privacy.export(target, alice, 151);
-      expect(current.questionnaire?.presentation).toEqual({
-        state: 'delivered',
-        confirmedParts: 1,
-      });
       expect(current.questionnaire?.questions.map(({ answer }) => answer)).toEqual([
         'Шашки',
         null,
@@ -292,8 +343,24 @@ test('личные правки анкеты и подтверждённое у�
         const copy = await openStorage(backup);
         try {
           const restored = personalDataStore(copy).export(scopeFor(copy, group), alice, 151);
-          expect(restored.questionnaire).toEqual(current.questionnaire);
+          expect(restored.questionnaire?.questions).toEqual(current.questionnaire?.questions);
+          expect(restored.questionnaire?.presentation).toBeUndefined();
+          expect(stage.prepare('SELECT state FROM questionnaire_presentations').all()).toEqual([]);
+          expect(
+            stage
+              .prepare(
+                'SELECT receipt,expires_at FROM questionnaire_management_prompts WHERE receipt=202',
+              )
+              .get(),
+          ).toEqual({ receipt: 202, expires_at: 0 });
           expect(restored.facts).toEqual(current.facts);
+          const scope = scopeFor(copy, group);
+          expect(questionnaireViewStore(copy).read(scope, scope, twin, alice, 151)?.pairs).toEqual([
+            { question, answer: 'Шашки' },
+          ]);
+          expect(copy.profileFacts.cardFacts(scope, alice)).toMatchObject([
+            { value: { value: 'Шашки' } },
+          ]);
         } finally {
           await copy.close();
         }
@@ -321,6 +388,62 @@ test('личные правки анкеты и подтверждённое у�
     } finally {
       db.close();
     }
+  } finally {
+    await f.close();
+  }
+});
+
+test('схема 60 сохраняет публичное, личное и неопределённое происхождение по каждой позиции', async () => {
+  const f = await profileFixture();
+  try {
+    const target = await f.chat();
+    const other = await f.chat(neighbor);
+    const direct = await f.chat(alice, [alice]);
+    for (const scope of [target, other]) {
+      f.deliver(scope);
+      const { store, id } = await pending(f, scope, alice, '200');
+      expect(store.finish(scope, id, 130, answers, () => true)).toBe(true);
+    }
+    f.deliver(direct);
+    const legacy = new Database(f.path);
+    try {
+      seedLegacyPrivateForm(legacy, direct, 130, { '1': 'Имя из лички' });
+      seedLegacyQuestionnaireRestriction(legacy, target, alice, 3, 145);
+      seedLegacyQuestionnaireRestriction(legacy, other, alice, 1, 145, 'unknown');
+      legacy.exec(`DROP TRIGGER questionnaire_invitation_attempt_removed;
+        DROP TABLE questionnaire_invitation_parts;
+        ALTER TABLE greeting_windows DROP COLUMN invitation_template;
+        ALTER TABLE greeting_windows DROP COLUMN invitation_disclosure;
+        ALTER TABLE greeting_windows DROP COLUMN invitation_enabled_at;
+        ALTER TABLE greeting_windows DROP COLUMN invitation_enabled_from;
+        ALTER TABLE greeting_members DROP COLUMN invitation_attempt;
+        ALTER TABLE greeting_members DROP COLUMN invitation_participation;
+        ALTER TABLE profile_facts DROP COLUMN questionnaire_public_attempt;
+        DELETE FROM schema_migrations WHERE version>=61;`);
+    } finally {
+      legacy.close();
+    }
+    await f.reopen();
+    const first = scopeFor(f.storage, group);
+    const second = scopeFor(f.storage, neighbor);
+    const views = questionnaireViewStore(f.storage);
+    expect(views.read(first, first, twin, alice, 150)?.pairs).toEqual([
+      { question, answer: 'Шахматы' },
+    ]);
+    expect(views.read(second, second, twin, alice, 150)?.pairs).toEqual([
+      { question, answer: 'Го' },
+    ]);
+    expect(views.read(first, second, twin, alice, 150)).toBeNull();
+    expect(
+      personalDataStore(f.storage).export(scopeFor(f.storage, alice), alice, 150).questionnaire
+        ?.questions[0]?.answer,
+    ).toBe('Имя из лички');
+    expect(f.storage.profileFacts.read(first, alice).facts.map(({ value }) => value)).toEqual([
+      'Шахматы',
+    ]);
+    expect(f.storage.profileFacts.cardFacts(second, alice).map(({ value }) => value.value)).toEqual(
+      ['Го'],
+    );
   } finally {
     await f.close();
   }

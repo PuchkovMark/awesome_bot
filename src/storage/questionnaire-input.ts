@@ -1,10 +1,20 @@
 import type { Database } from 'better-sqlite3';
 import type { ConnectionScope, UserId } from '../contracts/index';
 import { profileAdmitted } from './personal-data-store';
+import { participantProfileAvailable, readDeparture } from './participant-departures';
 import { historyBounds } from './history-retention-store';
 import { timestamp } from './validation';
 export const questionnaireHour = 3_600_000;
 const subject = 'chat_id=? AND generation=? AND user_id=?';
+export function isQuestionnaireMember(db: Database, scope: ConnectionScope, user: UserId) {
+  return (
+    participantProfileAvailable(readDeparture(db, scope, user)) &&
+    !!db
+      .prepare("SELECT 1 FROM chat_participants WHERE chat_id=? AND user_id=? AND status='present'")
+      .get(scope.chatId, user)
+  );
+}
+
 export function questionnaireSource(
   db: Database,
   scope: ConnectionScope,
@@ -37,6 +47,7 @@ export function answerableAttempt(
   receivedAt: number,
 ) {
   timestamp(receivedAt);
+  if (scope.chatId === user) return null;
   const key = [scope.chatId, scope.generation, user] as const;
   const row = db
     .prepare(
@@ -71,6 +82,16 @@ export function acceptQuestionnaireInput(
 ) {
   const attempt = answerableAttempt(db, scope, user, messageId, receivedAt);
   if (!attempt || (expectedAttempt !== undefined && expectedAttempt !== attempt)) return false;
+  return markQuestionnaireInput(db, scope, user, attempt, messageId);
+}
+
+export function markQuestionnaireInput(
+  db: Database,
+  scope: ConnectionScope,
+  user: UserId,
+  attempt: string,
+  messageId: number,
+) {
   if (
     !db
       .prepare('INSERT OR IGNORE INTO questionnaire_inputs VALUES(?,?,?,?)')

@@ -41,7 +41,7 @@ test('версия 7 сохраняет данные, FK и checksums; оба р
       chat_connections:
         ",NULL AS pause_reason,0 AS erased_author_number,state='active' AS established",
       profile_facts:
-        ",NULL AS generation,NULL AS source_at,NULL AS event_key,'' AS interest_key,'set' AS change_kind",
+        ",NULL AS generation,NULL AS source_at,NULL AS event_key,'' AS interest_key,'set' AS change_kind,NULL AS questionnaire_public_attempt",
     };
     const saved = savedTables.map((table) =>
       db.prepare('SELECT *' + (addedColumns[table] ?? '') + ' FROM ' + table).all(),

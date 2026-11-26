@@ -8,17 +8,17 @@ import {
   unknownHint,
 } from './command-help';
 import { createQuestionnaireProgress } from '../core/questionnaire/progress';
+import { privateQuestionnaireHint } from '../core/questionnaire/text';
 import { createLlmAdmission } from '../core/llm-admission';
 import { createPersonaCommands } from './persona-commands';
 import {
   createQuestionnaireCommands,
-  openQuestionnaire,
+  isQuestionnaireQuestions,
   parseQuestionnaireCommand,
   parseQuestionnaireView,
 } from './questionnaire-commands';
 import { questionnaireAnswerHandler } from '../core/questionnaire/answer';
 import { questionnaireProgressStore } from '../storage/questionnaire-progress-store';
-import { questionnaireStore } from '../storage/questionnaire-store';
 import { createProfileCommands } from './profile-commands';
 import { createProfileUpdates } from '../core/profile-updates/service';
 import { applicationSummaries } from './chat-summaries';
@@ -88,7 +88,7 @@ interface ApplicationDependencies {
   readonly administrationIntervalMs?: number;
   readonly reminderIntervalMs?: number;
   readonly greetingIntervalMs?: number;
-  readonly questionnaireInvitations?: QuestionnaireInvitationSource;
+  readonly questionnaireInvitations?: Pick<QuestionnaireInvitationSource, 'state'>;
   readonly greetingRules?: (scope: ConnectionScope) => string | undefined;
   readonly membershipScanMs?: number;
   readonly membershipStaggerMs?: number;
@@ -174,7 +174,6 @@ export async function runApplication(
       });
       const privacy = personalDataStore(storage);
       const questionnaireProgress = createQuestionnaireProgress(storage);
-      const questionnaireTemplates = questionnaireStore(storage);
       const registry = participantRegistryStore(storage);
       privacy.purgeExpired(Date.now());
       privacy.cleanup(Date.now());
@@ -214,17 +213,16 @@ export async function runApplication(
             if (!onboarding.configuredForProfiles()) return true;
             if (onboarding.privatePending(scope)) {
               const command = (message.literalText ?? message.text).trim();
-              const questionnaire =
-                !message.hasForwarded &&
-                !message.attachments.length &&
-                (parseQuestionnaireCommand(command) || parseQuestionnaireView(command));
+              const commandAllowed = !message.hasForwarded && !message.attachments.length;
+              const filling = commandAllowed && parseQuestionnaireCommand(command);
+              const viewing = commandAllowed && parseQuestionnaireView(command) !== null;
               await onboarding.notifyPrivate(scope, current);
-              if (questionnaire) {
+              if (filling || viewing) {
                 const isCurrent = () => current() && !onboarding.privatePending(scope);
                 if (isCurrent())
                   await channel.replyPrivateControl(
                     vkChatId(message.authorId),
-                    `Чтобы продолжить, повторите ${command}.`,
+                    filling ? privateQuestionnaireHint : `Чтобы продолжить, повторите ${command}.`,
                     { signal, isCurrent, allow: async () => isCurrent() },
                   );
                 return false;
@@ -387,7 +385,6 @@ export async function runApplication(
         ...(dependencies.greetingRules ? { rules: dependencies.greetingRules } : {}),
         questionnaire: questionnaireProgress.invitations(
           dependencies.questionnaireInvitations ?? {
-            action: (scope) => (questionnaireTemplates.current(scope) ? openQuestionnaire : null),
             state(scope, user) {
               const state = controls.read(scope);
               return state.enabled &&
@@ -403,6 +400,7 @@ export async function runApplication(
           name: channel.getUserName,
           send: channel.sendGreeting,
           sendInvitation: channel.sendQuestionnaireInvitation,
+          confirmInvitation: channel.confirmQuestionnaireInvitation,
         },
       });
       let greetingWait: AbortController | undefined;
@@ -641,7 +639,6 @@ export async function runApplication(
         channel,
         signal,
         progress: questionnaireProgress,
-        present: publication.presentQuestionnaire,
         track: trackPublication,
       });
       const address = createAddressPreferenceHandlers({
@@ -684,6 +681,27 @@ export async function runApplication(
         logger,
         authorization,
         canAnswerQuestionnaire: questionnaireAttempts.canAnswer,
+        invitationReply: questionnaireAttempts.invitationReply,
+        onInvitationHint(scope, status, user, accepted) {
+          const current = () =>
+            accepted() &&
+            questionnaireAttempts.participating(scope, user) &&
+            privacy.profileAllowed(scope, user, Date.now());
+          const text = {
+            restart:
+              'Список больше не принимает ответы. Чтобы заполнить анкету, отправьте /анкета.',
+            warning: 'Ответьте на сообщение с вопросами или отправьте /анкета.',
+            pending:
+              'Показ вопросов пока не подтверждён. Ответьте на список чуть позже или отправьте /анкета.',
+          }[status];
+          trackPublication(
+            channel.replyGroupControl(scope, text, {
+              signal,
+              isCurrent: current,
+              allow: async () => current(),
+            }),
+          );
+        },
         onQueueFull(scope, messageId, route, guard) {
           trackPublication(publication.queueFull(scope, messageId, route, guard));
         },
@@ -693,12 +711,7 @@ export async function runApplication(
         },
         commandInput: (message) => commandInput(message, config.vk.groupId),
         recognizeCommand: (message, replyToOther, scope) => {
-          if (isPrivateStart(message)) {
-            const form = questionnaireProgress
-              .participant(scope, message.userId)
-              .current(Date.now());
-            return form?.state === 'active' ? null : helpAction;
-          }
+          if (isPrivateStart(message)) return helpAction;
           const adminCommand = botAdministrators.recognizeGroup(message);
           // Личная команда может содержать закрытую причину отзыва.
           if (adminCommand?.minimumRole === 'owner') return adminCommand;
@@ -741,6 +754,8 @@ export async function runApplication(
               isObserving ?? isCurrent,
             );
           if (command?.action === 'commands.read') {
+            if (isQuestionnaireQuestions(message))
+              return questionnaires.execute(context, message, isCurrent);
             const role = await commandAuthorization.role(context);
             if (!role.allowed || !isCurrent()) return;
             const state = controls.read(context.scope);
@@ -776,9 +791,10 @@ export async function runApplication(
                   )
                 : unknownHint(
                     input,
-                    questionnaireProgress
-                      .participant(context.scope, message.userId)
-                      .current(Date.now())?.state === 'active',
+                    message.isGroupChat &&
+                      questionnaireProgress
+                        .participant(context.scope, message.userId)
+                        .current(Date.now())?.state === 'active',
                   );
             trackPublication(
               message.isGroupChat

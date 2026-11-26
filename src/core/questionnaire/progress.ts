@@ -6,18 +6,12 @@ import {
 } from '../../storage/questionnaire-progress-store';
 import { questionnaireStore } from '../../storage/questionnaire-store';
 import type { QuestionnaireInvitationSource } from '../greetings/invitation';
-import { privateQuestionnaire } from '../questionnaires/private-template';
 
 export function createQuestionnaireProgress(storage: Storage) {
   const store = questionnaireProgressStore(storage);
   const groups = questionnaireStore(storage);
   function revision(scope: ConnectionScope, user: UserId) {
-    if (scope.chatId !== user) return groups.current(scope);
-    const { key, revision, questions } = privateQuestionnaire;
-    return {
-      ref: { chatId: scope.chatId, generation: scope.generation, key, revision },
-      questions,
-    };
+    return scope.chatId === user ? null : groups.current(scope);
   }
   return {
     revision,
@@ -33,11 +27,11 @@ export function createQuestionnaireProgress(storage: Storage) {
         ) => actor.command(action, event, now, () => revision(scope, user)),
       };
     },
-    invitations(entry?: QuestionnaireInvitationSource): QuestionnaireInvitationSource {
+    invitations(
+      entry?: Pick<QuestionnaireInvitationSource, 'state'>,
+    ): QuestionnaireInvitationSource {
       return {
-        action(scope) {
-          return entry?.action(scope) ?? null;
-        },
+        revision: groups.current,
         state(scope, user) {
           if (store.completionRevision(scope, user) !== null) return 'completed';
           if (!store.participating(scope, user)) return 'unavailable';

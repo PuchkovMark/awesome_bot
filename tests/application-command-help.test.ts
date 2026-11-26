@@ -181,7 +181,8 @@ test('помощь и команды совпадают и учитывают п
       }
     }
     const settings = await request('/помощь анкета', 42, '/вопросы изменить');
-    expect(settings).not.toMatch(/\/анкета|заполнени/u);
+    expect(settings).toContain('/анкета вопросы изменить');
+    expect(settings).not.toMatch(/\/анкета —|заполнени/u);
     expect(await request('/команды профль', 42, 'Доступные темы')).toBe(
       `Доступные темы\n/помощь анкета — вопросы беседы.\n${managementTopic}`,
     );

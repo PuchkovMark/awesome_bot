@@ -6,8 +6,8 @@ import { lifecycleBackend } from './lifecycle-store';
 import { appendMessage } from './messages';
 import { profileAdmitted } from './personal-data-store';
 import { editQuestionnaireAnswer } from './profile-fact-store';
-import { questionnaireMessageSequence } from './questionnaire-access-store';
-import { isQuestionnaireMember } from './questionnaire-view-store';
+import { questionnaireMessageSequence } from './questionnaire-types';
+import { isQuestionnaireMember } from './questionnaire-input';
 import type { Storage } from './types';
 import { requireInput } from './validation';
 

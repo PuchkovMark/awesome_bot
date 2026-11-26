@@ -20,4 +20,4 @@ export interface ProfileCommandEdit {
 }
 
 export type ProfileCommandEditResult =
-  'applied' | 'duplicate' | 'stale' | 'not_inferred' | 'conflict';
+  'applied' | 'duplicate' | 'stale' | 'not_inferred' | 'conflict' | 'questionnaire';
