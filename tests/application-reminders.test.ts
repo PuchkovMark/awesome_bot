@@ -233,6 +233,127 @@ test.each(['Пенёк,', '[club314|Пенёк],', '[club314|Пенёк]'])(
   },
 );
 
+test.each(['ответ участнику', 'отдельная реплика'] as const)(
+  'выбранное упоминание с формой «%s» доставляет одно напоминание автору',
+  async (form) => {
+    const f = await remindersFixture();
+    try {
+      const parent = form === 'ответ участнику' ? f.send('Встреча у входа.', 42, peer) : undefined;
+      const requestedAt = f.origin + minute;
+      const dueAt = requestedAt + 20 * minute;
+      f.at(requestedAt);
+      const request = f.send(
+        '[club314|Пенёк], напомни мне через 20 минут взять билет',
+        41,
+        peer,
+        requestedAt,
+        parent,
+      );
+      await until(() => expect(f.sends).toHaveLength(1));
+      expect({
+        peerId: f.sends[0]?.peer_id,
+        modelCalls: f.complete.mock.calls.length,
+        reminders: f.pending().length,
+      }).toEqual({ peerId: 41, modelCalls: 0, reminders: 1 });
+      expect(f.sends[0]?.text).toMatch(/^Напомню вам[^\n]*\nвзять билет$/u);
+      const item = f.pending()[0]!;
+      expect(item).toMatchObject({ chatId: 'vk:41', dueAt, state: 'pending', text: 'взять билет' });
+
+      f.repeat(request);
+      const marker = f.send('Проверочная реплика после повтора.', 42, peer);
+      const history = () => f.storage.messages.list(f.scope, { limit: 30 });
+      await until(async () =>
+        expect(
+          (await history()).some((row) => row.messageId === String(marker.conversation_message_id)),
+        ).toBe(true),
+      );
+      const recorded = (await history()).filter(
+        (row) => row.messageId === String(request.conversation_message_id),
+      );
+      expect(recorded).toHaveLength(1);
+      expect(recorded[0]).toMatchObject({ purpose: 'service_notice', userId: 'vk:41' });
+      expect(recorded[0]?.replyToMessageId).toBe(
+        parent ? String(parent.conversation_message_id) : undefined,
+      );
+      expect(await f.storage.contextMessages.search(f.scope, 'билет', 10, 100)).toEqual([]);
+      expect(f.pending()).toEqual([item]);
+      expect(f.sends).toHaveLength(1);
+
+      f.at(dueAt);
+      await until(() => expect(f.pending()[0]?.state).toBe('delivered'));
+      expect(f.pending()).toEqual([
+        expect.objectContaining({ id: item.id, chatId: 'vk:41', dueAt, state: 'delivered' }),
+      ]);
+      expect(f.sends).toHaveLength(2);
+      expect(f.sends[1]).toMatchObject({ peer_id: 41, text: 'Напоминание.\nвзять билет' });
+      expect(f.complete).not.toHaveBeenCalled();
+    } finally {
+      await f.close();
+    }
+  },
+);
+
+test('ответы участнику с неясной адресацией идут в журнал без отправок, заданий и модели', async () => {
+  const f = await remindersFixture();
+  try {
+    const parent = f.send('Встреча у входа.', 42, peer);
+    const hidden = f.send('Реплика недоступна при проверке.', 42, peer);
+    f.hideMessage(hidden.conversation_message_id);
+    const at = f.origin + minute;
+    f.at(at);
+    const text = 'напомни мне через 20 минут взять билет';
+    const events = [
+      f.send('Пенёк, ' + text, 41, peer, at, parent),
+      f.send('[club314|Пенёк], [id42|Саша], ' + text, 41, peer, at, parent),
+      f.send('[club314|Пенёк], ' + text, 41, peer, at, hidden),
+    ];
+    const ids = events.map(({ conversation_message_id }) => String(conversation_message_id));
+    const recorded = async () =>
+      (await f.storage.messages.list(f.scope, { limit: 30 })).filter((row) =>
+        ids.includes(row.messageId),
+      );
+    await until(async () => expect(await recorded()).toHaveLength(3));
+    const byId = new Map((await recorded()).map((row) => [row.messageId, row]));
+    for (const id of ids.slice(0, 2))
+      expect(byId.get(id)?.replyToMessageId).toBe(String(parent.conversation_message_id));
+    expect(byId.get(ids[2]!)?.replyToMessageId).toBeUndefined();
+    expect(
+      f.db
+        .prepare(
+          'SELECT count(*) FROM queue_jobs q JOIN messages m ON m.id=q.message_id WHERE m.chat_id=? AND m.platform_message_id IN (?,?,?)',
+        )
+        .pluck()
+        .get(f.scope.chatId, ...ids),
+    ).toBe(0);
+    expect(f.pending()).toEqual([]);
+    expect(f.sends).toEqual([]);
+    expect(f.complete).not.toHaveBeenCalled();
+  } finally {
+    await f.close();
+  }
+});
+
+test('при закрытой личке ответ участнику даёт в беседе подсказку без поручения', async () => {
+  const f = await remindersFixture();
+  try {
+    f.privateAccess(41, false);
+    const parent = f.send('Встреча у входа.', 42, peer);
+    const at = f.origin + minute;
+    f.at(at);
+    f.send('[club314|Пенёк], напомни мне через 20 минут взять билет', 41, peer, at, parent);
+    await until(() => expect(f.sends).toHaveLength(1));
+    expect(f.sends[0]).toMatchObject({
+      peer_id: peer,
+      text: expect.stringContaining('разрешите сообщения'),
+    });
+    expect(f.sends[0]?.text).not.toContain('взять билет');
+    expect(f.pending()).toEqual([]);
+    expect(f.complete).not.toHaveBeenCalled();
+  } finally {
+    await f.close();
+  }
+});
+
 test('групповая просьба подтверждается только автору, а UTC-срок переживает указание другого пояса и перезапуск', async () => {
   const f = await remindersFixture();
   try {
