@@ -816,6 +816,7 @@ export async function runApplication(
                   text: message.text,
                   cmid: Number(message.messageId),
                   reply: undefined,
+                  hasForwarded: message.hasForwarded === true,
                 },
                 () => isCurrent() && lifecycle.isAdmissionCurrent(context.scope),
               );

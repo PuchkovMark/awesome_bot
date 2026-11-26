@@ -108,6 +108,131 @@ test('неизвестный код, чужой код и недоступная
   }
 });
 
+const separateMessage = 'Отправьте команду отдельным сообщением без пересылки';
+
+test.each([peer, 41])(
+  'четыре команды с пересылкой в диалоге %i дают подсказку и сохраняют данные двух бесед',
+  async (destination) => {
+    const upload = vi.fn(async () => 'doc1_2');
+    const app = await fixture({ profileNotice: 'Синтетическое уведомление профиля', upload });
+    const inGroup = destination === peer;
+    const author = 'vk:41';
+    const commands = [
+      '/отключить-профиль',
+      '/мои-данные',
+      '/удалить-мои-данные',
+      '/статус-удаления',
+    ];
+    try {
+      const neighbor = await app.connectGroup(peer + 1);
+      await app.journaled(app.submit('Запись автора в беседе.'));
+      const otherEvent = app.submit(
+        'Запись того же автора в соседней беседе.',
+        41,
+        undefined,
+        peer + 1,
+      );
+      const incoming = app.db.prepare(
+        'SELECT text FROM messages WHERE chat_id=? AND platform_message_id=?',
+      );
+      await until(() => expect(incoming.get(neighbor.chatId, String(otherEvent))).toBeDefined());
+      app.submit('/помощь', 41, undefined, 41);
+      await until(() =>
+        expect(
+          app.sends.some(({ peer_id, text }) => peer_id === 41 && text.includes('/мои-данные')),
+        ).toBe(true),
+      );
+
+      const privacy = personalDataStore(app.storage);
+      const activeAt = app.start + 1_000;
+      const liveProfiles = () =>
+        [app.scope, neighbor].map((scope) => privacy.profileAllowed(scope, author, activeAt));
+      const requests = () =>
+        ['personal_exports', 'personal_deletions', 'personal_profile_choices'].map((name) =>
+          app.db.prepare(`SELECT count(*) FROM ${name}`).pluck().get(),
+        );
+      expect([app.scope, neighbor].map((scope) => privacy.hasData(scope, author))).toEqual([
+        true,
+        true,
+      ]);
+      expect(liveProfiles()).toEqual([true, true]);
+      const captions = inGroup
+        ? [...commands, `/статус-удаления ${neighbor.chatId}`]
+        : commands.map((command) => `${command} ${chat}`);
+      for (const command of captions) {
+        const before = app.sends.length;
+        app.submit(command, 41, undefined, destination, 'Пересланная реплика');
+        await until(() => expect(app.sends.length).toBeGreaterThan(before));
+        expect(app.sends.slice(before).map(({ peer_id, text }) => [peer_id, text])).toEqual([
+          [destination, separateMessage],
+        ]);
+        expect(requests()).toEqual([0, 0, 0]);
+        expect(liveProfiles()).toEqual([true, true]);
+      }
+      expect(app.complete).not.toHaveBeenCalled();
+
+      const beforeForwarded = app.sends.length;
+      for (const [index, forwarded] of commands.entries()) {
+        const caption = index % 2 === 0 ? 'Мне прислали это сообщение.' : '';
+        const id = app.submit(caption, 41, undefined, destination, forwarded);
+        await until(() =>
+          expect(incoming.get(`vk:${destination}`, String(id))).toEqual({ text: caption }),
+        );
+        if (!inGroup && index === 0)
+          await until(() =>
+            expect(app.sends.at(-1)).toMatchObject({ peer_id: 41, text: answer.text }),
+          );
+      }
+      app.submit('/помощь', 41, undefined, destination);
+      await until(() =>
+        expect(
+          app.sends
+            .slice(beforeForwarded)
+            .some(
+              ({ peer_id, text }) =>
+                peer_id === destination && text.startsWith('Доступные команды'),
+            ),
+        ).toBe(true),
+      );
+      expect(
+        app.sends
+          .slice(beforeForwarded)
+          .filter(
+            ({ peer_id, text }) =>
+              peer_id !== destination ||
+              (!text.startsWith('Доступные команды') && (inGroup || text !== answer.text)),
+          ),
+      ).toEqual([]);
+      expect(requests()).toEqual([0, 0, 0]);
+      expect(liveProfiles()).toEqual([true, true]);
+      expect(upload).not.toHaveBeenCalled();
+      expect(app.filesSent).toEqual([]);
+
+      if (inGroup) {
+        app.at(1_000);
+        const before = app.sends.length;
+        app.submit('/отключить-профиль');
+        const deadline = new Date(activeAt + 7 * 86_400_000).toISOString();
+        await until(() => expect(app.sends.length).toBeGreaterThan(before));
+        expect(app.sends.slice(before).map(({ peer_id, text }) => [peer_id, text])).toEqual([
+          [
+            41,
+            `Профилирование в ${chat} отключено. Личная выгрузка профиля доступна до ${deadline}.`,
+          ],
+        ]);
+        expect(
+          app.db
+            .prepare('SELECT chat_id,user_id,disabled_at,purged_at FROM personal_profile_choices')
+            .all(),
+        ).toEqual([{ chat_id: chat, user_id: author, disabled_at: activeAt, purged_at: null }]);
+        expect(liveProfiles()).toEqual([false, true]);
+      }
+    } finally {
+      await app.close();
+    }
+  },
+);
+
 test('в группе файл получает только автор, подтверждение из чужой лички не удаляет историю', async () => {
   const upload = vi.fn<(peer: number, data: Buffer) => Promise<string>>();
   let copied = '';

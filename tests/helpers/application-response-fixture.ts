@@ -530,7 +530,7 @@ export async function fixture(
         from = 41,
         parent?: Message,
         destination = peer,
-        forwarded = false,
+        forwarded: boolean | string = false,
         cmid = serial + 1,
       ) {
         serial = Math.max(serial, cmid);
@@ -541,7 +541,13 @@ export async function fixture(
           date: Math.floor(Date.now() / 1000),
           text,
           ...(parent ? { reply_message: parent } : {}),
-          ...(forwarded ? { fwd_messages: [{}] } : {}),
+          ...(forwarded === false
+            ? {}
+            : {
+                fwd_messages: [
+                  typeof forwarded === 'string' ? { from_id: 88, text: forwarded } : {},
+                ],
+              }),
         };
         remember(row);
         listener.onUpdates([{ type: 'message_new', group_id: group, object: { message: row } }]);
