@@ -514,13 +514,13 @@ test('завершение только в личке оставляет шта�
   }
 });
 
-test.each(['нет редакции', 'участник отказался от профилирования'] as const)(
+test.each(['стартовая редакция прежней группы', 'участник отказался от профилирования'] as const)(
   'штатное приглашение учитывает доступность — %s',
   async (reason) => {
     const app = await fixture({
       profileNotice: 'Обработка анкеты и профиля.',
       greetings: { members: [73] },
-      ...(reason === 'нет редакции'
+      ...(reason === 'стартовая редакция прежней группы'
         ? { existingChat: (path: string) => seedBeforeQuestionnaires(path, [chat]) }
         : {}),
     });
@@ -531,8 +531,17 @@ test.each(['нет редакции', 'участник отказался от 
       enter(app);
       await open(app);
       app.at(31_000);
-      await until(() => expect(states(app)).toEqual([{ state: 'skipped', invitation: 'skipped' }]));
-      expect(invitations(app)).toEqual([]);
+      if (reason === 'стартовая редакция прежней группы') {
+        await until(() =>
+          expect(states(app)).toEqual([{ state: 'skipped', invitation: 'delivered' }]),
+        );
+        expect(invitations(app)).toHaveLength(1);
+      } else {
+        await until(() =>
+          expect(states(app)).toEqual([{ state: 'skipped', invitation: 'skipped' }]),
+        );
+        expect(invitations(app)).toEqual([]);
+      }
     } finally {
       await app.close();
     }

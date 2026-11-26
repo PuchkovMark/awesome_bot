@@ -30,12 +30,21 @@ import {
 } from './questionnaire-management';
 import { pendingControlPrompts, type TrackPublication } from './control-publications';
 import { questionnaireViewStore } from '../storage/questionnaire-view-store';
+import { questionnaireStore } from '../storage/questionnaire-store';
 import type { Storage } from '../storage/types';
 import type { PublicationGuard } from '../core/message-router/publication-service';
 import { completedQuestionnaireActions, questionnaireListText } from '../core/questionnaire/text';
 
 export const openQuestionnaire = '/анкета';
 const cancelQuestionnaire = '/анкета отмена';
+export function isQuestionnaireQuestions(message: IncomingMessage) {
+  return (
+    message.isGroupChat &&
+    !message.hasOtherAddress &&
+    /^\/анкета\s+вопросы$/iu.test(message.text.trim())
+  );
+}
+
 export function parseQuestionnaireCommand(text: string): QuestionnaireCommand | null {
   switch (text.trim().toLowerCase().replace(/\s+/gu, ' ')) {
     case openQuestionnaire:
@@ -59,6 +68,12 @@ const ownCommand = {
   minimumRole: 'member',
   journalLabel: 'Действие с анкетой',
 } as const;
+const readQuestions = {
+  action: 'commands.read',
+  minimumRole: 'member',
+  journalLabel: 'Просмотр вопросов анкеты',
+} as const;
+const questionList = { questions: true } as const;
 
 const prompt = {
   group:
@@ -105,6 +120,7 @@ export function createQuestionnaireCommands(options: {
 }) {
   const { channel, progress, authorization, lifecycle, signal } = options;
   const controls = chatControlStore(options.storage);
+  const templates = questionnaireStore(options.storage);
   const legacyPrompts = legacyQuestionnairePrompts(options.storage);
   const presentations = questionnairePresentationStore(options.storage);
   const management = questionnaireManagementStore(options.storage);
@@ -117,6 +133,7 @@ export function createQuestionnaireCommands(options: {
     const receipt = message.replyToMessageId ?? message.unverifiedReplyToMessageId;
     if (message.isGroupChat && receipt && prompts.has(scope, message))
       return { managementReply: receipt };
+    if (isQuestionnaireQuestions(message)) return questionList;
     const raw = message.text.trim();
     const text =
       raw.startsWith('/') &&
@@ -213,6 +230,7 @@ export function createQuestionnaireCommands(options: {
   return {
     recognize(scope: ConnectionScope, message: IncomingMessage) {
       const command = commandOf(scope, message);
+      if (command && typeof command !== 'string' && 'questions' in command) return readQuestions;
       return command ? ownCommand : null;
     },
     async execute(
@@ -234,13 +252,29 @@ export function createQuestionnaireCommands(options: {
         return;
       const control = controls.capture(scope);
       const current = () => accepted() && control().ordinary;
+      const viewingQuestions = typeof command !== 'string' && 'questions' in command;
       const allowed = async () =>
         current() &&
-        (await authorization.check(context, ownCommand.action, message.userId)).allowed &&
+        (viewingQuestions
+          ? await authorization.check(context, readQuestions.action)
+          : await authorization.check(context, ownCommand.action, message.userId)
+        ).allowed &&
         current();
       if (!(await allowed())) return;
 
       const guard = { signal, isCurrent: current, allow: allowed };
+      if (viewingQuestions) {
+        const list = templates.current(scope);
+        if (list)
+          options.track(
+            channel.replyGroupControl(
+              scope,
+              'Вопросы анкеты\n\n' + list.questions.map(({ text }) => text).join('\n'),
+              guard,
+            ),
+          );
+        return;
+      }
       if (typeof command !== 'string' && 'showingAnswer' in command) {
         options.track(
           message.isGroupChat

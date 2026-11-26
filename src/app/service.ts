@@ -12,6 +12,7 @@ import { createLlmAdmission } from '../core/llm-admission';
 import { createPersonaCommands } from './persona-commands';
 import {
   createQuestionnaireCommands,
+  isQuestionnaireQuestions,
   openQuestionnaire,
   parseQuestionnaireCommand,
   parseQuestionnaireView,
@@ -741,6 +742,8 @@ export async function runApplication(
               isObserving ?? isCurrent,
             );
           if (command?.action === 'commands.read') {
+            if (isQuestionnaireQuestions(message))
+              return questionnaires.execute(context, message, isCurrent);
             const role = await commandAuthorization.role(context);
             if (!role.allowed || !isCurrent()) return;
             const state = controls.read(context.scope);

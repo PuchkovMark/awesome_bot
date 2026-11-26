@@ -169,23 +169,64 @@ test('первое открытие в личке доставляет увед�
   }
 });
 
-test('в старой группе без редакции команда предлагает настроить вопросы', async () => {
+test('участник старой беседы читает новые вопросы и продолжает уже показанную редакцию', async () => {
   const app = await fixture({
     profileNotice,
     existingChat: (path) => seedBeforeQuestionnaires(path, [chat]),
   });
   try {
     app.at(1000);
+    async function readQuestions(user: number, list: string) {
+      const start = app.sends.length;
+      app.submit('/анкета вопросы', user);
+      await until(() =>
+        expect(app.sends.slice(start)).toContainEqual(
+          expect.objectContaining({ peer_id: peer, text: 'Вопросы анкеты\n\n' + list }),
+        ),
+      );
+    }
+    await readQuestions(41, questionList);
+    expect(attempt(app)).toBeUndefined();
+    expect(app.db.prepare('SELECT count(*) FROM questionnaire_editor_prompts').pluck().get()).toBe(
+      0,
+    );
+    app.submit('/анкета');
+    await until(() => expect(attempt(app)?.state).toBe('active'));
+    expect(
+      app.sends.some(({ text }) => text.startsWith(groupHint) && text.endsWith(questionList)),
+    ).toBe(true);
+    const original = attempt(app)?.attempt;
+    app.submit('/вопросы изменить', 73);
+    const editor = () =>
+      app.sends.find(({ text }) => text.endsWith('по одному вопросу на строку.'));
+    await until(() => {
+      expect(editor()).toBeDefined();
+      expect(
+        app.db.prepare('SELECT count(*) FROM questionnaire_editor_prompts').pluck().get(),
+      ).toBe(1);
+    });
+    const two = 'Как к тебе обращаться?\nЧем увлекаешься?';
+    app.submit(two, 73, editor()!);
+    await until(() =>
+      expect(
+        app.sends.some(({ text }) => text === 'Анкета сохранена. Количество вопросов — 2.'),
+      ).toBe(true),
+    );
+    await app.restart(true);
+    await readQuestions(42, two);
+    expect(attempt(app, peer, 42)).toBeUndefined();
+    app.submit('/анкета пауза');
+    await until(() => expect(attempt(app)?.state).toBe('paused'));
+    const before = app.sends.length;
     app.submit('/анкета');
     await until(() =>
       expect(
-        app.sends.some(
-          ({ text }) =>
-            text.startsWith('Вопросы не настроены.') && text.includes('/вопросы изменить'),
-        ),
+        app.sends
+          .slice(before)
+          .some(({ text }) => text.startsWith(groupHint) && text.endsWith(questionList)),
       ).toBe(true),
     );
-    expect(attempt(app)).toBeUndefined();
+    expect(attempt(app)?.attempt).toBe(original);
     expect(app.complete).not.toHaveBeenCalled();
   } finally {
     await app.close();

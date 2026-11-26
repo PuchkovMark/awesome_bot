@@ -79,13 +79,13 @@ test('редакции двух бесед и лички одного участ
   }
 });
 
-test('у подключённой до редактора группы без назначенной редакции нет анкеты', async () => {
+test('у подключённой до редактора группы действуют 16 стартовых вопросов', async () => {
   const files = storageFixture();
   seedBeforeQuestionnaires(files.path, [group]);
   const storage = await openStorage(files.path);
   try {
     const scope = scopeFor(storage, group);
-    expect(createQuestionnaireProgress(storage).revision(scope, alice)).toBeNull();
+    expect(createQuestionnaireProgress(storage).revision(scope, alice)?.questions).toHaveLength(16);
   } finally {
     await storage.close();
     files.cleanup();

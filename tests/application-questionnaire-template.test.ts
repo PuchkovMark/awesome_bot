@@ -110,14 +110,15 @@ test('новая группа сразу получает 16 вопросов, �
   }
 });
 
-test('в прежней группе просмотр оставляет образец, редактор меняет состав, права и порядок действуют после перезапуска', async () => {
+test('в прежней группе действует стартовая редакция, редактор меняет состав с проверкой прав', async () => {
   const app = await fixture({ existingChat: (path) => seedBeforeQuestionnaires(path, [chat]) });
   try {
-    expect(current(app)).toBeNull();
+    const before = current(app);
+    expect(questions(app)).toEqual(original);
     const ownerPrompt = await editor(app);
-    expect(ownerPrompt.text).toContain('Список этой беседы пока не сохранён.');
+    expect(ownerPrompt.text).toContain('Вопросы анкеты');
     expect(ownerPrompt.text).toContain('Сколько в ВРН?');
-    expect(current(app)).toBeNull();
+    expect(current(app)).toEqual(before);
     const unauthorized = app.submit('/вопросы', member);
     await app.journaled(unauthorized);
     app.submit('/вопросы', owner, undefined, owner);
@@ -130,14 +131,14 @@ test('в прежней группе просмотр оставляет обр�
     await app.journaled(app.submit('Правка после отзыва', admin, adminPrompt));
     await app.journaled(app.submit('Ответ обычного участника', member, ownerPrompt));
     await app.journaled(app.submit('Ответ на пересылку', owner, ownerPrompt, peer, true));
-    expect(current(app)).toBeNull();
+    expect(current(app)).toEqual(before);
     app.submit(' \n', owner, ownerPrompt);
     await until(() =>
       expect(
         app.sends.some((row) => row.text.startsWith('В списке должен быть хотя бы один вопрос.')),
       ).toBe(true),
     );
-    expect(current(app)).toBeNull();
+    expect(current(app)).toEqual(before);
 
     const rewritten = [
       original[15]!,
