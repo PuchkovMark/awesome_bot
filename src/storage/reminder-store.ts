@@ -34,6 +34,7 @@ export type ReminderFields =
       readonly timezone: string;
       readonly text: string;
       readonly confirmation: readonly string[];
+      readonly scheduleKey?: string;
     };
 
 interface ReminderRecord {
@@ -49,6 +50,7 @@ interface ReminderRecord {
   readonly due_at: number | null;
   readonly timezone: string | null;
   readonly finished_at: number | null;
+  readonly schedule_key: string | null;
   readonly delivery_unknown?: 0 | 1;
 }
 
@@ -77,6 +79,7 @@ interface Part {
   readonly state: 'ready' | 'sending' | 'confirmed' | 'unknown';
   readonly attempted_at: number | null;
   readonly receipt: string | null;
+  readonly definite_failure: 0 | 1;
 }
 
 function record(db: Database, id: number) {
@@ -108,7 +111,8 @@ function finish(
 ) {
   db.prepare(
     `UPDATE personal_reminders SET state=?, finished_at=?, text=NULL,draft=NULL,expires_at=NULL,
-    next_at=NULL,lock_token=NULL,lock_until=NULL,lock_stage=NULL WHERE id=?`,
+    next_at=NULL,lock_token=NULL,lock_until=NULL,lock_stage=NULL,schedule_key=NULL,hint_claimed=0
+    WHERE id=?`,
   ).run(state, at, id);
   db.prepare('DELETE FROM personal_reminder_parts WHERE reminder_id=?').run(id);
 }
@@ -130,7 +134,7 @@ function insertParts(db: Database, id: number, stage: ReminderStage, chunks: rea
 function nextPart(db: Database, lease: Lease) {
   return db
     .prepare(
-      `SELECT part,send_id,text,state,attempted_at,receipt FROM personal_reminder_parts
+      `SELECT part,send_id,text,state,attempted_at,receipt,definite_failure FROM personal_reminder_parts
     WHERE reminder_id=? AND stage=? AND state!='confirmed' ORDER BY part LIMIT 1`,
     )
     .get(lease.id, lease.stage) as Part | undefined;
@@ -244,8 +248,8 @@ export function createReminderStore(connection: Connection, lifecycle: Lifecycle
     }
     db.prepare(
       `UPDATE personal_reminders SET text=?,state='pending',draft=NULL,expires_at=NULL,
-      due_at=?,timezone=?,next_at=? WHERE id=?`,
-    ).run(fields.text, fields.dueAt, fields.timezone, fields.dueAt, id);
+      due_at=?,timezone=?,next_at=?,schedule_key=? WHERE id=?`,
+    ).run(fields.text, fields.dueAt, fields.timezone, fields.dueAt, fields.scheduleKey ?? null, id);
     insertParts(db, id, 'confirmation', fields.confirmation);
   }
 
@@ -415,7 +419,7 @@ export function createReminderStore(connection: Connection, lifecycle: Lifecycle
         return (
           db
             .prepare(
-              `UPDATE personal_reminder_parts SET state='sending',attempted_at=?
+              `UPDATE personal_reminder_parts SET state='sending',attempted_at=?,definite_failure=0
           WHERE reminder_id=? AND stage=? AND part=? AND state='ready' AND receipt IS NULL`,
             )
             .run(now, lease.id, lease.stage, part.part).changes === 1
@@ -436,9 +440,17 @@ export function createReminderStore(connection: Connection, lifecycle: Lifecycle
         const state =
           outcome === 'delivered' ? 'confirmed' : outcome === 'failed' ? 'ready' : 'unknown';
         db.prepare(
-          `UPDATE personal_reminder_parts SET state=?,receipt=CASE WHEN ?='ready' THEN NULL ELSE receipt END
+          `UPDATE personal_reminder_parts SET state=?,receipt=CASE WHEN ?='ready' THEN NULL ELSE receipt END,
+          definite_failure=?
           WHERE reminder_id=? AND stage=? AND part=?`,
-        ).run(state, state, lease.id, lease.stage, part.part);
+        ).run(
+          state,
+          state,
+          Number(lease.stage === 'confirmation' && outcome === 'failed'),
+          lease.id,
+          lease.stage,
+          part.part,
+        );
         if (outcome === 'delivered') {
           if (nextPart(db, lease)) return true;
           if (lease.stage === 'delivery') finish(db, lease.id, 'delivered', now);

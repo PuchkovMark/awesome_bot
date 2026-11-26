@@ -1,3 +1,4 @@
+import Database from 'better-sqlite3';
 import { expect, test } from 'vitest';
 import { createLifecycleService } from '../src/core/index';
 import { openStorage } from '../src/storage/index';
@@ -145,6 +146,77 @@ test('захват конкурирующими исполнителями, от
   } finally {
     await a.close();
     await b.close();
+    files.cleanup();
+  }
+});
+
+test('отказ и неопределённость подтверждения различаются после повторного открытия базы', async () => {
+  const files = storageFixture();
+  let storage = await openStorage(files.path);
+  try {
+    let f = await fixture(storage);
+    const ids = (['failed', 'unknown'] as const).map((outcome, index) => {
+      const item = f.store.create(
+        f.one,
+        { ...source, scope: f.group, messageId: String(index + 1) },
+        { ...fields, scheduleKey: 'relative:1' },
+        now,
+      )!;
+      const lease = f.store.claimConfirmation(f.one, item.id, now)!;
+      const part = f.store.getPart(lease, now)!;
+      expect(f.store.beginPart(lease, part, now)).toBe(true);
+      if (outcome === 'unknown') f.store.receipt(lease, part, '101');
+      expect(f.store.settle(lease, part, outcome, now)).toBe(false);
+      return item.id;
+    });
+    await storage.close();
+    storage = await openStorage(files.path);
+    f = await fixture(storage);
+    const db = new Database(files.path, { readonly: true, fileMustExist: true });
+    try {
+      expect(
+        db
+          .prepare(
+            `SELECT r.id,r.due_at,r.schedule_key,p.state,p.definite_failure,p.receipt
+           FROM personal_reminders r JOIN personal_reminder_parts p ON p.reminder_id=r.id
+           ORDER BY r.id`,
+          )
+          .all(),
+      ).toEqual([
+        {
+          id: ids[0],
+          due_at: dueAt,
+          schedule_key: 'relative:1',
+          state: 'ready',
+          definite_failure: 1,
+          receipt: null,
+        },
+        {
+          id: ids[1],
+          due_at: dueAt,
+          schedule_key: 'relative:1',
+          state: 'unknown',
+          definite_failure: 0,
+          receipt: '101',
+        },
+      ]);
+      expect(f.store.cancel(f.one, ids[0]!, now)).toBe('cancelled');
+      expect(
+        db
+          .prepare('SELECT text,schedule_key,hint_claimed FROM personal_reminders WHERE id=?')
+          .get(ids[0]),
+      ).toEqual({ text: null, schedule_key: null, hint_claimed: 0 });
+      expect(
+        db
+          .prepare('SELECT count(*) FROM personal_reminder_parts WHERE reminder_id=?')
+          .pluck()
+          .get(ids[0]),
+      ).toBe(0);
+    } finally {
+      db.close();
+    }
+  } finally {
+    await storage.close();
     files.cleanup();
   }
 });

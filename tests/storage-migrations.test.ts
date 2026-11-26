@@ -7,6 +7,40 @@ import { storageFixture } from './helpers/storage-fixture';
 
 const insert =
   "INSERT INTO messages(chat_id,platform_message_id,user_id,author_name,role,text,timestamp) VALUES ('vk:1','1','vk:2','Имя','user','старый',0)";
+
+test('миграция 59 сохраняет старое задание и не считает готовую часть отказом', () => {
+  const db = new Database(':memory:');
+  try {
+    db.pragma('foreign_keys=ON');
+    migrate(db, migrations.slice(0, 58));
+    db.exec(`INSERT INTO chat_connections(chat_id,generation,revision,state) VALUES ('vk:41',1,0,'active');
+      INSERT INTO personal_reminders(id,chat_id,generation,origin_at,text,due_at,timezone,next_at,state)
+        VALUES (12,'vk:41',1,0,'взять билет',60000,'UTC',60000,'pending');
+      INSERT INTO personal_reminder_parts(reminder_id,stage,part,send_id,text)
+        VALUES (12,'confirmation',0,8,'Назначено');`);
+    migrate(db);
+    expect(
+      db.prepare('SELECT id,due_at,text,schedule_key,hint_claimed FROM personal_reminders').get(),
+    ).toEqual({
+      id: 12,
+      due_at: 60000,
+      text: 'взять билет',
+      schedule_key: null,
+      hint_claimed: 0,
+    });
+    expect(
+      db.prepare('SELECT send_id,state,definite_failure FROM personal_reminder_parts').get(),
+    ).toEqual({
+      send_id: 8,
+      state: 'ready',
+      definite_failure: 0,
+    });
+    expect(db.pragma('foreign_key_check')).toEqual([]);
+  } finally {
+    db.close();
+  }
+});
+
 test('миграция 13 сохраняет поколения и связывает отметки с конкретным чатом и поколением', () => {
   const db = new Database(':memory:');
   try {

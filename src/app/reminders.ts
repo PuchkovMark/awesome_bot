@@ -80,6 +80,10 @@ function fields(input: string, originAt: number, timezone?: string, edited?: Rem
     dueAt,
     timezone: selected,
     text,
+    scheduleKey:
+      schedule?.kind === 'relative'
+        ? `relative:${schedule.minutes}`
+        : `calendar:${dueAt}:${selected}`,
     confirmation: splitVkText(
       `Напомню вам в этой личке ${formatReminderTime(dueAt, selected)} (${selected}).\n${text}`,
     ),
