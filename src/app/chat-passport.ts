@@ -5,7 +5,11 @@ import { vkMessageLength } from '../channels/vk/outbound-text';
 import type { createAuthorizationService } from '../core/authorization/service';
 import type { createLifecycleService } from '../core/lifecycle/service';
 import { ordinaryGroupRoute } from '../core/message-router/routing';
-import { pendingControlPrompts, type TrackPublication } from './control-publications';
+import {
+  pendingControlPrompts,
+  verifiedControlReplyText,
+  type TrackPublication,
+} from './control-publications';
 import { chatControlStore } from '../storage/chat-control-store';
 import { chatPassportStore } from '../storage/chat-passport-store';
 import {
@@ -93,6 +97,10 @@ function requestedSection(message: IncomingMessage) {
 
 function view(entry: PassportEntry) {
   return sections[entry.section].title + '\n' + (entry.text ?? 'Раздел пока пуст.');
+}
+
+function viewHint(section: PassportSection) {
+  return `\n\nДля правки отправьте ${sections[section].command} изменить.`;
 }
 
 function fullPassport(entries: readonly PassportEntry[]): readonly string[] {
@@ -256,7 +264,17 @@ export function createChatPassport(options: {
         return;
       }
       const request = parse(message.text);
-      if (!request || message.replyAddress || message.replyToMessageId) return;
+      if (!request) return;
+      if (message.replyAddress || message.replyToMessageId) {
+        const parent = verifiedControlReplyText(message);
+        if (
+          request.kind !== 'edit' ||
+          request.section !== 'rules' ||
+          !parent?.startsWith(sections.rules.title + '\n') ||
+          !parent.endsWith(viewHint('rules'))
+        )
+          return;
+      }
       if (request.kind === 'invalid') {
         reply('Откройте паспорт командой /паспорт или выберите раздел его командой.');
         return;
@@ -282,9 +300,7 @@ export function createChatPassport(options: {
         return;
       }
       if (request.kind === 'section') {
-        reply(
-          view(entry) + `\n\nДля правки отправьте ${sections[entry.section].command} изменить.`,
-        );
+        reply(view(entry) + viewHint(entry.section));
         return;
       }
       if (request.kind === 'clear' && entry.text === null) {

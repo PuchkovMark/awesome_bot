@@ -167,16 +167,18 @@ async function appendSource(f: Awaited<ReturnType<typeof fixture>>, name: string
   });
 }
 
-async function seedClockHistory(f: Awaited<ReturnType<typeof fixture>>) {
-  await f.storage.chats.update(f.scope, { timezone: 'Europe/Moscow' });
-  const history = [
+async function seedClockHistory(
+  f: Awaited<ReturnType<typeof fixture>>,
+  history: readonly (readonly [string, number])[] = [
     ['Накануне', Date.UTC(2026, 10, 23, 20, 59)],
     ['Утреннее решение', Date.UTC(2026, 10, 24, 6)],
     ['Ровно в шесть', Date.UTC(2026, 10, 24, 15)],
     ['Перед восьмью', Date.UTC(2026, 10, 24, 16, 59)],
     ['Вечернее решение', Date.UTC(2026, 10, 24, 17)],
     ['Следующий день', Date.UTC(2026, 10, 24, 21)],
-  ] as const;
+  ],
+) {
+  await f.storage.chats.update(f.scope, { timezone: 'Europe/Moscow' });
   for (const [label, timestamp] of history)
     await f.storage.messages.append(f.scope, {
       chatId: chat,
@@ -245,6 +247,58 @@ test.each([false, true])(
     }
   },
 );
+test.each([false, true])(
+  'пересказ до полудня исключает 12:00, готовая дневная сводка %s',
+  async (ready) => {
+    const f = await fixture({ startAt: recapAt, limit: 40, summaryIntervalMs: 999999999 });
+    const noon = Date.UTC(2026, 10, 24, 9);
+    try {
+      const result = await seedClockHistory(f, [
+        ['Утреннее решение', Date.UTC(2026, 10, 24, 6)],
+        ['Сообщение перед полуднем', noon - 60_000],
+        ['Сообщение ровно в полдень', noon],
+        ['Вечернее решение', Date.UTC(2026, 10, 24, 16)],
+      ]);
+      if (ready)
+        await result(
+          f.submit(question),
+          'Утреннее решение, Сообщение перед полуднем, Сообщение ровно в полдень, Вечернее решение',
+        );
+      const expected = 'Утреннее решение, Сообщение перед полуднем';
+      await result(f.submit('Пенёк, что обсуждали вчера до полудня?'), expected);
+      expect(
+        f.db
+          .prepare(
+            `SELECT m.platform_message_id FROM chat_summaries s
+        JOIN chat_summary_sources cs ON cs.summary_id=s.id JOIN messages m ON m.id=cs.message_id
+        WHERE s.chat_id=? AND s.level='day' AND s.starts_at=? AND s.ends_at=? ORDER BY m.id`,
+          )
+          .pluck()
+          .all(chat, yesterdayFrom, noon),
+      ).toEqual(['Утреннее решение', 'Сообщение перед полуднем']);
+      if (ready) {
+        const request = f.submit('Пенёк, что обсуждали вчера до обеда?');
+        const prompt = () =>
+          f.sends.find(
+            (row) =>
+              row.reply_message?.conversation_message_id === request &&
+              row.text.startsWith('До какого времени вчера'),
+          );
+        await until(() =>
+          expect(f.db.prepare('SELECT count(*) FROM recap_clarifications').pluck().get()).toBe(1),
+        );
+        expect(prompt()).toBeDefined();
+        await result(f.submit('12:00', 41, prompt()!), expected);
+        await until(() =>
+          expect(f.db.prepare('SELECT count(*) FROM recap_clarifications').pluck().get()).toBe(0),
+        );
+      }
+    } finally {
+      await f.close();
+    }
+  },
+);
+
 test('точный интервал и неизвестная доставка промежуточного reply сохраняют один полезный результат', async () => {
   const f = await fixture();
   try {

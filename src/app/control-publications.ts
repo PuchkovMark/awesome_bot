@@ -2,6 +2,16 @@ import type { ConnectionScope, IncomingMessage, UserId } from '../contracts/inde
 
 export type TrackPublication = (work: Promise<unknown>) => void;
 
+export function verifiedControlReplyText(message: IncomingMessage) {
+  if (
+    message.replyAddress === 'bot' &&
+    message.replyToMessageId &&
+    !message.hasOtherAddress &&
+    !message.attachments.length
+  )
+    return message.botReplyText;
+}
+
 interface PendingPrompt {
   readonly scope: ConnectionScope;
   readonly actor: UserId;

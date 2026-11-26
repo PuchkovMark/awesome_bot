@@ -24,14 +24,39 @@ const interval = new RegExp(
     ')*',
   'giu',
 );
-const clock =
-  /(?<![\p{L}\p{N}:.])(?:(сегодня|завтра|послезавтра|\d{1,2}\.\d{1,2}(?:\.\d{4})?)\s+(?:в\s+)?|(?:в|или)\s+)(\d{1,2}):(\d{2})(?![\p{L}\p{N}:])/giu;
+const monthNames = [
+  'января',
+  'февраля',
+  'марта',
+  'апреля',
+  'мая',
+  'июня',
+  'июля',
+  'августа',
+  'сентября',
+  'октября',
+  'ноября',
+  'декабря',
+];
+const namedDateText = String.raw`\d{1,2}\s+(?:${monthNames.join('|')})(?:\s+\d{4}(?:\s+(?:года|г\.))?)?`;
+const namedDateStart = new RegExp(String.raw`^${namedDateText}(?![\p{L}\p{N}_/:]|\.\d)`, 'iu');
+const numericDateText = String.raw`\d{1,2}\.\d{1,2}(?:\.\d{4})?`;
+const calendarDate = new RegExp(
+  String.raw`(?<![\p{L}\p{N}_./:])(${numericDateText}|${namedDateText})(?![\p{L}\p{N}_/:]|\.\d)`,
+  'giu',
+);
+const clock = new RegExp(
+  String.raw`(?<![\p{L}\p{N}:.])(?:(сегодня|завтра|послезавтра|${numericDateText}|${namedDateText})\s+(?:в\s+)?|(?:в|или)\s+)(\d{1,2}):(\d{2})(?![\p{L}\p{N}:])`,
+  'giu',
+);
 const relativeDay = /^(?:сегодня|завтра|послезавтра)$/u;
 const vague =
   /(?<!\p{L})(?:(сегодня|завтра|послезавтра)(?:\s+(?:утром|дн[её]м|вечером|ночью))?|утром|дн[её]м|вечером|ночью)(?!\p{L})/giu;
-const numericDate = /(?<![\p{L}\p{N}_./:])(\d{1,2}\.\d{1,2}(?:\.\d{4})?)(?![\p{L}\p{N}_/:]|\.\d)/gu;
 const zoneToken =
-  /(?:по\s+Москве|(?<![\p{L}\p{N}_])(?:UTC|[A-Za-z][A-Za-z_+-]*(?:\/[A-Za-z0-9_+.-]+)+))(?![\p{L}\p{N}_/])/giu;
+  /(?:по\s+Москве|(?<![\p{L}\p{N}_])(?:UTC(?:[+-][\p{L}\p{N}_]*(?:[:.]\d+)?)?|[A-Za-z][A-Za-z_+-]*(?:\/[A-Za-z0-9_+.-]+)+))(?![\p{L}\p{N}_/+-]|[:.]\d)/giu;
+const urlText = String.raw`(?<![\p{L}\p{N}_])(?:[a-z][a-z\d+.-]*://|www\.)[^\s<>"«»]+`;
+const urlToken = new RegExp(urlText, 'giu');
+const contentEdges = new RegExp(String.raw`(${urlText})|^[\s,.:;–—-]+|[\s,;–—-]+$`, 'giu');
 
 export type ReminderSchedule =
   | { readonly kind: 'relative'; readonly minutes: number }
@@ -53,6 +78,25 @@ export type ReminderTime =
 export function reminderTimezone(value: string): string | null {
   const text = value.trim();
   return /^по\s+москве$/iu.test(text) ? 'Europe/Moscow' : canonicalTimezone(text);
+}
+
+export function startsWithNamedReminderDate(text: string) {
+  return namedDateStart.test(text);
+}
+
+function explicitReminderTimezone(value: string): string | null {
+  const offset = /^UTC([+-])(\d{1,2})(?::(\d{2}))?$/iu.exec(value);
+  if (!offset) return reminderTimezone(value);
+  const [, sign, hour, minutes = '00'] = offset;
+  if (Number(hour) > 23 || Number(minutes) > 59) return null;
+  return sign + hour!.padStart(2, '0') + ':' + minutes;
+}
+
+function normalizeCalendarDate(value: string) {
+  const text = value.toLowerCase();
+  const [date, name, year] = text.split(/\s+/u);
+  const month = name === undefined ? 0 : monthNames.indexOf(name) + 1;
+  return month ? [date, month, year].filter((part) => part !== undefined).join('.') : text;
 }
 
 interface ReminderTimeInput {
@@ -95,7 +139,7 @@ export function resolveReminderTime(input: ReminderTimeInput): ReminderTime {
   if (!schedule || !Number.isSafeInteger(originAt) || originAt < 0 || originAt > maxDate - 4 * day)
     return { kind: 'time' };
   const timezone = input.explicitTimezone
-    ? reminderTimezone(input.explicitTimezone)
+    ? explicitReminderTimezone(input.explicitTimezone)
     : input.timezone && reminderTimezone(input.timezone);
   if (input.explicitTimezone && !timezone) return { kind: 'zone' };
   if (schedule.kind === 'relative') {
@@ -136,14 +180,16 @@ export function resolveReminderTime(input: ReminderTimeInput): ReminderTime {
 }
 
 export function extractReminderTime(text: string) {
-  const relatives = [...text.matchAll(interval)];
-  // Номер версии принадлежит поручению. Пробелы сохраняют индексы диапазонов в исходном тексте.
-  const calendarText = text.replace(/(?<!\p{L})верси(?:я|ю|и|ей)\s+\d+(?:\.\d+)+/giu, (version) =>
-    ' '.repeat(version.length),
+  // Маска сохраняет индексы и отделяет слова по обе стороны адреса.
+  const timeText = text.replace(urlToken, (url) => '~'.repeat(url.length));
+  const relatives = [...timeText.matchAll(interval)];
+  const calendarText = timeText.replace(
+    /(?<!\p{L})верси(?:я|ю|и|ей)\s+\d+(?:\.\d+)+/giu,
+    (version) => ' '.repeat(version.length),
   );
   const absolute = [...calendarText.matchAll(clock)];
-  const zones = [...text.matchAll(zoneToken)];
-  const separateDays = [...text.matchAll(vague), ...calendarText.matchAll(numericDate)].filter(
+  const zones = [...timeText.matchAll(zoneToken)];
+  const separateDays = [...timeText.matchAll(vague), ...calendarText.matchAll(calendarDate)].filter(
     (part) => !absolute.some((local) => local.index === part.index),
   );
   const relativeChoices = relatives.flatMap((part) =>
@@ -153,7 +199,7 @@ export function extractReminderTime(text: string) {
       .map((choice) => choice.replace(/^через\s+/u, '')),
   );
   const days = [...absolute, ...separateDays].flatMap((part) =>
-    part[1] ? [part[1].toLowerCase()] : [],
+    part[1] ? [normalizeCalendarDate(part[1])] : [],
   );
   const date = days.length === 1 ? days[0] : undefined;
   const possibleTimes = relativeChoices.length + absolute.length;
@@ -207,7 +253,9 @@ export function extractReminderTime(text: string) {
     ambiguous,
     timeExample,
     explicitTimezone: zones.length > 1 ? 'неоднозначно' : zones[0]?.[0],
-    content: content.replace(/^[\s,.:;–—-]+|[\s,;–—-]+$/gu, '').replace(/[ \t]{2,}/gu, ' '),
+    content: content
+      .replace(contentEdges, (_, url?: string) => url ?? '')
+      .replace(/[ \t]{2,}/gu, ' '),
   };
 }
 

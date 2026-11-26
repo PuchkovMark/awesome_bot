@@ -45,9 +45,9 @@ async function choose(app: App, choice: string, start: number) {
   return app.submit(choice, owner, await replacementPrompt(app, start));
 }
 
-async function editor(app: App, actor = owner, destination = peer) {
+async function editor(app: App, actor = owner, destination = peer, reply?: App['sends'][number]) {
   const start = app.sends.length;
-  app.submit('/вопросы изменить', actor, undefined, destination);
+  app.submit('/вопросы изменить', actor, reply, destination);
   await until(() => {
     const prompt = opened(app, start, destination);
     expect(prompt).toBeDefined();
@@ -173,6 +173,106 @@ test('в прежней группе просмотр оставляет обр�
   }
 });
 
+test('полная копия просмотра сохраняет порядок вопросов при заполнении и точечном изменении', async () => {
+  const app = await fixture({ profileNotice: 'Тестовое уведомление об анкете и личном профиле.' });
+  try {
+    await app.storage.authorization.transaction(app.scope, (tx) =>
+      tx.grant({ userId: 'vk:41', basis: 'explicit', grantedAt: app.start, grantedBy: 'vk:73' }),
+    );
+    app.submit('/вопросы', admin);
+    const view = () =>
+      app.sends.find(
+        ({ peer_id, text }) =>
+          peer_id === peer && text.endsWith('Для правки отправьте /вопросы изменить.'),
+      );
+    await until(() => expect(view()).toBeDefined());
+    const copy = view()!.text;
+    expect(copy).toBe(
+      'Вопросы анкеты\n\n' + original.join('\n') + '\n\nДля правки отправьте /вопросы изменить.',
+    );
+    const first = await editor(app, admin);
+    const from = app.sends.length;
+    app.submit(copy, admin, first);
+    await until(() =>
+      expect(app.sends.slice(from).some(({ text }) => text === saved + '16.')).toBe(true),
+    );
+    expect(questions(app)).toEqual(original);
+
+    app.at(1000);
+    const beforeForm = app.sends.length;
+    app.submit('/анкета', member);
+    const list = () =>
+      app.sends.find(
+        ({ peer_id, text }) => peer_id === peer && text.startsWith('Ваш ответ увидят участники'),
+      );
+    await until(() =>
+      expect(
+        list(),
+        JSON.stringify(app.sends.slice(beforeForm).map(({ text }) => text)),
+      ).toBeDefined(),
+    );
+    expect(list()!.text.split('\n\n').slice(1).join('\n\n').split('\n')).toEqual(original);
+
+    const second = await editor(app, admin);
+    const changed = 'Как открыть https://example.org/docs командой /вопросы изменить?';
+    const expected = [original[0], changed, ...original.slice(2)];
+    const edited = copy.replace('\n' + original[1] + '\n', '\n' + changed + '\n');
+    app.submit(edited.replaceAll('\n', '\r\n'), admin, second);
+    await until(() => expect(questions(app)).toEqual(expected));
+    expect(app.complete).not.toHaveBeenCalled();
+  } finally {
+    await app.close();
+  }
+});
+
+test('ответ на просмотр открывает редактор только администратору и сохраняет текущие вопросы до правки', async () => {
+  const app = await fixture();
+  try {
+    await app.storage.authorization.transaction(app.scope, (tx) =>
+      tx.grant({ userId: 'vk:41', basis: 'explicit', grantedAt: app.start, grantedBy: 'vk:73' }),
+    );
+    async function read(command: string) {
+      const start = app.sends.length;
+      app.submit(command, admin);
+      const find = () =>
+        app.sends
+          .slice(start)
+          .find(({ text, peer_id }) => peer_id === peer && text.endsWith(command + ' изменить.'));
+      await until(() => expect(find()).toBeDefined());
+      return find()!;
+    }
+    const first = await read('/вопросы');
+    const rules = await read('/правила');
+    const start = app.sends.length;
+    const before = current(app);
+    const rejected = [
+      app.submit('/вопросы изменить', member, first),
+      app.submit('/вопросы изменить', admin, rules),
+      app.submit('/вопросы изменить', admin, first, peer, true),
+    ];
+    for (const id of rejected) await app.journaled(id);
+    app.hideVkMessage(first.conversation_message_id);
+    await app.journaled(app.submit('/вопросы изменить', admin, first));
+    const view = await read('/вопросы');
+    expect(opened(app, start)).toBeUndefined();
+    const prompt = await editor(app, admin, peer, view);
+    expect(current(app)).toEqual(before);
+    expect(app.sends.slice(start).filter(({ text }) => text.endsWith(instructions))).toEqual([
+      prompt,
+    ]);
+    expect(app.db.prepare('SELECT count(*) FROM questionnaire_editor_prompts').pluck().get()).toBe(
+      1,
+    );
+    app.submit('Как тебя найти?\nКакие встречи интересны?', admin, prompt);
+    await until(() =>
+      expect(questions(app)).toEqual(['Как тебя найти?', 'Какие встречи интересны?']),
+    );
+    expect(app.complete).not.toHaveBeenCalled();
+  } finally {
+    await app.close();
+  }
+});
+
 test('длинный список полностью показывается до редактора, частичные и неподтверждённые ответы сохраняют прежнюю редакцию', async () => {
   const app = await fixture();
   try {
@@ -209,16 +309,33 @@ test('длинный список полностью показывается д
     expect(current(app)).toEqual(version);
     expect(chatControlStore(app.storage).read(app.scope).enabled).toBe(true);
 
+    const beforeView = app.sends.length;
+    app.submit('/вопросы', owner);
+    const shown = () =>
+      app.sends
+        .slice(beforeView)
+        .filter(({ text }) => text.endsWith('Для правки отправьте /вопросы изменить.'));
+    await until(() => expect(shown()).toHaveLength(2));
+    expect(shown().every(({ text }) => text.includes('\nСписок показан частями.\n'))).toBe(true);
     from = app.sends.length;
-    const final = await editor(app);
+    const final = await editor(app, owner, peer, shown().at(-1)!);
     const chunks = app.sends.slice(from, app.sends.indexOf(final));
     expect(chunks).toHaveLength(2);
     expect(chunks.every(({ text }) => Buffer.byteLength(text) <= 4000)).toBe(true);
     expect(
       chunks.map(({ text }) => text.slice('Вопросы анкеты\n\n'.length, -chunkHint.length)).join(''),
     ).toBe(long);
+    const beforePartialView = app.sends.length;
+    app.submit(shown()[0]!.text, owner, final);
+    await until(() =>
+      expect(app.sends.slice(beforePartialView).some(({ text }) => text === reopen)).toBe(true),
+    );
+    expect(current(app)).toEqual(version);
+    const beforePartialEditor = app.sends.length;
     app.submit(chunks[0]!.text, owner, final);
-    await until(() => expect(app.sends.slice(from).some(({ text }) => text === reopen)).toBe(true));
+    await until(() =>
+      expect(app.sends.slice(beforePartialEditor).some(({ text }) => text === reopen)).toBe(true),
+    );
     expect(current(app)).toEqual(version);
     app.submit('🤍'.repeat(1001), owner, final);
     await until(() =>

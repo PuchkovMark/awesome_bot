@@ -10,10 +10,16 @@ import { StorageError } from '../storage/errors';
 import { questionnaireStore } from '../storage/questionnaire-store';
 import type { QuestionnaireReplyResult } from '../storage/questionnaire-types';
 import type { Storage } from '../storage/types';
-import { pendingControlPrompts, type TrackPublication } from './control-publications';
+import {
+  pendingControlPrompts,
+  verifiedControlReplyText,
+  type TrackPublication,
+} from './control-publications';
 
 const heading = 'Вопросы анкеты';
 const sample = 'Стартовый образец анкеты\nСписок этой беседы пока не сохранён.';
+const viewInstruction = '\n\nДля правки отправьте /вопросы изменить.';
+const partMark = '\nСписок показан частями.\n\n';
 const editorHeading = 'Редактор анкеты';
 const instruction =
   '\n\nЧтобы изменить анкету, ответьте на это сообщение полным списком, по одному вопросу на строку.';
@@ -35,6 +41,25 @@ function looksLikeEditor(text: string | undefined) {
       (text.endsWith(instruction) || text.endsWith(continuation))) ||
       (text.startsWith('В списке ') && text.endsWith(confirmation)))
   );
+}
+
+function questionView(text: string) {
+  const normalized = text.replace(/\r\n?/gu, '\n').trim();
+  if (!normalized.endsWith(viewInstruction)) return undefined;
+  const title = [heading, sample].find((part) => normalized.startsWith(part + '\n'));
+  if (!title) return undefined;
+  const framed = normalized.slice(title.length, -viewInstruction.length);
+  if (framed.startsWith(partMark)) return { kind: 'part' } as const;
+  if (framed.startsWith('\n\n')) return { kind: 'full', text: framed.slice(2) } as const;
+}
+
+function questionViewParts(title: string, list: readonly string[]) {
+  const body = list.join('\n');
+  const full = title + '\n\n' + body + viewInstruction;
+  if (Buffer.byteLength(full) <= vkMessageLength.value) return [full];
+  const prefix = title + partMark;
+  const limit = vkMessageLength.value - Buffer.byteLength(prefix + viewInstruction);
+  return splitVkText(body, limit).map((part) => prefix + part + viewInstruction);
 }
 
 function preview(title: string, lines: readonly string[]) {
@@ -147,14 +172,11 @@ export function createQuestionnaireEditor(options: {
       accepted: () => boolean,
       editing: boolean,
     ) {
-      if (
-        !message.isGroupChat ||
-        message.isBot !== false ||
-        message.hasForwarded ||
-        message.replyAddress ||
-        message.replyToMessageId
-      )
-        return;
+      if (!message.isGroupChat || message.isBot !== false || message.hasForwarded) return;
+      if (message.replyAddress || message.replyToMessageId) {
+        const parent = verifiedControlReplyText(message);
+        if (!editing || parent === undefined || !questionView(parent)) return;
+      }
       const guard = guardFor(context, accepted);
       if (!(await guard.allow())) return;
       const scope = context.scope;
@@ -163,10 +185,7 @@ export function createQuestionnaireEditor(options: {
       const list = (chosen?.questions ?? legacyQuestionnaire.questions).map(({ text }) => text);
       const title = chosen ? heading : sample;
       if (!editing) {
-        const parts = splitVkText(
-          title + '\n\n' + list.join('\n') + '\n\nДля правки отправьте /вопросы изменить.',
-          vkMessageLength.value,
-        );
+        const parts = questionViewParts(title, list);
         options.track(
           (async () => {
             for (const part of parts)
@@ -205,18 +224,20 @@ export function createQuestionnaireEditor(options: {
       const guard = guardFor(context, accepted);
       if (!guard.isCurrent()) return;
       const raw = message.literalText ?? message.text;
-      if (message.attachments.length || looksLikeEditor(raw)) {
+      const view = questionView(raw);
+      if (message.attachments.length || looksLikeEditor(raw) || view?.kind === 'part') {
         options.track(channel.replyGroupControl(context.scope, reopen, guard));
         return;
       }
       const id = Number(message.messageId);
       if (!Number.isSafeInteger(id) || id < 1 || String(id) !== message.messageId) return;
       const editor = message.replyToMessageId;
+      const text = view?.kind === 'full' ? view.text : raw;
       const apply = async () => {
         if (!guard.isCurrent()) return;
         const result = await authorization.applyQuestionnaireReply(
           context,
-          { receipt: editor, eventId: id, eventAt: message.timestamp, text: raw },
+          { receipt: editor, eventId: id, eventAt: message.timestamp, text },
           guard.isCurrent,
         );
         if (result.allowed && result.value.status === 'confirm') {
