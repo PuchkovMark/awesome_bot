@@ -18,10 +18,6 @@ import {
   questionnaireMessageSequence,
 } from '../storage/questionnaire-access-store';
 import type { QuestionnaireCommand } from '../storage/questionnaire-progress-store';
-import {
-  questionnairePresentationStore,
-  type QuestionnairePresentationGrant,
-} from '../storage/questionnaire-presentation-store';
 import { questionnaireManagementStore } from '../storage/questionnaire-management-store';
 import {
   isQuestionnaireManagementPrompt,
@@ -33,7 +29,12 @@ import { questionnaireViewStore } from '../storage/questionnaire-view-store';
 import { questionnaireStore } from '../storage/questionnaire-store';
 import type { Storage } from '../storage/types';
 import type { PublicationGuard } from '../core/message-router/publication-service';
-import { completedQuestionnaireActions, questionnaireListText } from '../core/questionnaire/text';
+import {
+  completedQuestionnaireActions,
+  privateQuestionnaireHint,
+  questionnaireListText,
+  questionnairePresentationQuestion,
+} from '../core/questionnaire/text';
 
 export const openQuestionnaire = '/анкета';
 const cancelQuestionnaire = '/анкета отмена';
@@ -75,12 +76,8 @@ const readQuestions = {
 } as const;
 const questionList = { questions: true } as const;
 
-const prompt = {
-  group:
-    'Ваш ответ увидят участники этой беседы. Ответьте одним сообщением, любые вопросы можно пропустить. Обратитесь к боту по имени, упомяните его или ответьте на его сообщение.',
-  private:
-    'Пришлите ответы следующим сообщением. Любые вопросы можно пропустить. Для отмены отправьте /анкета отмена.',
-};
+const instructions =
+  'Ваш ответ увидят участники этой беседы. Ответьте одним сообщением, любые вопросы можно пропустить. Обратитесь к боту по имени, упомяните его или ответьте на его сообщение.';
 const showingAnswer = { showingAnswer: true } as const;
 const status = {
   active: 'Анкета открыта. Пришлите ответы одним сообщением.',
@@ -110,19 +107,12 @@ export function createQuestionnaireCommands(options: {
     | 'questionnaireMention'
   >;
   readonly track: TrackPublication;
-  readonly present: (
-    scope: ConnectionScope,
-    grant: QuestionnairePresentationGrant,
-    authorName: string,
-    guard: PublicationGuard,
-  ) => Promise<void>;
   readonly signal: AbortSignal;
 }) {
   const { channel, progress, authorization, lifecycle, signal } = options;
   const controls = chatControlStore(options.storage);
   const templates = questionnaireStore(options.storage);
   const legacyPrompts = legacyQuestionnairePrompts(options.storage);
-  const presentations = questionnairePresentationStore(options.storage);
   const management = questionnaireManagementStore(options.storage);
   const prompts = pendingControlPrompts();
   const questionLists = pendingControlPrompts();
@@ -140,11 +130,17 @@ export function createQuestionnaireCommands(options: {
       (!message.hasOtherAddress || /^\/анкета\s+показать(?:\s|$)/iu.test(raw))
         ? raw
         : (message.literalText ?? message.text).trim();
+    if (
+      /^\/анкета\s+представить$/iu.test(text) ||
+      (receipt &&
+        (message.botReplyText === questionnairePresentationQuestion ||
+          legacyPrompts.hasPrompt(scope, receipt)))
+    )
+      return { ignored: true };
     const progress = parseQuestionnaireCommand(text);
     if (progress) return progress;
     const view = parseQuestionnaireView(text);
     if (view) return { view: view[1] ?? '' };
-    if (/^\/анкета\s+представить$/iu.test(text)) return { present: true };
     if (receipt && questionLists.owns(scope, message)) return showingAnswer;
     if (!message.isGroupChat) return null;
     if (/^\/анкета\s+изменить$/iu.test(text)) return { manage: 'edit' as const };
@@ -155,15 +151,7 @@ export function createQuestionnaireCommands(options: {
       isQuestionnaireManagementPrompt(message.botReplyText)
     )
       return { managementReply: receipt };
-    if (legacyPrompts.hasPrompt(scope, receipt)) return { ignored: true };
-    const presentChoice = text.toLowerCase();
-    const isPresentationChoice =
-      presentChoice === 'представить' || presentChoice === 'не представлять';
-    if (presentations.hasPrompt(scope, receipt))
-      return isPresentationChoice
-        ? { present: presentChoice === 'представить', receipt }
-        : { ignored: true };
-    return isPresentationChoice && message.isReplyToBot ? { ignored: true } : null;
+    return null;
   }
 
   async function show(
@@ -373,47 +361,10 @@ export function createQuestionnaireCommands(options: {
         options.track(show(scope, message, command.view, guard));
         return;
       }
-      if (typeof command !== 'string') {
-        if ('ignored' in command) return;
-        const receipt = command.receipt ? questionnaireMessageSequence(command.receipt) : null;
-        if (
-          command.receipt &&
-          (receipt === null ||
-            message.replyAddress !== 'bot' ||
-            message.replyToMessageId !== command.receipt)
-        )
-          return;
-        const event = { sequence, at: message.timestamp, receipt };
-        if ('present' in command) {
-          if (!message.isGroupChat) {
-            options.track(
-              channel.replyPrivateControl(
-                message.userId,
-                'Отправьте /анкета представить в беседе с заполненной анкетой.',
-                guard,
-              ),
-            );
-            return;
-          }
-          const decision = presentations.decide(scope, message.userId, command.present, event);
-          if (decision.kind === 'approved') {
-            options.track(options.present(scope, decision.grant, message.authorName, guard));
-            return;
-          }
-          if (decision.kind === 'declined')
-            options.track(
-              channel.replyGroupControl(scope, 'Представление по анкете отменено.', guard),
-            );
-          if (decision.kind === 'unavailable')
-            options.track(
-              channel.replyGroupControl(
-                scope,
-                'У вас пока нет заполненной анкеты в этой беседе.',
-                guard,
-              ),
-            );
-          return;
-        }
+      if (typeof command !== 'string') return;
+      if (!message.isGroupChat) {
+        options.track(channel.replyPrivateControl(message.userId, privateQuestionnaireHint, guard));
+        return;
       }
 
       const actor = progress.participant(scope, message.userId);
@@ -441,7 +392,6 @@ export function createQuestionnaireCommands(options: {
       const presentation = result.presentation;
       const work = actor.takePresentation(Date.now(), presentation);
       if (!work) return;
-      const instructions = message.isGroupChat ? prompt.group : prompt.private;
       const together = instructions + '\n\n' + work.text;
       const separate = Buffer.byteLength(together) > vkMessageLength.value;
       const presenting = () =>

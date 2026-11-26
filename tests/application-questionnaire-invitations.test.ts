@@ -1,5 +1,6 @@
+import { lifecycleBackend } from '../src/storage/lifecycle-store';
 import { legacyQuestionnaire } from '../src/core/questionnaires/legacy-template';
-import { privateQuestionnaire } from '../src/core/questionnaires/private-template';
+import { privateQuestionnaireHint } from '../src/core/questionnaire/text';
 import { expect, test } from 'vitest';
 import { chat, fixture, peer, until } from './helpers/application-response-fixture';
 import { chatControlStore } from '../src/storage/chat-control-store';
@@ -7,7 +8,7 @@ import { participantRegistryStore } from '../src/storage/participant-registry';
 import { personalDataStore } from '../src/storage/personal-data-store';
 import type { UserId } from '../src/contracts/index';
 import type { QuestionnaireInvitationSource } from '../src/core/greetings/invitation';
-import { seedBeforeQuestionnaires } from './helpers/questionnaire-upgrade';
+import { seedBeforeQuestionnaires, seedLegacyPrivateForm } from './helpers/questionnaire-upgrade';
 
 type App = Awaited<ReturnType<typeof fixture>>;
 const hello = 'Рады видеть в лесу! [id999|чужой]';
@@ -454,7 +455,7 @@ test.each([false, true])(
   },
 );
 
-test('завершение только в личке оставляет штатное приглашение беседы доступным', async () => {
+test('прежняя заполненная личная анкета оставляет штатное приглашение беседы доступным', async () => {
   const app = await fixture({
     profileNotice: 'Обработка анкеты и профиля.',
     greetings: { members: [73] },
@@ -465,41 +466,12 @@ test('завершение только в личке оставляет шта�
     app.submit(action, 101, undefined, 101);
     await until(() =>
       expect(
-        app.sends.some(
-          ({ peer_id, text }) => peer_id === 101 && text.includes('повторите /анкета.'),
-        ),
+        app.sends.some(({ peer_id, text }) => peer_id === 101 && text === privateQuestionnaireHint),
       ).toBe(true),
     );
-    app.at(2000);
-    app.submit(action, 101, undefined, 101);
-    const completion = (chatId: string) =>
-      app.db
-        .prepare("SELECT state FROM questionnaire_progress WHERE chat_id=? AND user_id='vk:101'")
-        .pluck()
-        .get(chatId);
-    await until(() => expect(completion('vk:101')).toBe('active'));
-    app.complete.mockResolvedValueOnce({
-      kind: 'complete',
-      usage: { input: 20, output: 10 },
-      text: JSON.stringify(
-        Object.fromEntries(
-          privateQuestionnaire.questions.map(({ position }) => [
-            position,
-            position === 1 ? 'Аня' : null,
-          ]),
-        ),
-      ),
+    seedLegacyPrivateForm(app.db, lifecycleBackend(app.storage).current('vk:101'), app.start, {
+      '1': 'Аня',
     });
-    app.at(3000);
-    app.submit('Я Аня. Остальное пропущу.', 101, undefined, 101);
-    await until(() =>
-      expect(
-        app.sends.some(
-          ({ peer_id, text }) => peer_id === 101 && text === 'Спасибо! Анкета заполнена.',
-        ),
-      ).toBe(true),
-    );
-    expect(completion('vk:101')).toBe('completed');
     enter(app, 101, [73, 101], 4000);
     await open(app);
     app.at(34_000);
@@ -508,7 +480,11 @@ test('завершение только в личке оставляет шта�
       peer_id: peer,
       text: expect.stringContaining('[id101|'),
     });
-    expect(completion(app.scope.chatId)).toBeUndefined();
+    expect(
+      app.db
+        .prepare("SELECT state FROM questionnaire_progress WHERE chat_id=? AND user_id='vk:101'")
+        .get(app.scope.chatId),
+    ).toBeUndefined();
   } finally {
     await app.close();
   }

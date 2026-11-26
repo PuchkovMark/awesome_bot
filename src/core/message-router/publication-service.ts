@@ -27,13 +27,6 @@ import {
 import { noticeInterval } from './notice-config';
 import { publicationDecision, publicationRow, noticeTemplate } from './publication';
 import { disclosesAuthorLabel } from './author-label-disclosure';
-import {
-  questionnairePresentationStore,
-  type QuestionnairePresentationGrant,
-  type QuestionnairePresentationTarget,
-} from '../../storage/questionnaire-presentation-store';
-import { questionnaireViewStore } from '../../storage/questionnaire-view-store';
-import { questionnaireListText, questionnairePresentationQuestion } from '../questionnaire/text';
 export interface PublicationGuard {
   readonly signal: AbortSignal;
   readonly isCurrent: () => boolean;
@@ -98,8 +91,6 @@ export function createPublicationService(options: {
     traces = traceBackend(options.storage);
   const lifecycle = lifecycleBackend(options.storage);
   const measurements = chatRequestMetricsStore(options.storage);
-  const questionnairePresentations = questionnairePresentationStore(options.storage);
-  const questionnaireViews = questionnaireViewStore(options.storage);
   const counters = {
     publication_failed: 0,
     journal_failed: 0,
@@ -573,135 +564,12 @@ export function createPublicationService(options: {
     }
   }
 
-  async function askForPresentation(
-    work: QueueSettlement,
-    target: QuestionnairePresentationTarget,
-  ) {
-    const { port } = options;
-    if (!port || !work.route?.isGroupChat || work.signal.aborted || !work.isCurrent()) return;
-    const scope = lifecycle.current(work.scope.chatId, true);
-    const current = () => {
-      try {
-        return (
-          !work.signal.aborted &&
-          work.isCurrent() &&
-          (options.disclosureCurrent?.(work) ?? true) &&
-          questionnairePresentations.canPrompt(scope, target) &&
-          Boolean(questionnaireViews.presentation(scope, target.user, Date.now())?.pairs.length)
-        );
-      } catch {
-        return false;
-      }
-    };
-    if (!current()) return;
-    const source = await options.storage.messages.get(scope, work.messageId);
-    if (!source || !current()) return;
-    const guard = { signal: work.signal, isCurrent: current, allow: async () => current() };
-    const reply = await bounded(
-      work.signal,
-      port.canReply(scope, work.signal, source.messageId, guard),
-    );
-    if (reply !== true || !current()) return;
-    const text = questionnairePresentationQuestion;
-    let confirmed = false;
-    const confirmPart = (part: PublishedPart) => {
-      if (!confirmed && part.text === text && part.replyToMessageId === source.messageId)
-        confirmed = questionnairePresentations.confirmPrompt(scope, target, part);
-    };
-    const result = await bounded(
-      work.signal,
-      port.publish({
-        ...guard,
-        scope,
-        kind: 'answer',
-        text,
-        replyToMessageId: source.messageId,
-        beforeSend: current,
-        confirmPart,
-      }),
-    );
-    if (result?.kind === 'delivered' && 'receipt' in result)
-      confirmPart({ ...result.receipt, text, replyToMessageId: source.messageId });
-  }
-
-  async function presentQuestionnaire(
-    scope: ConnectionScope,
-    grant: QuestionnairePresentationGrant,
-    authorName: string,
-    guard: PublicationGuard,
-  ) {
-    let outcome: 'failed' | 'unknown' | 'delivered' = 'failed';
-    try {
-      const { port } = options;
-      const read = () => questionnaireViews.presentation(scope, grant.user, Date.now());
-      if (!port || !guard.isCurrent()) return;
-      const view = read();
-      if (!view?.pairs.length || view.attempt !== grant.attempt) return;
-      const current = () => {
-        try {
-          return (
-            guard.isCurrent() &&
-            questionnairePresentations.current(scope, grant) &&
-            read()?.signature === view.signature
-          );
-        } catch {
-          return false;
-        }
-      };
-      const name = [...authorName.replace(/[\p{Cc}\p{Cf}\s]+/gu, ' ').trim()]
-        .slice(0, 120)
-        .join('');
-      const heading = name ? `Знакомьтесь, ${name}!` : 'Представление участника';
-      const text = questionnaireListText(view.pairs, heading);
-      const parts = new Set<string>();
-      const confirmPart = (part: PublishedPart) => {
-        if (parts.has(part.messageId)) return;
-        questionnairePresentations.confirmPart(scope, grant, part);
-        parts.add(part.messageId);
-      };
-      outcome = 'unknown';
-      const result = await bounded(
-        guard.signal,
-        port.publish({
-          ...guard,
-          scope,
-          kind: 'answer',
-          text,
-          isCurrent: current,
-          allow: async () => current() && (await guard.allow()) && current(),
-          beforeSend: current,
-          confirmPart,
-        }),
-      );
-      if (result?.kind === 'delivered' && 'receipt' in result && parts.size === 0)
-        confirmPart({ ...result.receipt, text });
-      if (
-        result?.kind === 'delivered' &&
-        parts.size > 0 &&
-        (!('confirmedParts' in result) || result.confirmedParts === parts.size)
-      )
-        outcome = 'delivered';
-      if (result?.kind === 'failed' && parts.size === 0) outcome = 'failed';
-    } catch {
-      report('publication_failed');
-    } finally {
-      try {
-        const latest = lifecycle.current(scope.chatId);
-        if (latest.generation === scope.generation)
-          questionnairePresentations.finish(latest, grant, outcome);
-      } catch {
-        // Неизвестное состояние после потери подключения блокирует повторную отправку.
-        report('publication_failed');
-      }
-    }
-  }
   return Object.freeze({
-    presentQuestionnaire,
     stats() {
       return Object.freeze({ ...counters });
     },
     async onSettled(work: QueueSettlement, completion: QueueCompletion) {
-      const outcome = await publish(
+      await publish(
         work,
         completion.preparationFailure
           ? { kind: completion.preparationFailure }
@@ -721,13 +589,6 @@ export function createPublicationService(options: {
             : {}),
         },
       );
-      if (outcome === 'delivered' && completion.questionnaireCompletion) {
-        try {
-          await askForPresentation(work, completion.questionnaireCompletion);
-        } catch {
-          report('publication_failed');
-        }
-      }
     },
     async flood(
       scope: ConnectionScope,

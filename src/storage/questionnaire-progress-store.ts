@@ -77,6 +77,7 @@ export function questionnaireProgressStore(storage: Storage) {
       },
       open(now: number, revision = () => templates.current(scope)) {
         timestamp(now);
+        if (scope.chatId === user) return null;
         return lifecycle.transaction(scope, (db) => {
           if (!profileAdmitted(db, scope, user, now)) return null;
           const row = read(db);
@@ -302,7 +303,7 @@ export function questionnaireProgressStore(storage: Storage) {
         "SELECT p.* FROM questionnaire_progress p JOIN questionnaire_inputs i ON i.chat_id=p.chat_id AND i.generation=p.generation AND i.attempt=p.attempt AND i.message_id=p.source_id WHERE p.chat_id=? AND p.generation=? AND i.message_id=? AND p.state='processing'",
       )
       .get(scope.chatId, scope.generation, id) as (Row & { user_id: UserId }) | undefined;
-    if (!row) return null;
+    if (!row || row.user_id === scope.chatId) return null;
     const msg = questionnaireSource(db, scope, row.user_id, id, now, true);
     return (
       msg && { ...msg, attempt: row.attempt, template: view(row, now).template, user: row.user_id }

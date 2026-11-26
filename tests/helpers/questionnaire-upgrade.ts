@@ -1,6 +1,9 @@
 import Database from 'better-sqlite3';
 import { migrate } from '../../src/storage/migrate';
 import { migrations } from '../../src/storage/migrations/index';
+import type { ConnectionScope, UserId } from '../../src/contracts/index';
+import { privateQuestionnaire } from '../../src/core/questionnaires/private-template';
+import { recordQuestionnaireFacts } from '../../src/storage/profile-fact-store';
 
 export function seedBeforeQuestionnaires(path: string, chats: readonly string[]) {
   const db = new Database(path);
@@ -18,4 +21,55 @@ export function seedBeforeQuestionnaires(path: string, chats: readonly string[])
   } finally {
     db.close();
   }
+}
+
+export function seedLegacyPrivateForm(
+  db: Database.Database,
+  scope: ConnectionScope,
+  now: number,
+  answers?: Record<string, string>,
+  sourceId?: number,
+) {
+  const userId = scope.chatId as UserId;
+  const attempt = 'legacy-private-' + userId;
+  const { key, revision, questions } = privateQuestionnaire;
+  const template = { ref: { ...scope, key, revision }, questions };
+  db.transaction(() => {
+    db.prepare(
+      `INSERT INTO questionnaire_progress(chat_id,generation,user_id,attempt,presentation,template,state,shown_at,source_id)
+      VALUES(?,?,?,?,?,?,?,?,?)`,
+    ).run(
+      scope.chatId,
+      scope.generation,
+      userId,
+      attempt,
+      attempt,
+      JSON.stringify(template),
+      answers ? 'completed' : sourceId ? 'processing' : 'active',
+      now,
+      sourceId ?? null,
+    );
+    if (answers)
+      recordQuestionnaireFacts(
+        db,
+        scope,
+        attempt,
+        template,
+        {
+          userId,
+          messageId: '1',
+          at: now,
+          text: Object.values(answers).join(' '),
+        },
+        answers,
+        now,
+      );
+    if (sourceId)
+      db.prepare('INSERT INTO questionnaire_inputs VALUES(?,?,?,?)').run(
+        sourceId,
+        scope.chatId,
+        scope.generation,
+        attempt,
+      );
+  })();
 }

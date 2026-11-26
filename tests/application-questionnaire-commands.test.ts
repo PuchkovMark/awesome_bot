@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 import { legacyQuestionnaire } from '../src/core/questionnaires/legacy-template';
-import { privateQuestionnaire } from '../src/core/questionnaires/private-template';
+import { privateQuestionnaireHint } from '../src/core/questionnaire/text';
 import { vkMessageLength } from '../src/channels/vk/outbound-text';
 import { chat, fixture, peer, until } from './helpers/application-response-fixture';
 import { seedBeforeQuestionnaires } from './helpers/questionnaire-upgrade';
@@ -9,9 +9,7 @@ import { participantRegistryStore } from '../src/storage/participant-registry';
 type App = Awaited<ReturnType<typeof fixture>>;
 const profileNotice = 'Тестовое уведомление об анкете и личном профиле.';
 const groupHint = 'Ваш ответ увидят участники этой беседы.';
-const personalHint = 'Пришлите ответы следующим сообщением.';
 const questionList = legacyQuestionnaire.questions.map(({ text }) => text).join('\n');
-const personalList = privateQuestionnaire.questions.map(({ text }) => text).join('\n');
 
 function attempt(app: App, destination = peer, user = 41) {
   return app.db
@@ -118,14 +116,14 @@ test('команды работают без приглашения и моде�
   }
 });
 
-test('первая /анкета без уведомления объясняет условие профиля и оставляет доступ к справке', async () => {
+test('первая /анкета без уведомления направляет в беседу и оставляет доступ к справке', async () => {
   const app = await fixture();
   try {
     app.submit('/анкета', 41, undefined, 41);
     await until(() =>
       expect(app.sends.at(-1)).toMatchObject({
         peer_id: 41,
-        text: 'Для анкеты нужен доступный профиль в этом чате.',
+        text: privateQuestionnaireHint,
       }),
     );
     app.submit('/помощь', 41, undefined, 41);
@@ -142,7 +140,7 @@ test('первая /анкета без уведомления объясняе�
   }
 });
 
-test('первое открытие в личке доставляет уведомление и предлагает повторить команду', async () => {
+test('команды заполнения в личке направляют в беседу, в том числе после первого уведомления', async () => {
   const app = await fixture({ profileNotice });
   try {
     app.at(1000);
@@ -150,18 +148,21 @@ test('первое открытие в личке доставляет увед�
     await until(() =>
       expect(app.sends.filter(({ peer_id }) => peer_id === 41).map(({ text }) => text)).toEqual([
         expect.stringContaining(profileNotice),
-        expect.stringContaining('повторите /анкета.'),
+        privateQuestionnaireHint,
       ]),
     );
     expect(attempt(app, 41)).toBeUndefined();
-    app.at(2000);
-    app.submit('/анкета', 41, undefined, 41);
-    await until(() => expect(attempt(app, 41)?.state).toBe('active'));
-    const shown = app.sends.find(
-      ({ peer_id, text }) => peer_id === 41 && text.startsWith(personalHint),
-    );
-    expect(shown?.text.endsWith(personalList)).toBe(true);
-    expect(shown?.disableMentions).toBe(1);
+    await app.restart(true);
+    for (const command of ['/анкета', '/анкета пауза', '/анкета отмена']) {
+      const before = app.sends.length;
+      app.submit(command, 41, undefined, 41);
+      await until(() =>
+        expect(app.sends.slice(before)).toEqual([
+          expect.objectContaining({ peer_id: 41, text: privateQuestionnaireHint }),
+        ]),
+      );
+      expect(attempt(app, 41)).toBeUndefined();
+    }
     expect(attempt(app)).toBeUndefined();
     expect(app.complete).not.toHaveBeenCalled();
   } finally {
@@ -360,19 +361,13 @@ test('после смены состава подтверждённый отка
   }
 });
 
-test.each([peer, 41])('опечатка при заполнении на %d не передаётся модели', async (destination) => {
+test('опечатка при заполнении в беседе не передаётся модели', async () => {
+  const destination = peer;
   const app = await fixture({ profileNotice });
   try {
     const send = (text: string) => app.submit(text, 41, undefined, destination);
     app.at(1000);
     send('/АНКЕТА');
-    if (destination === 41) {
-      await until(() =>
-        expect(app.sends.some((s) => s.text.includes('повторите /АНКЕТА'))).toBe(true),
-      );
-      app.at(2000);
-      send('/анкета');
-    }
     await until(() => expect(attempt(app, destination)?.state).toBe('active'));
     send('/анкета паузза');
     await until(() =>
@@ -382,12 +377,12 @@ test.each([peer, 41])('опечатка при заполнении на %d не
     );
     expect(attempt(app, destination)?.state).toBe('active');
     const start = app.sends.length;
-    send(destination === peer ? 'Пенёк, /неизвестная' : '/неизвестная');
+    send('Пенёк, /неизвестная');
     await until(() =>
       expect(app.sends.slice(start).some((s) => s.text.includes('/анкета пауза'))).toBe(true),
     );
     expect(attempt(app, destination)?.state).toBe('active');
-    send(destination === peer ? '[club314|Пенёк] /Анкета  пауза' : '/Анкета  пауза');
+    send('[club314|Пенёк] /Анкета  пауза');
     await until(() => expect(attempt(app, destination)?.state).toBe('paused'));
     expect(app.complete).not.toHaveBeenCalled();
   } finally {

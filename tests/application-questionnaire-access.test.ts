@@ -1,5 +1,4 @@
 import { expect, test } from 'vitest';
-import { questionnairePresentationQuestion } from '../src/core/questionnaire/text';
 import {
   answer,
   chat,
@@ -56,32 +55,13 @@ async function fill(app: App, { large = false, held = false } = {}) {
   if (held) {
     await until(() => expect(app.holds).toHaveLength(2));
     app.holds[1]!.release();
-    await until(() => expect(app.holds).toHaveLength(3));
-    app.holds[2]!.release();
-    await presentationPrompt(app);
+    await completion(app);
   }
   return input;
 }
 
 function values(app: App) {
   return app.storage.profileFacts.read(app.scope, 'vk:41').facts.map(({ value }) => value);
-}
-
-function presentation(app: App) {
-  return app.db
-    .prepare(
-      `SELECT prompt_message_id AS receipt,event_id AS event,state,confirmed_parts AS parts
-    FROM questionnaire_presentations WHERE chat_id=? AND user_id='vk:41'`,
-    )
-    .get(chat) as
-    { receipt: number | null; event: number | null; state: string; parts: number } | undefined;
-}
-
-async function presentationPrompt(app: App) {
-  await until(() => expect(presentation(app)?.receipt).toBeGreaterThan(0));
-  const question = app.sends.find(({ text }) => text === questionnairePresentationQuestion)!;
-  expect(presentation(app)?.receipt).toBe(question.conversation_message_id);
-  return question;
 }
 
 function introductions(app: App) {
@@ -107,13 +87,14 @@ test('публичные ответы доступны сразу и после 
     );
     app.at(500);
     expect(await requestView(app, '/анкета показать @id41', 42)).toBe('Анкета не заполнена');
+    const sent = app.sends.length;
     await fill(app);
     await completion(app);
     expect(values(app)).toEqual(['Шахматы', 'Личный факт']);
-    expect(app.sends.some((row) => row.text.includes('Разрешить участникам этой беседы'))).toBe(
-      false,
-    );
-    await presentationPrompt(app);
+    expect(app.sends.slice(sent).map(({ text }) => text)).toEqual([
+      expect.stringContaining('Ваш ответ увидят участники этой беседы.'),
+      'Спасибо! Анкета заполнена.',
+    ]);
     const previous = await completion(app);
     app.db
       .prepare('UPDATE questionnaire_progress SET legacy_access_prompt_id=? WHERE chat_id=?')
@@ -258,17 +239,17 @@ test('выход автора во время выдачи блокирует в
     await completion(app);
     app.at(3_000);
     app.submit('/анкета показать @id41', 42);
+    await until(() => expect(app.holds).toHaveLength(3));
+    app.holds[2]!.release();
     await until(() => expect(app.holds).toHaveLength(4));
-    app.holds[3]!.release();
-    await until(() => expect(app.holds).toHaveLength(5));
     expect(
       app.sends.some(({ text }) => text.startsWith('Анкета\n') && text.includes('Шахматы')),
     ).toBe(true);
     app.setMembers([42, 73]);
     app.membership('chat_kick_user', 41, 41);
     await until(() => expect(values(app)).toEqual([]));
-    app.holds[4]!.release();
-    await app.holds[4]!.finished;
+    app.holds[3]!.release();
+    await app.holds[3]!.finished;
     expect(app.sends.filter(({ text }) => text.includes('Длинный ответ'))).toEqual([]);
   } finally {
     await app.close();
@@ -332,108 +313,37 @@ async function hideSecondFact(app: App, list: App['sends'][number]) {
   );
 }
 
-test.each(['команда', 'ответ'] as const)(
-  'представление сохраняет отдельное согласие автора через %s и публикуется один раз',
-  async (mode) => {
-    const app = await setup();
-    try {
-      await fill(app);
-      const viewQuestion = await completion(app);
-      const question = await presentationPrompt(app);
-      expect(viewQuestion.conversation_message_id).not.toBe(question.conversation_message_id);
-      app.at(3_000);
-      for (const event of [
-        app.submit('Представить', 42, question),
-        app.submit('Да', 41, question),
-        app.submit('Представить', 41, viewQuestion),
-      ])
-        await app.journaled(event);
-      expect(presentation(app)).toMatchObject({ state: 'waiting', event: null });
-      const decline = app.submit('Не представлять', 41, question);
-      await until(() =>
-        expect(presentation(app)).toMatchObject({ state: 'declined', event: decline }),
-      );
-      expect(introductions(app)).toEqual([]);
-      const list = await ownProfile(app);
-      app.at(4_000);
-      await hideSecondFact(app, list);
-      const consent =
-        mode === 'команда'
-          ? app.submit('/анкета представить')
-          : app.submit('Представить', 41, question);
-      await until(() =>
-        expect(presentation(app)).toMatchObject({ state: 'delivered', event: consent, parts: 1 }),
-      );
-      expect(introductions(app)).toHaveLength(1);
-      expect(introductions(app)[0]?.text).toContain(hobby + '\nШахматы');
-      expect(introductions(app)[0]?.text).not.toMatch(/Личный факт|Что пропустить/u);
-      expect(values(app)).toEqual(['Шахматы']);
-      expect(app.complete).toHaveBeenCalledTimes(1);
-      await app.restart(true);
-      app.at(5_000);
-      app.replay(consent);
-      const repeated = app.submit('/анкета представить');
-      await app.journaled(repeated);
-      expect(presentation(app)).toMatchObject({ state: 'delivered', event: consent, parts: 1 });
-      expect(introductions(app)).toHaveLength(1);
-    } finally {
-      await app.close();
-    }
-  },
-);
-
-test.each(['скрытие поля', 'выход'] as const)(
-  'перед отправкой представления учитывается %s автора',
-  async (action) => {
-    const app = await setup(true);
-    try {
-      await fill(app, { held: true });
-      const list = action === 'скрытие поля' ? await ownProfile(app) : undefined;
-      app.at(4_000);
-      app.submit('/анкета представить');
-      await until(() => expect(app.holds).toHaveLength(4));
-      if (list) await hideSecondFact(app, list);
-      else {
-        app.setMembers([42, 73]);
-        app.membership('chat_kick_user', 41, 41);
-        await until(() =>
-          expect(
-            app.db
-              .prepare(
-                `SELECT returned_at FROM participant_departures
-          WHERE chat_id=? AND user_id='vk:41'`,
-              )
-              .get(chat),
-          ).toEqual({ returned_at: null }),
-        );
-      }
-      app.holds[3]!.release();
-      await until(() => expect(presentation(app)).toMatchObject({ state: 'failed', parts: 0 }));
-      expect(introductions(app)).toEqual([]);
-    } finally {
-      await app.close();
-    }
-  },
-);
-
-test('неизвестный исход публикации представления блокирует повтор после перезапуска', async () => {
+test('старые команда и квитанция о представлении не отправляют ответ и не заполняют новую анкету', async () => {
   const app = await setup();
   try {
     await fill(app);
-    await presentationPrompt(app);
-    app.failSend((text) => (text.startsWith('Знакомьтесь,') ? 'unknownAfterDelivery' : undefined));
-    app.at(3_000);
-    const event = app.submit('/анкета представить');
-    await until(() =>
-      expect(presentation(app)).toMatchObject({ state: 'unknown', event, parts: 0 }),
-    );
-    expect(introductions(app)).toHaveLength(1);
+    const old = await completion(app);
+    app.db
+      .prepare(
+        `INSERT INTO questionnaire_presentations(chat_id,generation,user_id,attempt,prompt_message_id)
+      SELECT chat_id,generation,user_id,attempt,? FROM questionnaire_progress WHERE chat_id=? AND user_id='vk:41'`,
+      )
+      .run(old.conversation_message_id, chat);
     await app.restart(true);
-    app.at(4_000);
-    const repeated = app.submit('/анкета представить');
-    await app.journaled(repeated);
-    expect(presentation(app)).toMatchObject({ state: 'unknown', event, parts: 0 });
-    expect(introductions(app)).toHaveLength(1);
+    app.at(3_000);
+    app.submit('/анкета', 42);
+    const status = () =>
+      app.db
+        .prepare("SELECT state FROM questionnaire_progress WHERE chat_id=? AND user_id='vk:42'")
+        .pluck()
+        .get(chat);
+    await until(() => expect(status()).toBe('active'));
+    const sent = app.sends.length;
+    for (const id of [
+      app.submit('/анкета представить', 41),
+      app.submit('Представить', 41, old),
+      app.submit('Не представлять', 42, old),
+    ])
+      await app.journaled(id);
+    expect(status()).toBe('active');
+    expect(app.sends).toHaveLength(sent);
+    expect(introductions(app)).toEqual([]);
+    expect(app.complete).toHaveBeenCalledTimes(1);
   } finally {
     await app.close();
   }

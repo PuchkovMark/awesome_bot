@@ -8,6 +8,7 @@ import {
   unknownHint,
 } from './command-help';
 import { createQuestionnaireProgress } from '../core/questionnaire/progress';
+import { privateQuestionnaireHint } from '../core/questionnaire/text';
 import { createLlmAdmission } from '../core/llm-admission';
 import { createPersonaCommands } from './persona-commands';
 import {
@@ -215,17 +216,16 @@ export async function runApplication(
             if (!onboarding.configuredForProfiles()) return true;
             if (onboarding.privatePending(scope)) {
               const command = (message.literalText ?? message.text).trim();
-              const questionnaire =
-                !message.hasForwarded &&
-                !message.attachments.length &&
-                (parseQuestionnaireCommand(command) || parseQuestionnaireView(command));
+              const commandAllowed = !message.hasForwarded && !message.attachments.length;
+              const filling = commandAllowed && parseQuestionnaireCommand(command);
+              const viewing = commandAllowed && parseQuestionnaireView(command);
               await onboarding.notifyPrivate(scope, current);
-              if (questionnaire) {
+              if (filling || viewing) {
                 const isCurrent = () => current() && !onboarding.privatePending(scope);
                 if (isCurrent())
                   await channel.replyPrivateControl(
                     vkChatId(message.authorId),
-                    `Чтобы продолжить, повторите ${command}.`,
+                    filling ? privateQuestionnaireHint : `Чтобы продолжить, повторите ${command}.`,
                     { signal, isCurrent, allow: async () => isCurrent() },
                   );
                 return false;
@@ -642,7 +642,6 @@ export async function runApplication(
         channel,
         signal,
         progress: questionnaireProgress,
-        present: publication.presentQuestionnaire,
         track: trackPublication,
       });
       const address = createAddressPreferenceHandlers({
@@ -694,12 +693,7 @@ export async function runApplication(
         },
         commandInput: (message) => commandInput(message, config.vk.groupId),
         recognizeCommand: (message, replyToOther, scope) => {
-          if (isPrivateStart(message)) {
-            const form = questionnaireProgress
-              .participant(scope, message.userId)
-              .current(Date.now());
-            return form?.state === 'active' ? null : helpAction;
-          }
+          if (isPrivateStart(message)) return helpAction;
           const adminCommand = botAdministrators.recognizeGroup(message);
           // Личная команда может содержать закрытую причину отзыва.
           if (adminCommand?.minimumRole === 'owner') return adminCommand;
@@ -779,9 +773,10 @@ export async function runApplication(
                   )
                 : unknownHint(
                     input,
-                    questionnaireProgress
-                      .participant(context.scope, message.userId)
-                      .current(Date.now())?.state === 'active',
+                    message.isGroupChat &&
+                      questionnaireProgress
+                        .participant(context.scope, message.userId)
+                        .current(Date.now())?.state === 'active',
                   );
             trackPublication(
               message.isGroupChat

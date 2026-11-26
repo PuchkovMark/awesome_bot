@@ -1,4 +1,7 @@
 import { expect, test } from 'vitest';
+import { privateQuestionnaireHint } from '../src/core/questionnaire/text';
+import { lifecycleBackend } from '../src/storage/lifecycle-store';
+import { seedLegacyPrivateForm } from './helpers/questionnaire-upgrade';
 import type { LlmRequest } from '../src/llm/types';
 import { fixture, peer, until } from './helpers/application-response-fixture';
 
@@ -69,9 +72,7 @@ test.each(['Пенёк', 'Пенек', 'упоминание', 'ответ'] as 
           ? app.submit(body, 41, prompt)
           : app.submit((address === 'упоминание' ? '[club314|Пенёк] ' : address + ', ') + body);
       await app.published(input);
-      expect(
-        app.sends.some(({ text }) => text.startsWith(saved) && text.includes('/анкета показать')),
-      ).toBe(true);
+      expect(app.sends.some(({ text }) => text === saved)).toBe(true);
       expect(attempt(app)).toMatchObject({
         state: 'completed',
         answers: '{"2":"Аня","9":"походы"}',
@@ -127,37 +128,21 @@ test('обычная реплика, цитата, пересылка и неп�
   }
 });
 
-test('явная справка сохраняет открытую личную анкету, а слово «Начать» передаётся как ответ', async () => {
+test('прежняя личная анкета после перезапуска не перехватывает справку и диалог', async () => {
   const app = await fixture({ profileNotice });
   const send = (text: string) => app.submit(text, 41, undefined, 41);
   try {
     send('/анкета');
-    await until(() => expect(app.sends.at(-1)?.text).toContain('повторите /анкета'));
-    app.at(1000);
-    send('/анкета');
-    await until(() => expect(attempt(app, 41)?.state).toBe('active'));
+    await until(() => expect(app.sends.at(-1)?.text).toBe(privateQuestionnaireHint));
+    seedLegacyPrivateForm(app.db, lifecycleBackend(app.storage).current('vk:41'), app.start);
     const opened = attempt(app, 41);
-    send('/помощь');
+    await app.restart(true);
+    send('Начать');
     await until(() => expect(app.sends.at(-1)?.text).toContain('Доступные команды'));
-    expect(attempt(app, 41)).toEqual(opened);
     expect(app.complete).not.toHaveBeenCalled();
     app.at(2000);
-    app.complete.mockImplementation(async (request) => {
-      const data = JSON.parse(request.messages[0]!.text!);
-      expect(data.answer).toBe('Начать');
-      expect(data.questions).toHaveLength(3);
-      return {
-        kind: 'complete',
-        text: '{"1":"Начать","2":null,"3":null}',
-        usage: { input: 20, output: 10 },
-      };
-    });
-    await app.published(send('Начать'));
-    expect(attempt(app, 41)).toMatchObject({
-      attempt: opened!.attempt,
-      state: 'completed',
-      answers: '{"1":"Начать"}',
-    });
+    await app.published(send('Обычная личная реплика'));
+    expect(attempt(app, 41)).toEqual(opened);
     expect(app.complete).toHaveBeenCalledOnce();
   } finally {
     await app.close();
@@ -186,14 +171,9 @@ test('тёзки заполняют свои анкеты, а команды и 
     );
     await until(() =>
       expect(
-        app.sends.some(
-          ({ peer_id, text }) => peer_id === 41 && text.includes('повторите /анкета.'),
-        ),
+        app.sends.some(({ peer_id, text }) => peer_id === 41 && text === privateQuestionnaireHint),
       ).toBe(true),
     );
-    app.at(2000);
-    app.submit('/анкета', 41, undefined, 41);
-    await until(() => expect(attempt(app, 41)?.state).toBe('active'));
     const other = attempt(app, neighbor);
     const direct = attempt(app, 41);
 
@@ -243,18 +223,6 @@ test('тёзки заполняют свои анкеты, а команды и 
     );
     expect(attempt(app, 41)).toEqual(direct);
     expect(app.complete).toHaveBeenCalledTimes(2);
-    app.at(6000);
-    app.submit(body, 41, undefined, 41);
-    await until(() =>
-      expect(app.sends.some(({ peer_id, text }) => peer_id === 41 && text === saved)).toBe(true),
-    );
-    expect(attempt(app, 41)).toMatchObject({
-      state: 'completed',
-      answers: '{"1":"Аня","3":"походы"}',
-    });
-    expect(attempt(app)?.answers).toBe('{"2":"Аня","9":"походы"}');
-    expect(attempt(app, neighbor)).toBeUndefined();
-    expect(app.complete).toHaveBeenCalledTimes(3);
   } finally {
     model.resolve();
     await app.close();

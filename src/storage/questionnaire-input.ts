@@ -37,6 +37,7 @@ export function answerableAttempt(
   receivedAt: number,
 ) {
   timestamp(receivedAt);
+  if (scope.chatId === user) return null;
   const key = [scope.chatId, scope.generation, user] as const;
   const row = db
     .prepare(

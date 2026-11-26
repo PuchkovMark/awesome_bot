@@ -22,7 +22,7 @@ import { storageFixture } from './helpers/storage-fixture';
 const sample = questionnaireCases[0];
 const output = '{"1":"Аня","2":null,"3":"походы и настольные игры"}';
 
-test('редакции двух бесед и лички одного участника закрепляются независимо', async () => {
+test('редакции двух бесед закрепляются независимо, для лички редакции нет', async () => {
   const f = await profileFixture();
   try {
     const first = await f.chat(group);
@@ -33,19 +33,10 @@ test('редакции двух бесед и лички одного участ
     const groupActor = progress.participant(first, alice);
     const before = groupActor.open(20)!;
     const other = progress.participant(second, alice).open(20)!;
-    const privateAttempt = progress.participant(direct, alice).open(20)!;
-    expect(new Set([before.attempt, other.attempt, privateAttempt.attempt]).size).toBe(3);
+    expect(before.attempt).not.toBe(other.attempt);
     expect(before.template.questions).toHaveLength(16);
     expect(other.template.questions).toEqual(before.template.questions);
-    expect(privateAttempt.template.questions.map((q) => q.text)).toEqual([
-      'Как к тебе обращаться?',
-      'Из какого ты города?',
-      'Чем увлекаешься?',
-    ]);
-    expect(privateAttempt.template.ref).toMatchObject({
-      chatId: direct.chatId,
-      key: 'private-introduction',
-    });
+    expect(progress.participant(direct, alice).open(20)).toBeNull();
     const templates = questionnaireStore(f.storage);
     expect(
       templates.recordPrompt(first, twin, before.template.ref.revision, {
@@ -73,7 +64,7 @@ test('редакции двух бесед и лички одного участ
         ?.template.questions.map((q) => q.text),
     ).toEqual(['Новый вопрос?', 'Ещё вопрос?']);
     expect(progress.revision(second, alice)).toEqual(other.template);
-    expect(progress.revision(direct, alice)).toEqual(privateAttempt.template);
+    expect(progress.revision(direct, alice)).toBeNull();
   } finally {
     await f.close();
   }
@@ -271,7 +262,7 @@ test('разбор на границе очереди, отказ квоты, п
     expect(await run(work)).toMatchObject({ outcome: 'failed' });
     expect(await run(work)).toMatchObject({
       outcome: 'completed',
-      result: { text: expect.stringContaining('/анкета показать') },
+      result: { text: 'Спасибо! Анкета заполнена.' },
     });
     expect(recordUsage).toHaveBeenCalledTimes(1);
     expect(await run(work)).toMatchObject({ outcome: 'interrupted' });

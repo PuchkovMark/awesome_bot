@@ -7,7 +7,6 @@ import { estimateRequestInput } from '../context/budget';
 import type { QueueHandlerInput, QueueCompletion } from '../chat-queue/types';
 import { createAttemptSummary } from '../agent-loop/summary';
 import { scheduleLlmCall, type LlmAdmission, type SendLlmCall } from '../llm-admission';
-import { completedQuestionnaireActions } from './text';
 import { measureModelCall } from '../model-measurement';
 
 const instructions =
@@ -161,19 +160,15 @@ export function questionnaireAnswerHandler(options: {
       return { outcome: 'failed' };
     const completionRevision = store.completionRevision(scope, input.user, input.attempt);
     if (completionRevision === null) return { outcome: 'interrupted' };
-    const group = work.route?.isGroupChat === true;
     return {
       outcome: 'completed',
       subjectIds: [input.user],
-      ...(group ? { questionnaireCompletion: { user: input.user, attempt: input.attempt } } : {}),
       toolResultsCurrent: () =>
         options.disclosed(work) &&
         store.completionRevision(scope, input.user, input.attempt) === completionRevision,
       result: {
         kind: 'complete',
-        text: group
-          ? 'Спасибо! Анкета заполнена. ' + completedQuestionnaireActions
-          : 'Спасибо! Анкета заполнена.',
+        text: 'Спасибо! Анкета заполнена.',
         summary: measured,
       },
     };
