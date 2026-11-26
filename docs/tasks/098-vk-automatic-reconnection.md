@@ -6,7 +6,7 @@
 - Дата: 2026-11-26
 - Дата завершения: —
 - Утверждение: 2026-11-26 владелец подтвердил, что начатое общение в беседе и личке остаётся включённым до его собственного решения. [Запись решения](../decisions.md#2026-11-26--запрос-на-автоматическое-восстановление-приёма-vk)
-- Связанные документы: [Приёмка запуска 071](071-first-live-vk-launch.md) · [Паузы VK F3.7](completed/034-vk-paused-chats.md) · [Первый вход в личку](completed/087-vk-first-private-recovery.md) · [План фичи](../plans/098-vk-automatic-reconnection.md)
+- Связанные документы: [Приёмка запуска 071](071-first-live-vk-launch.md) · [Паузы VK F3.7](completed/034-vk-paused-chats.md) · [Первый вход в личку](completed/087-vk-first-private-recovery.md) · [План фичи](../plans/098-vk-automatic-reconnection.md) · [План реализации](../impl-plans/098-vk-automatic-reconnection.md)
 
 ## Проблема или цель
 

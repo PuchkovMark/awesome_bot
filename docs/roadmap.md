@@ -50,7 +50,7 @@
 | 095 | [Переход от справки к диагностике беседы](tasks/095-vk-diagnostics-discovery.md) · [Утверждённый план фичи](plans/095-vk-diagnostics-discovery.md) · [Черновик плана реализации](impl-plans/095-vk-diagnostics-discovery.md) | P3 | утверждено |
 | 096 | [Продолжение запроса после ошибки кода удаления](tasks/096-vk-deletion-confirmation-feedback.md) | P3 | черновик |
 | 097 | [Напоминания, пересказ до полудня и правка по подсказкам в VK](tasks/097-vk-reminders-recap-and-editors.md) | — | черновик |
-| 098 | [Доступная личка и восстановление бесед VK после обрыва](tasks/098-vk-automatic-reconnection.md) · [План фичи](plans/098-vk-automatic-reconnection.md) | — | утверждено |
+| 098 | [Доступная личка и восстановление бесед VK после обрыва](tasks/098-vk-automatic-reconnection.md) · [Утверждённый план фичи](plans/098-vk-automatic-reconnection.md) · [Черновик плана реализации](impl-plans/098-vk-automatic-reconnection.md) | — | утверждено |
 
 ## Веха 0. Процесс и документация
 
