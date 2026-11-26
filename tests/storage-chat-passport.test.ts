@@ -1,4 +1,5 @@
 import { expect, test } from 'vitest';
+import { glossaryBotNames, matchGroupBotName } from '../src/core/message-router/name-address';
 import type { ConnectionScope, UserId } from '../src/contracts/index';
 import { createAuthorizationService } from '../src/core/index';
 import { chatPassportStore } from '../src/storage/chat-passport-store';
@@ -165,6 +166,42 @@ test('гонка одних разделов сохраняет победите
     expect(await f.apply(scope, 106, 208, 'Повторное заполнение')).toEqual(allowed('applied'));
     expect(await f.apply(scope, 104, 209, 'Устаревшее', other)).toEqual(allowed('stale'));
     expect(f.read(scope, 'rules')).toMatchObject({ revision: 3, text: 'Повторное заполнение' });
+  } finally {
+    await f.close();
+  }
+});
+
+test('местные имена бота берутся из выделенной строки глоссария текущей беседы и редакции', async () => {
+  const f = await setup();
+  try {
+    const scope = scopeFor(f.storage, main);
+    const second = scopeFor(f.storage, neighbor);
+    const names = (target: ConnectionScope) => glossaryBotNames(f.read(target, 'glossary'));
+    f.prompt(scope, 'glossary', 101);
+    expect(
+      await f.apply(
+        scope,
+        101,
+        201,
+        'Местный словарь: Хранитель\nИмена бота — Лесовик, Добрый Дядя',
+      ),
+    ).toEqual(allowed('applied'));
+    expect(matchGroupBotName('Подскажи ДОБРЫЙ ДЯДЯ что делать', names(scope))).toEqual({
+      glossaryRevision: 1,
+    });
+    expect(matchGroupBotName('Лесовик', names(scope))).toEqual({ glossaryRevision: 1 });
+    expect(matchGroupBotName('Хранитель', names(scope))).toBeNull();
+    expect(matchGroupBotName('Лесовик', names(second))).toBeNull();
+    f.prompt(second, 'glossary', 101);
+    expect(await f.apply(second, 101, 201, 'Имена бота — Лесовик')).toEqual(allowed('applied'));
+    f.prompt(scope, 'glossary', 102);
+    expect(await f.apply(scope, 102, 202, 'Имена бота — Ёлкин')).toEqual(allowed('applied'));
+    expect(matchGroupBotName('Лесовик', names(scope))).toBeNull();
+    expect(matchGroupBotName('Елкин', names(scope))).toEqual({ glossaryRevision: 2 });
+    f.prompt(scope, 'glossary', 103, 'clear');
+    expect(await f.apply(scope, 103, 203, 'Подтверждаю')).toEqual(allowed('applied'));
+    expect(matchGroupBotName('Ёлкин', names(scope))).toBeNull();
+    expect(matchGroupBotName('Лесовик', names(second))).toEqual({ glossaryRevision: 1 });
   } finally {
     await f.close();
   }

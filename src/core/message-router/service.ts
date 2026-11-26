@@ -192,7 +192,7 @@ export function createMessageRouter(options: RouterOptions) {
             };
           }
           return {
-            reason: decision.reason,
+            reason: decision.kind === 'assessment' ? 'not_addressed' : decision.reason,
             ...(!command &&
             message.isBot === false &&
             !message.hasForwarded &&

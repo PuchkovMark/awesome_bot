@@ -2,6 +2,7 @@ import type { IncomingMessage, AuthorizationAction, BotRole } from '../../contra
 import type { ChatSettings } from '../../storage/types';
 import type { DirectRoute } from '../../storage/queue-types';
 import type { InitiativeCause } from './autonomous-rules';
+import type { glossaryBotNames } from './name-address';
 export interface ServiceCommand {
   readonly action: AuthorizationAction;
   readonly minimumRole: BotRole;
@@ -13,11 +14,19 @@ export interface RoutingInput {
   readonly settings: Pick<ChatSettings, 'enabled' | 'responseMode'>;
   readonly considerInitiative?: boolean;
   readonly questionnaireName?: boolean;
+  readonly replyGate?: {
+    readonly allowInitiative: boolean;
+    readonly glossary?: ReturnType<typeof glossaryBotNames>;
+  };
   readonly service?: {
     readonly command: ServiceCommand;
     readonly role: BotRole;
     readonly allowed: boolean;
   };
+}
+export interface GroupReplyAssessment {
+  readonly kind: 'name' | 'initiative';
+  readonly glossaryRevision?: number;
 }
 export type RoutingDecision =
   | {
@@ -26,6 +35,11 @@ export type RoutingDecision =
       readonly route: DirectRoute;
     }
   | { readonly kind: 'service'; readonly reason: 'service' }
+  | {
+      readonly kind: 'assessment';
+      readonly reason: 'assessment';
+      readonly assessment: GroupReplyAssessment;
+    }
   | {
       readonly kind: 'silence';
       readonly initiative?: InitiativeCause;
