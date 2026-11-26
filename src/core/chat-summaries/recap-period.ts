@@ -290,6 +290,7 @@ export function parseRecapPeriod(
   let text = input
     .toLocaleLowerCase('ru')
     .replaceAll('ё', 'е')
+    .replace(/(?<![\p{L}\d])до\s+полудня(?![\p{L}\d])/gu, 'до 12:00')
     .replace(words, (word) => String(dayNames.get(word.replace(/\s+/gu, ' '))))
     .replace(/(\d{1,2})[-‑]?(?:го|е|ое|й)(?!\p{L})/gu, '$1');
   try {
