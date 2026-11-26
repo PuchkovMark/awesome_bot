@@ -57,9 +57,9 @@ test.each([58, 59])(
       }
       await openCandidate(snapshot, candidate, 'one', now + 1);
       const restored = openExisting(candidate, false);
-    const authority = openExisting(files.path);
+      const authority = openExisting(files.path);
       try {
-      reconcileRestore(restored, authority, now + 1, 30 * 86_400_000);
+        reconcileRestore(restored, authority, now + 1, 30 * 86_400_000);
         expect(
           restored
             .prepare('SELECT id,due_at,schedule_key,hint_claimed FROM personal_reminders')
@@ -84,7 +84,7 @@ test.each([58, 59])(
         ]);
         expect(restored.pragma('foreign_key_check')).toEqual([]);
       } finally {
-      authority.close();
+        authority.close();
         restored.close();
       }
     } finally {
