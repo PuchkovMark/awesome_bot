@@ -12,7 +12,7 @@ const fields = {
   text: 'взять документы',
   dueAt,
   timezone: 'Europe/Moscow',
-  confirmation: ['Назначено'],
+  confirmation: () => ['Назначено'],
 };
 const source = { messageId: '1', originAt: now };
 
@@ -297,6 +297,80 @@ test('неполное условие старого задания оставл
     });
     expect(f.store.replay(f.one, newEvent, now)).toBeUndefined();
     expect(f.store.list(f.one, now).map(({ id }) => id)).toEqual([modern.id, legacy.id]);
+  } finally {
+    await storage.close();
+  }
+});
+
+test('одно событие копирования при двух обращениях создаёт одну копию с собственным ключом', async () => {
+  const files = storageFixture();
+  const a = await openStorage(files.path),
+    b = await openStorage(files.path);
+  try {
+    const first = await fixture(a);
+    const second = await fixture(b);
+    const schedule = { ...fields, scheduleKey: 'relative:1' };
+    const original = created(
+      first.store.create(first.one, { ...source, scope: first.group }, schedule, now),
+    );
+    const copyEvent = { scope: first.one.scope, messageId: '2', originAt: now };
+    const confirm = (text: string, at: number, zone: string, id: number) => [
+      String(id) + ' ' + text + ' ' + at + ' ' + zone,
+    ];
+    const result = first.store.copy(first.one, copyEvent, original.id, () => now, confirm);
+    expect(result).toMatchObject({
+      kind: 'created',
+      item: { dueAt, text: fields.text, timezone: fields.timezone },
+    });
+    if (result?.kind !== 'created') throw Error('Ожидалась копия');
+    const copy = result.item;
+    const repeated = { ...copyEvent, scope: second.one.scope };
+    expect(second.store.copy(second.one, repeated, original.id, () => now, confirm)).toEqual({
+      kind: 'replayed',
+    });
+    expect(second.store.replay(second.one, repeated, now)?.id).toBe(copy.id);
+    expect(copy.id).not.toBe(original.id);
+    const request = { ...repeated, messageId: '3' };
+    expect(second.store.create(second.one, request, schedule, now)).toMatchObject({
+      kind: 'choose',
+      items: [{ id: original.id }, { id: copy.id }],
+    });
+    expect(second.store.copy(second.one, request, original.id, () => dueAt, confirm)).toMatchObject(
+      {
+        kind: 'unavailable',
+        deadlineReached: true,
+      },
+    );
+    expect(second.store.list(second.one, now).map(({ id }) => id)).toEqual([original.id, copy.id]);
+    const originalLease = first.store.claimConfirmation(first.one, original.id, now)!;
+    const copyLease = second.store.claimConfirmation(second.one, copy.id, now)!;
+    expect(first.store.getPart(originalLease, now)?.send_id).not.toBe(
+      second.store.getPart(copyLease, now)?.send_id,
+    );
+    expect(second.store.getPart(copyLease, now)?.text.startsWith(`${copy.id} `)).toBe(true);
+  } finally {
+    await a.close();
+    await b.close();
+    files.cleanup();
+  }
+});
+
+test('достоверный отказ допускает повтор на границе срока до начала доставки', async () => {
+  const storage = await openStorage(':memory:');
+  try {
+    const f = await fixture(storage);
+    const item = created(f.store.create(f.one, { ...source, scope: f.one.scope }, fields, now));
+    const initial = f.store.claimConfirmation(f.one, item.id, now)!;
+    const part = f.store.getPart(initial, now)!;
+    expect(f.store.beginPart(initial, part, now)).toBe(true);
+    expect(f.store.settle(initial, part, 'failed', now)).toBe(false);
+    const retry = f.store.claimConfirmation(f.one, item.id, dueAt, true)!;
+    expect(f.store.getPart(retry, dueAt)?.send_id).toBe(part.send_id);
+    expect(f.store.settle(retry, part, 'failed', dueAt)).toBe(false);
+    const delivery = f.store.claimDelivery(dueAt, (text) => [text])!;
+    expect(f.store.beginPart(delivery, f.store.getPart(delivery, dueAt)!, dueAt)).toBe(true);
+    expect(f.store.claimConfirmation(f.one, item.id, dueAt, true)).toBeUndefined();
+    expect(f.store.inspectConfirmation(f.one, item.id, dueAt)?.item.deliveryStarted).toBe(true);
   } finally {
     await storage.close();
   }

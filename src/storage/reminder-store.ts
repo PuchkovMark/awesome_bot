@@ -37,7 +37,7 @@ export type ReminderFields =
       readonly dueAt: number;
       readonly timezone: string;
       readonly text: string;
-      readonly confirmation: readonly string[];
+      readonly confirmation: (id: number) => readonly string[];
       readonly scheduleKey?: string;
     };
 
@@ -289,7 +289,7 @@ export function createReminderStore(connection: Connection, lifecycle: Lifecycle
       `UPDATE personal_reminders SET text=?,state='pending',draft=NULL,expires_at=NULL,
       due_at=?,timezone=?,next_at=?,schedule_key=? WHERE id=?`,
     ).run(fields.text, fields.dueAt, fields.timezone, fields.dueAt, fields.scheduleKey ?? null, id);
-    insertParts(db, id, 'confirmation', fields.confirmation);
+    insertParts(db, id, 'confirmation', fields.confirmation(id));
   }
 
   function addReminder(
@@ -367,6 +367,48 @@ export function createReminderStore(connection: Connection, lifecycle: Lifecycle
           if (candidates.length) return { kind: 'choose', items: candidates.map(view) };
         }
         return { kind: 'created', item: addReminder(db, recipient, source, fields, now) };
+      });
+    },
+    copy(
+      recipient: Recipient,
+      source: Source,
+      id: number,
+      clock: () => number,
+      confirmation: (
+        text: string,
+        dueAt: number,
+        timezone: string,
+        copyId: number,
+      ) => readonly string[],
+    ) {
+      return transaction((db) => {
+        assertRecipient(db, recipient);
+        requireInput(source.scope === recipient.scope);
+        const now = clock();
+        maintain(db, now);
+        if (pendingFromOrigin(db, recipient, source)) return { kind: 'replayed' } as const;
+        const row = recipientRecord(db, recipient, id);
+        if (!row) return null;
+        const deadlineReached = row.due_at !== null && row.due_at <= now;
+        if (row.state !== 'pending' || row.delivery_state !== null || deadlineReached)
+          return { kind: 'unavailable', item: view(row), deadlineReached } as const;
+        const text = row.text!;
+        const dueAt = row.due_at!;
+        const timezone = row.timezone!;
+        const item = addReminder(
+          db,
+          recipient,
+          source,
+          {
+            text,
+            dueAt,
+            timezone,
+            ...(row.schedule_key === null ? {} : { scheduleKey: row.schedule_key }),
+            confirmation: (copyId) => confirmation(text, dueAt, timezone, copyId),
+          },
+          now,
+        );
+        return { kind: 'created', item } as const;
       });
     },
     revise(
@@ -453,6 +495,7 @@ export function createReminderStore(connection: Connection, lifecycle: Lifecycle
     claimConfirmation(recipient: Recipient, id: number, now: number, retry = false) {
       return transaction((db) => {
         assertRecipient(db, recipient);
+        if (retry) maintain(db, now);
         const row = recipientRecord(db, recipient, id);
         if (
           row?.state !== 'pending' ||
@@ -471,7 +514,7 @@ export function createReminderStore(connection: Connection, lifecycle: Lifecycle
         if (part?.state !== 'ready') return;
         if (
           retry
-            ? part.definite_failure !== 1 || row.due_at! <= now
+            ? part.definite_failure !== 1
             : row.confirmation !== 'pending' ||
               part.attempted_at !== null ||
               part.definite_failure === 1

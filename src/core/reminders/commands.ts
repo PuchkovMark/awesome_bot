@@ -8,6 +8,7 @@ export type ReminderCommand =
   | { readonly kind: 'clarify'; readonly id?: number; readonly input: string }
   | { readonly kind: 'retry-confirmation'; readonly id: number }
   | { readonly kind: 'check-confirmation'; readonly id: number }
+  | { readonly kind: 'copy'; readonly id: number }
   | { readonly kind: 'timezone'; readonly input: string };
 
 const botName = /^пен[её]к(?![\p{L}\p{N}_])\s*[,!:.—-]?\s*/iu;
@@ -25,6 +26,9 @@ export function parseReminderCommand(text: string, group: boolean): ReminderComm
     }
   }
   if (group) return undefined;
+  const copy = /^создать ещ[её] одно\s+#?(\d+)[.!]?$/iu.exec(own);
+  if (copy && Number.isSafeInteger(Number(copy[1])) && Number(copy[1]) > 0)
+    return { kind: 'copy', id: Number(copy[1]) };
   const recovery = /^(повтори подтверждение|проверь напоминание)\s+#?(\d+)[.!]?$/iu.exec(own);
   if (recovery) {
     const id = Number(recovery[2]);

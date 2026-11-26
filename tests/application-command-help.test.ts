@@ -357,7 +357,13 @@ test.each(['/помощь', '/команды', '/помощь напоминан
       await until(() => expect(app.sends.at(-1)?.peer_id).toBe(73));
       const text = app.sends.at(-1)!.text;
       if (command.includes('напоминания')) {
-        for (const example of ['Напомни мне', 'Мои напоминания', 'Отмени напоминание'])
+        for (const example of [
+          'Напомни мне',
+          'Мои напоминания',
+          'Отмени напоминание',
+          'Создать ещё одно #12',
+          'команду проверки или повтора',
+        ])
           expect(text).toContain(example);
       } else {
         expect(text).toContain('/помощь напоминания');

@@ -14,7 +14,7 @@ import type { SafeLogger } from '../../src/logger/index';
 import { disclosureStore } from '../../src/storage/chat-disclosure-store';
 import { openStorage } from '../../src/storage/index';
 import { lifecycleBackend } from '../../src/storage/lifecycle-store';
-import { answer, chat, group, ownerId, until } from './application-response-fixture';
+import { answer, chat, group, ownerId, peer, until } from './application-response-fixture';
 import { storageFixture } from './storage-fixture';
 
 interface Message {
@@ -25,6 +25,10 @@ interface Message {
   readonly text: string;
   readonly random_id?: number;
   readonly reply_message?: Message;
+}
+
+function address(destination: number, id: number) {
+  return `${destination}/${id}`;
 }
 
 export async function remindersFixture(origin = Date.UTC(2026, 10, 23, 20, 55)) {
@@ -72,10 +76,11 @@ export async function remindersFixture(origin = Date.UTC(2026, 10, 23, 20, 55)) 
     debugText: logs,
   };
   const complete = vi.fn<(request: LlmRequest) => Promise<LlmResult>>(async () => answer);
-  const messages = new Map<number, Message>();
+  const messages = new Map<string, Message>();
   const sends: Message[] = [];
   const closed = new Set<number>();
-  const hidden = new Set<number>();
+  const hidden = new Set<string>();
+  const pausedReads = new Map<string, ReturnType<typeof Promise.withResolvers<void>>>();
   const holds: (() => void)[] = [];
   let serial = 0;
   let tick = 0;
@@ -117,17 +122,20 @@ export async function remindersFixture(origin = Date.UTC(2026, 10, 23, 20, 55)) 
         };
       case 'messages.getConversationMembers':
         return { response: { items: [{ member_id: -group, is_admin: true }] } };
-      case 'messages.getByConversationMessageId':
+      case 'messages.getByConversationMessageId': {
+        const addresses = String(args.conversation_message_ids)
+          .split(',')
+          .map((id) => address(Number(args.peer_id), Number(id)));
+        await Promise.all(addresses.map((key) => pausedReads.get(key)?.promise));
         return {
           response: {
-            items: String(args.conversation_message_ids)
-              .split(',')
-              .map(Number)
-              .filter((id) => !hidden.has(id))
-              .map((id) => messages.get(id))
+            items: addresses
+              .filter((key) => !hidden.has(key))
+              .map((key) => messages.get(key))
               .filter(Boolean),
           },
         };
+      }
       case 'messages.setActivity':
         return { response: 1 };
       case 'messages.send': {
@@ -135,24 +143,29 @@ export async function remindersFixture(origin = Date.UTC(2026, 10, 23, 20, 55)) 
           refuseText = undefined;
           return { error: { error_code: 901 } };
         }
+        const destination = Number(args.peer_ids);
         const parent = args.forward
           ? messages.get(
-              (JSON.parse(String(args.forward)) as { conversation_message_ids: number[] })
-                .conversation_message_ids[0]!,
+              address(
+                destination,
+                (JSON.parse(String(args.forward)) as { conversation_message_ids: number[] })
+                  .conversation_message_ids[0]!,
+              ),
             )
           : undefined;
         const row: Message = {
           from_id: -group,
-          peer_id: Number(args.peer_ids),
+          peer_id: destination,
           conversation_message_id: ++serial,
           date: Math.floor(now / 1000),
           text: String(args.message),
           random_id: Number(args.random_id),
           ...(parent ? { reply_message: parent } : {}),
         };
-        messages.set(row.conversation_message_id, row);
+        const key = address(destination, row.conversation_message_id);
+        messages.set(key, row);
         sends.push(row);
-        if (hideText && row.text.includes(hideText)) hidden.add(row.conversation_message_id);
+        if (hideText && row.text.includes(hideText)) hidden.add(key);
         if (lostText && row.text.includes(lostText)) throw Error('Синтетическая потеря ответа');
         return { response: [row] };
       }
@@ -198,6 +211,8 @@ export async function remindersFixture(origin = Date.UTC(2026, 10, 23, 20, 55)) 
   async function halt() {
     stop?.abort();
     for (const release of holds.splice(0)) release();
+    for (const read of pausedReads.values()) read.resolve();
+    pausedReads.clear();
     expect(await running).toBeNull();
   }
   async function resolve(chatId: ChatId, decision: 'continue' | 'new' = 'continue') {
@@ -225,6 +240,11 @@ export async function remindersFixture(origin = Date.UTC(2026, 10, 23, 20, 55)) 
       life,
       holds,
       resolve,
+      async readyGroup(destination: number) {
+        const next = await resolve(`vk:${destination}`, 'new');
+        await until(() => expect(disclosure.gate(next).version).toBe(version));
+        return next;
+      },
       launch,
       halt,
       at(value: number) {
@@ -233,16 +253,24 @@ export async function remindersFixture(origin = Date.UTC(2026, 10, 23, 20, 55)) 
         ).run(value + 30_000);
         now = value;
       },
-      send(text: string, from = 41, destination = from, timestamp = now, reply?: Message) {
+      send(
+        text: string,
+        from = 41,
+        destination = from,
+        timestamp = now,
+        reply?: Message,
+        localId?: number,
+      ) {
         const row: Message = {
           from_id: from,
           peer_id: destination,
           text,
           date: Math.floor(timestamp / 1000),
-          conversation_message_id: ++serial,
+          conversation_message_id: localId ?? ++serial,
           ...(reply ? { reply_message: reply } : {}),
         };
-        messages.set(row.conversation_message_id, row);
+        serial = Math.max(serial, row.conversation_message_id);
+        messages.set(address(destination, row.conversation_message_id), row);
         deliver(row);
         return row;
       },
@@ -260,8 +288,8 @@ export async function remindersFixture(origin = Date.UTC(2026, 10, 23, 20, 55)) 
       hide(text: string) {
         hideText = text;
       },
-      hideMessage(messageId: number) {
-        hidden.add(messageId);
+      hideMessage(messageId: number, destination = peer) {
+        hidden.add(address(destination, messageId));
       },
       reveal() {
         hidden.clear();
@@ -269,6 +297,15 @@ export async function remindersFixture(origin = Date.UTC(2026, 10, 23, 20, 55)) 
       },
       hold() {
         holdNext = true;
+      },
+      holdRead(destination: number, messageId: number) {
+        const key = address(destination, messageId);
+        const pending = Promise.withResolvers<void>();
+        pausedReads.set(key, pending);
+        return () => {
+          pausedReads.delete(key);
+          pending.resolve();
+        };
       },
       pending() {
         return db

@@ -38,9 +38,16 @@ const display = {
 } as const;
 const confirmationText = {
   delivered: 'Подтверждение доставлено.',
-  failed: 'VK отклонил подтверждение.',
+  failed: 'Подтверждение не доставлено.',
   unknown: 'Доставка подтверждения неизвестна.',
 } as const;
+
+function confirmationParts(text: string, dueAt: number, timezone: string, copyId?: number) {
+  const copy = copyId === undefined ? '' : ` Копия #${copyId}.`;
+  return splitVkText(
+    `Напомню вам в этой личке ${formatReminderTime(dueAt, timezone)} (${timezone}).${copy}\n${text}`,
+  );
+}
 
 function fields(input: string, originAt: number, timezone?: string, edited?: Reminder) {
   const draft = edited?.draft;
@@ -90,9 +97,7 @@ function fields(input: string, originAt: number, timezone?: string, edited?: Rem
       schedule?.kind === 'relative'
         ? `relative:${schedule.minutes}`
         : `calendar:${dueAt}:${selected}`,
-    confirmation: splitVkText(
-      `Напомню вам в этой личке ${formatReminderTime(dueAt, selected)} (${selected}).\n${text}`,
-    ),
+    confirmation: () => confirmationParts(text, dueAt, selected),
   };
 }
 
@@ -138,7 +143,7 @@ function dueLabel(item: Reminder) {
     return `${formatReminderTime(item.dueAt, item.timezone)} (${item.timezone})`;
 }
 
-function summary(item: Reminder) {
+function summary(item: Reminder, now: number) {
   const prefix = `#${item.id}`;
   if (item.state === 'draft') return `${prefix} · ожидается уточнение`;
   const parts = [prefix];
@@ -155,8 +160,11 @@ function summary(item: Reminder) {
   );
   if (item.state === 'pending' && !item.deliveryStarted) {
     parts.push(confirmationText[item.confirmation]);
+    const lines = [parts.join(' · ')];
     const action = confirmationAction(item);
-    if (action) return parts.join(' · ') + '\n' + action;
+    if (action) lines.push(action);
+    if (item.dueAt! > now) lines.push('Копия на тот же срок.', `Создать ещё одно #${item.id}`);
+    return lines.join('\n');
   }
   return parts.join(' · ');
 }
@@ -168,7 +176,7 @@ function confirmationAction(item: Reminder) {
 
 function recoveryStatus(item: Reminder | undefined) {
   if (!item) return missing;
-  if (item.state !== 'pending' || item.deliveryStarted) return summary(item);
+  if (item.state !== 'pending' || item.deliveryStarted) return summary(item, Date.now());
   return `Напоминание #${item.id} назначено на ${dueLabel(item)}. ${confirmationText[item.confirmation]}`;
 }
 
@@ -239,7 +247,8 @@ export function createReminderHandlers(options: {
         ? ({
             action: 'reminder.manage',
             minimumRole: 'member',
-            replayRequest: command.kind === 'create' || command.kind === 'clarify',
+            replayRequest:
+              command.kind === 'create' || command.kind === 'clarify' || command.kind === 'copy',
           } as const)
         : null;
     },
@@ -303,7 +312,11 @@ export function createReminderHandlers(options: {
       }
       if (command.kind === 'list') {
         const items = store.list(target, now);
-        reply(items.length ? items.map(summary).join('\n') : 'Напоминаний пока нет.');
+        reply(
+          items.length
+            ? items.map((item) => summary(item, now)).join('\n\n')
+            : 'Напоминаний пока нет.',
+        );
         return;
       }
       if (command.kind === 'retry-confirmation') {
@@ -388,6 +401,21 @@ export function createReminderHandlers(options: {
           const action =
             item.state === 'pending' && !item.deliveryStarted && confirmationAction(item);
           reply(recoveryStatus(item) + (action ? '\n' + action : ''));
+          return;
+        }
+      } else if (command.kind === 'copy') {
+        const copy = store.copy(target, origin, command.id, Date.now, confirmationParts);
+        if (!copy) {
+          reply(missing);
+          return;
+        }
+        if (copy.kind === 'replayed') return;
+        item = copy.item;
+        if (copy.kind === 'unavailable') {
+          const next = copy.deadlineReached
+            ? '\nДля нового напоминания отправьте просьбу с новым сроком.'
+            : '';
+          reply(recoveryStatus(item) + next);
           return;
         }
       } else {
